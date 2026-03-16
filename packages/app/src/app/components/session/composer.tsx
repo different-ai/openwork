@@ -33,7 +33,7 @@ type ComposerProps = {
   onModelClick: () => void;
   modelVariantLabel: string;
   modelVariant: string | null;
-  onModelVariantChange: (value: string) => void;
+  onModelVariantChange: (value: string | null) => void;
   agentLabel: string;
   selectedAgent: string | null;
   agentPickerOpen: boolean;
@@ -207,11 +207,15 @@ const MAX_RECENT_EMITS = 400;
 const DRAFT_FLUSH_DEBOUNCE_MS = 140;
 
 const MODEL_VARIANT_OPTIONS = [
-  { value: "none", label: "None" },
+  { value: "__auto__", label: "Recommended" },
+  { value: "none", label: "Fastest" },
+  { value: "minimal", label: "Quick" },
   { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
+  { value: "medium", label: "Balanced" },
   { value: "high", label: "High" },
+  { value: "thinking", label: "Thoughtful" },
   { value: "xhigh", label: "X-High" },
+  { value: "max", label: "Max" },
 ];
 
 const partsToText = (parts: ComposerPart[]) =>
@@ -481,7 +485,7 @@ export default function Composer(props: ComposerProps) {
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
   const [showInboxUploadAction, setShowInboxUploadAction] = createSignal(false);
-  const activeVariant = createMemo(() => props.modelVariant ?? "none");
+  const activeVariant = createMemo(() => props.modelVariant ?? "__auto__");
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
 
@@ -1933,7 +1937,7 @@ export default function Composer(props: ComposerProps) {
                                         : "text-gray-11 hover:bg-gray-2/70"
                                          }`}
                                       onClick={() => {
-                                        props.onModelVariantChange(option.value);
+                                        props.onModelVariantChange(option.value === "__auto__" ? null : option.value);
                                         setVariantMenuOpen(false);
                                       }}
                                     >

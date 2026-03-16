@@ -28,6 +28,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/model-picker-modal";
+import AiDefaultsModal from "./components/ai-defaults-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
@@ -70,6 +71,14 @@ import {
   mapConfigProvidersToList,
   providerPriorityRank,
 } from "./utils/providers";
+import {
+  coerceModelVariantForModel,
+  findProviderModelByRef,
+  formatModelVariantLabel,
+  getModelStyleOptions,
+  getModelStyleSummary,
+  normalizeModelVariant,
+} from "./utils/model-style";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
@@ -1694,7 +1703,7 @@ export default function App() {
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
       const parts = await buildPromptParts(resolvedDraft);
-      const selectedVariant = modelVariant() ?? undefined;
+      const selectedVariant = coerceModelVariantForModel(model, providers(), modelVariant()) ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = reasoningEffort
@@ -2701,22 +2710,8 @@ export default function App() {
   const [autoCompactContext, setAutoCompactContext] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
-
-  const MODEL_VARIANT_OPTIONS = [
-    { value: "none", label: "None" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "xhigh", label: "X-High" },
-  ];
-
-  const normalizeModelVariant = (value: string | null) => {
-    if (!value) return null;
-    const trimmed = value.trim().toLowerCase();
-    if (trimmed === "balance" || trimmed === "balanced") return "none";
-    const match = MODEL_VARIANT_OPTIONS.find((option) => option.value === trimmed);
-    return match ? match.value : null;
-  };
+  const [aiDefaultsModalOpen, setAiDefaultsModalOpen] = createSignal(false);
+  const [reopenAiDefaultsAfterModelPicker, setReopenAiDefaultsAfterModelPicker] = createSignal(false);
 
   const resolveCodexReasoningEffort = (modelID: string, variant: string | null) => {
     if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
@@ -2724,25 +2719,6 @@ export default function App() {
     if (!normalized || normalized === "none") return undefined;
     if (normalized === "xhigh") return "high";
     return normalized;
-  };
-
-  const formatModelVariantLabel = (value: string | null) => {
-    const normalized = normalizeModelVariant(value) ?? "none";
-    return MODEL_VARIANT_OPTIONS.find((option) => option.value === normalized)?.label ?? "None";
-  };
-
-  const handleEditModelVariant = () => {
-    const next = window.prompt(
-      "Model variant (none, low, medium, high, xhigh)",
-      normalizeModelVariant(modelVariant()) ?? "none"
-    );
-    if (next == null) return;
-    const normalized = normalizeModelVariant(next);
-    if (!normalized) {
-      window.alert("Variant must be one of: none, low, medium, high, xhigh.");
-      return;
-    }
-    setModelVariant(normalized);
   };
 
   const workspaceStore = createWorkspaceStore({
@@ -4788,6 +4764,44 @@ export default function App() {
     });
   });
 
+  const defaultModelInfo = createMemo(() =>
+    findProviderModelByRef(defaultModel(), providers())
+  );
+
+  const defaultAnswerStyleOptions = createMemo(() => {
+    if (!defaultModelInfo()) return [];
+    return getModelStyleOptions(defaultModel(), providers());
+  });
+
+  const defaultAnswerStyleSummary = createMemo(() => {
+    if (!defaultModelInfo()) {
+      return {
+        id: "auto" as const,
+        label: "Unavailable",
+        description: "Connect to OpenCode to load answer styles for this assistant.",
+        rawValue: null,
+      };
+    }
+
+    return getModelStyleSummary(defaultModel(), providers(), modelVariant());
+  });
+
+  const defaultAssistantHint = createMemo(() => {
+    if (!defaultModelInfo()) {
+      return "Connect to OpenCode to see model-specific defaults and answer styles here.";
+    }
+
+    if (defaultAnswerStyleOptions().length > 0) {
+      return "A strong all-around choice. You can tune how thoughtful new runs feel.";
+    }
+
+    if (defaultModelInfo()?.model.reasoning) {
+      return "This assistant has built-in reasoning, but it does not expose separate answer styles here.";
+    }
+
+    return "A straightforward everyday assistant with a built-in response style.";
+  });
+
   function openSessionModelPicker() {
     setModelPickerTarget("session");
     setModelPickerQuery("");
@@ -4795,16 +4809,41 @@ export default function App() {
   }
 
   function openDefaultModelPicker() {
+    setReopenAiDefaultsAfterModelPicker(false);
     setModelPickerTarget("default");
     setModelPickerQuery("");
     setModelPickerOpen(true);
+  }
+
+  function openAiDefaultsModal() {
+    setAiDefaultsModalOpen(true);
+  }
+
+  function openDefaultModelPickerFromAiDefaults() {
+    setReopenAiDefaultsAfterModelPicker(true);
+    setAiDefaultsModalOpen(false);
+    setModelPickerTarget("default");
+    setModelPickerQuery("");
+    setModelPickerOpen(true);
+  }
+
+  function closeModelPicker() {
+    setModelPickerOpen(false);
+    if (!reopenAiDefaultsAfterModelPicker()) return;
+    setReopenAiDefaultsAfterModelPicker(false);
+    setAiDefaultsModalOpen(true);
   }
 
   function applyModelSelection(next: ModelRef) {
     if (modelPickerTarget() === "default") {
       setDefaultModelExplicit(true);
       setDefaultModel(next);
+      setModelVariant((current) => coerceModelVariantForModel(next, providers(), current));
       setModelPickerOpen(false);
+      if (reopenAiDefaultsAfterModelPicker()) {
+        setReopenAiDefaultsAfterModelPicker(false);
+        setAiDefaultsModalOpen(true);
+      }
       return;
     }
 
@@ -4830,6 +4869,7 @@ export default function App() {
   }
 
   function openSettingsFromModelPicker() {
+    setReopenAiDefaultsAfterModelPicker(false);
     setTab("settings");
     setView("dashboard");
   }
@@ -6208,6 +6248,11 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (!providers().length) return;
+    setModelVariant((current) => coerceModelVariantForModel(defaultModel(), providers(), current));
+  });
+
+  createEffect(() => {
     if (typeof window === "undefined") return;
     try {
       const value = modelVariant();
@@ -6619,15 +6664,15 @@ export default function App() {
       selectSession: selectSession,
       defaultModelLabel: formatModelLabel(defaultModel(), providers()),
       defaultModelRef: formatModelRef(defaultModel()),
-      openDefaultModelPicker,
+      openAiDefaultsModal,
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v) => !v),
       autoCompactContext: autoCompactContext(),
       toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
-      modelVariantLabel: formatModelVariantLabel(modelVariant()),
-      editModelVariant: handleEditModelVariant,
+      answerStyleLabel: defaultAnswerStyleSummary().label,
+      answerStyleHint: defaultAnswerStyleSummary().description,
       updateAutoCheck: updateAutoCheck(),
       toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
       updateAutoDownload: updateAutoDownload(),
@@ -6775,7 +6820,7 @@ export default function App() {
     openSessionModelPicker: openSessionModelPicker,
     modelVariantLabel: formatModelVariantLabel(modelVariant()),
     modelVariant: modelVariant(),
-    setModelVariant: (value: string) => setModelVariant(value),
+    setModelVariant: (value: string | null) => setModelVariant(value),
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
     mcpServers: mcpServers(),
@@ -7024,7 +7069,29 @@ export default function App() {
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
         onOpenSettings={openSettingsFromModelPicker}
-        onClose={() => setModelPickerOpen(false)}
+        onClose={closeModelPicker}
+      />
+
+      <AiDefaultsModal
+        open={aiDefaultsModalOpen()}
+        busy={busy()}
+        defaultModelLabel={formatModelLabel(defaultModel(), providers())}
+        defaultModelRef={formatModelRef(defaultModel())}
+        assistantHint={defaultAssistantHint()}
+        answerStyleLabel={defaultAnswerStyleSummary().label}
+        answerStyleHint={defaultAnswerStyleSummary().description}
+        answerStyleUnavailable={defaultAnswerStyleSummary().label === "Unavailable"}
+        answerStyleId={defaultAnswerStyleSummary().id}
+        answerStyleRawValue={defaultAnswerStyleSummary().rawValue}
+        answerStyleOptions={defaultAnswerStyleOptions()}
+        showThinking={showThinking()}
+        autoCompactContext={autoCompactContext()}
+        developerMode={developerMode()}
+        onChooseModel={openDefaultModelPickerFromAiDefaults}
+        onSelectAnswerStyle={(value) => setModelVariant(value)}
+        onToggleShowThinking={() => setShowThinking((current) => !current)}
+        onToggleAutoCompactContext={() => setAutoCompactContext((current) => !current)}
+        onClose={() => setAiDefaultsModalOpen(false)}
       />
 
       <ResetModal

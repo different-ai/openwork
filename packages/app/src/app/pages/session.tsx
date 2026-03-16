@@ -222,7 +222,7 @@ export type SessionViewProps = {
   openSessionModelPicker: () => void;
   modelVariantLabel: string;
   modelVariant: string | null;
-  setModelVariant: (value: string) => void;
+  setModelVariant: (value: string | null) => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
   onTryNotionPrompt: () => void;
@@ -328,11 +328,15 @@ const MAIN_THREAD_LAG_WARN_MS = 180;
 type CommandPaletteMode = "root" | "sessions" | "thinking";
 
 const COMMAND_PALETTE_THINKING_OPTIONS = [
-  { value: "none", label: "None", detail: "Fastest responses" },
+  { value: "__auto__", label: "Recommended", detail: "Use the assistant's usual balance" },
+  { value: "none", label: "Fastest", detail: "Use the least extra thinking" },
+  { value: "minimal", label: "Quick", detail: "Keep replies light and fast" },
   { value: "low", label: "Low", detail: "Light reasoning" },
-  { value: "medium", label: "Medium", detail: "Balanced depth" },
+  { value: "medium", label: "Balanced", detail: "Good default depth" },
   { value: "high", label: "High", detail: "Deeper reasoning" },
+  { value: "thinking", label: "Thoughtful", detail: "Use extended thinking mode" },
   { value: "xhigh", label: "X-High", detail: "Maximum effort" },
+  { value: "max", label: "Max", detail: "Provider maximum effort" },
 ] as const;
 
 export default function SessionView(props: SessionViewProps) {
@@ -3686,10 +3690,10 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const commandPaletteThinkingItems = createMemo<CommandPaletteItem[]>(() => {
-    const normalizedRaw = (props.modelVariant ?? "none").trim().toLowerCase();
+    const normalizedRaw = (props.modelVariant ?? "__auto__").trim().toLowerCase();
     const activeVariant =
       normalizedRaw === "balanced" || normalizedRaw === "balance"
-        ? "none"
+        ? "medium"
         : normalizedRaw;
     const query = commandPaletteQuery().trim().toLowerCase();
 
@@ -3702,7 +3706,7 @@ export default function SessionView(props: SessionViewProps) {
       detail: option.detail,
       meta: activeVariant === option.value ? "Current" : undefined,
       action: () => {
-        props.setModelVariant(option.value);
+        props.setModelVariant(option.value === "__auto__" ? null : option.value);
         closeCommandPalette();
         setToastMessage(`Thinking set to ${option.label}.`);
       },

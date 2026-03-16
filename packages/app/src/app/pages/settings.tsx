@@ -93,15 +93,15 @@ export type SettingsViewProps = {
   isWindows: boolean;
   defaultModelLabel: string;
   defaultModelRef: string;
-  openDefaultModelPicker: () => void;
+  openAiDefaultsModal: () => void;
   showThinking: boolean;
   toggleShowThinking: () => void;
   autoCompactContext: boolean;
   toggleAutoCompactContext: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
-  modelVariantLabel: string;
-  editModelVariant: () => void;
+  answerStyleLabel: string;
+  answerStyleHint: string;
   language: Language;
   setLanguage: (value: Language) => void;
   themeMode: "light" | "dark" | "system";
@@ -1265,70 +1265,63 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "model"}>
           <div class="space-y-6">
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Model</div>
-                <div class="text-xs text-gray-10">Defaults + thinking controls for runs.</div>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12 truncate">{props.defaultModelLabel}</div>
-                  <div class="text-xs text-gray-7 font-mono truncate">{props.defaultModelRef}</div>
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-5">
+              <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div class="space-y-2">
+                  <div class="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/20 px-2.5 py-1 text-[11px] font-medium text-blue-11">
+                    <Zap size={12} />
+                    AI defaults
+                  </div>
+                  <div>
+                    <div class="text-sm font-medium text-gray-12">How should OpenWork help?</div>
+                    <div class="max-w-[58ch] text-xs text-gray-10">
+                      Choose your default assistant and the kind of answers you want OpenWork to lean toward.
+                    </div>
+                  </div>
                 </div>
+
                 <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.openDefaultModelPicker}
+                  variant="secondary"
+                  class="h-9 rounded-xl px-4 text-xs font-semibold sm:shrink-0"
+                  onClick={props.openAiDefaultsModal}
                   disabled={props.busy}
                 >
-                  Change
+                  Open AI defaults
                 </Button>
               </div>
 
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Thinking</div>
-                  <div class="text-xs text-gray-7">Show thinking parts (Developer mode only).</div>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-2xl border border-gray-6/70 bg-gray-1/55 p-4">
+                  <div class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-9">
+                    Default assistant
+                  </div>
+                  <div class="mt-2 text-sm font-semibold text-gray-12 truncate">{props.defaultModelLabel}</div>
+                  <div class="mt-1 text-xs font-mono text-gray-8 truncate">{props.defaultModelRef}</div>
                 </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.toggleShowThinking}
-                  disabled={props.busy}
-                >
-                  {props.showThinking ? "On" : "Off"}
-                </Button>
+
+                <div class="rounded-2xl border border-gray-6/70 bg-gray-1/55 p-4">
+                  <div class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-9">Answer style</div>
+                  <div class="mt-2 text-sm font-semibold text-gray-12">{props.answerStyleLabel}</div>
+                  <div class="mt-1 text-xs text-gray-9">{props.answerStyleHint}</div>
+                </div>
               </div>
 
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Auto context compaction</div>
-                  <div class="text-xs text-gray-7">Automatically compact after a run completes.</div>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-2xl border border-gray-6/70 bg-gray-1/55 p-4">
+                  <div class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-9">
+                    Step-by-step reasoning
+                  </div>
+                  <div class="mt-2 text-sm font-semibold text-gray-12">{props.showThinking ? "On" : "Off"}</div>
+                  <div class="mt-1 text-xs text-gray-9">Visible when Developer mode is on.</div>
                 </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.toggleAutoCompactContext}
-                  disabled={props.busy}
-                >
-                  {props.autoCompactContext ? "On" : "Off"}
-                </Button>
-              </div>
 
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Model variant</div>
-                  <div class="text-xs text-gray-7 font-mono truncate">{props.modelVariantLabel}</div>
+                <div class="rounded-2xl border border-gray-6/70 bg-gray-1/55 p-4">
+                  <div class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-9">
+                    Clean up long chats
+                  </div>
+                  <div class="mt-2 text-sm font-semibold text-gray-12">{props.autoCompactContext ? "On" : "Off"}</div>
+                  <div class="mt-1 text-xs text-gray-9">Automatically compacts context after runs finish.</div>
                 </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.editModelVariant}
-                  disabled={props.busy}
-                >
-                  Edit
-                </Button>
               </div>
             </div>
           </div>

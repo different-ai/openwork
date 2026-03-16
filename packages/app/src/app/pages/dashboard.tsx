@@ -241,15 +241,15 @@ export type DashboardViewProps = {
   selectSession: (sessionId: string) => Promise<void> | void;
   defaultModelLabel: string;
   defaultModelRef: string;
-  openDefaultModelPicker: () => void;
+  openAiDefaultsModal: () => void;
   showThinking: boolean;
   toggleShowThinking: () => void;
   autoCompactContext: boolean;
   toggleAutoCompactContext: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
-  modelVariantLabel: string;
-  editModelVariant: () => void;
+  answerStyleLabel: string;
+  answerStyleHint: string;
   language: Language;
   setLanguage: (value: Language) => void;
   updateAutoCheck: boolean;
@@ -1367,15 +1367,15 @@ export default function DashboardView(props: DashboardViewProps) {
                   isWindows={props.isWindows}
                   defaultModelLabel={props.defaultModelLabel}
                   defaultModelRef={props.defaultModelRef}
-                  openDefaultModelPicker={props.openDefaultModelPicker}
+                  openAiDefaultsModal={props.openAiDefaultsModal}
                   showThinking={props.showThinking}
                   toggleShowThinking={props.toggleShowThinking}
                   autoCompactContext={props.autoCompactContext}
                   toggleAutoCompactContext={props.toggleAutoCompactContext}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
-                  modelVariantLabel={props.modelVariantLabel}
-                  editModelVariant={props.editModelVariant}
+                  answerStyleLabel={props.answerStyleLabel}
+                  answerStyleHint={props.answerStyleHint}
                   language={props.language}
                   setLanguage={props.setLanguage}
                   updateAutoCheck={props.updateAutoCheck}
