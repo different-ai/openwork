@@ -2589,6 +2589,15 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const focusComposer = () => {
+    if (typeof window === "undefined") return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
+      });
+    });
+  };
+
   const openCommandPalette = (mode: CommandPaletteMode = "root") => {
     setCommandPaletteMode(mode);
     setCommandPaletteQuery("");
@@ -3517,17 +3526,28 @@ export default function SessionView(props: SessionViewProps) {
     props.setPrompt(draft.text);
   };
 
-  const openSessionFromList = (workspaceId: string, sessionId: string) => {
+  const openSessionFromList = (
+    workspaceId: string,
+    sessionId: string,
+    options?: { focusComposer?: boolean },
+  ) => {
     if (!sessionId) return;
+    const shouldFocusComposer = options?.focusComposer === true;
     // Route-driven selection: navigate first and let the route effect own selectSession.
     if (workspaceId === props.activeWorkspaceId) {
       props.setView("session", sessionId);
+      if (shouldFocusComposer) {
+        focusComposer();
+      }
       return;
     }
     // For different workspace, activate workspace first
     void (async () => {
       await Promise.resolve(props.activateWorkspace(workspaceId));
       props.setView("session", sessionId);
+      if (shouldFocusComposer) {
+        focusComposer();
+      }
     })();
   };
 
@@ -3553,13 +3573,30 @@ export default function SessionView(props: SessionViewProps) {
         meta: "Create",
         action: () => {
           closeCommandPalette();
-          void Promise.resolve(props.createSessionAndOpen()).catch((error) => {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Failed to create session";
-            setToastMessage(message);
-          });
+          void Promise.resolve(props.createSessionAndOpen())
+            .then((sessionId) => {
+              if (!sessionId) return;
+              focusComposer();
+            })
+            .catch((error) => {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Failed to create session";
+              setToastMessage(message);
+            });
+        },
+      },
+      {
+        id: "rename-session",
+        title: "Rename current session",
+        detail:
+          selectedSessionTitle().trim() ||
+          "Give your selected session a clearer name",
+        meta: "Rename",
+        action: () => {
+          closeCommandPalette();
+          openRenameModal();
         },
       },
       {
@@ -3639,7 +3676,9 @@ export default function SessionView(props: SessionViewProps) {
           : "Switch",
       action: () => {
         closeCommandPalette();
-        openSessionFromList(item.workspaceId, item.sessionId);
+        openSessionFromList(item.workspaceId, item.sessionId, {
+          focusComposer: true,
+        });
       },
     }));
   });
