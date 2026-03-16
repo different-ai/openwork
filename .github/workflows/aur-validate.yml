@@ -345,13 +345,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -u builder bash -lc 'cd "$GITHUB_WORKSPACE/packaging/aur" && makepkg --printsrcinfo > .SRCINFO'
+          workspace_path="$GITHUB_WORKSPACE"
+          sudo -u builder bash -lc "cd '$workspace_path/packaging/aur' && makepkg --printsrcinfo > .SRCINFO"
 
       - name: Build package with makepkg
         shell: bash
         run: |
           set -euo pipefail
-          sudo -u builder bash -lc 'cd "$GITHUB_WORKSPACE/packaging/aur" && makepkg -f --syncdeps --noconfirm --cleanbuild'
+          workspace_path="$GITHUB_WORKSPACE"
+          sudo -u builder bash -lc "cd '$workspace_path/packaging/aur' && makepkg -f --syncdeps --noconfirm --cleanbuild"
 
       - name: Run namcap checks
         if: env.MODE == 'publish-ready'
