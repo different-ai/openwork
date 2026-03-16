@@ -7,7 +7,7 @@ import { DEFAULT_PUBLIC_BASE_URL } from "../server/_lib/share-utils.ts";
 
 export const revalidate = 3600;
 
-const rootOgImageUrl = `${DEFAULT_PUBLIC_BASE_URL}/og/root`;
+const rootOgImageUrl = `${DEFAULT_PUBLIC_BASE_URL}/api/og/root`;
 
 export const metadata: Metadata = {
   title: "Share Your Skill",
