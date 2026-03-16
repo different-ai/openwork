@@ -48,6 +48,7 @@ export default function ConfigView(props: ConfigViewProps) {
   const [openworkTestState, setOpenworkTestState] = createSignal<"idle" | "testing" | "success" | "error">("idle");
   const [openworkTestMessage, setOpenworkTestMessage] = createSignal<string | null>(null);
   const [clientTokenVisible, setClientTokenVisible] = createSignal(false);
+  const [ownerTokenVisible, setOwnerTokenVisible] = createSignal(false);
   const [hostTokenVisible, setHostTokenVisible] = createSignal(false);
   const [copyingField, setCopyingField] = createSignal<string | null>(null);
   let copyTimeout: number | undefined;
@@ -359,7 +360,7 @@ export default function ConfigView(props: ConfigViewProps) {
 
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">Access token</div>
+                <div class="text-xs font-medium text-gray-11">Collaborator token</div>
                 <div class="text-xs text-gray-7 font-mono truncate">
                   {clientTokenVisible()
                     ? hostInfo()?.clientToken || "—"
@@ -367,7 +368,7 @@ export default function ConfigView(props: ConfigViewProps) {
                       ? "••••••••••••"
                       : "—"}
                 </div>
-                <div class="text-[11px] text-gray-8 mt-1">Use on phones or laptops connecting to this server.</div>
+                <div class="text-[11px] text-gray-8 mt-1">Routine remote access for phones or laptops connecting to this server.</div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <Button
@@ -391,7 +392,39 @@ export default function ConfigView(props: ConfigViewProps) {
 
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">Server token</div>
+                <div class="text-xs font-medium text-gray-11">Owner token</div>
+                <div class="text-xs text-gray-7 font-mono truncate">
+                  {ownerTokenVisible()
+                    ? hostInfo()?.ownerToken || "—"
+                    : hostInfo()?.ownerToken
+                      ? "••••••••••••"
+                      : "—"}
+                </div>
+                <div class="text-[11px] text-gray-8 mt-1">Use this when a remote client needs to answer permission prompts or take owner-only actions.</div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => setOwnerTokenVisible((prev) => !prev)}
+                  disabled={!hostInfo()?.ownerToken}
+                >
+                  {ownerTokenVisible() ? "Hide" : "Show"}
+                </Button>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => handleCopy(hostInfo()?.ownerToken ?? "", "owner-token")}
+                  disabled={!hostInfo()?.ownerToken}
+                >
+                  {copyingField() === "owner-token" ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+              <div class="min-w-0">
+                <div class="text-xs font-medium text-gray-11">Host admin token</div>
                 <div class="text-xs text-gray-7 font-mono truncate">
                   {hostTokenVisible()
                     ? hostInfo()?.hostToken || "—"
@@ -399,7 +432,7 @@ export default function ConfigView(props: ConfigViewProps) {
                       ? "••••••••••••"
                       : "—"}
                 </div>
-                <div class="text-[11px] text-gray-8 mt-1">Keep private. Required for approval actions.</div>
+                <div class="text-[11px] text-gray-8 mt-1">Internal host-only token for approvals CLI and admin APIs. Do not use this in the remote app connect flow.</div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <Button
@@ -433,7 +466,7 @@ export default function ConfigView(props: ConfigViewProps) {
           <div>
             <div class="text-sm font-medium text-gray-12">OpenWork server</div>
             <div class="text-xs text-gray-10">
-              Connect to an OpenWork server. Use the URL and access token from your server admin.
+              Connect to an OpenWork server. Use the URL plus a collaborator or owner token from your server admin.
             </div>
           </div>
           <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>{openworkStatusLabel()}</div>
@@ -450,7 +483,7 @@ export default function ConfigView(props: ConfigViewProps) {
           />
 
           <label class="block">
-            <div class="mb-1 text-xs font-medium text-gray-11">Access token</div>
+            <div class="mb-1 text-xs font-medium text-gray-11">Collaborator or owner token</div>
             <div class="flex items-center gap-2">
               <input
                 type={openworkTokenVisible() ? "text" : "password"}
@@ -469,7 +502,7 @@ export default function ConfigView(props: ConfigViewProps) {
                 {openworkTokenVisible() ? "Hide" : "Show"}
               </Button>
             </div>
-            <div class="mt-1 text-xs text-gray-10">Optional. Paste the access token to authenticate.</div>
+            <div class="mt-1 text-xs text-gray-10">Optional. Paste a collaborator token for routine access or an owner token when this client must answer permission prompts.</div>
           </label>
         </div>
 

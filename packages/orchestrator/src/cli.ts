@@ -3757,6 +3757,22 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
   return payload;
 }
 
+async function issueOpenworkOwnerToken(baseUrl: string, hostToken: string, label = "OpenWork owner token"): Promise<string> {
+  const payload = await fetchJson(`${baseUrl.replace(/\/$/, "")}/tokens`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-OpenWork-Host-Token": hostToken,
+    },
+    body: JSON.stringify({ scope: "owner", label }),
+  });
+  const token = typeof payload?.token === "string" ? payload.token.trim() : "";
+  if (!token) {
+    throw new Error("OpenWork server did not return an owner token");
+  }
+  return token;
+}
+
 function normalizeEvent(raw: unknown): { type: string } | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
@@ -5360,6 +5376,7 @@ async function runStart(args: ParsedArgs) {
   const controlBaseUrl = `http://127.0.0.1:${controlPort}`;
   let opencodeActualVersion: string | undefined;
   let openworkActualVersion: string | undefined;
+  let openworkOwnerToken: string | undefined;
   const startedAt = Date.now();
   let opencodeRouterHealthInterval: NodeJS.Timeout | null = null;
   const restartingServices = new Set<string>();
@@ -6038,6 +6055,7 @@ async function runStart(args: ParsedArgs) {
         // proved the server is running and proxying correctly.
         logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "openwork-server");
       }
+      openworkOwnerToken = await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork sandbox owner token");
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
     } else {
       const startedOpencodeChild = await startOpencode({
@@ -6201,6 +6219,7 @@ async function runStart(args: ParsedArgs) {
         expectedOpencodeUsername: opencodeUsername,
         expectedOpencodePassword: opencodePassword,
       });
+      openworkOwnerToken = await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork owner token");
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
 
       if (opencodeRouterReady && !opencodeRouterHealthInterval) {
@@ -6274,6 +6293,8 @@ async function runStart(args: ParsedArgs) {
         connectUrl: openworkConnectUrl,
         host: openworkHost,
         port: openworkPort,
+        collaboratorToken: openworkToken,
+        ownerToken: openworkOwnerToken,
         token: openworkToken,
         hostToken: openworkHostToken,
         version: openworkActualVersion,
@@ -6354,8 +6375,14 @@ async function runStart(args: ParsedArgs) {
       }
       console.log(`OpenWork server: ${payload.openwork.baseUrl}`);
       console.log(`OpenWork connect URL: ${payload.openwork.connectUrl}`);
-      console.log(`Client token: ${payload.openwork.token}`);
-      console.log(`Host token: ${payload.openwork.hostToken}`);
+      console.log(`Collaborator token: ${payload.openwork.collaboratorToken}`);
+      console.log("  Routine remote access for shared workers.");
+      if (payload.openwork.ownerToken) {
+        console.log(`Owner token: ${payload.openwork.ownerToken}`);
+        console.log("  Use this when the remote client must answer permission prompts.");
+      }
+      console.log(`Host admin token: ${payload.openwork.hostToken}`);
+      console.log("  Internal host/admin token for approvals CLI and host-only APIs.");
     }
 
     if (detachRequested) {

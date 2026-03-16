@@ -617,7 +617,10 @@ export default function DashboardView(props: DashboardViewProps) {
   createEffect(() => {
     const ws = shareWorkspace();
     const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-    const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+    const token =
+      props.openworkServerHostInfo?.ownerToken?.trim() ||
+      props.openworkServerHostInfo?.clientToken?.trim() ||
+      "";
     const workspacePath = ws?.workspaceType === "local" ? ws.path?.trim() ?? "" : "";
 
     if (!ws || ws.workspaceType !== "local" || !workspacePath || !baseUrl || !token) {
@@ -670,10 +673,12 @@ export default function DashboardView(props: DashboardViewProps) {
         ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId())
         : null;
       const url = mountedUrl || hostUrl;
-      const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
+      const ownerToken = props.openworkServerHostInfo?.ownerToken?.trim() || "";
+      const collaboratorToken = props.openworkServerHostInfo?.clientToken?.trim() || "";
+      const inviteToken = ownerToken || collaboratorToken;
       const inviteUrl = buildOpenworkConnectInviteUrl({
         workspaceUrl: url,
-        token,
+        token: inviteToken,
       });
       return [
         {
@@ -681,7 +686,9 @@ export default function DashboardView(props: DashboardViewProps) {
           value: inviteUrl,
           secret: true,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
-          hint: "One link that prefills worker URL and token.",
+          hint: ownerToken
+            ? "One link that prefills the worker URL and owner token for permission prompts."
+            : "One link that prefills the worker URL and collaborator token.",
         },
         {
           label: "OpenWork worker URL",
@@ -694,13 +701,22 @@ export default function DashboardView(props: DashboardViewProps) {
               : undefined,
         },
         {
-          label: "Access token",
-          value: token,
+          label: "Owner token",
+          value: ownerToken,
           secret: true,
           placeholder: isTauriRuntime() ? "-" : "Desktop app required",
           hint: mountedUrl
             ? "Use on phones or laptops connecting to this worker."
-            : "Use on phones or laptops connecting to this host.",
+            : "Use on phones or laptops connecting to this host when the remote client must answer permission prompts.",
+        },
+        {
+          label: "Collaborator token",
+          value: collaboratorToken,
+          secret: true,
+          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
+          hint: mountedUrl
+            ? "Routine remote access when you do not need owner-only actions."
+            : "Routine remote access to this host without owner-only actions.",
         },
       ];
     }
@@ -728,11 +744,11 @@ export default function DashboardView(props: DashboardViewProps) {
           value: url,
         },
         {
-          label: "Access token",
+          label: "Connected token",
           value: token,
           secret: true,
           placeholder: token ? undefined : "Set token in Advanced",
-          hint: "This token grants access to the worker on that host.",
+          hint: "This worker is currently connected with this token.",
         },
       ];
     }
@@ -769,7 +785,10 @@ export default function DashboardView(props: DashboardViewProps) {
     }
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      const token =
+        props.openworkServerHostInfo?.ownerToken?.trim() ||
+        props.openworkServerHostInfo?.clientToken?.trim() ||
+        "";
       if (!baseUrl || !token) {
         return "Local OpenWork host is not ready yet.";
       }
@@ -794,7 +813,10 @@ export default function DashboardView(props: DashboardViewProps) {
 
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      const token =
+        props.openworkServerHostInfo?.ownerToken?.trim() ||
+        props.openworkServerHostInfo?.clientToken?.trim() ||
+        "";
       if (!baseUrl || !token) {
         throw new Error("Local OpenWork host is not ready yet.");
       }

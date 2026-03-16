@@ -67,6 +67,7 @@ type WorkerLaunch = {
   openworkUrl: string | null;
   workspaceId: string | null;
   clientToken: string | null;
+  ownerToken: string | null;
   hostToken: string | null;
 };
 
@@ -81,6 +82,7 @@ type WorkerSummary = {
 
 type WorkerTokens = {
   clientToken: string | null;
+  ownerToken: string | null;
   hostToken: string | null;
   openworkUrl: string | null;
   workspaceId: string | null;
@@ -457,6 +459,7 @@ function getWorker(payload: unknown): WorkerLaunch | null {
     openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
     workspaceId: null,
     clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
+    ownerToken: tokens && typeof tokens.owner === "string" ? tokens.owner : null,
     hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null
   };
 }
@@ -491,15 +494,16 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   const tokens = payload.tokens;
   const connect = isRecord(payload.connect) ? payload.connect : null;
   const clientToken = typeof tokens.client === "string" ? tokens.client : null;
+  const ownerToken = typeof tokens.owner === "string" ? tokens.owner : null;
   const hostToken = typeof tokens.host === "string" ? tokens.host : null;
   const openworkUrl = connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null;
   const workspaceId = connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null;
 
-  if (!clientToken && !hostToken) {
+  if (!clientToken && !ownerToken && !hostToken) {
     return null;
   }
 
-  return { clientToken, hostToken, openworkUrl, workspaceId };
+  return { clientToken, ownerToken, hostToken, openworkUrl, workspaceId };
 }
 
 function getWorkerRuntimeSnapshot(payload: unknown): WorkerRuntimeSnapshot | null {
@@ -728,6 +732,7 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     (typeof value.openworkUrl === "string" || value.openworkUrl === null || typeof value.openworkUrl === "undefined") &&
     (typeof value.workspaceId === "string" || value.workspaceId === null || typeof value.workspaceId === "undefined") &&
     (typeof value.clientToken === "string" || value.clientToken === null) &&
+    (typeof value.ownerToken === "string" || value.ownerToken === null || typeof value.ownerToken === "undefined") &&
     (typeof value.hostToken === "string" || value.hostToken === null)
   );
 }
@@ -742,6 +747,7 @@ function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | null = n
     openworkUrl: item.instanceUrl,
     workspaceId: null,
     clientToken: current?.workerId === item.workerId ? current.clientToken : null,
+    ownerToken: current?.workerId === item.workerId ? current.ownerToken : null,
     hostToken: current?.workerId === item.workerId ? current.hostToken : null
   };
 }
@@ -996,6 +1002,7 @@ function CredentialRow({
   label,
   value,
   placeholder,
+  hint,
   canCopy,
   copied,
   onCopy
@@ -1003,6 +1010,7 @@ function CredentialRow({
   label: string;
   value: string | null;
   placeholder: string;
+  hint?: string;
   canCopy: boolean;
   copied: boolean;
   onCopy: () => void;
@@ -1026,6 +1034,7 @@ function CredentialRow({
           {copied ? "Copied" : canCopy ? "Copy" : "N/A"}
         </button>
       </div>
+      {hint ? <span className="px-0.5 text-[0.7rem] text-slate-500">{hint}</span> : null}
     </label>
   );
 }
@@ -1106,6 +1115,7 @@ export function CloudControlPanel() {
   const defaultAuthInfo = getAuthInfoForMode(authMode);
   const showAuthFeedback = authInfo !== defaultAuthInfo || authError !== null;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
+  const preferredOpenworkToken = activeWorker?.ownerToken ?? activeWorker?.clientToken ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
   const ownedWorkerCount = workers.filter((item) => item.isMine).length;
   const additionalWorkerNeedsPlan = Boolean(
@@ -1116,14 +1126,14 @@ export function CloudControlPanel() {
   );
   const openworkDeepLink = buildOpenworkDeepLink(
     openworkConnectUrl,
-    activeWorker?.clientToken ?? null,
+    preferredOpenworkToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
   );
   const openworkAppConnectUrl = buildOpenworkAppConnectUrl(
     OPENWORK_APP_CONNECT_BASE_URL,
     openworkConnectUrl,
-    activeWorker?.clientToken ?? null,
+    preferredOpenworkToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
   );
@@ -1257,7 +1267,7 @@ export function CloudControlPanel() {
       };
     }
 
-    const accessToken = candidate.clientToken?.trim() ?? "";
+    const accessToken = candidate.ownerToken?.trim() ?? candidate.clientToken?.trim() ?? "";
     if (!accessToken) {
       const mountedWorkspaceId = parseWorkspaceIdFromUrl(instanceUrl);
       return {
@@ -1792,6 +1802,7 @@ export function CloudControlPanel() {
         openworkUrl: parsed.openworkUrl ?? parsed.instanceUrl,
         workspaceId: parsed.workspaceId ?? parseWorkspaceIdFromUrl(parsed.instanceUrl ?? ""),
         clientToken: null,
+        ownerToken: null,
         hostToken: null
       };
 
@@ -1813,6 +1824,7 @@ export function CloudControlPanel() {
     const serializable: WorkerLaunch = {
       ...worker,
       clientToken: null,
+      ownerToken: null,
       hostToken: null
     };
 
@@ -1885,7 +1897,7 @@ export function CloudControlPanel() {
     if (pendingRestoredWorkerId === worker.workerId) {
       return;
     }
-    if (worker.clientToken) {
+    if (worker.ownerToken || worker.clientToken) {
       return;
     }
     if (actionBusy !== null || launchBusy) {
@@ -2456,6 +2468,7 @@ export function CloudControlPanel() {
               openworkUrl: summary.instanceUrl,
               workspaceId: null,
               clientToken: null,
+              ownerToken: null,
               hostToken: null
             };
 
@@ -2541,6 +2554,7 @@ export function CloudControlPanel() {
               openworkUrl: tokens.openworkUrl ?? worker.openworkUrl,
               workspaceId: tokens.workspaceId ?? worker.workspaceId,
               clientToken: tokens.clientToken,
+              ownerToken: tokens.ownerToken,
               hostToken: tokens.hostToken
             }
           : {
@@ -2552,6 +2566,7 @@ export function CloudControlPanel() {
               openworkUrl: tokens.openworkUrl,
               workspaceId: tokens.workspaceId,
               clientToken: tokens.clientToken,
+              ownerToken: tokens.ownerToken,
               hostToken: tokens.hostToken
             };
 
@@ -2560,7 +2575,7 @@ export function CloudControlPanel() {
       setPendingRestoredWorkerId(null);
 
       setLaunchStatus("Worker is ready to connect.");
-      appendEvent("success", "Access token ready", `Worker ID ${id}`);
+      appendEvent("success", "Owner token ready", `Worker ID ${id}`);
       void refreshWorkers({ keepSelection: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
@@ -3617,12 +3632,23 @@ export function CloudControlPanel() {
                                       />
 
                                       <CredentialRow
-                                        label="Access token"
+                                        label="Owner token"
+                                        value={activeWorker?.ownerToken ?? null}
+                                        placeholder="Use Worker actions to refresh"
+                                        hint="Use this token when the remote client must answer permission prompts."
+                                        canCopy={Boolean(activeWorker?.ownerToken)}
+                                        copied={copiedField === "owner-token"}
+                                        onCopy={() => void copyToClipboard("owner-token", activeWorker?.ownerToken ?? null)}
+                                      />
+
+                                      <CredentialRow
+                                        label="Collaborator token"
                                         value={activeWorker?.clientToken ?? null}
                                         placeholder="Use Worker actions to refresh"
+                                        hint="Routine remote access without owner-only actions."
                                         canCopy={Boolean(activeWorker?.clientToken)}
-                                        copied={copiedField === "access-token"}
-                                        onCopy={() => void copyToClipboard("access-token", activeWorker?.clientToken ?? null)}
+                                        copied={copiedField === "collaborator-token"}
+                                        onCopy={() => void copyToClipboard("collaborator-token", activeWorker?.clientToken ?? null)}
                                       />
                                     </div>
                                   ) : null}

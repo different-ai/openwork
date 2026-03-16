@@ -71,6 +71,14 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
   }
 }
 
+function parseIssuedToken(payload: unknown): string | null {
+  if (!isRecord(payload)) {
+    return null
+  }
+  const token = typeof payload.token === "string" ? payload.token.trim() : ""
+  return token || null
+}
+
 async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string) {
   const baseUrl = normalizeUrl(instanceUrl)
   if (!baseUrl || !clientToken.trim()) {
@@ -212,6 +220,26 @@ async function fetchWorkerRuntimeJson(input: {
   }
 
   return { ok: false as const, status: lastStatus, payload: lastPayload }
+}
+
+async function issueWorkerOwnerToken(workerId: string): Promise<string> {
+  const result = await fetchWorkerRuntimeJson({
+    workerId,
+    path: "/tokens",
+    method: "POST",
+    body: { scope: "owner", label: "Den owner token" },
+  })
+
+  const token = parseIssuedToken(result.payload)
+  if (result.ok && token) {
+    return token
+  }
+
+  const message =
+    isRecord(result.payload) && typeof result.payload.message === "string"
+      ? result.payload.message
+      : `Owner token request failed with ${result.status}.`
+  throw new Error(message)
 }
 
 async function requireSession(req: express.Request, res: express.Response) {
@@ -620,11 +648,24 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
 
   const instance = await getLatestWorkerInstance(rows[0].id)
   const connect = await resolveConnectUrlFromCandidates(rows[0].id, instance?.url ?? null, clientToken)
+  let ownerToken: string
+
+  try {
+    ownerToken = await issueWorkerOwnerToken(rows[0].id)
+  } catch (error) {
+    res.status(502).json({
+      error: "worker_owner_token_unavailable",
+      message: error instanceof Error ? error.message : "Could not mint an owner token for this worker.",
+    })
+    return
+  }
 
   res.json({
     tokens: {
       host: hostToken,
       client: clientToken,
+      collaborator: clientToken,
+      owner: ownerToken,
     },
     connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
   })

@@ -102,6 +102,7 @@ pub struct OpenworkServerInfo {
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
     pub client_token: Option<String>,
+    pub owner_token: Option<String>,
     pub host_token: Option<String>,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,

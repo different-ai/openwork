@@ -26,6 +26,7 @@ export type OpenworkServerInfo = {
   mdnsUrl: string | null;
   lanUrl: string | null;
   clientToken: string | null;
+  ownerToken: string | null;
   hostToken: string | null;
   pid: number | null;
   lastStdout: string | null;
@@ -401,6 +402,7 @@ export async function nukeOpencodeDevConfigAndExit(): Promise<void> {
 export type OrchestratorDetachedHost = {
   openworkUrl: string;
   token: string;
+  ownerToken?: string | null;
   hostToken: string;
   port: number;
   sandboxBackend?: "docker" | null;

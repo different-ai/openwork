@@ -20,6 +20,7 @@ pub struct OpenworkServerState {
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
     pub client_token: Option<String>,
+    pub owner_token: Option<String>,
     pub host_token: Option<String>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
@@ -45,6 +46,7 @@ impl OpenworkServerManager {
             mdns_url: state.mdns_url.clone(),
             lan_url: state.lan_url.clone(),
             client_token: state.client_token.clone(),
+            owner_token: state.owner_token.clone(),
             host_token: state.host_token.clone(),
             pid,
             last_stdout: state.last_stdout.clone(),
@@ -64,6 +66,7 @@ impl OpenworkServerManager {
         state.mdns_url = None;
         state.lan_url = None;
         state.client_token = None;
+        state.owner_token = None;
         state.host_token = None;
         state.last_stdout = None;
         state.last_stderr = None;

@@ -1685,7 +1685,7 @@ export function createWorkspaceStore(options: {
 
         const ok = await createRemoteWorkspaceFlow({
           openworkHostUrl: host.openworkUrl,
-          openworkToken: host.token,
+          openworkToken: host.ownerToken?.trim() || host.token,
           directory: resolvedFolder,
           displayName: name,
           sandboxBackend: host.sandboxBackend ?? "docker",
@@ -2199,7 +2199,7 @@ export function createWorkspaceStore(options: {
 
       const resolved = await resolveOpenworkHost({
         hostUrl: host.openworkUrl,
-        token: host.token,
+        token: host.ownerToken?.trim() || host.token,
         directoryHint: workspacePath,
       });
 
@@ -2213,7 +2213,7 @@ export function createWorkspaceStore(options: {
         baseUrl: resolved.opencodeBaseUrl,
         directory: resolved.directory || workspacePath,
         openworkHostUrl: resolved.hostUrl,
-        openworkToken: host.token,
+        openworkToken: host.ownerToken?.trim() || host.token,
         openworkWorkspaceId: resolved.workspace.id,
         openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
         sandboxBackend: host.sandboxBackend ?? "docker",
