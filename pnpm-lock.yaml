@@ -113,6 +113,9 @@ importers:
       '@types/node':
         specifier: ^20.11.30
         version: 20.12.12
+      drizzle-kit:
+        specifier: ^0.31.9
+        version: 0.31.9
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
