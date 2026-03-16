@@ -419,5 +419,10 @@ jobs:
             exit 1
           fi
 
+          mkdir -p "$HOME/.ssh"
+          touch "$HOME/.ssh/known_hosts"
+          ssh-keygen -R aur.archlinux.org >/dev/null 2>&1 || true
+          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> "$HOME/.ssh/known_hosts" 2>/dev/null
+
           export AUR_REPO
           scripts/aur/publish-aur.sh "$RELEASE_TAG"
