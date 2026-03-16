@@ -86,6 +86,62 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 
 For local Daytona development, place your Daytona API credentials in `/_repos/openwork/.env.daytona` and Den will pick them up automatically, including from task worktrees.
 
+## Building a Daytona snapshot
+
+If you want Daytona workers to start from a prebuilt runtime instead of a generic base image, create a snapshot and point Den at it.
+
+The snapshot builder for this repo lives at:
+
+- `scripts/create-daytona-openwork-snapshot.sh`
+- `services/den-worker-runtime/Dockerfile.daytona-snapshot`
+
+It builds a Linux image with:
+
+- `openwork-orchestrator`
+- `opencode`
+
+Prerequisites:
+
+- Docker running locally
+- Daytona CLI installed and logged in
+- a valid `.env.daytona` with at least `DAYTONA_API_KEY`
+
+From the OpenWork repo root:
+
+```bash
+./scripts/create-daytona-openwork-snapshot.sh
+```
+
+To publish a custom-named snapshot:
+
+```bash
+./scripts/create-daytona-openwork-snapshot.sh openwork-runtime
+```
+
+Useful optional overrides:
+
+- `DAYTONA_SNAPSHOT_NAME`
+- `DAYTONA_SNAPSHOT_REGION`
+- `DAYTONA_SNAPSHOT_CPU`
+- `DAYTONA_SNAPSHOT_MEMORY`
+- `DAYTONA_SNAPSHOT_DISK`
+- `OPENWORK_ORCHESTRATOR_VERSION`
+- `OPENCODE_VERSION`
+
+After the snapshot is pushed, set it in `.env.daytona`:
+
+```env
+DAYTONA_SNAPSHOT=openwork-runtime
+```
+
+Then start Den in Daytona mode:
+
+```bash
+DEN_PROVISIONER_MODE=daytona packaging/docker/den-dev-up.sh
+```
+
+If you do not set `DAYTONA_SNAPSHOT`, Den falls back to `DAYTONA_SANDBOX_IMAGE` and installs runtime dependencies at sandbox startup.
+
 ## Auth setup (Better Auth)
 
 Generate Better Auth schema (Drizzle):
