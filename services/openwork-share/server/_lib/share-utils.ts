@@ -124,7 +124,7 @@ export function buildRootUrl(req: RequestLike): string {
 
 export function buildOgImageUrl(req: RequestLike, targetId = "root"): string {
   const origin = buildRootUrl(req);
-  return `${origin}/api/og/${encodeURIComponent(targetId)}`;
+  return `${origin}/og/${encodeURIComponent(targetId)}`;
 }
 
 export function buildBundleUrls(req: RequestLike, id: string): BundleUrls {

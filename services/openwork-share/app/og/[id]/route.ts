@@ -1,6 +1,6 @@
 import sharp from "sharp";
-import { fetchBundleJsonById } from "../../../../server/_lib/blob-store.ts";
-import { renderBundleOgImage, renderRootOgImage } from "../../../../server/_lib/render-og-image.ts";
+import { fetchBundleJsonById } from "../../../server/_lib/blob-store.ts";
+import { renderBundleOgImage, renderRootOgImage } from "../../../server/_lib/render-og-image.ts";
 
 export const runtime = "nodejs";
 
