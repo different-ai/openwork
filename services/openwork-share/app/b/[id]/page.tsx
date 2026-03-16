@@ -17,7 +17,7 @@ async function loadBundlePageProps(id: string) {
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const routeParams = await params;
   const props = await loadBundlePageProps(routeParams?.id);
-  const pageTitle = props.missing ? "Bundle not found" : props.title;
+  const pageTitle = props.missing ? "SKILL.md not found" : props.title;
   const pageDescription = props.missing
     ? "This share link does not exist anymore, or the bundle id is invalid."
     : props.description;

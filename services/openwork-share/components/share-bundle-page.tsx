@@ -151,13 +151,13 @@ export default function ShareBundlePage(props: BundlePageProps & { stars?: strin
       {props.missing ? (
         <section className="status-card">
           <span className="eyebrow">OpenWork Share</span>
-          <h1>Bundle not found</h1>
+          <h1>SKILL.md not found</h1>
           <p>
             This share link does not exist anymore, or the bundle id is invalid.
           </p>
           <div className="hero-actions">
             <a className="button-primary" href="/">
-              Package another worker
+              Share another SKILL
             </a>
           </div>
         </section>

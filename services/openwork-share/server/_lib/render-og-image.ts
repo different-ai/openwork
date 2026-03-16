@@ -290,9 +290,9 @@ function classStyle(className: TokenClass): { fill: string; weight?: string; sty
     case "hl-type":
       return { fill: "#0ea5e9", style: "italic" };
     case "hl-cta":
-      return { fill: "#F99D16" };
+      return { fill: "#0f172a" };
     case "hl-cta-skill":
-      return { fill: "#F99D16", weight: "700" };
+      return { fill: "#0f172a", weight: "700" };
     case "hl-cta-url":
       return { fill: "#0f172a", weight: "700" };
     case "hl-codeblock":
@@ -313,7 +313,7 @@ function renderLine(line: WrappedLine, y: number): string {
       const width = segmentWidth(segment.text);
       const pill =
         segment.className === "hl-codeblock"
-          ? `<rect x="${x - 3}" y="${y - 14}" width="${width + 6}" height="22" rx="5" fill="#f8fafc" stroke="#cbd5e1" />`
+          ? `<rect x="${x - 1}" y="${y - 14}" width="${width + 8}" height="22" rx="5" fill="#f8fafc" stroke="#cbd5e1" />`
           : "";
       const node = `<text x="${x}" y="${y}" fill="${style.fill}" font-family="JetBrains Mono, Menlo, monospace" font-size="${FONT_SIZE}"${style.weight ? ` font-weight="${style.weight}"` : ""}${style.style ? ` font-style="${style.style}"` : ""}${segment.className === "hl-cta-url" ? ` text-decoration="underline"` : ""}>${escapeSvgText(segment.text)}</text>`;
       x += width;
