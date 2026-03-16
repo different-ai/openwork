@@ -44,11 +44,15 @@ PROJECT="openwork-den-dev-$DEV_ID"
 DEN_API_PORT="${DEN_API_PORT:-$(pick_port)}"
 DEN_WEB_PORT="${DEN_WEB_PORT:-$(pick_port)}"
 DEN_WORKER_PROXY_PORT="${DEN_WORKER_PROXY_PORT:-$(pick_port)}"
+DEN_MYSQL_PORT="${DEN_MYSQL_PORT:-$(pick_port)}"
 if [ "$DEN_WEB_PORT" = "$DEN_API_PORT" ]; then
   DEN_WEB_PORT="$(pick_port)"
 fi
 if [ "$DEN_WORKER_PROXY_PORT" = "$DEN_API_PORT" ] || [ "$DEN_WORKER_PROXY_PORT" = "$DEN_WEB_PORT" ]; then
   DEN_WORKER_PROXY_PORT="$(pick_port)"
+fi
+if [ "$DEN_MYSQL_PORT" = "$DEN_API_PORT" ] || [ "$DEN_MYSQL_PORT" = "$DEN_WEB_PORT" ] || [ "$DEN_MYSQL_PORT" = "$DEN_WORKER_PROXY_PORT" ]; then
+  DEN_MYSQL_PORT="$(pick_port)"
 fi
 
 DEN_BETTER_AUTH_SECRET="${DEN_BETTER_AUTH_SECRET:-$(random_hex 32)}"
@@ -79,9 +83,11 @@ PROJECT=$PROJECT
 DEN_API_PORT=$DEN_API_PORT
 DEN_WEB_PORT=$DEN_WEB_PORT
 DEN_WORKER_PROXY_PORT=$DEN_WORKER_PROXY_PORT
+DEN_MYSQL_PORT=$DEN_MYSQL_PORT
 DEN_API_URL=http://localhost:$DEN_API_PORT
 DEN_WEB_URL=http://localhost:$DEN_WEB_PORT
 DEN_WORKER_PROXY_URL=http://localhost:$DEN_WORKER_PROXY_PORT
+DEN_MYSQL_URL=mysql://root:password@127.0.0.1:$DEN_MYSQL_PORT/openwork_den
 DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL
 COMPOSE_FILE=$COMPOSE_FILE
 EOF
@@ -90,6 +96,7 @@ echo "Starting Docker Compose project: $PROJECT" >&2
 echo "- DEN_API_PORT=$DEN_API_PORT" >&2
 echo "- DEN_WEB_PORT=$DEN_WEB_PORT" >&2
 echo "- DEN_WORKER_PROXY_PORT=$DEN_WORKER_PROXY_PORT" >&2
+echo "- DEN_MYSQL_PORT=$DEN_MYSQL_PORT" >&2
 echo "- DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL" >&2
 echo "- DEN_PROVISIONER_MODE=$DEN_PROVISIONER_MODE" >&2
 if [ "$DEN_PROVISIONER_MODE" = "daytona" ]; then
@@ -102,6 +109,7 @@ fi
 if ! DEN_API_PORT="$DEN_API_PORT" \
   DEN_WEB_PORT="$DEN_WEB_PORT" \
   DEN_WORKER_PROXY_PORT="$DEN_WORKER_PROXY_PORT" \
+  DEN_MYSQL_PORT="$DEN_MYSQL_PORT" \
   DEN_BETTER_AUTH_SECRET="$DEN_BETTER_AUTH_SECRET" \
   DEN_BETTER_AUTH_URL="$DEN_BETTER_AUTH_URL" \
   DEN_CORS_ORIGINS="$DEN_CORS_ORIGINS" \
@@ -123,6 +131,7 @@ echo "" >&2
 echo "OpenWork Cloud web UI:  http://localhost:$DEN_WEB_PORT" >&2
 echo "Den demo/API:          http://localhost:$DEN_API_PORT" >&2
 echo "Worker proxy:          http://localhost:$DEN_WORKER_PROXY_PORT" >&2
+echo "MySQL:                 mysql://root:password@127.0.0.1:$DEN_MYSQL_PORT/openwork_den" >&2
 echo "Health check:          http://localhost:$DEN_API_PORT/health" >&2
 echo "Runtime env file:      $RUNTIME_FILE" >&2
 echo "" >&2

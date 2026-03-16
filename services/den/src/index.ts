@@ -11,6 +11,7 @@ import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { getRequestSession } from "./http/session.js"
 import { workersRouter } from "./http/workers.js"
+import { normalizeDenTypeId } from "./db/typeid.js"
 import { listUserOrgs } from "./orgs.js"
 
 const app = express()
@@ -51,7 +52,7 @@ app.get("/v1/me/orgs", asyncRoute(async (req, res) => {
     return
   }
 
-  const orgs = await listUserOrgs(session.user.id)
+  const orgs = await listUserOrgs(normalizeDenTypeId("user", session.user.id))
   res.json({
     orgs,
     defaultOrgId: orgs[0]?.id ?? null,

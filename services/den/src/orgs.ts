@@ -33,3 +33,33 @@ export async function ensureDefaultOrg(userId: UserId, name: string): Promise<Or
   })
   return orgId
 }
+
+export async function listUserOrgs(userId: UserId) {
+  const memberships = await db
+    .select({
+      membershipId: OrgMembershipTable.id,
+      role: OrgMembershipTable.role,
+      org: {
+        id: OrgTable.id,
+        name: OrgTable.name,
+        slug: OrgTable.slug,
+        ownerUserId: OrgTable.owner_user_id,
+        createdAt: OrgTable.created_at,
+        updatedAt: OrgTable.updated_at,
+      },
+    })
+    .from(OrgMembershipTable)
+    .innerJoin(OrgTable, eq(OrgMembershipTable.org_id, OrgTable.id))
+    .where(eq(OrgMembershipTable.user_id, userId))
+
+  return memberships.map((row) => ({
+    id: row.org.id,
+    name: row.org.name,
+    slug: row.org.slug,
+    ownerUserId: row.org.ownerUserId,
+    role: row.role,
+    membershipId: row.membershipId,
+    createdAt: row.org.createdAt,
+    updatedAt: row.org.updatedAt,
+  }))
+}

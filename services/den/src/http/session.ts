@@ -1,9 +1,10 @@
 import type express from "express"
 import { fromNodeHeaders } from "better-auth/node"
-import { and, eq, gt } from "drizzle-orm"
+import { and, eq, gt } from "../db/drizzle.js"
 import { auth } from "../auth.js"
 import { db } from "../db/index.js"
 import { AuthSessionTable, AuthUserTable } from "../db/schema.js"
+import { normalizeDenTypeId } from "../db/typeid.js"
 
 type AuthSessionLike = Awaited<ReturnType<typeof auth.api.getSession>>
 
@@ -57,7 +58,10 @@ async function getSessionFromBearerToken(token: string): Promise<AuthSessionLike
 
   return {
     session: row.session,
-    user: row.user,
+    user: {
+      ...row.user,
+      id: normalizeDenTypeId("user", row.user.id),
+    },
   }
 }
 
@@ -66,7 +70,13 @@ export async function getRequestSession(req: express.Request): Promise<AuthSessi
     headers: fromNodeHeaders(req.headers),
   })
   if (cookieSession?.user?.id) {
-    return cookieSession
+    return {
+      ...cookieSession,
+      user: {
+        ...cookieSession.user,
+        id: normalizeDenTypeId("user", cookieSession.user.id),
+      },
+    }
   }
 
   const bearerToken = readBearerToken(req)
