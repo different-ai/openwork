@@ -3,11 +3,12 @@ import cors from "cors"
 import express from "express"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
+import { toNodeHandler } from "better-auth/node"
 import { auth } from "./auth.js"
 import { env } from "./env.js"
 import { adminRouter } from "./http/admin.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
+import { getRequestSession } from "./http/session.js"
 import { workersRouter } from "./http/workers.js"
 import { listUserOrgs } from "./orgs.js"
 
@@ -34,9 +35,7 @@ app.get("/health", (_, res) => {
 })
 
 app.get("/v1/me", asyncRoute(async (req, res) => {
-  const session = await auth.api.getSession({
-    headers: fromNodeHeaders(req.headers),
-  })
+  const session = await getRequestSession(req)
   if (!session?.user?.id) {
     res.status(401).json({ error: "unauthorized" })
     return
@@ -45,9 +44,7 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
 }))
 
 app.get("/v1/me/orgs", asyncRoute(async (req, res) => {
-  const session = await auth.api.getSession({
-    headers: fromNodeHeaders(req.headers),
-  })
+  const session = await getRequestSession(req)
   if (!session?.user?.id) {
     res.status(401).json({ error: "unauthorized" })
     return

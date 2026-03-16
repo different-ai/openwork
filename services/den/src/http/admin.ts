@@ -1,12 +1,11 @@
 import express from "express"
-import { fromNodeHeaders } from "better-auth/node"
 import { asc, desc, eq, isNotNull, sql } from "drizzle-orm"
 import { ensureAdminAllowlistSeeded } from "../admin-allowlist.js"
-import { auth } from "../auth.js"
 import { getCloudWorkerAdminBillingStatus } from "../billing/polar.js"
 import { db } from "../db/index.js"
 import { AdminAllowlistTable, AuthAccountTable, AuthSessionTable, AuthUserTable, WorkerTable } from "../db/schema.js"
 import { asyncRoute } from "./errors.js"
+import { getRequestSession } from "./session.js"
 
 function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? ""
@@ -83,9 +82,7 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item
 }
 
 async function requireAdminSession(req: express.Request, res: express.Response) {
-  const session = await auth.api.getSession({
-    headers: fromNodeHeaders(req.headers),
-  })
+  const session = await getRequestSession(req)
 
   if (!session?.user?.id) {
     res.status(401).json({ error: "unauthorized" })
