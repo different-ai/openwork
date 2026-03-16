@@ -18,6 +18,7 @@ type TokenClass =
   | "hl-bold"
   | "hl-type"
   | "hl-cta"
+  | "hl-cta-skill"
   | "hl-cta-url"
   | "hl-codeblock";
 
@@ -205,9 +206,12 @@ function wrapTokenSegments(segments: TokenSegment[], maxWidth: number): TokenSeg
 }
 
 function buildContinuationLines(shareUrl: string): TokenSegment[][] {
+  const displayUrl = shareUrl.replace(/^https?:\/\/(www\.)?/, "");
   const segments: TokenSegment[] = [
-    { text: "Read and copy the full skill at: ", className: "hl-cta" },
-    { text: shareUrl, className: "hl-cta-url" },
+    { text: "Continue to read and copy this ", className: "hl-cta" },
+    { text: "SKILL.md", className: "hl-cta-skill" },
+    { text: " at:", className: "hl-cta" },
+    { text: displayUrl, className: "hl-cta-url" },
   ];
   return wrapTokenSegments(segments, BODY_WIDTH);
 }
@@ -286,11 +290,13 @@ function classStyle(className: TokenClass): { fill: string; weight?: string; sty
     case "hl-type":
       return { fill: "#0ea5e9", style: "italic" };
     case "hl-cta":
-      return { fill: "#0f172a" };
+      return { fill: "#F99D16" };
+    case "hl-cta-skill":
+      return { fill: "#F99D16", weight: "700" };
     case "hl-cta-url":
       return { fill: "#0f172a", weight: "700" };
     case "hl-codeblock":
-      return { fill: "#e11d48" };
+      return { fill: "#F99D16" };
     default:
       return { fill: "#475569" };
   }
@@ -335,12 +341,12 @@ function renderSkillCard(input: { title: string; filename: string; text: string;
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bgWarm" x1="64" y1="48" x2="360" y2="292" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#fbbf24" stop-opacity="0.58" />
-      <stop offset="1" stop-color="#fbbf24" stop-opacity="0" />
+      <stop stop-color="#F99D16" stop-opacity="0.58" />
+      <stop offset="1" stop-color="#F99D16" stop-opacity="0" />
     </linearGradient>
     <linearGradient id="bgCool" x1="1100" y1="36" x2="804" y2="250" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#60a5fa" stop-opacity="0.36" />
-      <stop offset="1" stop-color="#60a5fa" stop-opacity="0" />
+      <stop stop-color="#111827" stop-opacity="0.22" />
+      <stop offset="1" stop-color="#111827" stop-opacity="0" />
     </linearGradient>
     <linearGradient id="skillGradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
       <stop stop-color="#f97316" />
