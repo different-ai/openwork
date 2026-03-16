@@ -23,9 +23,9 @@ const deploymentModes = [
     icon: Users
   },
   {
-    title: "Preconfigured environment",
+    title: "Self-hosted or managed",
     description:
-      "Start with your gateway, MCP servers, skills, and internal data sources already connected.",
+      "Deploy inside your own environment or work with us on a managed rollout, with your gateway, MCP servers, skills, and internal data sources connected.",
     icon: PlugZap
   },
   {
@@ -70,7 +70,8 @@ export function LandingEnterprise(props: Props) {
             <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
               Run agentic workflows through your existing gateway, with
               approved tools, clear permissions, and a rollout path your
-              non-technical teams can actually use.
+              non-technical teams can actually use, whether you self-host in
+              your own infrastructure or deploy with OpenWork.
             </p>
 
             <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">

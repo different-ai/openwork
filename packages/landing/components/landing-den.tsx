@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { LandingBackground } from "./landing-background";
 import { DenCapabilityCarousel } from "./den-capability-carousel";
 import { DenHero } from "./den-hero";
@@ -25,18 +27,19 @@ const useCaseCards = [
     accent: "from-[#ffb570] via-[#ff9e43] to-[#f97316]",
   },
   {
-    label: "CODE",
-    title: "PR review, issue triage",
-    body: "Checks PRs against your style guide. Sorts issues by severity. Drafts first responses.",
-    detail: "Runs on every push",
-    accent: "from-[#6e87ff] via-[#4f6dff] to-[#1b29ff]",
-  },
-  {
-    label: "CONTENT",
+    label: "MARKETING",
     title: "Social drafts, follow-up emails",
     body: "Writes drafts from your changelog or CRM data. You approve before anything goes out.",
     detail: "You approve, it sends",
     accent: "from-[#67d9d1] via-[#3fcfc3] to-[#0f9f9a]",
+  },
+  {
+    label: "ENTERPRISE",
+    title: "Need this in your own infra?",
+    body: "Run OpenWork with your organization’s deployment, access controls, and rollout process.",
+    ctaLabel: "Explore enterprise",
+    ctaHref: "/enterprise",
+    accent: "from-[#6e87ff] via-[#4f6dff] to-[#1b29ff]",
   },
 ];
 
@@ -76,9 +79,20 @@ export function LandingDen(props: Props) {
                 <p className="flex-1 text-[15px] leading-7 text-gray-600">
                   {card.body}
                 </p>
-                <div className="mono mt-6 text-[13px] text-gray-500">
-                  {card.detail}
-                </div>
+                {card.ctaHref && card.ctaLabel ? (
+                  <div className="mt-6">
+                    <Link
+                      href={card.ctaHref}
+                      className="secondary-button inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-[#1f2937]"
+                    >
+                      {card.ctaLabel}
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="mono mt-6 text-[13px] text-gray-500">
+                    {card.detail}
+                  </div>
+                )}
               </article>
             ))}
           </section>
