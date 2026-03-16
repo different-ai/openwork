@@ -277,6 +277,19 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/utils:
+    dependencies:
+      typeid-js:
+        specifier: ^1.2.0
+        version: 1.2.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
   packages/web:
     dependencies:
       next:
@@ -4426,6 +4439,9 @@ packages:
     resolution: {integrity: sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==}
     engines: {node: '>= 0.6'}
 
+  typeid-js@1.2.0:
+    resolution: {integrity: sha512-t76ZucAnvGC60ea/HjVsB0TSoB0cw9yjnfurUgtInXQWUI/VcrlZGpO23KN3iSe8yOGUgb1zr7W7uEzJ3hSljA==}
+
   typescript@5.4.5:
     resolution: {integrity: sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ==}
     engines: {node: '>=14.17'}
@@ -4472,6 +4488,10 @@ packages:
   utils-merge@1.0.1:
     resolution: {integrity: sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==}
     engines: {node: '>= 0.4.0'}
+
+  uuid@10.0.0:
+    resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
+    hasBin: true
 
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
@@ -8942,6 +8962,10 @@ snapshots:
       media-typer: 0.3.0
       mime-types: 2.1.35
 
+  typeid-js@1.2.0:
+    dependencies:
+      uuid: 10.0.0
+
   typescript@5.4.5: {}
 
   typescript@5.9.3: {}
@@ -8973,6 +8997,8 @@ snapshots:
   util-deprecate@1.0.2: {}
 
   utils-merge@1.0.1: {}
+
+  uuid@10.0.0: {}
 
   vary@1.1.2: {}
 

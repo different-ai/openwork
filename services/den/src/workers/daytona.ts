@@ -1,12 +1,14 @@
 import { Daytona, type Sandbox } from "@daytonaio/sdk"
 import { eq } from "../db/drizzle.js"
-import { randomUUID } from "node:crypto"
 import { db } from "../db/index.js"
 import { DaytonaSandboxTable } from "../db/schema.js"
+import { createDenTypeId } from "../db/typeid.js"
 import { env } from "../env.js"
 
+type WorkerId = typeof DaytonaSandboxTable.$inferSelect.worker_id
+
 type ProvisionInput = {
-  workerId: string
+  workerId: WorkerId
   name: string
   hostToken: string
   clientToken: string
@@ -55,7 +57,7 @@ function signedPreviewRefreshAt(expiresInSeconds: number) {
   )
 }
 
-function workerProxyUrl(workerId: string) {
+function workerProxyUrl(workerId: WorkerId) {
   return `${env.daytona.workerProxyBaseUrl.replace(/\/+$/, "")}/${encodeURIComponent(workerId)}`
 }
 
@@ -65,11 +67,11 @@ function assertDaytonaConfig() {
   }
 }
 
-function workerHint(workerId: string) {
+function workerHint(workerId: WorkerId) {
   return workerId.replace(/-/g, "").slice(0, 12)
 }
 
-function sandboxLabels(workerId: string) {
+function sandboxLabels(workerId: WorkerId) {
   return {
     "openwork.den.provider": "daytona",
     "openwork.den.worker-id": workerId,
@@ -82,11 +84,11 @@ function sandboxName(input: ProvisionInput) {
   ).slice(0, 63)
 }
 
-function workspaceVolumeName(workerId: string) {
+function workspaceVolumeName(workerId: WorkerId) {
   return slug(`${env.daytona.volumeNamePrefix}-${workerHint(workerId)}-workspace`).slice(0, 63)
 }
 
-function dataVolumeName(workerId: string) {
+function dataVolumeName(workerId: WorkerId) {
   return slug(`${env.daytona.volumeNamePrefix}-${workerHint(workerId)}-data`).slice(0, 63)
 }
 
@@ -210,7 +212,7 @@ async function waitForHealth(url: string, timeoutMs: number, sandbox: Sandbox, s
 }
 
 async function upsertDaytonaSandbox(input: {
-  workerId: string
+  workerId: WorkerId
   sandboxId: string
   workspaceVolumeId: string
   dataVolumeId: string
@@ -240,7 +242,7 @@ async function upsertDaytonaSandbox(input: {
   }
 
   await db.insert(DaytonaSandboxTable).values({
-    id: randomUUID(),
+    id: createDenTypeId("daytonaSandbox"),
     worker_id: input.workerId,
     sandbox_id: input.sandboxId,
     workspace_volume_id: input.workspaceVolumeId,
@@ -251,7 +253,7 @@ async function upsertDaytonaSandbox(input: {
   })
 }
 
-export async function getDaytonaSandboxRecord(workerId: string) {
+export async function getDaytonaSandboxRecord(workerId: WorkerId) {
   const rows = await db
     .select()
     .from(DaytonaSandboxTable)
@@ -261,7 +263,7 @@ export async function getDaytonaSandboxRecord(workerId: string) {
   return rows[0] ?? null
 }
 
-export async function refreshDaytonaSignedPreview(workerId: string) {
+export async function refreshDaytonaSignedPreview(workerId: WorkerId) {
   assertDaytonaConfig()
 
   const record = await getDaytonaSandboxRecord(workerId)
@@ -294,7 +296,7 @@ export async function refreshDaytonaSignedPreview(workerId: string) {
   }
 }
 
-export async function getDaytonaSignedPreviewForProxy(workerId: string) {
+export async function getDaytonaSignedPreviewForProxy(workerId: WorkerId) {
   const record = await getDaytonaSandboxRecord(workerId)
   if (!record) {
     return null
@@ -429,7 +431,7 @@ export async function provisionWorkerOnDaytona(
   }
 }
 
-export async function deprovisionWorkerOnDaytona(workerId: string) {
+export async function deprovisionWorkerOnDaytona(workerId: WorkerId) {
   assertDaytonaConfig()
 
   const daytona = createDaytonaClient()

@@ -1,4 +1,5 @@
 import { env } from "../env.js";
+import { WorkerTable } from "../db/schema.js";
 import {
   deprovisionWorkerOnDaytona,
   provisionWorkerOnDaytona,
@@ -8,8 +9,10 @@ import {
   ensureVercelDnsRecord,
 } from "./vanity-domain.js";
 
+type WorkerId = typeof WorkerTable.$inferSelect.id;
+
 export type ProvisionInput = {
-  workerId: string;
+  workerId: WorkerId;
   name: string;
   hostToken: string;
   clientToken: string;
@@ -349,7 +352,7 @@ export async function provisionWorker(
 }
 
 export async function deprovisionWorker(input: {
-  workerId: string;
+  workerId: WorkerId;
   instanceUrl: string | null;
 }) {
   if (env.provisionerMode === "daytona") {

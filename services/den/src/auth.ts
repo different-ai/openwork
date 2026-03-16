@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { db } from "./db/index.js"
 import * as schema from "./db/schema.js"
+import { createDenTypeId, normalizeDenTypeId } from "./db/typeid.js"
 import { env } from "./env.js"
 import { ensureDefaultOrg } from "./orgs.js"
 
@@ -33,6 +34,24 @@ export const auth = betterAuth({
     provider: "mysql",
     schema,
   }),
+  advanced: {
+    database: {
+      generateId: (options) => {
+        switch (options.model) {
+          case "user":
+            return createDenTypeId("user")
+          case "session":
+            return createDenTypeId("session")
+          case "account":
+            return createDenTypeId("account")
+          case "verification":
+            return createDenTypeId("verification")
+          default:
+            return false
+        }
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
   },
@@ -41,7 +60,7 @@ export const auth = betterAuth({
       create: {
         after: async (user) => {
           const name = user.name ?? user.email ?? "Personal"
-          await ensureDefaultOrg(user.id, name)
+          await ensureDefaultOrg(normalizeDenTypeId("user", user.id), name)
         },
       },
     },

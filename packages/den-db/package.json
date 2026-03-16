@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:utils && tsc -p tsconfig.json",
+    "build:utils": "npm --prefix ../utils run build",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
   },

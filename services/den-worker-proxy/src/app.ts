@@ -3,12 +3,14 @@ import { Daytona } from "@daytonaio/sdk"
 import { Hono } from "hono"
 import { eq } from "../../../packages/den-db/dist/drizzle.js"
 import { createDenDb, DaytonaSandboxTable } from "../../../packages/den-db/dist/index.js"
+import { normalizeDenTypeId } from "../../../packages/utils/dist/typeid.js"
 import { env } from "./env.js"
 
 const { db } = createDenDb(env.databaseUrl, { mode: env.dbMode })
 const app = new Hono()
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
 const signedPreviewRefreshLeadMs = 5 * 60 * 1000
+type WorkerId = typeof DaytonaSandboxTable.$inferSelect.worker_id
 
 function assertDaytonaConfig() {
   if (!env.daytona.apiKey) {
@@ -48,13 +50,13 @@ function stripProxyHeaders(input: Headers) {
   return headers
 }
 
-function targetUrl(baseUrl: string, requestUrl: string, workerId: string) {
+function targetUrl(baseUrl: string, requestUrl: string, workerId: WorkerId) {
   const current = new URL(requestUrl)
   const suffix = current.pathname.slice(`/${encodeURIComponent(workerId)}`.length) || "/"
   return `${baseUrl.replace(/\/+$/, "")}${suffix}${current.search}`
 }
 
-async function getSignedPreviewUrl(workerId: string) {
+async function getSignedPreviewUrl(workerId: WorkerId) {
   const rows = await db
     .select()
     .from(DaytonaSandboxTable)
@@ -89,7 +91,7 @@ async function getSignedPreviewUrl(workerId: string) {
   return preview.url
 }
 
-async function proxyRequest(workerId: string, request: Request) {
+async function proxyRequest(workerId: WorkerId, request: Request) {
   let baseUrl: string | null = null
 
   try {
@@ -152,7 +154,16 @@ app.all("*", async (c) => {
     })
   }
 
-  return proxyRequest(workerId, c.req.raw)
+  try {
+    return proxyRequest(normalizeDenTypeId("worker", workerId), c.req.raw)
+  } catch {
+    const headers = new Headers({ "Content-Type": "application/json" })
+    noCacheHeaders(headers)
+    return new Response(JSON.stringify({ error: "worker_not_found" }), {
+      status: 404,
+      headers,
+    })
+  }
 })
 
 export default app
