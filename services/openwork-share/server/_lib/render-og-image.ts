@@ -39,6 +39,8 @@ const BODY_Y = 116;
 const BODY_WIDTH = 1084;
 const BODY_HEIGHT = 454;
 const CHAR_WIDTH = 8.9;
+const OG_SANS_FONT = `"DejaVu Sans", "Liberation Sans", Arial, sans-serif`;
+const OG_MONO_FONT = `"DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace`;
 const MAX_LINES = Math.floor(BODY_HEIGHT / LINE_HEIGHT);
 
 function escapeSvgText(value: unknown): string {
@@ -304,7 +306,7 @@ function classStyle(className: TokenClass): { fill: string; weight?: string; sty
 
 function renderLine(line: WrappedLine, y: number): string {
   let x = BODY_X;
-  const gutter = line.lineNumber == null ? "" : `<text x="${BODY_X}" y="${y}" fill="#cbd5e1" font-family="JetBrains Mono, Menlo, monospace" font-size="13" font-weight="600">${String(line.lineNumber).padStart(2, "0")}</text>`;
+  const gutter = line.lineNumber == null ? "" : `<text x="${BODY_X}" y="${y}" fill="#cbd5e1" font-family="${OG_MONO_FONT}" font-size="13" font-weight="600">${String(line.lineNumber).padStart(2, "0")}</text>`;
   x += 44;
 
   return `${gutter}${line.segments
@@ -315,7 +317,7 @@ function renderLine(line: WrappedLine, y: number): string {
         segment.className === "hl-codeblock"
           ? `<rect x="${x - 1}" y="${y - 14}" width="${width + 8}" height="22" rx="5" fill="#f8fafc" stroke="#cbd5e1" />`
           : "";
-      const node = `<text x="${x}" y="${y}" fill="${style.fill}" font-family="JetBrains Mono, Menlo, monospace" font-size="${FONT_SIZE}"${style.weight ? ` font-weight="${style.weight}"` : ""}${style.style ? ` font-style="${style.style}"` : ""}${segment.className === "hl-cta-url" ? ` text-decoration="underline"` : ""}>${escapeSvgText(segment.text)}</text>`;
+      const node = `<text x="${x}" y="${y}" fill="${style.fill}" font-family="${OG_MONO_FONT}" font-size="${FONT_SIZE}"${style.weight ? ` font-weight="${style.weight}"` : ""}${style.style ? ` font-style="${style.style}"` : ""}${segment.className === "hl-cta-url" ? ` text-decoration="underline"` : ""}>${escapeSvgText(segment.text)}</text>`;
       x += width;
       return `${pill}${node}${index === line.segments.length - 1 ? "" : ""}`;
     })
@@ -329,9 +331,9 @@ function renderPreviewSurface(input: { title: string; filename: string; text: st
     <g transform="translate(18 12)">
       <rect width="1164" height="606" rx="38" fill="rgba(255,255,255,0.96)" stroke="rgba(148,163,184,0.16)" />
       <path d="M0 66H1164" stroke="rgba(226,232,240,0.92)" />
-      <text x="34" y="42" fill="#0f172a" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="800" letter-spacing="-1.2">SKILL.md</text>
+      <text x="34" y="42" fill="#0f172a" font-family="${OG_SANS_FONT}" font-size="28" font-weight="800" letter-spacing="-1.2">SKILL.md</text>
       <circle cx="930" cy="33" r="7" fill="url(#skillGradient)" />
-      <text x="950" y="40" fill="#94a3b8" font-family="JetBrains Mono, Menlo, monospace" font-size="16">${escapeSvgText(input.filename)}</text>
+      <text x="950" y="40" fill="#94a3b8" font-family="${OG_MONO_FONT}" font-size="16">${escapeSvgText(input.filename)}</text>
       ${wrappedLines.map((line, index) => renderLine(line, BODY_Y + index * LINE_HEIGHT)).join("")}
     </g>`;
 }
