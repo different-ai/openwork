@@ -80,7 +80,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
       return;
     }
     setConnectingFallbackVisible(false);
-    const timer = window.setTimeout(() => setConnectingFallbackVisible(true), 4_000);
+    const timer = window.setTimeout(() => setConnectingFallbackVisible(true), 15_000);
     onCleanup(() => window.clearTimeout(timer));
   });
 
