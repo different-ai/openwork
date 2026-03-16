@@ -30,7 +30,7 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `DATABASE_URL` MySQL connection URL
 - `BETTER_AUTH_SECRET` 32+ char secret
 - `BETTER_AUTH_URL` public base URL Better Auth uses for OAuth redirects and callbacks
-- `BETTER_AUTH_TRUSTED_ORIGINS` optional comma-separated trusted origins for Better Auth origin validation (defaults to `CORS_ORIGINS`)
+- `DEN_BETTER_AUTH_TRUSTED_ORIGINS` optional comma-separated trusted origins for Better Auth origin validation (defaults to `CORS_ORIGINS`)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in

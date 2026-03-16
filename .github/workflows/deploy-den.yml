@@ -248,7 +248,7 @@ jobs:
               {"key": "DATABASE_URL", "value": os.environ["DEN_DATABASE_URL"]},
               {"key": "BETTER_AUTH_SECRET", "value": os.environ["DEN_BETTER_AUTH_SECRET"]},
               {"key": "BETTER_AUTH_URL", "value": better_auth_url},
-              {"key": "BETTER_AUTH_TRUSTED_ORIGINS", "value": better_auth_trusted_origins},
+              {"key": "DEN_BETTER_AUTH_TRUSTED_ORIGINS", "value": better_auth_trusted_origins},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
               {"key": "GOOGLE_CLIENT_ID", "value": google_client_id},

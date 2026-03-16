@@ -92,7 +92,7 @@ services:
       DATABASE_URL: mysql://root:password@mysql:3306/openwork_den
       BETTER_AUTH_SECRET: ${DEN_BETTER_AUTH_SECRET:-dev-den-local-auth-secret-please-override-1234567890}
       BETTER_AUTH_URL: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}
-      BETTER_AUTH_TRUSTED_ORIGINS: ${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://localhost:8788,http://127.0.0.1:8788}}
+      DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://localhost:8788,http://127.0.0.1:8788}}
       PORT: "8788"
       CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://localhost:8788,http://127.0.0.1:8788}
       PROVISIONER_MODE: ${DEN_PROVISIONER_MODE:-stub}
