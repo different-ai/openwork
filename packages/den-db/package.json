@@ -1,0 +1,16 @@
+{
+  "name": "@openwork/den-db",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.1",
+    "mysql2": "^3.11.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "typescript": "^5.5.4"
+  }
+}

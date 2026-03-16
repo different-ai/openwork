@@ -1,4 +1,8 @@
 import { Daytona, type Sandbox } from "@daytonaio/sdk"
+import { eq } from "../db/drizzle.js"
+import { randomUUID } from "node:crypto"
+import { db } from "../db/index.js"
+import { DaytonaSandboxTable } from "../db/schema.js"
 import { env } from "../env.js"
 
 type ProvisionInput = {
@@ -17,6 +21,7 @@ type ProvisionedInstance = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
+const signedPreviewRefreshLeadMs = 5 * 60 * 1000
 
 const slug = (value: string) =>
   value
@@ -35,6 +40,23 @@ function createDaytonaClient() {
     apiUrl: env.daytona.apiUrl,
     ...(env.daytona.target ? { target: env.daytona.target } : {}),
   })
+}
+
+function normalizedSignedPreviewExpirySeconds() {
+  return Math.max(
+    1,
+    Math.min(env.daytona.signedPreviewExpiresSeconds, maxSignedPreviewExpirySeconds),
+  )
+}
+
+function signedPreviewRefreshAt(expiresInSeconds: number) {
+  return new Date(
+    Date.now() + Math.max(0, expiresInSeconds * 1000 - signedPreviewRefreshLeadMs),
+  )
+}
+
+function workerProxyUrl(workerId: string) {
+  return `${env.daytona.workerProxyBaseUrl.replace(/\/+$/, "")}/${encodeURIComponent(workerId)}`
 }
 
 function assertDaytonaConfig() {
@@ -187,6 +209,105 @@ async function waitForHealth(url: string, timeoutMs: number, sandbox: Sandbox, s
   )
 }
 
+async function upsertDaytonaSandbox(input: {
+  workerId: string
+  sandboxId: string
+  workspaceVolumeId: string
+  dataVolumeId: string
+  signedPreviewUrl: string
+  signedPreviewUrlExpiresAt: Date
+  region: string | null
+}) {
+  const existing = await db
+    .select({ id: DaytonaSandboxTable.id })
+    .from(DaytonaSandboxTable)
+    .where(eq(DaytonaSandboxTable.worker_id, input.workerId))
+    .limit(1)
+
+  if (existing.length > 0) {
+    await db
+      .update(DaytonaSandboxTable)
+      .set({
+        sandbox_id: input.sandboxId,
+        workspace_volume_id: input.workspaceVolumeId,
+        data_volume_id: input.dataVolumeId,
+        signed_preview_url: input.signedPreviewUrl,
+        signed_preview_url_expires_at: input.signedPreviewUrlExpiresAt,
+        region: input.region,
+      })
+      .where(eq(DaytonaSandboxTable.worker_id, input.workerId))
+    return
+  }
+
+  await db.insert(DaytonaSandboxTable).values({
+    id: randomUUID(),
+    worker_id: input.workerId,
+    sandbox_id: input.sandboxId,
+    workspace_volume_id: input.workspaceVolumeId,
+    data_volume_id: input.dataVolumeId,
+    signed_preview_url: input.signedPreviewUrl,
+    signed_preview_url_expires_at: input.signedPreviewUrlExpiresAt,
+    region: input.region,
+  })
+}
+
+export async function getDaytonaSandboxRecord(workerId: string) {
+  const rows = await db
+    .select()
+    .from(DaytonaSandboxTable)
+    .where(eq(DaytonaSandboxTable.worker_id, workerId))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
+export async function refreshDaytonaSignedPreview(workerId: string) {
+  assertDaytonaConfig()
+
+  const record = await getDaytonaSandboxRecord(workerId)
+  if (!record) {
+    return null
+  }
+
+  const daytona = createDaytonaClient()
+  const sandbox = await daytona.get(record.sandbox_id)
+  await sandbox.refreshData()
+
+  const expiresInSeconds = normalizedSignedPreviewExpirySeconds()
+  const preview = await sandbox.getSignedPreviewUrl(env.daytona.openworkPort, expiresInSeconds)
+  const expiresAt = signedPreviewRefreshAt(expiresInSeconds)
+
+  await db
+    .update(DaytonaSandboxTable)
+    .set({
+      signed_preview_url: preview.url,
+      signed_preview_url_expires_at: expiresAt,
+      region: sandbox.target,
+    })
+    .where(eq(DaytonaSandboxTable.worker_id, workerId))
+
+  return {
+    ...record,
+    signed_preview_url: preview.url,
+    signed_preview_url_expires_at: expiresAt,
+    region: sandbox.target,
+  }
+}
+
+export async function getDaytonaSignedPreviewForProxy(workerId: string) {
+  const record = await getDaytonaSandboxRecord(workerId)
+  if (!record) {
+    return null
+  }
+
+  if (record.signed_preview_url_expires_at.getTime() > Date.now()) {
+    return record.signed_preview_url
+  }
+
+  const refreshed = await refreshDaytonaSignedPreview(workerId)
+  return refreshed?.signed_preview_url ?? null
+}
+
 export async function provisionWorkerOnDaytona(
   input: ProvisionInput,
 ): Promise<ProvisionedInstance> {
@@ -279,18 +400,22 @@ export async function provisionWorkerOnDaytona(
       0,
     )
 
-    const preview = await sandbox.getSignedPreviewUrl(
-      env.daytona.openworkPort,
-      Math.max(
-        1,
-        Math.min(env.daytona.signedPreviewExpiresSeconds, maxSignedPreviewExpirySeconds),
-      ),
-    )
+    const expiresInSeconds = normalizedSignedPreviewExpirySeconds()
+    const preview = await sandbox.getSignedPreviewUrl(env.daytona.openworkPort, expiresInSeconds)
     await waitForHealth(preview.url, env.daytona.healthcheckTimeoutMs, sandbox, sessionId, command.cmdId)
+    await upsertDaytonaSandbox({
+      workerId: input.workerId,
+      sandboxId: sandbox.id,
+      workspaceVolumeId: workspaceVolume.id,
+      dataVolumeId: dataVolume.id,
+      signedPreviewUrl: preview.url,
+      signedPreviewUrlExpiresAt: signedPreviewRefreshAt(expiresInSeconds),
+      region: sandbox.target ?? null,
+    })
 
     return {
       provider: "daytona",
-      url: preview.url,
+      url: workerProxyUrl(input.workerId),
       status: "healthy",
       region: sandbox.target,
     }
@@ -308,6 +433,32 @@ export async function deprovisionWorkerOnDaytona(workerId: string) {
   assertDaytonaConfig()
 
   const daytona = createDaytonaClient()
+  const record = await getDaytonaSandboxRecord(workerId)
+
+  if (record) {
+    try {
+      const sandbox = await daytona.get(record.sandbox_id)
+      await sandbox.delete(env.daytona.deleteTimeoutSeconds)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown_error"
+      console.warn(`[provisioner] failed to delete Daytona sandbox ${record.sandbox_id}: ${message}`)
+    }
+
+    const volumes = await daytona.volume.list().catch(() => [])
+    for (const volumeId of [record.workspace_volume_id, record.data_volume_id]) {
+      const volume = volumes.find((entry) => entry.id === volumeId)
+      if (!volume) {
+        continue
+      }
+      await daytona.volume.delete(volume).catch((error) => {
+        const message = error instanceof Error ? error.message : "unknown_error"
+        console.warn(`[provisioner] failed to delete Daytona volume ${volumeId}: ${message}`)
+      })
+    }
+
+    return
+  }
+
   const sandboxes = await daytona.list(sandboxLabels(workerId), 1, 20)
 
   for (const sandbox of sandboxes.items) {

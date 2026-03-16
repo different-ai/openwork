@@ -1,11 +1,15 @@
 import express from "express"
-import { asc, desc, eq, isNotNull, sql } from "drizzle-orm"
+import { fromNodeHeaders } from "better-auth/node"
+import { asc, desc, eq, isNotNull, sql } from "../db/drizzle.js"
 import { ensureAdminAllowlistSeeded } from "../admin-allowlist.js"
+import { auth } from "../auth.js"
 import { getCloudWorkerAdminBillingStatus } from "../billing/polar.js"
 import { db } from "../db/index.js"
 import { AdminAllowlistTable, AuthAccountTable, AuthSessionTable, AuthUserTable, WorkerTable } from "../db/schema.js"
+import { normalizeDenTypeId } from "../db/typeid.js"
 import { asyncRoute } from "./errors.js"
-import { getRequestSession } from "./session.js"
+
+type UserId = typeof AuthUserTable.$inferSelect.id
 
 function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? ""
@@ -82,12 +86,16 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item
 }
 
 async function requireAdminSession(req: express.Request, res: express.Response) {
-  const session = await getRequestSession(req)
+  const session = await auth.api.getSession({
+    headers: fromNodeHeaders(req.headers),
+  })
 
   if (!session?.user?.id) {
     res.status(401).json({ error: "unauthorized" })
     return null
   }
+
+  const userId = normalizeDenTypeId("user", session.user.id)
 
   const email = normalizeEmail(session.user.email)
   if (!email) {
@@ -108,7 +116,13 @@ async function requireAdminSession(req: express.Request, res: express.Response) 
     return null
   }
 
-  return session
+  return {
+    ...session,
+    user: {
+      ...session.user,
+      id: userId,
+    },
+  }
 }
 
 export const adminRouter = express.Router()
@@ -155,7 +169,7 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
       .from(AuthAccountTable),
   ])
 
-  const workerStatsByUser = new Map<string, {
+  const workerStatsByUser = new Map<UserId, {
     workerCount: number
     cloudWorkerCount: number
     localWorkerCount: number
@@ -175,7 +189,7 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
     })
   }
 
-  const sessionStatsByUser = new Map<string, {
+  const sessionStatsByUser = new Map<UserId, {
     sessionCount: number
     lastSeenAt: Date | string | null
   }>()
@@ -187,7 +201,7 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
     })
   }
 
-  const providersByUser = new Map<string, Set<string>>()
+  const providersByUser = new Map<UserId, Set<string>>()
   for (const row of accountRows) {
     const providerId = normalizeProvider(row.providerId)
     const existing = providersByUser.get(row.userId) ?? new Set<string>()

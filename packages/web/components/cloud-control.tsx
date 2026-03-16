@@ -463,7 +463,7 @@ function getWorker(payload: unknown): WorkerLaunch | null {
   return {
     workerId: worker.id,
     workerName: worker.name,
-    status: typeof worker.status === "string" ? worker.status : "unknown",
+    status: getEffectiveWorkerStatus(worker.status, instance),
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
@@ -489,7 +489,7 @@ function getWorkerSummary(payload: unknown): WorkerSummary | null {
   return {
     workerId: worker.id,
     workerName: worker.name,
-    status: typeof worker.status === "string" ? worker.status : "unknown",
+    status: getEffectiveWorkerStatus(worker.status, instance),
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     isMine: worker.isMine === true
@@ -667,7 +667,7 @@ function parseWorkerListItem(value: unknown): WorkerListItem | null {
   return {
     workerId,
     workerName,
-    status: typeof value.status === "string" ? value.status : "unknown",
+    status: getEffectiveWorkerStatus(value.status, instance),
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     isMine: value.isMine === true,
@@ -726,6 +726,22 @@ function getWorkerStatusCopy(status: string): string {
     default:
       return "Worker status unknown.";
   }
+}
+
+function getEffectiveWorkerStatus(workerStatus: unknown, instance: Record<string, unknown> | null): string {
+  const normalizedWorkerStatus = typeof workerStatus === "string" ? workerStatus : "unknown";
+  const normalized = normalizedWorkerStatus.trim().toLowerCase();
+  const instanceStatus = instance && typeof instance.status === "string" ? instance.status.trim().toLowerCase() : null;
+
+  if (!instanceStatus) {
+    return normalizedWorkerStatus;
+  }
+
+  if (normalized === "provisioning" || normalized === "starting") {
+    return instanceStatus;
+  }
+
+  return normalizedWorkerStatus;
 }
 
 function isWorkerLaunch(value: unknown): value is WorkerLaunch {

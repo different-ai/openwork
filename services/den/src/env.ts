@@ -10,6 +10,7 @@ const schema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   PORT: z.string().optional(),
+  WORKER_PROXY_PORT: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
@@ -55,6 +56,7 @@ const schema = z.object({
   DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL: z.string().optional(),
   DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL: z.string().optional(),
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
+  DAYTONA_WORKER_PROXY_BASE_URL: z.string().optional(),
   DAYTONA_SANDBOX_NAME_PREFIX: z.string().optional(),
   DAYTONA_VOLUME_NAME_PREFIX: z.string().optional(),
   DAYTONA_WORKSPACE_MOUNT_PATH: z.string().optional(),
@@ -118,6 +120,7 @@ export const env = {
     clientSecret: parsed.GOOGLE_CLIENT_SECRET?.trim() || undefined,
   },
   port: Number(parsed.PORT ?? "8788"),
+  workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins: corsOrigins ?? [],
   provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
@@ -183,6 +186,8 @@ export const env = {
     signedPreviewExpiresSeconds: Number(
       parsed.DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS ?? "86400",
     ),
+    workerProxyBaseUrl:
+      optionalString(parsed.DAYTONA_WORKER_PROXY_BASE_URL) ?? "https://workers.den.openworklabs",
     sandboxNamePrefix:
       optionalString(parsed.DAYTONA_SANDBOX_NAME_PREFIX) ?? "den-daytona-worker",
     volumeNamePrefix:

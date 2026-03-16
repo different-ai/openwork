@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build:den-db && OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
+    "build": "npm run build:den-db && tsc -p tsconfig.json",
+    "build:den-db": "npm --prefix ../../packages/den-db run build",
     "start": "node dist/index.js",
     "db:migrate:sql": "node scripts/run-sql-migrations.mjs",
     "test:smoke:daytona": "pnpm build && node scripts/daytona-provisioner-smoke.mjs",
