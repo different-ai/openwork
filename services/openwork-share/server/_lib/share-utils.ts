@@ -175,10 +175,10 @@ export function wantsJsonResponse(req: RequestLike): boolean {
   if (format === "html") return false;
 
   const accept = String(req.headers?.accept ?? "").toLowerCase();
-  if (!accept) return true;
+  if (!accept) return false;
   if (accept.includes("application/json")) return true;
   if (accept.includes("text/html") || accept.includes("application/xhtml+xml")) return false;
-  return true;
+  return false;
 }
 
 export function wantsDownload(req: RequestLike): boolean {

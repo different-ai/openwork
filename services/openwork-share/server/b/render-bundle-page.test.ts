@@ -21,10 +21,11 @@ test("wantsJsonResponse honors explicit format query", () => {
   assert.equal(wantsJsonResponse(makeReq({ query: { format: "html" }, accept: "application/json" })), false);
 });
 
-test("wantsJsonResponse defaults to json unless browser html accept is present", () => {
-  assert.equal(wantsJsonResponse(makeReq()), true);
+test("wantsJsonResponse defaults to html unless json is explicitly requested", () => {
+  assert.equal(wantsJsonResponse(makeReq()), false);
   assert.equal(wantsJsonResponse(makeReq({ accept: "application/json" })), true);
   assert.equal(wantsJsonResponse(makeReq({ accept: "text/html,application/xhtml+xml" })), false);
+  assert.equal(wantsJsonResponse(makeReq({ accept: "*/*" })), false);
 });
 
 test("wantsDownload only enables on download=1", () => {

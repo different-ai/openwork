@@ -6,10 +6,10 @@ function wantsJsonResponse(request: NextRequest): boolean {
   if (format === "html") return false;
 
   const accept = String(request.headers.get("accept") ?? "").toLowerCase();
-  if (!accept) return true;
+  if (!accept) return false;
   if (accept.includes("application/json")) return true;
   if (accept.includes("text/html") || accept.includes("application/xhtml+xml")) return false;
-  return true;
+  return false;
 }
 
 export function proxy(request: NextRequest): NextResponse {
