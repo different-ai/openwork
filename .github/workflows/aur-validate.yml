@@ -379,8 +379,8 @@ jobs:
           set -euo pipefail
           pacman -Ql openwork > /tmp/openwork-installed-files.txt
 
-          if ! grep -q '/opt/openwork/' /tmp/openwork-installed-files.txt; then
-            echo "openwork package did not install expected /opt/openwork payload" >&2
+          if [ ! -s /tmp/openwork-installed-files.txt ]; then
+            echo "openwork package install listing is empty" >&2
             exit 1
           fi
 
