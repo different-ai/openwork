@@ -25,9 +25,18 @@ x-shared: &shared
 services:
   mysql:
     image: mysql:8.4
+    command:
+      - --performance_schema=OFF
+      - --innodb_buffer_pool_size=128M
+      - --innodb_log_buffer_size=8M
+      - --max_connections=30
+      - --table_open_cache=128
+      - --tmp_table_size=16M
+      - --max_heap_table_size=16M
     environment:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: openwork_den
+      MYSQL_INITDB_SKIP_TZINFO: "1"
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ppassword --silent"]
       interval: 5s
