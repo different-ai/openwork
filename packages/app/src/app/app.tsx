@@ -3091,17 +3091,53 @@ export default function App() {
         ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
-      setSidebarSessionsByWorkspaceId((prev) => ({
-        ...prev,
-        [wsId]: sorted.map((s) => ({
-          id: s.id,
-          title: s.title,
-          slug: s.slug,
-          parentID: s.parentID,
-          time: s.time,
-          directory: s.directory,
-        })),
+      const rootItems: SidebarSessionItem[] = sorted.map((s) => ({
+        id: s.id,
+        title: s.title,
+        slug: s.slug,
+        parentID: s.parentID,
+        time: s.time,
+        directory: s.directory,
       }));
+      setSidebarSessionsByWorkspaceId((prev) => {
+        const current = prev[wsId] ?? [];
+        const hasCurrentChildren = current.some((item) => Boolean(item.parentID?.trim()));
+        const incomingAreRootsOnly = rootItems.every((item) => !item.parentID?.trim());
+        if (!hasCurrentChildren || !incomingAreRootsOnly) {
+          return {
+            ...prev,
+            [wsId]: rootItems,
+          };
+        }
+
+        const byId = new Map(current.map((item) => [item.id, item] as const));
+        for (const item of rootItems) {
+          byId.set(item.id, {
+            ...(byId.get(item.id) ?? {}),
+            ...item,
+          });
+        }
+
+        const rootIDs = new Set(rootItems.map((item) => item.id));
+        const keepChild = (item: SidebarSessionItem, seen = new Set<string>()) => {
+          const parentID = item.parentID?.trim() ?? "";
+          if (!parentID) return false;
+          if (rootIDs.has(parentID)) return true;
+          if (seen.has(parentID)) return false;
+          const parent = byId.get(parentID);
+          if (!parent) return false;
+          seen.add(parentID);
+          return keepChild(parent, seen);
+        };
+
+        return {
+          ...prev,
+          [wsId]: [
+            ...rootItems,
+            ...current.filter((item) => !rootIDs.has(item.id) && keepChild(item)),
+          ],
+        };
+      });
     }
   });
 
