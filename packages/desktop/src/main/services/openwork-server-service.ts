@@ -7,7 +7,6 @@ import { networkInterfaces } from "node:os";
 import { hostname } from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
 
 import type { EngineInfo, OpenworkServerInfo } from "../../../../app/src/app/lib/desktop-contract";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -83,7 +82,7 @@ function snapshot(state: OpenworkServerState): OpenworkServerInfo {
 
 function resolveOpenworkServerCommand() {
   const fileName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
-  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentFile = __filename;
   const currentDir = path.dirname(currentFile);
   const appPath = app.getAppPath();
   const sourceSidecarDirs = [

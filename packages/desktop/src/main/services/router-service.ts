@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
 
 import type {
   ExecResult,
@@ -95,7 +94,7 @@ function stopChild(state: RouterState) {
 
 function resolveRouterCommand() {
   const fileName = process.platform === "win32" ? "opencode-router.exe" : "opencode-router";
-  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentFile = __filename;
   const currentDir = path.dirname(currentFile);
   const appPath = app.getAppPath();
   const sourceSidecarDirs = [

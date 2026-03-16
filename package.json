@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @different-ai/openwork dev",
+    "dev": "OPENWORK_DEV_MODE=1 node scripts/dev-electron.mjs",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @different-ai/openwork-ui dev",
     "dev:web": "OPENWORK_DEV_MODE=1 pnpm --filter @different-ai/openwork-web dev",
     "dev:web-local": "OPENWORK_DEV_MODE=1 bash scripts/dev-web-local.sh",

@@ -1,6 +1,5 @@
 import { app, BrowserWindow, type Rectangle } from "electron";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 const MAIN_WINDOW_WIDTH = 1180;
 const MAIN_WINDOW_HEIGHT = 820;
@@ -17,8 +16,8 @@ type CreateMainWindowOptions = {
 };
 
 function resolveSiblingPath(tsRelativePath: string, jsRelativePath: string) {
-  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
-  const currentDir = typeof __dirname !== "undefined" ? __dirname : path.dirname(currentFile);
+  const currentFile = __filename;
+  const currentDir = __dirname;
   const relativePath = currentFile.endsWith(".ts") ? tsRelativePath : jsRelativePath;
   return path.resolve(currentDir, relativePath);
 }

@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 
 import type {
   ExecResult,
@@ -139,7 +138,7 @@ async function allocateFreePort() {
 }
 
 function resolveOrchestratorCommand() {
-  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentFile = __filename;
   const currentDir = path.dirname(currentFile);
   const appPath = app.getAppPath();
   const sourceSidecarDirs = [

@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import type { ExecResult } from "../../../../app/src/app/lib/desktop-contract";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -94,7 +93,7 @@ function commonToolPaths() {
 }
 
 function sourceSidecarDirs() {
-  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentFile = __filename;
   const currentDir = path.dirname(currentFile);
   const appPath = app.getAppPath();
   return [
