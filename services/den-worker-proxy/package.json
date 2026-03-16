@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npm run build:den-db && OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
+    "dev": "npm run build:den-db && OPENWORK_DEV_MODE=1 tsx watch src/server.ts",
     "build": "npm run build:den-db && tsc -p tsconfig.json",
     "build:den-db": "npm --prefix ../../packages/den-db run build",
-    "start": "node dist/index.js"
+    "start": "node dist/server.js"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.150.0",

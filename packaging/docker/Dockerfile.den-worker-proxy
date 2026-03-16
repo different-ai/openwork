@@ -21,4 +21,4 @@ RUN npm run build
 
 EXPOSE 8789
 
-CMD ["sh", "-lc", "node dist/index.js"]
+CMD ["sh", "-lc", "node dist/server.js"]

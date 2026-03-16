@@ -1,0 +1,17 @@
+name: Deploy Den (disabled)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  disabled:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disabled
+        run: |
+          echo "deploy-den.yml is intentionally disabled"
+
+# Historical workflow intentionally commented out.
+# The previous Render deployment automation for the legacy Den service
+# should not run anymore.
