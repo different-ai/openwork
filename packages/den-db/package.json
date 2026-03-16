@@ -8,6 +8,7 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
   },
   "dependencies": {
+    "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.1",
     "mysql2": "^3.11.3"
   },

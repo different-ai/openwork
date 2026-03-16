@@ -1,7 +1,12 @@
+import { Client } from "@planetscale/database"
 import { drizzle } from "drizzle-orm/mysql2"
+import { drizzle as drizzlePlanetScale } from "drizzle-orm/planetscale-serverless"
 import type { FieldPacket, QueryOptions, QueryResult } from "mysql2"
 import mysql from "mysql2/promise"
 import * as schema from "./schema.js"
+
+export type DenDbMode = "mysql" | "planetscale"
+type DenDb = ReturnType<typeof drizzlePlanetScale>
 
 const TRANSIENT_DB_ERROR_CODES = new Set([
   "ECONNRESET",
@@ -76,7 +81,30 @@ async function retryReadQuery<T>(label: "query" | "execute", sql: string | null,
   }
 }
 
-export function createDenDb(databaseUrl: string) {
+function parsePlanetScaleConfigFromDatabaseUrl(databaseUrl: string) {
+  const parsed = new URL(databaseUrl)
+  if (!parsed.hostname || !parsed.username) {
+    throw new Error("DATABASE_URL must include host and username when DB_MODE=planetscale")
+  }
+
+  return {
+    host: parsed.hostname,
+    username: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+  }
+}
+
+export function createDenDb(databaseUrl: string, options?: { mode?: DenDbMode }) {
+  const mode = options?.mode ?? "mysql"
+
+  if (mode === "planetscale") {
+    const client = new Client(parsePlanetScaleConfigFromDatabaseUrl(databaseUrl))
+    return {
+      client,
+      db: drizzlePlanetScale(client, { schema }) as unknown as DenDb,
+    }
+  }
+
   const client = mysql.createPool({
     uri: databaseUrl,
     waitForConnections: true,
@@ -122,6 +150,6 @@ export function createDenDb(databaseUrl: string) {
 
   return {
     client,
-    db: drizzle(client, { schema, mode: "default" }),
+    db: drizzle(client, { schema, mode: "default" }) as unknown as DenDb,
   }
 }

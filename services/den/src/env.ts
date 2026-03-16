@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
+  DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
@@ -107,6 +108,7 @@ const daytonaSandboxPublic =
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
+  dbMode: parsed.DB_MODE ?? "mysql",
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: parsed.BETTER_AUTH_URL,
   betterAuthTrustedOrigins,

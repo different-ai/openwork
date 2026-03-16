@@ -5,7 +5,7 @@ import { eq } from "../../../packages/den-db/dist/drizzle.js"
 import { createDenDb, DaytonaSandboxTable } from "../../../packages/den-db/dist/index.js"
 import { env } from "./env.js"
 
-const { db } = createDenDb(env.databaseUrl)
+const { db } = createDenDb(env.databaseUrl, { mode: env.dbMode })
 const app = new Hono()
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
 const signedPreviewRefreshLeadMs = 5 * 60 * 1000

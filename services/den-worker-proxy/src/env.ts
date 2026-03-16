@@ -2,6 +2,7 @@ import { z } from "zod"
 
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
+  DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
   PORT: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
@@ -19,6 +20,7 @@ function optionalString(value: string | undefined) {
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
+  dbMode: parsed.DB_MODE ?? "mysql",
   port: Number(parsed.PORT ?? "8789"),
   daytona: {
     apiUrl: optionalString(parsed.DAYTONA_API_URL) ?? "https://app.daytona.io/api",
