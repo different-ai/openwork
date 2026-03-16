@@ -10,7 +10,7 @@ export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
 export const DEFAULT_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
-    : "").trim() || "https://api.openwork.software";
+    : "").trim() || "https://app.openworklabs.com";
 
 export type DenSettings = {
   baseUrl: string;

@@ -1273,7 +1273,10 @@ export default function SettingsView(props: SettingsViewProps) {
         </Match>
 
         <Match when={activeTab() === "den"}>
-          <DenSettingsPanel connectRemoteWorkspace={props.connectRemoteWorkspace} />
+          <DenSettingsPanel
+            developerMode={props.developerMode}
+            connectRemoteWorkspace={props.connectRemoteWorkspace}
+          />
         </Match>
 
         <Match when={activeTab() === "model"}>

@@ -13,6 +13,7 @@ import {
 import { usePlatform } from "../context/platform";
 
 type DenSettingsPanelProps = {
+  developerMode: boolean;
   connectRemoteWorkspace: (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
@@ -59,9 +60,10 @@ function workerStatusMeta(status: string) {
 export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
   const initial = readDenSettings();
+  const initialBaseUrl = props.developerMode ? initial.baseUrl || DEFAULT_DEN_BASE_URL : DEFAULT_DEN_BASE_URL;
 
-  const [baseUrl, setBaseUrl] = createSignal(initial.baseUrl || DEFAULT_DEN_BASE_URL);
-  const [baseUrlDraft, setBaseUrlDraft] = createSignal(initial.baseUrl || DEFAULT_DEN_BASE_URL);
+  const [baseUrl, setBaseUrl] = createSignal(initialBaseUrl);
+  const [baseUrlDraft, setBaseUrlDraft] = createSignal(initialBaseUrl);
   const [baseUrlError, setBaseUrlError] = createSignal<string | null>(null);
   const [authToken, setAuthToken] = createSignal(initial.authToken?.trim() || "");
   const [activeOrgId, setActiveOrgId] = createSignal(initial.activeOrgId?.trim() || "");
@@ -109,10 +111,18 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   createEffect(() => {
     writeDenSettings({
-      baseUrl: baseUrl(),
+      baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
       authToken: authToken() || null,
       activeOrgId: activeOrgId() || null,
     });
+  });
+
+  createEffect(() => {
+    if (!props.developerMode) {
+      setBaseUrl(DEFAULT_DEN_BASE_URL);
+      setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
+      setBaseUrlError(null);
+    }
   });
 
   const openControlPlane = () => {
@@ -377,31 +387,49 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
             </div>
           </div>
 
-          <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <TextInput
-              label="Den control plane URL"
-              value={baseUrlDraft()}
-              onInput={(event) => setBaseUrlDraft(event.currentTarget.value)}
-              placeholder={DEFAULT_DEN_BASE_URL}
-              hint="Use the hosted API or a local Den dev stack URL. Changing this signs you out so the app can re-hydrate against the new control plane."
-              disabled={authBusy() || sessionBusy()}
-            />
-            <div class="flex flex-wrap items-center gap-2">
-              <Button variant="outline" class="h-9 px-3 text-xs" onClick={() => setBaseUrlDraft(baseUrl())} disabled={authBusy() || sessionBusy()}>
-                Reset
-              </Button>
-              <Button variant="secondary" class="h-9 px-3 text-xs" onClick={applyBaseUrl} disabled={authBusy() || sessionBusy()}>
-                Save URL
-              </Button>
-              <Button variant="outline" class="h-9 px-3 text-xs" onClick={openControlPlane}>
-                Open in browser
-                <ArrowUpRight size={13} />
-              </Button>
-            </div>
-          </div>
+          <Show
+            when={props.developerMode}
+            fallback={
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-6/60 bg-gray-1/60 px-3 py-3 text-xs text-gray-10">
+                <div>
+                  <div class="font-medium text-gray-12">Hosted control plane</div>
+                  <div>{DEFAULT_DEN_BASE_URL}</div>
+                </div>
+                <Button variant="outline" class="h-9 px-3 text-xs" onClick={openControlPlane}>
+                  Open in browser
+                  <ArrowUpRight size={13} />
+                </Button>
+              </div>
+            }
+          >
+            <>
+              <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                <TextInput
+                  label="Den control plane URL"
+                  value={baseUrlDraft()}
+                  onInput={(event) => setBaseUrlDraft(event.currentTarget.value)}
+                  placeholder={DEFAULT_DEN_BASE_URL}
+                  hint="Developer mode only. Use this to target a local or self-hosted Den control plane. Changing it signs you out so the app can re-hydrate against the new control plane."
+                  disabled={authBusy() || sessionBusy()}
+                />
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" class="h-9 px-3 text-xs" onClick={() => setBaseUrlDraft(baseUrl())} disabled={authBusy() || sessionBusy()}>
+                    Reset
+                  </Button>
+                  <Button variant="secondary" class="h-9 px-3 text-xs" onClick={applyBaseUrl} disabled={authBusy() || sessionBusy()}>
+                    Save URL
+                  </Button>
+                  <Button variant="outline" class="h-9 px-3 text-xs" onClick={openControlPlane}>
+                    Open in browser
+                    <ArrowUpRight size={13} />
+                  </Button>
+                </div>
+              </div>
 
-          <Show when={baseUrlError()}>
-            {(value) => <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{value()}</div>}
+              <Show when={baseUrlError()}>
+                {(value) => <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{value()}</div>}
+              </Show>
+            </>
           </Show>
           <Show when={statusMessage() && !authError() && !workersError() && !orgsError()}>
             {(value) => <div class="rounded-xl border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-xs text-gray-11">{value()}</div>}
