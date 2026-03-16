@@ -2395,24 +2395,38 @@ export default function App() {
     }
 
     const removeProviderAuth = async () => {
+      const authClient = c.auth as unknown as {
+        remove?: (options: { providerID: string }) => Promise<unknown>;
+        set?: (options: { providerID: string; auth: unknown }) => Promise<unknown>;
+      };
+      if (typeof authClient.remove === "function") {
+        const result = await authClient.remove({ providerID: resolved });
+        assertNoClientError(result);
+        return;
+      }
+
       const rawClient = (c as unknown as { client?: { delete?: (options: { url: string }) => Promise<unknown> } })
         .client;
       if (rawClient?.delete) {
         await rawClient.delete({ url: `/auth/${encodeURIComponent(resolved)}` });
         return;
       }
-      await c.auth.set({ providerID: resolved, auth: null as never });
+
+      if (typeof authClient.set === "function") {
+        const result = await authClient.set({ providerID: resolved, auth: null });
+        assertNoClientError(result);
+        return;
+      }
+
+      throw new Error("Provider auth removal is not supported by this client.");
     };
 
     try {
       await removeProviderAuth();
-      try {
-        await c.global.dispose();
-      } catch {
-        // ignore
+      const updated = await refreshProviders({ dispose: true });
+      if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
+        return `Removed stored credentials for ${resolved}, but the worker still reports it as connected. Clear any remaining API key or OAuth credentials and restart the worker to fully disconnect.`;
       }
-      const updated = unwrap(await c.provider.list());
-      globalSync.set("provider", updated);
       return `Disconnected ${resolved}`;
     } catch (error) {
       const message = describeProviderError(error, "Failed to disconnect provider");

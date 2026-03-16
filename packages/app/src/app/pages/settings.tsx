@@ -428,7 +428,7 @@ export default function SettingsView(props: SettingsViewProps) {
     const confirmed =
       typeof window === "undefined"
         ? true
-        : window.confirm(`Disconnect ${resolved}? This removes the stored credentials.`);
+        : window.confirm(`Disconnect ${resolved}? This removes stored API keys or OAuth credentials for this provider.`);
     if (!confirmed) return;
     setProviderDisconnectError(null);
     setProviderDisconnectStatus(null);
