@@ -1,6 +1,6 @@
-import sharp from "sharp";
 import { fetchBundleJsonById } from "../../../server/_lib/blob-store.ts";
-import { renderBundleOgImage, renderRootOgImage } from "../../../server/_lib/render-og-image.ts";
+import { buildBundleOgImageModel, buildRootOgImageModel, renderBundleOgImage, renderRootOgImage } from "../../../server/_lib/render-og-image.ts";
+import { renderOgPngResponse } from "../../../server/_lib/render-og-image-response.tsx";
 
 export const runtime = "nodejs";
 
@@ -10,12 +10,6 @@ function getCorsHeaders(): Record<string, string> {
     "Access-Control-Allow-Methods": "GET,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type,Accept"
   };
-}
-
-async function renderOgBody(svg: string, format: "svg" | "png") {
-  if (format === "svg") return svg;
-  const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
-  return new Uint8Array(buffer);
 }
 
 export function OPTIONS() {
@@ -29,36 +23,64 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const routeParams = await params;
   const id = String(routeParams?.id ?? "root").trim() || "root";
   const format = new URL(request.url).searchParams.get("format") === "svg" ? "svg" : "png";
-  const responseHeaders = new Headers({
-    ...getCorsHeaders(),
-    "Content-Type": format === "svg" ? "image/svg+xml; charset=utf-8" : "image/png",
-    "Cache-Control":
-      id === "root"
-        ? "public, max-age=3600"
-        : "public, max-age=3600, stale-while-revalidate=86400"
-  });
+  const cacheControl =
+    id === "root"
+      ? "public, max-age=3600"
+      : "public, max-age=3600, stale-while-revalidate=86400";
 
   if (id === "root") {
-    const svg = renderRootOgImage();
-    return new Response(await renderOgBody(svg, format), {
-      status: 200,
-      headers: responseHeaders
+    if (format === "svg") {
+      return new Response(renderRootOgImage(), {
+        status: 200,
+        headers: {
+          ...getCorsHeaders(),
+          "Content-Type": "image/svg+xml; charset=utf-8",
+          "Cache-Control": cacheControl
+        }
+      });
+    }
+
+    return renderOgPngResponse(buildRootOgImageModel(), {
+      ...getCorsHeaders(),
+      "Cache-Control": cacheControl
     });
   }
 
   try {
     const { rawJson } = await fetchBundleJsonById(id);
-    const svg = renderBundleOgImage({ id, rawJson });
-    return new Response(await renderOgBody(svg, format), {
-      status: 200,
-      headers: responseHeaders
+    if (format === "svg") {
+      return new Response(renderBundleOgImage({ id, rawJson }), {
+        status: 200,
+        headers: {
+          ...getCorsHeaders(),
+          "Content-Type": "image/svg+xml; charset=utf-8",
+          "Cache-Control": cacheControl
+        }
+      });
+    }
+
+    return renderOgPngResponse(buildBundleOgImageModel({ id, rawJson }), {
+      ...getCorsHeaders(),
+      "Cache-Control": cacheControl
     });
   } catch {
-    responseHeaders.set("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
-    const svg = renderRootOgImage();
-    return new Response(await renderOgBody(svg, format), {
-      status: 200,
-      headers: responseHeaders
+    console.error(`[share-og] failed to render bundle ${id}`);
+    const fallbackCacheControl = "public, max-age=300, stale-while-revalidate=3600";
+
+    if (format === "svg") {
+      return new Response(renderRootOgImage(), {
+        status: 200,
+        headers: {
+          ...getCorsHeaders(),
+          "Content-Type": "image/svg+xml; charset=utf-8",
+          "Cache-Control": fallbackCacheControl
+        }
+      });
+    }
+
+    return renderOgPngResponse(buildRootOgImageModel(), {
+      ...getCorsHeaders(),
+      "Cache-Control": fallbackCacheControl
     });
   }
 }

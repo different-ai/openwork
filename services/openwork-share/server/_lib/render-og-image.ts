@@ -1,5 +1,5 @@
 import { highlightSyntax } from "../../components/share-preview-syntax.ts";
-import { buildBundlePreview, maybeString, parseBundle, parseFrontmatter } from "./share-utils.ts";
+import { DEFAULT_PUBLIC_BASE_URL, buildBundlePreview, maybeString, parseBundle, parseFrontmatter } from "./share-utils.ts";
 
 type TokenClass =
   | "plain"
@@ -30,6 +30,21 @@ type TokenSegment = {
 type WrappedLine = {
   lineNumber: number | null;
   segments: TokenSegment[];
+};
+
+export type OgTokenClass = TokenClass;
+export type OgTokenSegment = TokenSegment;
+export type OgWrappedLine = WrappedLine;
+export type OgImageModel = {
+  filename: string;
+  lines: WrappedLine[];
+};
+
+type SkillCardInput = {
+  title: string;
+  filename: string;
+  text: string;
+  shareUrl: string;
 };
 
 const FONT_SIZE = 15;
@@ -261,6 +276,13 @@ function buildWrappedLines(text: string, shareUrl: string): WrappedLine[] {
   return wrapped;
 }
 
+function buildSkillCardModel(input: SkillCardInput): OgImageModel {
+  return {
+    filename: input.filename,
+    lines: buildWrappedLines(input.text, input.shareUrl),
+  };
+}
+
 function classStyle(className: TokenClass): { fill: string; weight?: string; style?: string } {
   switch (className) {
     case "hl-frontmatter":
@@ -325,7 +347,7 @@ function renderLine(line: WrappedLine, y: number): string {
 }
 
 function renderPreviewSurface(input: { title: string; filename: string; text: string; shareUrl: string }): string {
-  const wrappedLines = buildWrappedLines(input.text, input.shareUrl);
+  const model = buildSkillCardModel(input);
 
   return `
     <g transform="translate(18 12)">
@@ -334,7 +356,7 @@ function renderPreviewSurface(input: { title: string; filename: string; text: st
       <text x="34" y="42" fill="#0f172a" font-family="${OG_SANS_FONT}" font-size="28" font-weight="800" letter-spacing="-1.2">SKILL.md</text>
       <circle cx="930" cy="33" r="7" fill="url(#skillGradient)" />
       <text x="950" y="40" fill="#94a3b8" font-family="${OG_MONO_FONT}" font-size="16">${escapeSvgText(input.filename)}</text>
-      ${wrappedLines.map((line, index) => renderLine(line, BODY_Y + index * LINE_HEIGHT)).join("")}
+      ${model.lines.map((line, index) => renderLine(line, BODY_Y + index * LINE_HEIGHT)).join("")}
     </g>`;
 }
 
@@ -367,11 +389,11 @@ function renderSkillCard(input: { title: string; filename: string; text: string;
 </svg>`;
 }
 
-export function renderRootOgImage(): string {
-  return renderSkillCard({
+function buildRootOgInput(): SkillCardInput {
+  return {
     title: "Meeting Reminder",
     filename: "meeting-reminder.md",
-    shareUrl: "http://127.0.0.1:3002/b/01KKPSGYSGDRRWNTAACAMZY3PF",
+    shareUrl: `${DEFAULT_PUBLIC_BASE_URL}/b/root`,
     text: `# Welcome to OpenWork
 
 Hi, I'm Ben and this is OpenWork. It's an open-source alternative to Claude's cowork. It helps you work on your files with AI and automate the mundane tasks so you don't have to.
@@ -414,19 +436,35 @@ Config reference:
 - Docs: https://opencode.ai/docs/config/
 
 End with two friendly next actions to try in OpenWork.`,
-  });
+  };
 }
 
-export function renderBundleOgImage({ id, rawJson }: { id: string; rawJson: string }): string {
+function buildBundleOgInput({ id, rawJson }: { id: string; rawJson: string }): SkillCardInput {
   const bundle = parseBundle(rawJson);
   const preview = buildBundlePreview(bundle);
   const { data } = parseFrontmatter(bundle.content);
   const skillName = maybeString(data.name).trim() || bundle.name || "shared-skill";
 
-  return renderSkillCard({
+  return {
     title: humanizeSkillName(skillName),
     filename: preview.filename || `${skillName}.md`,
-    shareUrl: `http://127.0.0.1:3002/b/${id}`,
+    shareUrl: `${DEFAULT_PUBLIC_BASE_URL}/b/${id}`,
     text: bundle.content || preview.text || "",
-  });
+  };
+}
+
+export function buildRootOgImageModel(): OgImageModel {
+  return buildSkillCardModel(buildRootOgInput());
+}
+
+export function buildBundleOgImageModel({ id, rawJson }: { id: string; rawJson: string }): OgImageModel {
+  return buildSkillCardModel(buildBundleOgInput({ id, rawJson }));
+}
+
+export function renderRootOgImage(): string {
+  return renderSkillCard(buildRootOgInput());
+}
+
+export function renderBundleOgImage({ id, rawJson }: { id: string; rawJson: string }): string {
+  return renderSkillCard(buildBundleOgInput({ id, rawJson }));
 }
