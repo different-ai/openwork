@@ -11,11 +11,10 @@ import {
   humanizeType,
   parseBundle,
   wantsDownload,
-  wantsJsonResponse,
 } from "../_lib/share-utils.ts";
 import type { RequestLike } from "../_lib/types.ts";
 
-export { buildBundleUrls, wantsDownload, wantsJsonResponse } from "../_lib/share-utils.ts";
+export { buildBundleUrls, wantsDownload } from "../_lib/share-utils.ts";
 
 export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: string; req: RequestLike }): string {
   const bundle = parseBundle(rawJson);

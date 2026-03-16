@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildBundleUrls, renderBundlePage, wantsDownload, wantsJsonResponse } from "./render-bundle-page.ts";
+import { buildBundleUrls, renderBundlePage, wantsDownload } from "./render-bundle-page.ts";
 import type { RequestLike } from "../_lib/types.ts";
 
 function makeReq({ accept = "", query = {}, host = "share.openwork.software" }: { accept?: string; query?: Record<string, string>; host?: string } = {}): RequestLike {
@@ -15,18 +15,6 @@ function makeReq({ accept = "", query = {}, host = "share.openwork.software" }: 
     },
   };
 }
-
-test("wantsJsonResponse honors explicit format query", () => {
-  assert.equal(wantsJsonResponse(makeReq({ query: { format: "json" }, accept: "text/html" })), true);
-  assert.equal(wantsJsonResponse(makeReq({ query: { format: "html" }, accept: "application/json" })), false);
-});
-
-test("wantsJsonResponse defaults to html unless json is explicitly requested", () => {
-  assert.equal(wantsJsonResponse(makeReq()), false);
-  assert.equal(wantsJsonResponse(makeReq({ accept: "application/json" })), true);
-  assert.equal(wantsJsonResponse(makeReq({ accept: "text/html,application/xhtml+xml" })), false);
-  assert.equal(wantsJsonResponse(makeReq({ accept: "*/*" })), false);
-});
 
 test("wantsDownload only enables on download=1", () => {
   assert.equal(wantsDownload(makeReq({ query: { download: "1" } })), true);

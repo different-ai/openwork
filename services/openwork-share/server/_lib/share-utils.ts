@@ -169,18 +169,6 @@ export function buildOpenInAppUrls(shareUrl: string, options: { label?: string }
   }
 }
 
-export function wantsJsonResponse(req: RequestLike): boolean {
-  const format = String(req.query?.format ?? "").trim().toLowerCase();
-  if (format === "json") return true;
-  if (format === "html") return false;
-
-  const accept = String(req.headers?.accept ?? "").toLowerCase();
-  if (!accept) return false;
-  if (accept.includes("application/json")) return true;
-  if (accept.includes("text/html") || accept.includes("application/xhtml+xml")) return false;
-  return false;
-}
-
 export function wantsDownload(req: RequestLike): boolean {
   return String(req.query?.download ?? "").trim() === "1";
 }
