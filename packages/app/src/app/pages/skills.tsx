@@ -39,14 +39,14 @@ export type SkillsViewProps = {
   skillsStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
-  hubRepo: HubSkillRepo;
-  customHubRepos: HubSkillRepo[];
+  hubRepo: HubSkillRepo | null;
+  hubRepos: HubSkillRepo[];
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<InstallResult>;
   installHubSkill: (name: string) => Promise<InstallResult>;
-  setHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  addCustomHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  removeCustomHubRepo: (repo: Partial<HubSkillRepo>) => void;
+  setHubRepo: (repo: Partial<HubSkillRepo> | null) => void;
+  addHubRepo: (repo: Partial<HubSkillRepo>) => void;
+  removeHubRepo: (repo: Partial<HubSkillRepo>) => void;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -128,11 +128,9 @@ export default function SkillsView(props: SkillsViewProps) {
   const hubRepoKey = (repo: HubSkillRepo) => `${repo.owner}/${repo.repo}@${repo.ref}`;
   const defaultHubRepoKey = "different-ai/openwork-hub@main";
 
-  const activeHubRepoLabel = createMemo(
-    () => `${props.hubRepo.owner}/${props.hubRepo.repo}@${props.hubRepo.ref}`,
-  );
+  const activeHubRepoLabel = createMemo(() => (props.hubRepo ? hubRepoKey(props.hubRepo) : "No hub repo selected"));
 
-  const isDefaultHubRepo = createMemo(() => hubRepoKey(props.hubRepo) === defaultHubRepoKey);
+  const hasDefaultHubRepo = createMemo(() => props.hubRepos.some((repo) => hubRepoKey(repo) === defaultHubRepoKey));
 
   const selectHubRepo = (repo: HubSkillRepo) => {
     props.setHubRepo(repo);
@@ -142,9 +140,9 @@ export default function SkillsView(props: SkillsViewProps) {
   const openCustomRepoModal = () => {
     if (props.busy) return;
     setCustomRepoOpen(true);
-    setCustomRepoOwner(props.hubRepo.owner);
-    setCustomRepoName(props.hubRepo.repo);
-    setCustomRepoRef(props.hubRepo.ref || "main");
+    setCustomRepoOwner(props.hubRepo?.owner ?? "");
+    setCustomRepoName(props.hubRepo?.repo ?? "");
+    setCustomRepoRef(props.hubRepo?.ref || "main");
     setCustomRepoError(null);
   };
 
@@ -161,7 +159,7 @@ export default function SkillsView(props: SkillsViewProps) {
       setCustomRepoError("Owner and repo are required.");
       return;
     }
-    props.addCustomHubRepo({ owner, repo, ref });
+    props.addHubRepo({ owner, repo, ref });
     props.refreshHubSkills({ force: true });
     closeCustomRepoModal();
   };
@@ -784,7 +782,7 @@ export default function SkillsView(props: SkillsViewProps) {
               title="Add custom GitHub repo"
             >
               <Plus size={14} />
-              Add custom git repo
+              Add git repo
             </button>
             <button
               type="button"
@@ -808,22 +806,27 @@ export default function SkillsView(props: SkillsViewProps) {
             Source: <span class="font-mono text-dls-text">{activeHubRepoLabel()}</span>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => selectHubRepo({ owner: "different-ai", repo: "openwork-hub", ref: "main" })}
-              class={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
-                isDefaultHubRepo()
-                  ? "border-dls-border bg-dls-active text-dls-text"
-                  : "border-dls-border bg-dls-surface text-dls-secondary hover:text-dls-text"
-              }`}
-              disabled={props.busy}
-            >
-              different-ai/openwork-hub@main
-            </button>
-            <For each={props.customHubRepos}>
+            <Show when={!hasDefaultHubRepo()}>
+              <button
+                type="button"
+                onClick={() => {
+                  props.addHubRepo({ owner: "different-ai", repo: "openwork-hub", ref: "main" });
+                  props.refreshHubSkills({ force: true });
+                }}
+                class={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
+                  props.busy
+                    ? "border-dls-border bg-dls-hover text-dls-secondary"
+                    : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
+                }`}
+                disabled={props.busy}
+              >
+                Add OpenWork Hub
+              </button>
+            </Show>
+            <For each={props.hubRepos}>
               {(repo) => {
                 const key = hubRepoKey(repo);
-                const active = key === activeHubRepoLabel();
+                const active = props.hubRepo ? key === hubRepoKey(props.hubRepo) : false;
                 return (
                   <div class="inline-flex items-center rounded-md border border-dls-border bg-dls-surface">
                     <button
@@ -842,7 +845,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       type="button"
                       class="px-1.5 py-1 text-[11px] text-dls-secondary hover:text-red-11"
                       onClick={() => {
-                        props.removeCustomHubRepo(repo);
+                        props.removeHubRepo(repo);
                         props.refreshHubSkills({ force: true });
                       }}
                       disabled={props.busy}
@@ -867,7 +870,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={filteredHubSkills().length}
           fallback={
             <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
-              No hub skills available.
+              {props.hubRepo ? "No hub skills available." : "No hub repo selected. Add a GitHub repo to browse skills."}
             </div>
           }
         >
@@ -883,7 +886,10 @@ export default function SkillsView(props: SkillsViewProps) {
                       <div class="flex items-center gap-2 mb-0.5">
                         <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
                       </div>
-                      <Show when={skill.description} fallback={<p class="text-xs text-dls-secondary">From openwork-hub</p>}>
+                      <Show
+                        when={skill.description}
+                        fallback={<p class="text-xs text-dls-secondary">From {skill.source.owner}/{skill.source.repo}</p>}
+                      >
                         <p class="text-xs text-dls-secondary line-clamp-2">{skill.description}</p>
                       </Show>
                       <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">

@@ -67,22 +67,18 @@ export function createExtensionsStore(options: {
     ref: "main",
   };
 
-  const [hubRepo, setHubRepoSignal] = createSignal<HubSkillRepo>(DEFAULT_HUB_REPO);
-  const [customHubRepos, setCustomHubRepos] = createSignal<HubSkillRepo[]>([]);
+  const [hubRepo, setHubRepoSignal] = createSignal<HubSkillRepo | null>(DEFAULT_HUB_REPO);
+  const [hubRepos, setHubRepos] = createSignal<HubSkillRepo[]>([DEFAULT_HUB_REPO]);
 
-  const normalizeHubRepo = (input?: Partial<HubSkillRepo> | null): HubSkillRepo => {
-    const owner = input?.owner?.trim() || DEFAULT_HUB_REPO.owner;
-    const repo = input?.repo?.trim() || DEFAULT_HUB_REPO.repo;
+  const normalizeHubRepo = (input?: Partial<HubSkillRepo> | null): HubSkillRepo | null => {
+    const owner = input?.owner?.trim() || "";
+    const repo = input?.repo?.trim() || "";
     const ref = input?.ref?.trim() || DEFAULT_HUB_REPO.ref;
+    if (!owner || !repo) return null;
     return { owner, repo, ref };
   };
 
   const hubRepoKey = (repo: HubSkillRepo) => `${repo.owner}/${repo.repo}@${repo.ref}`;
-
-  const isDefaultHubRepo = (repo: HubSkillRepo) =>
-    repo.owner === DEFAULT_HUB_REPO.owner &&
-    repo.repo === DEFAULT_HUB_REPO.repo &&
-    repo.ref === DEFAULT_HUB_REPO.ref;
 
   const normalizeHubRepoList = (items: unknown[]): HubSkillRepo[] => {
     const seen = new Set<string>();
@@ -95,7 +91,7 @@ export function createExtensionsStore(options: {
         repo: typeof record.repo === "string" ? record.repo : undefined,
         ref: typeof record.ref === "string" ? record.ref : undefined,
       });
-      if (isDefaultHubRepo(normalized)) continue;
+      if (!normalized) continue;
       const key = hubRepoKey(normalized);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -134,47 +130,57 @@ export function createExtensionsStore(options: {
     try {
       window.localStorage.setItem(
         HUB_REPOS_STORAGE_KEY,
-        JSON.stringify({ selected: hubRepo(), custom: customHubRepos() }),
+        JSON.stringify({ selected: hubRepo(), repos: hubRepos() }),
       );
     } catch {
       // ignore
     }
   };
 
-  const setHubRepo = (repoInput: Partial<HubSkillRepo>, optionsOverride?: { remember?: boolean }) => {
+  const setHubRepo = (repoInput: Partial<HubSkillRepo> | null, optionsOverride?: { remember?: boolean }) => {
     const next = normalizeHubRepo(repoInput);
     setHubRepoSignal(next);
     hubSkillsLoaded = false;
-    if (optionsOverride?.remember === false) return;
-    if (!isDefaultHubRepo(next)) {
-      setCustomHubRepos((prev) => {
-        const seen = new Set<string>();
-        const merged = [next, ...prev];
-        const deduped: HubSkillRepo[] = [];
-        for (const item of merged) {
-          const key = hubRepoKey(item);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          deduped.push(item);
-        }
-        return deduped;
-      });
+    if (optionsOverride?.remember === false || !next) {
+      persistHubRepos();
+      return;
     }
+    setHubRepos((prev) => {
+      const seen = new Set<string>();
+      const merged = [next, ...prev];
+      const deduped: HubSkillRepo[] = [];
+      for (const item of merged) {
+        const key = hubRepoKey(item);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(item);
+      }
+      return deduped;
+    });
     persistHubRepos();
   };
 
-  const addCustomHubRepo = (repoInput: Partial<HubSkillRepo>) => {
+  const addHubRepo = (repoInput: Partial<HubSkillRepo>) => {
     const next = normalizeHubRepo(repoInput);
+    if (!next) return;
     setHubRepo(next);
   };
 
-  const removeCustomHubRepo = (repoInput: Partial<HubSkillRepo>) => {
+  const removeHubRepo = (repoInput: Partial<HubSkillRepo>) => {
     const target = normalizeHubRepo(repoInput);
+    if (!target) return;
     const targetKey = hubRepoKey(target);
-    setCustomHubRepos((prev) => prev.filter((item) => hubRepoKey(item) !== targetKey));
-    if (hubRepoKey(hubRepo()) === targetKey) {
-      setHubRepoSignal(DEFAULT_HUB_REPO);
+    const nextRepos = hubRepos().filter((item) => hubRepoKey(item) !== targetKey);
+    setHubRepos(nextRepos);
+    const activeRepo = hubRepo();
+    if (activeRepo && hubRepoKey(activeRepo) === targetKey) {
+      setHubRepoSignal(nextRepos[0] ?? null);
       hubSkillsLoaded = false;
+      if (!nextRepos.length) {
+        setHubSkills([]);
+        setHubSkillsStatus("No hub repo selected. Add a GitHub repo to browse skills.");
+        hubSkillsLoadKey = "";
+      }
     }
     persistHubRepos();
   };
@@ -183,13 +189,21 @@ export function createExtensionsStore(options: {
     try {
       const raw = window.localStorage.getItem(HUB_REPOS_STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw) as { selected?: unknown; custom?: unknown[] };
-        const custom = Array.isArray(parsed?.custom) ? normalizeHubRepoList(parsed.custom) : [];
-        setCustomHubRepos(custom);
-        if (parsed?.selected && typeof parsed.selected === "object") {
-          const selected = normalizeHubRepo(parsed.selected as Partial<HubSkillRepo>);
-          setHubRepoSignal(selected);
-        }
+        const parsed = JSON.parse(raw) as { selected?: unknown; repos?: unknown[]; custom?: unknown[] };
+        const storedRepos = Array.isArray(parsed?.repos)
+          ? normalizeHubRepoList(parsed.repos)
+          : Array.isArray(parsed?.custom)
+            ? normalizeHubRepoList(parsed.custom)
+            : [];
+        const selected =
+          parsed?.selected && typeof parsed.selected === "object"
+            ? normalizeHubRepo(parsed.selected as Partial<HubSkillRepo>)
+            : null;
+        const selectedKey = selected ? hubRepoKey(selected) : null;
+        const hasSelected = selectedKey ? storedRepos.some((item) => hubRepoKey(item) === selectedKey) : false;
+        const nextRepos = selected && !hasSelected ? [selected, ...storedRepos] : storedRepos;
+        setHubRepos(nextRepos);
+        setHubRepoSignal(selected && nextRepos.length ? selected : nextRepos[0] ?? null);
       }
     } catch {
       // ignore
@@ -199,7 +213,7 @@ export function createExtensionsStore(options: {
   async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
     const repo = hubRepo();
-    const loadKey = `${root}::${hubRepoKey(repo)}`;
+    const loadKey = `${root}::${repo ? hubRepoKey(repo) : "none"}`;
     const openworkClient = options.openworkServerClient();
     const openworkCapabilities = options.openworkServerCapabilities();
     const canUseOpenworkServer =
@@ -220,6 +234,14 @@ export function createExtensionsStore(options: {
 
     try {
       setHubSkillsStatus(null);
+
+      if (!repo) {
+        setHubSkills([]);
+        setHubSkillsStatus("No hub repo selected. Add a GitHub repo to browse skills.");
+        hubSkillsLoaded = true;
+        hubSkillsLoadKey = loadKey;
+        return;
+      }
 
       if (canUseOpenworkServer) {
         const response = await (openworkClient as any).listHubSkills({
@@ -286,6 +308,9 @@ export function createExtensionsStore(options: {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, message: "Skill name is required." };
     const repo = hubRepo();
+    if (!repo) {
+      return { ok: false, message: "Select a hub repo before installing skills." };
+    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const openworkClient = options.openworkServerClient();
@@ -310,15 +335,13 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
-      const repoOverride: OpenworkHubRepo | undefined = isDefaultHubRepo(repo)
-        ? undefined
-        : {
-            owner: repo.owner,
-            repo: repo.repo,
-            ref: repo.ref,
-          };
+      const repoOverride: OpenworkHubRepo = {
+        owner: repo.owner,
+        repo: repo.repo,
+        ref: repo.ref,
+      };
       const result = await (openworkClient as any).installHubSkill(openworkWorkspaceId, trimmed, {
-        ...(repoOverride ? { repo: repoOverride } : {}),
+        repo: repoOverride,
       });
       await refreshSkills({ force: true });
       await refreshHubSkills({ force: true });
@@ -1242,7 +1265,7 @@ export function createExtensionsStore(options: {
     hubSkills,
     hubSkillsStatus,
     hubRepo,
-    customHubRepos,
+    hubRepos,
     pluginScope,
     setPluginScope,
     pluginConfig,
@@ -1259,8 +1282,8 @@ export function createExtensionsStore(options: {
     refreshSkills,
     refreshHubSkills,
     setHubRepo,
-    addCustomHubRepo,
-    removeCustomHubRepo,
+    addHubRepo,
+    removeHubRepo,
     refreshPlugins,
     addPlugin,
     removePlugin,

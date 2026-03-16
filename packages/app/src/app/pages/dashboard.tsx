@@ -175,17 +175,17 @@ export type DashboardViewProps = {
   skillsStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
-  hubRepo: HubSkillRepo;
-  customHubRepos: HubSkillRepo[];
+  hubRepo: HubSkillRepo | null;
+  hubRepos: HubSkillRepo[];
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
   installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
-  setHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  addCustomHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  removeCustomHubRepo: (repo: Partial<HubSkillRepo>) => void;
+  setHubRepo: (repo: Partial<HubSkillRepo> | null) => void;
+  addHubRepo: (repo: Partial<HubSkillRepo>) => void;
+  removeHubRepo: (repo: Partial<HubSkillRepo>) => void;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -1224,13 +1224,13 @@ export default function DashboardView(props: DashboardViewProps) {
                 hubSkills={props.hubSkills}
                 hubSkillsStatus={props.hubSkillsStatus}
                 hubRepo={props.hubRepo}
-                customHubRepos={props.customHubRepos}
+                hubRepos={props.hubRepos}
                 importLocalSkill={props.importLocalSkill}
                 installSkillCreator={props.installSkillCreator}
                 installHubSkill={props.installHubSkill}
                 setHubRepo={props.setHubRepo}
-                addCustomHubRepo={props.addCustomHubRepo}
-                removeCustomHubRepo={props.removeCustomHubRepo}
+                addHubRepo={props.addHubRepo}
+                removeHubRepo={props.removeHubRepo}
                 revealSkillsFolder={props.revealSkillsFolder}
                 uninstallSkill={props.uninstallSkill}
                 readSkill={props.readSkill}
