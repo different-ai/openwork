@@ -377,7 +377,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xvfb-run -a bash -lc 'openwork --help >/tmp/openwork-help.txt 2>&1 || openwork --version >/tmp/openwork-version.txt 2>&1'
+          launch_bin=""
+          if command -v openwork >/dev/null 2>&1; then
+            launch_bin="$(command -v openwork)"
+          elif [ -x "/usr/bin/openwork" ]; then
+            launch_bin="/usr/bin/openwork"
+          elif [ -x "/opt/openwork/openwork" ]; then
+            launch_bin="/opt/openwork/openwork"
+          fi
+
+          if [ -z "$launch_bin" ]; then
+            echo "openwork binary not found after pacman -U" >&2
+            exit 1
+          fi
+
+          xvfb-run -a bash -lc '"$1" --help >/tmp/openwork-help.txt 2>&1 || "$1" --version >/tmp/openwork-version.txt 2>&1' -- "$launch_bin"
 
       - name: Publish to AUR
         if: env.PUSH_TO_AUR == 'true'
