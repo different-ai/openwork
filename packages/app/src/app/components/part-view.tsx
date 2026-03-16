@@ -182,14 +182,35 @@ const splitTextTokens = (text: string): TextSegment[] => {
 const escapeHtml = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-const renderInlineTextWithLinks = (text: string) => {
+const linkClass = (type: LinkType, tone: "light" | "dark") => {
+  if (type === "file") {
+    return tone === "dark"
+      ? "rounded-md border border-gray-11/20 bg-gray-12/10 px-1.5 py-0.5 font-mono text-[0.84em] text-gray-12 no-underline break-all transition-colors hover:border-gray-11/35 hover:bg-gray-12/15"
+      : "rounded-md border border-gray-6/80 bg-gray-2/80 px-1.5 py-0.5 font-mono text-[0.84em] text-gray-12 no-underline break-all transition-colors hover:border-gray-8/80 hover:bg-gray-3/80";
+  }
+
+  return "font-medium text-dls-accent underline decoration-current/35 underline-offset-[0.22em] transition-colors hover:text-[var(--dls-accent-hover)]";
+};
+
+const renderInlineTextWithLinks = (text: string, tone: "light" | "dark") => {
   const tokens = splitTextTokens(text);
   return tokens
     .map((token) => {
       if (token.kind === "text") return escapeHtml(token.value);
-      return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]">${escapeHtml(token.value)}</a>`;
+      return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer" class="${linkClass(token.type, tone)}">${escapeHtml(token.value)}</a>`;
     })
     .join("");
+};
+
+const unwrapSimpleListParagraph = (html: string) => {
+  const trimmed = html.trim();
+  const match = trimmed.match(/^<p>([\s\S]*)<\/p>$/i);
+  if (!match) return trimmed;
+
+  const inner = match[1]?.trim() ?? "";
+  if (!inner) return trimmed;
+  if (/<(?:p|ul|ol|table|blockquote|pre|div|h[1-6])\b/i.test(inner)) return trimmed;
+  return inner;
 };
 
 const normalizeRelativePath = (relativePath: string, workspaceRoot: string) => {
@@ -422,7 +443,7 @@ function createCustomRenderer(tone: "light" | "dark") {
 
   renderer.html = ({ text }) => escapeHtml(text);
 
-  renderer.text = ({ text }) => renderInlineTextWithLinks(text);
+  renderer.text = ({ text }) => renderInlineTextWithLinks(text, tone);
 
   renderer.code = ({ text, lang }) => {
     const language = lang || "";
@@ -446,15 +467,30 @@ function createCustomRenderer(tone: "light" | "dark") {
     )}</code>`;
   };
 
+  renderer.listitem = ({ text, task, checked }) => {
+    const content = unwrapSimpleListParagraph(text);
+    if (!task) return `<li>${content}</li>`;
+
+    return `
+      <li class="list-none">
+        <label class="inline-flex items-start gap-2">
+          <input type="checkbox" disabled ${checked ? "checked" : ""} class="mt-[0.34rem] h-3.5 w-3.5 rounded border-gray-7" />
+          <span>${content}</span>
+        </label>
+      </li>
+    `;
+  };
+
   renderer.link = ({ href, title, text }) => {
     const safeHref = isSafeUrl(href) ? escapeHtml(href ?? "#") : "#";
     const safeTitle = title ? escapeHtml(title) : "";
+    const linkType = parseLinkFromToken(href ?? "")?.type ?? "url";
     return `
       <a
         href="${safeHref}"
         target="_blank"
         rel="noopener noreferrer"
-        class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]"
+        class="${linkClass(linkType, tone)}"
         ${safeTitle ? `title="${safeTitle}"` : ""}
       >
         ${text}
@@ -590,8 +626,8 @@ export default function PartView(props: Props) {
     try {
       const startedAt = perfNow();
       const renderer = rendererForTone(toneKey);
-      const result = marked.parse(text, { 
-        breaks: true, 
+      const result = marked.parse(text, {
+        breaks: false,
         gfm: true,
         renderer,
         async: false
@@ -673,7 +709,7 @@ export default function PartView(props: Props) {
                 href={token.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]"
+                class={linkClass(token.type, tone())}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -915,18 +951,24 @@ export default function PartView(props: Props) {
               class={`markdown-content max-w-none ${textClass()}
                 [&_strong]:font-semibold
                 [&_em]:italic
-                [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
-                [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
-                [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
-                [&_p]:my-3 [&_p]:leading-relaxed
-                [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3
-                [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
-                [&_li]:my-1
-                [&_blockquote]:border-l-4 [&_blockquote]:border-dls-border [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
-                [&_table]:w-full [&_table]:border-collapse [&_table]:my-4
-                [&_th]:border [&_th]:border-dls-border [&_th]:p-2 [&_th]:bg-dls-hover
-                [&_td]:border [&_td]:border-dls-border [&_td]:p-2
-              `.trim()}
+                 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
+                 [&_h1]:mt-7 [&_h1]:mb-3 [&_h1]:text-[1.65rem] [&_h1]:font-semibold [&_h1]:tracking-[-0.03em]
+                 [&_h2]:mt-6 [&_h2]:mb-3 [&_h2]:text-[1.3rem] [&_h2]:font-semibold [&_h2]:tracking-[-0.02em]
+                 [&_h3]:mt-5 [&_h3]:mb-2 [&_h3]:text-[1.08rem] [&_h3]:font-semibold
+                 [&_p]:my-3 [&_p]:leading-[1.78]
+                 [&_ul]:my-4 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-5
+                 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-5
+                 [&_li]:pl-1 [&_li]:leading-[1.72]
+                 [&_li>p]:my-0
+                 [&_li>ul]:mt-2 [&_li>ol]:mt-2
+                 [&_blockquote]:my-5 [&_blockquote]:rounded-r-2xl [&_blockquote]:border-l-[3px] [&_blockquote]:border-dls-border [&_blockquote]:bg-dls-hover/40 [&_blockquote]:px-4 [&_blockquote]:py-3 [&_blockquote]:italic
+                 [&_table]:my-5 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:rounded-2xl
+                 [&_th]:border [&_th]:border-dls-border [&_th]:p-2 [&_th]:bg-dls-hover
+                 [&_td]:border [&_td]:border-dls-border [&_td]:p-2
+                 [&_hr]:my-6 [&_hr]:border-dls-border/80
+                 [&_a]:align-baseline
+                 [&_code]:align-[0.04em]
+               `.trim()}
               innerHTML={renderedMarkdown()!}
               onClick={openMarkdownLink}
             />
