@@ -424,5 +424,34 @@ jobs:
           ssh-keygen -R aur.archlinux.org >/dev/null 2>&1 || true
           ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> "$HOME/.ssh/known_hosts" 2>/dev/null
 
-          export AUR_REPO
-          scripts/aur/publish-aur.sh "$RELEASE_TAG"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          key_path="$tmp_dir/aur.key"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+
+          aur_remote="ssh://aur@aur.archlinux.org/${AUR_REPO}.git"
+          export GIT_SSH_COMMAND="ssh -i $key_path -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
+          git clone "$aur_remote" "$tmp_dir/aur"
+          cp packaging/aur/PKGBUILD "$tmp_dir/aur/PKGBUILD"
+          cp packaging/aur/.SRCINFO "$tmp_dir/aur/.SRCINFO"
+
+          cd "$tmp_dir/aur"
+          if git diff --quiet -- PKGBUILD .SRCINFO; then
+            echo "AUR already up to date for ${AUR_REPO}."
+            exit 0
+          fi
+
+          git add PKGBUILD .SRCINFO
+          git -c user.name="OpenWork Release Bot" \
+              -c user.email="release-bot@users.noreply.github.com" \
+              commit -m "chore(aur): update PKGBUILD for ${RELEASE_TAG#v}"
+
+          current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+          if [ -z "$current_branch" ]; then
+            current_branch="master"
+          fi
+
+          git push origin "HEAD:${current_branch}"
