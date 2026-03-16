@@ -1,150 +1,336 @@
-import type { PreviewItem } from "../../components/share-home-types.ts";
-import { buildBundleNarrative, buildBundlePreview, collectBundleItems, escapeHtml, getBundleCounts, humanizeType, parseBundle } from "./share-utils.ts";
+import { highlightSyntax } from "../../components/share-preview-syntax.ts";
+import { buildBundlePreview, maybeString, parseBundle, parseFrontmatter } from "./share-utils.ts";
+
+type TokenClass =
+  | "plain"
+  | "hl-frontmatter"
+  | "hl-key"
+  | "hl-url"
+  | "hl-string"
+  | "hl-bracket"
+  | "hl-punctuation"
+  | "hl-number"
+  | "hl-keyword"
+  | "hl-comment"
+  | "hl-heading"
+  | "hl-field"
+  | "hl-inline-code"
+  | "hl-bold"
+  | "hl-type"
+  | "hl-cta"
+  | "hl-cta-url"
+  | "hl-codeblock";
+
+type TokenSegment = {
+  text: string;
+  className: TokenClass;
+};
+
+type WrappedLine = {
+  lineNumber: number | null;
+  segments: TokenSegment[];
+};
+
+const FONT_SIZE = 15;
+const LINE_HEIGHT = 22;
+const BODY_X = 34;
+const BODY_Y = 116;
+const BODY_WIDTH = 1084;
+const BODY_HEIGHT = 454;
+const CHAR_WIDTH = 8.9;
+const MAX_LINES = Math.floor(BODY_HEIGHT / LINE_HEIGHT);
 
 function escapeSvgText(value: unknown): string {
-  return escapeHtml(String(value ?? ""));
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-function toneFill(tone: string): string {
-  if (tone === "agent") return "url(#agentGradient)";
-  if (tone === "mcp") return "url(#mcpGradient)";
-  if (tone === "command") return "url(#commandGradient)";
-  if (tone === "config") return "url(#configGradient)";
-  return "url(#skillGradient)";
+function decodeHtml(value: string): string {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
 }
 
-function truncateLine(value: string, maxChars: number): string {
-  const normalized = value.replace(/\t/g, "  ");
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxChars - 1))}…`;
+function humanizeSkillName(value: string): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
-function wrapText(value: string, maxCharsPerLine: number, maxLines: number): string[] {
-  const words = String(value ?? "").trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return [""];
+function parseHighlightedLine(lineHtml: string): TokenSegment[] {
+  if (!lineHtml) return [{ text: "", className: "plain" }];
 
-  const lines: string[] = [];
-  let current = "";
+  const segments: TokenSegment[] = [];
+  const pattern = /<span class="([^"]+)">([\s\S]*?)<\/span>/g;
+  let lastIndex = 0;
 
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length <= maxCharsPerLine) {
-      current = next;
-      continue;
+  for (const match of lineHtml.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      segments.push({
+        text: decodeHtml(lineHtml.slice(lastIndex, index)),
+        className: "plain",
+      });
     }
 
-    if (current) lines.push(current);
-    current = word;
-
-    if (lines.length === maxLines - 1) break;
+    segments.push({
+      text: decodeHtml(match[2] ?? ""),
+      className: ((match[1] as TokenClass) || "plain"),
+    });
+    lastIndex = index + match[0].length;
   }
 
-  if (lines.length < maxLines && current) {
-    lines.push(current);
+  if (lastIndex < lineHtml.length) {
+    segments.push({
+      text: decodeHtml(lineHtml.slice(lastIndex)),
+      className: "plain",
+    });
   }
 
-  if (lines.length > maxLines) {
-    return lines.slice(0, maxLines);
+  return segments.filter((segment) => segment.text.length > 0 || segment.className === "plain");
+}
+
+function detectQuotedCodeSegments(rawLine: string): TokenSegment[] | null {
+  const trimmed = rawLine.trim();
+  if (!trimmed) return null;
+
+  const wholeDoubleQuoted = trimmed.match(/^"[^"]+"$/);
+  if (wholeDoubleQuoted) {
+    return [{ text: trimmed, className: "hl-codeblock" }];
   }
 
-  if (words.join(" ").length > lines.join(" ").length && lines.length) {
-    lines[lines.length - 1] = truncateLine(lines[lines.length - 1]!, maxCharsPerLine);
-    if (!lines[lines.length - 1]!.endsWith("…")) {
-      lines[lines.length - 1] = `${truncateLine(lines[lines.length - 1]!, Math.max(1, maxCharsPerLine - 1))}…`;
+  const wholeBackticked = trimmed.match(/^`[^`]+`$/);
+  if (wholeBackticked) {
+    return [{ text: trimmed, className: "hl-codeblock" }];
+  }
+
+  const bulletDoubleQuoted = rawLine.match(/^(\s*-\s+)("[^"]+")$/);
+  if (bulletDoubleQuoted) {
+    return [
+      { text: bulletDoubleQuoted[1] ?? "", className: "hl-punctuation" },
+      { text: bulletDoubleQuoted[2] ?? "", className: "hl-codeblock" },
+    ];
+  }
+
+  const bulletBackticked = rawLine.match(/^(\s*-\s+)(`[^`]+`)$/);
+  if (bulletBackticked) {
+    return [
+      { text: bulletBackticked[1] ?? "", className: "hl-punctuation" },
+      { text: bulletBackticked[2] ?? "", className: "hl-codeblock" },
+    ];
+  }
+
+  return null;
+}
+
+function sliceSegment(segment: TokenSegment, start: number, end?: number): TokenSegment {
+  return {
+    text: segment.text.slice(start, end),
+    className: segment.className,
+  };
+}
+
+function segmentWidth(text: string): number {
+  return text.length * CHAR_WIDTH;
+}
+
+function wrapTokenSegments(segments: TokenSegment[], maxWidth: number): TokenSegment[][] {
+  if (!segments.length) return [[{ text: "", className: "plain" }]];
+
+  const wrapped: TokenSegment[][] = [];
+  let currentLine: TokenSegment[] = [];
+  let currentWidth = 0;
+  const maxChars = Math.max(1, Math.floor(maxWidth / CHAR_WIDTH));
+
+  const pushCurrent = () => {
+    wrapped.push(currentLine.length ? currentLine : [{ text: "", className: "plain" }]);
+    currentLine = [];
+    currentWidth = 0;
+  };
+
+  for (const segment of segments) {
+    const parts =
+      segment.className === "hl-codeblock"
+        ? [segment.text]
+        : segment.text.split(/(\s+)/).filter((part) => part.length > 0);
+
+    for (const part of parts) {
+      let remaining = part;
+
+      while (remaining.length > 0) {
+        const partWidth = segmentWidth(remaining);
+        if (currentWidth + partWidth <= maxWidth) {
+          currentLine.push({ text: remaining, className: segment.className });
+          currentWidth += partWidth;
+          remaining = "";
+          continue;
+        }
+
+        if (currentLine.length === 0) {
+          const chunk = remaining.slice(0, maxChars);
+          currentLine.push({ text: chunk, className: segment.className });
+          currentWidth += segmentWidth(chunk);
+          remaining = remaining.slice(chunk.length);
+          pushCurrent();
+          continue;
+        }
+
+        if (/^\s+$/.test(remaining)) {
+          remaining = "";
+          pushCurrent();
+          continue;
+        }
+
+        pushCurrent();
+      }
     }
   }
 
-  return lines;
+  if (currentLine.length) {
+    pushCurrent();
+  }
+
+  return wrapped.length ? wrapped : [[{ text: "", className: "plain" }]];
 }
 
-function previewLineColor(value: string): string {
-  if (/^#{1,6}\s/.test(value)) return "#011627";
-  if (/^\s*[-*]\s+[a-z_]+:/.test(value)) return "#be123c";
-  if (/^\s*[-*]\s/.test(value)) return "#7c3aed";
-  if (/https?:\/\//.test(value)) return "#2563eb";
-  if (/^\s*[{}\[\]"]/.test(value)) return "#0f766e";
-  return "#5f6b7a";
+function buildContinuationLines(shareUrl: string): TokenSegment[][] {
+  const segments: TokenSegment[] = [
+    { text: "Read and copy the full skill at: ", className: "hl-cta" },
+    { text: shareUrl, className: "hl-cta-url" },
+  ];
+  return wrapTokenSegments(segments, BODY_WIDTH);
 }
 
-function renderStatPills(stats: { label: string; value: number }[], y: number): string {
-  return stats
-    .filter((stat) => stat.value)
-    .slice(0, 4)
-    .map((stat, index) => {
-      const x = 96 + index * 108;
-      return `
-        <g transform="translate(${x} ${y})">
-          <rect width="96" height="56" rx="20" fill="rgba(255,255,255,0.84)" stroke="rgba(255,255,255,0.92)" />
-          <text x="16" y="23" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="1.2">${escapeSvgText(stat.label.toUpperCase())}</text>
-          <text x="16" y="42" fill="#011627" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">${escapeSvgText(String(stat.value))}</text>
-        </g>`;
+function buildWrappedLines(text: string, shareUrl: string): WrappedLine[] {
+  const htmlLines = highlightSyntax(text).split("\n");
+  const rawLines = text.replace(/\r\n/g, "\n").split("\n");
+  const wrapped: WrappedLine[] = [];
+  const continuationLines = buildContinuationLines(shareUrl);
+  const maxContentLines = Math.max(1, MAX_LINES - continuationLines.length);
+  let truncated = false;
+
+  for (const [index, htmlLine] of htmlLines.entries()) {
+    const quotedCodeSegments = detectQuotedCodeSegments(rawLines[index] ?? "");
+    const parsed = quotedCodeSegments
+      ? quotedCodeSegments
+      : parseHighlightedLine(htmlLine);
+    const lineGroups = wrapTokenSegments(parsed, BODY_WIDTH);
+    for (const lineGroup of lineGroups) {
+      if (wrapped.length === maxContentLines) {
+        truncated = true;
+        break;
+      }
+      wrapped.push({
+        lineNumber: wrapped.length + 1,
+        segments: lineGroup,
+      });
+    }
+    if (truncated) break;
+  }
+
+  if (truncated) {
+    wrapped.push({
+      lineNumber: null,
+      segments: [],
+    });
+    for (const continuationLine of continuationLines) {
+      wrapped.push({
+        lineNumber: null,
+        segments: continuationLine,
+      });
+    }
+  }
+
+  return wrapped;
+}
+
+function classStyle(className: TokenClass): { fill: string; weight?: string; style?: string } {
+  switch (className) {
+    case "hl-frontmatter":
+      return { fill: "#94a3b8" };
+    case "hl-key":
+      return { fill: "#475569" };
+    case "hl-url":
+      return { fill: "#2563eb" };
+    case "hl-string":
+      return { fill: "#0f766e" };
+    case "hl-bracket":
+      return { fill: "#94a3b8" };
+    case "hl-punctuation":
+      return { fill: "#94a3b8" };
+    case "hl-number":
+      return { fill: "#f97316" };
+    case "hl-keyword":
+      return { fill: "#be123c" };
+    case "hl-comment":
+      return { fill: "#94a3b8", style: "italic" };
+    case "hl-heading":
+      return { fill: "#0f172a", weight: "700" };
+    case "hl-field":
+      return { fill: "#be123c" };
+    case "hl-inline-code":
+      return { fill: "#7c3aed" };
+    case "hl-bold":
+      return { fill: "#0f172a", weight: "700" };
+    case "hl-type":
+      return { fill: "#0ea5e9", style: "italic" };
+    case "hl-cta":
+      return { fill: "#0f172a" };
+    case "hl-cta-url":
+      return { fill: "#0f172a", weight: "700" };
+    case "hl-codeblock":
+      return { fill: "#e11d48" };
+    default:
+      return { fill: "#475569" };
+  }
+}
+
+function renderLine(line: WrappedLine, y: number): string {
+  let x = BODY_X;
+  const gutter = line.lineNumber == null ? "" : `<text x="${BODY_X}" y="${y}" fill="#cbd5e1" font-family="JetBrains Mono, Menlo, monospace" font-size="13" font-weight="600">${String(line.lineNumber).padStart(2, "0")}</text>`;
+  x += 44;
+
+  return `${gutter}${line.segments
+    .map((segment, index) => {
+      const style = classStyle(segment.className);
+      const width = segmentWidth(segment.text);
+      const pill =
+        segment.className === "hl-codeblock"
+          ? `<rect x="${x - 3}" y="${y - 14}" width="${width + 6}" height="22" rx="5" fill="#f8fafc" stroke="#cbd5e1" />`
+          : "";
+      const node = `<text x="${x}" y="${y}" fill="${style.fill}" font-family="JetBrains Mono, Menlo, monospace" font-size="${FONT_SIZE}"${style.weight ? ` font-weight="${style.weight}"` : ""}${style.style ? ` font-style="${style.style}"` : ""}${segment.className === "hl-cta-url" ? ` text-decoration="underline"` : ""}>${escapeSvgText(segment.text)}</text>`;
+      x += width;
+      return `${pill}${node}${index === line.segments.length - 1 ? "" : ""}`;
     })
-    .join("");
+    .join("")}`;
 }
 
-function renderItemRows(items: PreviewItem[], y: number): string {
-  return items
-    .slice(0, 3)
-    .map((item, index) => {
-      const rowY = y + index * 44;
-      return `
-        <g transform="translate(96 ${rowY})">
-          <rect width="430" height="36" rx="16" fill="rgba(248,250,252,0.9)" stroke="rgba(148,163,184,0.16)" />
-          <rect x="12" y="8" width="20" height="20" rx="10" fill="${toneFill(item.tone)}" />
-          <text x="44" y="20" fill="#011627" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">${escapeSvgText(truncateLine(item.name, 28))}</text>
-          <text x="44" y="33" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="11">${escapeSvgText(truncateLine(`${item.kind} · ${item.meta}`, 42))}</text>
-        </g>`;
-    })
-    .join("");
-}
-
-function renderPreviewPanel(preview: { filename: string; text: string; tone: string; label: string }): string {
-  const lines = preview.text
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .slice(0, 10);
+function renderPreviewSurface(input: { title: string; filename: string; text: string; shareUrl: string }): string {
+  const wrappedLines = buildWrappedLines(input.text, input.shareUrl);
 
   return `
-    <g transform="translate(628 88)">
-      <rect width="472" height="454" rx="30" fill="rgba(255,255,255,0.94)" stroke="rgba(148,163,184,0.18)" />
-      <path d="M0 68H472" stroke="rgba(148,163,184,0.14)" />
-      <text x="28" y="42" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.8">PREVIEW</text>
-      <text x="28" y="408" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="11">${escapeSvgText(truncateLine(preview.label, 44))}</text>
-      <text x="28" y="430" fill="#94a3b8" font-family="JetBrains Mono, Menlo, monospace" font-size="11">${escapeSvgText(truncateLine(preview.filename, 38))}</text>
-      <rect x="330" y="26" width="10" height="10" rx="5" fill="#94a3b8" />
-      <text x="346" y="35" fill="#94a3b8" font-family="JetBrains Mono, Menlo, monospace" font-size="11">${escapeSvgText(truncateLine(preview.filename, 16))}</text>
-      ${lines
-        .map((line, index) => {
-          const y = 104 + index * 28;
-          return `
-            <g transform="translate(28 ${y})">
-              <text x="0" y="0" fill="#cbd5e1" font-family="JetBrains Mono, Menlo, monospace" font-size="11">${String(index + 1).padStart(2, "0")}</text>
-              <text x="32" y="0" fill="${previewLineColor(line)}" font-family="JetBrains Mono, Menlo, monospace" font-size="15">${escapeSvgText(truncateLine(line, 42))}</text>
-            </g>`;
-        })
-        .join("")}
+    <g transform="translate(18 12)">
+      <rect width="1164" height="606" rx="38" fill="rgba(255,255,255,0.96)" stroke="rgba(148,163,184,0.16)" />
+      <path d="M0 66H1164" stroke="rgba(226,232,240,0.92)" />
+      <text x="34" y="42" fill="#0f172a" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="800" letter-spacing="-1.2">SKILL.md</text>
+      <circle cx="930" cy="33" r="7" fill="url(#skillGradient)" />
+      <text x="950" y="40" fill="#94a3b8" font-family="JetBrains Mono, Menlo, monospace" font-size="16">${escapeSvgText(input.filename)}</text>
+      ${wrappedLines.map((line, index) => renderLine(line, BODY_Y + index * LINE_HEIGHT)).join("")}
     </g>`;
 }
 
-function renderBaseCard(input: {
-  title: string;
-  subtitle: string;
-  eyebrow: string;
-  items: PreviewItem[];
-  stats: { label: string; value: number }[];
-  preview: { filename: string; text: string; tone: string; label: string };
-  kicker: string;
-}): string {
-  const titleLines = wrapText(input.title, 18, 2);
-  const subtitleLines = wrapText(input.subtitle, 42, 2);
-  const titleStartY = 146;
-  const titleLineHeight = 52;
-  const subtitleStartY = titleStartY + titleLines.length * titleLineHeight + 22;
-  const subtitleLineHeight = 24;
-  const statsY = subtitleStartY + subtitleLines.length * subtitleLineHeight + 28;
-  const kickerY = statsY + 78;
-  const listCardY = kickerY + 24;
-
+function renderSkillCard(input: { title: string; filename: string; text: string; shareUrl: string }): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -160,22 +346,6 @@ function renderBaseCard(input: {
       <stop stop-color="#f97316" />
       <stop offset="1" stop-color="#facc15" />
     </linearGradient>
-    <linearGradient id="agentGradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#1d4ed8" />
-      <stop offset="1" stop-color="#60a5fa" />
-    </linearGradient>
-    <linearGradient id="mcpGradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0f766e" />
-      <stop offset="1" stop-color="#2dd4bf" />
-    </linearGradient>
-    <linearGradient id="commandGradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7c3aed" />
-      <stop offset="1" stop-color="#c084fc" />
-    </linearGradient>
-    <linearGradient id="configGradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#334155" />
-      <stop offset="1" stop-color="#94a3b8" />
-    </linearGradient>
     <filter id="cardShadow" x="0" y="0" width="1200" height="630" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feDropShadow dx="0" dy="36" stdDeviation="28" flood-color="#0f172a" flood-opacity="0.14" />
     </filter>
@@ -185,68 +355,70 @@ function renderBaseCard(input: {
   <circle cx="1046" cy="108" r="200" fill="url(#bgCool)" />
   <rect x="48" y="44" width="1104" height="542" rx="42" fill="rgba(255,255,255,0.72)" stroke="rgba(255,255,255,0.9)" filter="url(#cardShadow)" />
   <rect x="48" y="44" width="1104" height="542" rx="42" fill="rgba(255,255,255,0.56)" />
-  <rect x="96" y="88" width="140" height="34" rx="17" fill="rgba(255,255,255,0.88)" stroke="rgba(255,255,255,0.94)" />
-  <text x="114" y="109" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.9">${escapeSvgText(input.eyebrow.toUpperCase())}</text>
-  ${titleLines
-    .map((line, index) => `<text x="96" y="${titleStartY + index * titleLineHeight}" fill="#011627" font-family="Inter, Arial, sans-serif" font-size="50" font-weight="700" letter-spacing="-2">${escapeSvgText(line)}</text>`)
-    .join("")}
-  ${subtitleLines
-    .map((line, index) => `<text x="96" y="${subtitleStartY + index * subtitleLineHeight}" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="22">${escapeSvgText(line)}</text>`)
-    .join("")}
-  ${renderStatPills(input.stats, statsY)}
-  <text x="96" y="${kickerY}" fill="#011627" font-family="Georgia, 'Times New Roman', serif" font-size="26" font-style="italic">${escapeSvgText(input.kicker)}</text>
-  <g transform="translate(84 ${listCardY})">
-    <rect width="456" height="156" rx="28" fill="rgba(255,255,255,0.88)" stroke="rgba(255,255,255,0.94)" />
-    <text x="20" y="28" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.8">PACKAGE CONTENTS</text>
-  </g>
-  ${renderItemRows(input.items, listCardY + 34)}
-  ${renderPreviewPanel(input.preview)}
+  ${renderPreviewSurface(input)}
 </svg>`;
 }
 
 export function renderRootOgImage(): string {
-  return renderBaseCard({
-    title: "Package your worker",
-    subtitle: "Drop skills, agents, or MCPs into OpenWork Share.",
-    eyebrow: "OpenWork Share",
-    items: [
-      { name: "Sales Inbound", kind: "Agent", meta: "v1.2.0", tone: "agent" },
-      { name: "meeting-reminder", kind: "Skill", meta: "Trigger · daily", tone: "skill" },
-      { name: "crm-sync", kind: "MCP", meta: "Remote MCP", tone: "mcp" },
-    ],
-    stats: [
-      { label: "skills", value: 1 },
-      { label: "agents", value: 1 },
-      { label: "MCPs", value: 1 },
-    ],
-    preview: {
-      filename: "meeting-reminder.md",
-      label: "Skill preview",
-      tone: "skill",
-      text: `# meeting-reminder\n\nA skill that sends a follow-up reminder after a configurable delay.\n\n## Trigger\n\nRuns automatically when a conversation has been idle for the configured duration.\n\n- delay: Duration before triggering\n- channel: Send via email, slack, or in-app`,
-    },
-    kicker: "",
+  return renderSkillCard({
+    title: "Meeting Reminder",
+    filename: "meeting-reminder.md",
+    shareUrl: "http://127.0.0.1:3002/b/01KKPSGYSGDRRWNTAACAMZY3PF",
+    text: `# Welcome to OpenWork
+
+Hi, I'm Ben and this is OpenWork. It's an open-source alternative to Claude's cowork. It helps you work on your files with AI and automate the mundane tasks so you don't have to.
+
+Before we start, use the question tool to ask:
+"Are you more technical or non-technical? I'll tailor the explanation."
+
+## If the person is non-technical
+OpenWork feels like a chat app, but it can safely work with the files you allow. Put files in this workspace and I can summarize them, create new ones, or help organize them.
+
+Try:
+- "Summarize the files in this workspace."
+- "Create a checklist for my week."
+- "Draft a short summary from this document."
+
+## Skills and plugins (simple)
+Skills add new capabilities. Plugins add advanced features like scheduling or browser automation. We can add them later when you're ready.
+
+## If the person is technical
+OpenWork is a GUI for OpenCode. Everything that works in OpenCode works here.
+
+Most reliable setup today:
+1) Install OpenCode from opencode.ai
+2) Configure providers there (models and API keys)
+3) Come back to OpenWork and start a session
+
+Skills:
+- Install from the Skills tab, or add them to this workspace.
+- Docs: https://opencode.ai/docs/skills
+
+Plugins:
+- Configure in opencode.json or use the Plugins tab.
+- Docs: https://opencode.ai/docs/plugins/
+
+MCP servers:
+- Add external tools via opencode.json.
+- Docs: https://opencode.ai/docs/mcp-servers/
+
+Config reference:
+- Docs: https://opencode.ai/docs/config/
+
+End with two friendly next actions to try in OpenWork.`,
   });
 }
 
 export function renderBundleOgImage({ id, rawJson }: { id: string; rawJson: string }): string {
   const bundle = parseBundle(rawJson);
-  const counts = getBundleCounts(bundle);
-  const items = collectBundleItems(bundle, 5);
   const preview = buildBundlePreview(bundle);
+  const { data } = parseFrontmatter(bundle.content);
+  const skillName = maybeString(data.name).trim() || bundle.name || "shared-skill";
 
-  return renderBaseCard({
-    title: bundle.name || `OpenWork ${humanizeType(bundle.type)}`,
-    subtitle: buildBundleNarrative(bundle),
-    eyebrow: `${humanizeType(bundle.type)} · ${id.slice(-8)}`,
-    items: items.length ? items : [{ name: "OpenWork bundle", kind: "Skill", meta: "Shared config", tone: "skill" }],
-    stats: [
-      { label: "skills", value: counts.skillCount },
-      { label: "agents", value: counts.agentCount },
-      { label: "MCPs", value: counts.mcpCount },
-      { label: "commands", value: counts.commandCount },
-    ],
-    preview,
-    kicker: "",
+  return renderSkillCard({
+    title: humanizeSkillName(skillName),
+    filename: preview.filename || `${skillName}.md`,
+    shareUrl: `http://127.0.0.1:3002/b/${id}`,
+    text: bundle.content || preview.text || "",
   });
 }

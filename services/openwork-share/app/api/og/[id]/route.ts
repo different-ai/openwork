@@ -44,8 +44,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       headers: responseHeaders
     });
   } catch {
+    responseHeaders.set("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
     return new Response(renderRootOgImage(), {
-      status: 404,
+      status: 200,
       headers: responseHeaders
     });
   }

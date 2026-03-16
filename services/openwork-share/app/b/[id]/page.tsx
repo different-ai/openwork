@@ -28,6 +28,16 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     alternates: {
       canonical: props.canonicalUrl
     },
+    robots: props.missing
+      ? {
+          index: false,
+          follow: false,
+          googleBot: {
+            index: false,
+            follow: false
+          }
+        }
+      : undefined,
     openGraph: {
       type: "website",
       siteName: "OpenWork Share",

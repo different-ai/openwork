@@ -99,6 +99,11 @@ export function truncate(value: unknown, maxChars = 3200): string {
 }
 
 function getOrigin(req: RequestLike): string {
+  const configuredPublicBaseUrl = normalizeBaseUrl(getEnv("PUBLIC_BASE_URL"));
+  if (configuredPublicBaseUrl) {
+    return configuredPublicBaseUrl;
+  }
+
   const protocolHeader = String(req.headers?.["x-forwarded-proto"] ?? "https")
     .split(",")[0]
     .trim();
@@ -107,7 +112,7 @@ function getOrigin(req: RequestLike): string {
     .trim();
 
   if (!hostHeader) {
-    return normalizeBaseUrl(getEnv("PUBLIC_BASE_URL", DEFAULT_PUBLIC_BASE_URL));
+    return DEFAULT_PUBLIC_BASE_URL;
   }
 
   return `${protocolHeader || "https"}://${hostHeader}`;
@@ -119,7 +124,7 @@ export function buildRootUrl(req: RequestLike): string {
 
 export function buildOgImageUrl(req: RequestLike, targetId = "root"): string {
   const origin = buildRootUrl(req);
-  return `${origin}/og/${encodeURIComponent(targetId)}`;
+  return `${origin}/api/og/${encodeURIComponent(targetId)}`;
 }
 
 export function buildBundleUrls(req: RequestLike, id: string): BundleUrls {

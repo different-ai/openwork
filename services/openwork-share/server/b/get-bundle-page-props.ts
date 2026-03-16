@@ -35,7 +35,7 @@ export function buildMissingBundlePageProps(requestLike: RequestLike, id = "miss
   return {
     missing: true,
     canonicalUrl: buildBundleUrls(requestLike, id).shareUrl,
-    ogImageUrl: buildOgImageUrl(requestLike, "root")
+    ogImageUrl: buildOgImageUrl(requestLike, id)
   };
 }
 
