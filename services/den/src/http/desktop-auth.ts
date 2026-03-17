@@ -4,6 +4,7 @@ import { and, eq, gt, isNull } from "drizzle-orm"
 import { z } from "zod"
 import { db } from "../db/index.js"
 import { AuthSessionTable, DesktopHandoffGrantTable, AuthUserTable } from "../db/schema.js"
+import { normalizeDenTypeId } from "../db/typeid.js"
 import { asyncRoute } from "./errors.js"
 import { getRequestSession } from "./session.js"
 
@@ -44,7 +45,7 @@ desktopAuthRouter.post("/desktop-handoff", asyncRoute(async (req, res) => {
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
   await db.insert(DesktopHandoffGrantTable).values({
     id: grant,
-    user_id: session.user.id,
+    user_id: normalizeDenTypeId("user", session.user.id),
     session_token: session.session.token,
     expires_at: expiresAt,
     consumed_at: null,

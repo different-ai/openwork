@@ -102,6 +102,22 @@ export const session = AuthSessionTable
 export const account = AuthAccountTable
 export const verification = AuthVerificationTable
 
+export const DesktopHandoffGrantTable = mysqlTable(
+  "desktop_handoff_grant",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    user_id: denTypeIdColumn("user", "user_id").notNull(),
+    session_token: text("session_token").notNull(),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    consumed_at: timestamp("consumed_at", { fsp: 3 }),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("desktop_handoff_grant_user_id").on(table.user_id),
+    index("desktop_handoff_grant_expires_at").on(table.expires_at),
+  ],
+)
+
 export const OrgTable = mysqlTable(
   "org",
   {

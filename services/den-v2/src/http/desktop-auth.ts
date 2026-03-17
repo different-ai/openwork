@@ -1,30 +1,14 @@
 import { randomBytes } from "node:crypto"
 import express from "express"
-import { index, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core"
-import { and, eq, gt, isNull, sql } from "../db/drizzle.js"
+import { and, eq, gt, isNull } from "../db/drizzle.js"
 import { db } from "../db/index.js"
-import { AuthSessionTable, AuthUserTable } from "../db/schema.js"
+import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable } from "../db/schema.js"
+import { normalizeDenTypeId } from "../db/typeid.js"
 import { asyncRoute } from "./errors.js"
 import { getRequestSession } from "./session.js"
 import { z } from "zod"
 
 const desktopAuthRouter = express.Router()
-
-const DesktopHandoffGrantTable = mysqlTable(
-  "desktop_handoff_grant",
-  {
-    id: varchar("id", { length: 64 }).notNull().primaryKey(),
-    user_id: varchar("user_id", { length: 64 }).notNull(),
-    session_token: text("session_token").notNull(),
-    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
-    consumed_at: timestamp("consumed_at", { fsp: 3 }),
-    created_at: timestamp("created_at", { fsp: 3 }).notNull().default(sql`(now(3))`),
-  },
-  (table) => [
-    index("desktop_handoff_grant_user_id").on(table.user_id),
-    index("desktop_handoff_grant_expires_at").on(table.expires_at),
-  ],
-)
 
 const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional(),
@@ -69,7 +53,7 @@ desktopAuthRouter.post(
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
     await db.insert(DesktopHandoffGrantTable).values({
       id: grant,
-      user_id: session.user.id,
+      user_id: normalizeDenTypeId("user", session.user.id),
       session_token: session.session.token,
       expires_at: expiresAt,
       consumed_at: null,
