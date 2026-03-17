@@ -15,7 +15,7 @@ export default async function Den() {
     <LandingDen
       stars={github.stars}
       downloadHref={github.downloads.macos}
-      getStartedHref="https://app.openwork.software"
+      getStartedHref="https://app.openworklabs.com"
       callHref={cal}
     />
   );
