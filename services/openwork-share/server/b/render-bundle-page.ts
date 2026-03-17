@@ -3,7 +3,7 @@ import {
   SHARE_EASE,
   buildBundleNarrative,
   buildBundleUrls,
-  buildOgImageUrl,
+  buildOgImageUrls,
   buildOpenInAppUrls,
   collectBundleItems,
   escapeHtml,
@@ -19,7 +19,8 @@ export { buildBundleUrls, wantsDownload } from "../_lib/share-utils.ts";
 export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: string; req: RequestLike }): string {
   const bundle = parseBundle(rawJson);
   const urls = buildBundleUrls(req, id);
-  const ogImageUrl = buildOgImageUrl(req, id);
+  const ogImageUrls = buildOgImageUrls(req, id);
+  const ogImageUrl = ogImageUrls.default;
   const { openInAppDeepLink } = buildOpenInAppUrls(urls.shareUrl, {
     label: bundle.name || "Shared worker package",
   });
@@ -49,10 +50,13 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
   <meta property="og:description" content="${escapeHtml(description)}" />
   <meta property="og:url" content="${escapeHtml(urls.shareUrl)}" />
   <meta property="og:image" content="${escapeHtml(ogImageUrl)}" />
+  <meta property="og:image" content="${escapeHtml(ogImageUrls.byVariant.linkedin)}" />
+  <meta property="og:image" content="${escapeHtml(ogImageUrls.byVariant.slack)}" />
+  <meta property="og:image" content="${escapeHtml(ogImageUrls.byVariant.whatsapp)}" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${escapeHtml(title)}" />
   <meta name="twitter:description" content="${escapeHtml(description)}" />
-  <meta name="twitter:image" content="${escapeHtml(ogImageUrl)}" />
+  <meta name="twitter:image" content="${escapeHtml(ogImageUrls.twitter)}" />
   <style>
     @font-face {
       font-family: "FK Raster Roman Compact Smooth";

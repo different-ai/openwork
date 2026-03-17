@@ -6,6 +6,12 @@ import {
   parseBundle,
   parseFrontmatter,
 } from "./share-utils.ts";
+import {
+  BASE_OG_IMAGE_HEIGHT,
+  BASE_OG_IMAGE_WIDTH,
+  getOgImageVariantConfig,
+  type OgImageVariant,
+} from "./og-image-variants.ts";
 
 export type OgImageModel = {
   title: string;
@@ -306,7 +312,8 @@ function renderTitleBlock(model: OgImageModel): string {
   `;
 }
 
-function renderSkillCard(model: OgImageModel): string {
+function renderSkillCard(model: OgImageModel, variant: OgImageVariant): string {
+  const variantConfig = getOgImageVariantConfig(variant);
   const cardX = 108;
   const cardY = 82;
   const cardWidth = 984;
@@ -316,7 +323,7 @@ function renderSkillCard(model: OgImageModel): string {
   const badgeY = cardY + 44;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="${variantConfig.width}" height="${variantConfig.height}" viewBox="0 0 ${BASE_OG_IMAGE_WIDTH} ${BASE_OG_IMAGE_HEIGHT}" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="canvasGradient" x1="72" y1="0" x2="1128" y2="630" gradientUnits="userSpaceOnUse">
       <stop stop-color="#f6f9fc" />
@@ -339,9 +346,9 @@ function renderSkillCard(model: OgImageModel): string {
       <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#011627" flood-opacity="0.04" />
     </filter>
   </defs>
-  <rect width="1200" height="630" fill="url(#canvasGradient)" />
+  <rect width="${BASE_OG_IMAGE_WIDTH}" height="${BASE_OG_IMAGE_HEIGHT}" fill="url(#canvasGradient)" />
   <rect x="-180" y="160" width="1560" height="164" transform="rotate(-18 600 315)" fill="url(#diagonalBand)" />
-  <rect width="1200" height="630" fill="url(#dotGrid)" />
+  <rect width="${BASE_OG_IMAGE_WIDTH}" height="${BASE_OG_IMAGE_HEIGHT}" fill="url(#dotGrid)" />
 
   ${renderOpenWorkMark({ x: 58, y: 30, size: 24 })}
   <text x="92" y="47" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">openwork</text>
@@ -374,10 +381,18 @@ export function buildBundleOgImageModel({ id, rawJson }: { id: string; rawJson: 
   return buildBundleOgInput({ id, rawJson });
 }
 
-export function renderRootOgImage(): string {
-  return renderSkillCard(buildRootOgInput());
+export function renderRootOgImage(variant: OgImageVariant = "facebook"): string {
+  return renderSkillCard(buildRootOgInput(), variant);
 }
 
-export function renderBundleOgImage({ id, rawJson }: { id: string; rawJson: string }): string {
-  return renderSkillCard(buildBundleOgInput({ id, rawJson }));
+export function renderBundleOgImage({
+  id,
+  rawJson,
+  variant = "facebook",
+}: {
+  id: string;
+  rawJson: string;
+  variant?: OgImageVariant;
+}): string {
+  return renderSkillCard(buildBundleOgInput({ id, rawJson }), variant);
 }

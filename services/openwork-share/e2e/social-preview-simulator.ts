@@ -1,6 +1,10 @@
+import type { Page } from "@playwright/test";
+import type { OgImageVariant } from "../server/_lib/og-image-variants.ts";
+
 export type SocialPreviewScenario = {
   key: string;
   label: string;
+  variant: OgImageVariant;
   surfaceWidth: number;
   surfaceHeight: number;
   previewWidth: number;
@@ -8,12 +12,20 @@ export type SocialPreviewScenario = {
   minDarkPixelRatio: number;
 };
 
+export type SocialPreviewImageSet = string | Partial<Record<OgImageVariant, string>>;
+
 type Region = {
   left: number;
   top: number;
   width: number;
   height: number;
 };
+
+const GALLERY_GAP = 32;
+const GALLERY_PADDING = 20;
+const GALLERY_HEADER_GAP = 12;
+const GALLERY_LABEL_HEIGHT = 22;
+const COMPARISON_GAP = 28;
 
 const TITLE_REGION: Region = {
   left: 170 / 1200,
@@ -24,8 +36,29 @@ const TITLE_REGION: Region = {
 
 export const SOCIAL_PREVIEW_SCENARIOS: SocialPreviewScenario[] = [
   {
+    key: "facebook-large",
+    label: "Facebook / large",
+    variant: "facebook",
+    surfaceWidth: 640,
+    surfaceHeight: 335,
+    previewWidth: 520,
+    previewHeight: 273,
+    minDarkPixelRatio: 0.027,
+  },
+  {
+    key: "linkedin-large",
+    label: "LinkedIn / large",
+    variant: "linkedin",
+    surfaceWidth: 640,
+    surfaceHeight: 335,
+    previewWidth: 520,
+    previewHeight: 272,
+    minDarkPixelRatio: 0.027,
+  },
+  {
     key: "whatsapp-small",
     label: "WhatsApp / small",
+    variant: "whatsapp",
     surfaceWidth: 520,
     surfaceHeight: 270,
     previewWidth: 420,
@@ -35,6 +68,7 @@ export const SOCIAL_PREVIEW_SCENARIOS: SocialPreviewScenario[] = [
   {
     key: "slack-medium",
     label: "Slack / medium",
+    variant: "slack",
     surfaceWidth: 640,
     surfaceHeight: 335,
     previewWidth: 520,
@@ -44,6 +78,7 @@ export const SOCIAL_PREVIEW_SCENARIOS: SocialPreviewScenario[] = [
   {
     key: "twitter-large",
     label: "Twitter / large",
+    variant: "twitter",
     surfaceWidth: 760,
     surfaceHeight: 400,
     previewWidth: 610,
@@ -74,11 +109,37 @@ export function getScenarioTitleRegion(scenario: SocialPreviewScenario): Region 
   };
 }
 
+export function getSocialPreviewGalleryViewport(): { width: number; height: number } {
+  const width =
+    GALLERY_PADDING * 2 +
+    SOCIAL_PREVIEW_SCENARIOS.reduce((sum, scenario) => sum + scenario.surfaceWidth, 0) +
+    GALLERY_GAP * Math.max(0, SOCIAL_PREVIEW_SCENARIOS.length - 1);
+  const height =
+    GALLERY_PADDING * 2 +
+    GALLERY_LABEL_HEIGHT +
+    GALLERY_HEADER_GAP +
+    Math.max(...SOCIAL_PREVIEW_SCENARIOS.map((scenario) => scenario.surfaceHeight));
+
+  return { width, height };
+}
+
+export function getSocialPreviewComparisonViewport(): { width: number; height: number } {
+  const galleryViewport = getSocialPreviewGalleryViewport();
+  return {
+    width: galleryViewport.width,
+    height: galleryViewport.height * 2 + COMPARISON_GAP,
+  };
+}
+
 function buildPreviewTileHtml(options: {
-  imageUrl: string;
+  images: SocialPreviewImageSet;
   scenario: SocialPreviewScenario;
 }): string {
-  const { imageUrl, scenario } = options;
+  const { images, scenario } = options;
+  const imageUrl =
+    typeof images === "string"
+      ? images
+      : images[scenario.variant] || images.facebook || images.twitter || Object.values(images)[0] || "";
   return `
     <section class="social-tile" data-scenario="${escapeHtml(scenario.key)}">
       <h2>${escapeHtml(scenario.label)}</h2>
@@ -96,12 +157,12 @@ function buildPreviewTileHtml(options: {
 }
 
 function buildGalleryHtml(options: {
-  imageUrl: string;
+  images: SocialPreviewImageSet;
   heading?: string;
 }): string {
   const heading = options.heading ? `<h1 class="gallery-heading">${escapeHtml(options.heading)}</h1>` : "";
   const tiles = SOCIAL_PREVIEW_SCENARIOS.map((scenario) =>
-    buildPreviewTileHtml({ imageUrl: options.imageUrl, scenario }),
+    buildPreviewTileHtml({ images: options.images, scenario }),
   ).join("");
 
   return `
@@ -113,7 +174,7 @@ function buildGalleryHtml(options: {
 }
 
 export function buildSocialPreviewGalleryHtml(options: {
-  imageUrl: string;
+  images: SocialPreviewImageSet;
   heading?: string;
 }): string {
   return `<!doctype html>
@@ -135,13 +196,13 @@ export function buildSocialPreviewGalleryHtml(options: {
             margin: 0;
             background: #f5f8fc;
             color: #0f172a;
-            padding: 20px;
+            padding: ${GALLERY_PADDING}px;
           }
 
           .gallery-block {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: ${GALLERY_HEADER_GAP}px;
           }
 
           .gallery-heading {
@@ -153,7 +214,7 @@ export function buildSocialPreviewGalleryHtml(options: {
 
           .gallery-row {
             display: flex;
-            gap: 32px;
+            gap: ${GALLERY_GAP}px;
             align-items: flex-start;
           }
 
@@ -201,8 +262,8 @@ export function buildSocialPreviewGalleryHtml(options: {
 }
 
 export function buildSocialPreviewComparisonHtml(options: {
-  beforeImageUrl: string;
-  afterImageUrl: string;
+  beforeImages: SocialPreviewImageSet;
+  afterImages: SocialPreviewImageSet;
 }): string {
   return `<!doctype html>
     <html lang="en">
@@ -226,7 +287,7 @@ export function buildSocialPreviewComparisonHtml(options: {
             padding: 20px;
             display: flex;
             flex-direction: column;
-            gap: 28px;
+            gap: ${COMPARISON_GAP}px;
           }
 
           .gallery-block {
@@ -286,8 +347,26 @@ export function buildSocialPreviewComparisonHtml(options: {
         </style>
       </head>
       <body>
-        ${buildGalleryHtml({ imageUrl: options.beforeImageUrl, heading: "Before" })}
-        ${buildGalleryHtml({ imageUrl: options.afterImageUrl, heading: "After" })}
+        ${buildGalleryHtml({ images: options.beforeImages, heading: "Before" })}
+        ${buildGalleryHtml({ images: options.afterImages, heading: "After" })}
       </body>
     </html>`;
+}
+
+export async function capturePixelPerfectScreenshot(
+  page: Page,
+  options: {
+    path: string;
+    width: number;
+    height: number;
+  },
+): Promise<void> {
+  await page.setViewportSize({
+    width: options.width,
+    height: options.height,
+  });
+  await page.screenshot({
+    path: options.path,
+    scale: "css",
+  });
 }

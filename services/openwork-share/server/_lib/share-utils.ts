@@ -6,12 +6,19 @@ import type {
   BundleUrls,
   Frontmatter,
   NormalizedBundle,
+  OgImageUrlSet,
   NormalizedCommandItem,
   NormalizedSkillItem,
   OpenInAppUrls,
   RequestLike,
   ValidationResult,
 } from "./types.ts";
+import {
+  DEFAULT_OG_IMAGE_VARIANT,
+  DEFAULT_TWITTER_IMAGE_VARIANT,
+  OG_IMAGE_VARIANTS,
+  type OgImageVariant,
+} from "./og-image-variants.ts";
 
 export const OPENWORK_SITE_URL = "https://openwork.software";
 export const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
@@ -122,9 +129,35 @@ export function buildRootUrl(req: RequestLike): string {
   return normalizeBaseUrl(getOrigin(req)) || DEFAULT_PUBLIC_BASE_URL;
 }
 
-export function buildOgImageUrl(req: RequestLike, targetId = "root"): string {
+export function buildOgImageUrlFromOrigin(
+  origin: string,
+  targetId = "root",
+  variant: OgImageVariant = DEFAULT_OG_IMAGE_VARIANT,
+): string {
+  const url = new URL(`${normalizeBaseUrl(origin) || DEFAULT_PUBLIC_BASE_URL}/og/${encodeURIComponent(targetId)}`);
+  if (variant !== DEFAULT_OG_IMAGE_VARIANT) {
+    url.searchParams.set("variant", variant);
+  }
+  return url.toString();
+}
+
+export function buildOgImageUrl(req: RequestLike, targetId = "root", variant: OgImageVariant = DEFAULT_OG_IMAGE_VARIANT): string {
   const origin = buildRootUrl(req);
-  return `${origin}/og/${encodeURIComponent(targetId)}`;
+  return buildOgImageUrlFromOrigin(origin, targetId, variant);
+}
+
+export function buildOgImageUrls(req: RequestLike, targetId = "root"): OgImageUrlSet {
+  const origin = buildRootUrl(req);
+  return {
+    default: buildOgImageUrlFromOrigin(origin, targetId, DEFAULT_OG_IMAGE_VARIANT),
+    twitter: buildOgImageUrlFromOrigin(origin, targetId, DEFAULT_TWITTER_IMAGE_VARIANT),
+    byVariant: Object.fromEntries(
+      Object.keys(OG_IMAGE_VARIANTS).map((variant) => [
+        variant,
+        buildOgImageUrlFromOrigin(origin, targetId, variant as OgImageVariant),
+      ]),
+    ) as Record<OgImageVariant, string>,
+  };
 }
 
 export function buildBundleUrls(req: RequestLike, id: string): BundleUrls {

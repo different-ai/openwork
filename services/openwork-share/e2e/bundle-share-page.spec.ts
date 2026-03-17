@@ -5,6 +5,8 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   buildPngDataUrl,
   buildSocialPreviewGalleryHtml,
+  capturePixelPerfectScreenshot,
+  getSocialPreviewGalleryViewport,
   getScenarioTitleRegion,
   SOCIAL_PREVIEW_SCENARIOS,
 } from "./social-preview-simulator.ts";
@@ -79,16 +81,26 @@ test("shows a read-only shared skill page with OpenWork import actions", async (
 
 test("publishes a share page with a valid OG preview card for link unfurls", async ({ page }) => {
   const shareUrl = await publishSkill(page);
-  const ogImageUrl = await page.locator('meta[property="og:image"]').getAttribute("content");
+  const ogImageUrls = await page.locator('meta[property="og:image"]').evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("content") ?? "").filter(Boolean),
+  );
+  const ogImageUrl = ogImageUrls[0];
   const ogTitle = await page.locator('meta[property="og:title"]').getAttribute("content");
   const ogDescription = await page.locator('meta[property="og:description"]').getAttribute("content");
   const twitterCard = await page.locator('meta[name="twitter:card"]').getAttribute("content");
+  const twitterImageUrl = await page.locator('meta[name="twitter:image"]').getAttribute("content");
 
+  expect(ogImageUrls).toHaveLength(4);
   expect(ogImageUrl).toBeTruthy();
   expect(ogImageUrl).toContain("/og/");
+  expect(ogImageUrl).not.toContain("variant=");
+  expect(ogImageUrls).toContain(`${ogImageUrl!}?variant=linkedin`);
+  expect(ogImageUrls).toContain(`${ogImageUrl!}?variant=slack`);
+  expect(ogImageUrls).toContain(`${ogImageUrl!}?variant=whatsapp`);
   expect(ogTitle).toBe("agent-creator");
   expect(ogDescription).toBe("Create new OpenCode agents with a gpt-5.2-codex default.");
   expect(twitterCard).toBe("summary_large_image");
+  expect(twitterImageUrl).toBe(`${ogImageUrl!}?variant=twitter`);
 
   const pngResponse = await page.request.get(ogImageUrl!);
   expect(pngResponse.ok()).toBeTruthy();
@@ -127,6 +139,33 @@ test("publishes a share page with a valid OG preview card for link unfurls", asy
   expect(imageMetrics.height).toBe(630);
   expect(imageMetrics.darkPixels).toBeGreaterThan(2200);
 
+  const twitterPngResponse = await page.request.get(twitterImageUrl!);
+  expect(twitterPngResponse.ok()).toBeTruthy();
+  const twitterMetrics = await page.evaluate(async (url) => {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return {
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+    };
+  }, twitterImageUrl!);
+  expect(twitterMetrics.width).toBe(1200);
+  expect(twitterMetrics.height).toBe(600);
+
+  const linkedinImageUrl = `${ogImageUrl!}?variant=linkedin`;
+  const linkedinMetrics = await page.evaluate(async (url) => {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return {
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+    };
+  }, linkedinImageUrl);
+  expect(linkedinMetrics.width).toBe(1200);
+  expect(linkedinMetrics.height).toBe(627);
+
   const svgResponse = await page.request.get(`${ogImageUrl!}?format=svg`);
   expect(svgResponse.ok()).toBeTruthy();
   expect(svgResponse.headers()["content-type"] ?? "").toContain("image/svg+xml");
@@ -144,24 +183,41 @@ test("publishes a share page with a valid OG preview card for link unfurls", asy
 
 test("keeps the OG title legible across simulated social preview sizes", async ({ page }, testInfo) => {
   await publishSkill(page);
-  const ogImageUrl = await page.locator('meta[property="og:image"]').getAttribute("content");
+  const ogImageUrl = await page.locator('meta[property="og:image"]').first().getAttribute("content");
+  const twitterImageUrl = await page.locator('meta[name="twitter:image"]').getAttribute("content");
 
   expect(ogImageUrl).toBeTruthy();
+  expect(twitterImageUrl).toBeTruthy();
 
-  const pngResponse = await page.request.get(ogImageUrl!);
-  expect(pngResponse.ok()).toBeTruthy();
-
-  const ogPng = Buffer.from(await pngResponse.body());
+  const variantUrls = {
+    facebook: ogImageUrl!,
+    linkedin: `${ogImageUrl!}?variant=linkedin`,
+    slack: `${ogImageUrl!}?variant=slack`,
+    whatsapp: `${ogImageUrl!}?variant=whatsapp`,
+    twitter: twitterImageUrl!,
+  };
+  const variantImageUrls = {
+    facebook: buildPngDataUrl(Buffer.from(await (await page.request.get(variantUrls.facebook)).body())),
+    linkedin: buildPngDataUrl(Buffer.from(await (await page.request.get(variantUrls.linkedin)).body())),
+    slack: buildPngDataUrl(Buffer.from(await (await page.request.get(variantUrls.slack)).body())),
+    whatsapp: buildPngDataUrl(Buffer.from(await (await page.request.get(variantUrls.whatsapp)).body())),
+    twitter: buildPngDataUrl(Buffer.from(await (await page.request.get(variantUrls.twitter)).body())),
+  };
   const socialPreviewPage = await page.context().newPage();
-  await socialPreviewPage.setViewportSize({ width: 2080, height: 520 });
   await socialPreviewPage.setContent(
     buildSocialPreviewGalleryHtml({
-      imageUrl: buildPngDataUrl(ogPng),
+      images: variantImageUrls,
     }),
     { waitUntil: "load" },
   );
-  await socialPreviewPage.screenshot({
+  await socialPreviewPage.waitForFunction(() =>
+    Array.from(document.images).every((image) => image.complete && image.naturalWidth > 0),
+  );
+  const galleryViewport = getSocialPreviewGalleryViewport();
+  await capturePixelPerfectScreenshot(socialPreviewPage, {
     path: testInfo.outputPath("social-preview-gallery.png"),
+    width: galleryViewport.width,
+    height: galleryViewport.height,
   });
 
   for (const scenario of SOCIAL_PREVIEW_SCENARIOS) {

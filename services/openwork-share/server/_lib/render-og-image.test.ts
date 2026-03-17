@@ -34,3 +34,19 @@ test("renderBundleOgImage focuses on bundle metadata instead of bundle body text
   assert.match(svg, /trigger: idle/);
   assert.doesNotMatch(svg, /Runs after the conversation is idle for 24h/);
 });
+
+test("renderBundleOgImage supports platform-specific canvas dimensions", () => {
+  const rawJson = JSON.stringify({
+    schemaVersion: 1,
+    type: "skill",
+    name: "follow-up-reminder",
+    description: "Shareable reminder skill",
+    content: "# follow-up-reminder",
+  });
+
+  const twitterSvg = renderBundleOgImage({ id: "01TESTPREVIEW", rawJson, variant: "twitter" });
+  const linkedinSvg = renderBundleOgImage({ id: "01TESTPREVIEW", rawJson, variant: "linkedin" });
+
+  assert.match(twitterSvg, /<svg width="1200" height="600"/);
+  assert.match(linkedinSvg, /<svg width="1200" height="627"/);
+});
