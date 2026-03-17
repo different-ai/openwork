@@ -62,35 +62,11 @@ services:
         echo "[orchestrator] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
-        # --- Build Linux binaries into container-local path ---
-        # Avoids overwriting macOS-native binaries on the host mount.
-        export OPENWORK_SERVER_BIN="/tmp/openwork-bins/openwork-server"
-        export OPENCODE_ROUTER_BIN="/tmp/openwork-bins/opencode-router"
-        mkdir -p /tmp/openwork-bins
-
-        # --- Compile sidecars for the container architecture ---
-        case "$(uname -m)" in
-          x86_64|amd64)
-            BUN_TARGET="bun-linux-x64"
-            ;;
-          aarch64|arm64)
-            BUN_TARGET="bun-linux-arm64"
-            ;;
-          *)
-            echo "Unsupported container architecture: $(uname -m)" >&2
-            exit 1
-            ;;
-        esac
-
-        echo "[orchestrator] Building openwork-server binary (linux)..."
-        cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
-
-        echo "[orchestrator] Building opencode-router binary (linux)..."
-        OPENCODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
-        cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
-          --define "__OPENCODE_ROUTER_VERSION__=\"$${OPENCODE_ROUTER_VERSION}\"" --outfile "$$OPENCODE_ROUTER_BIN"
-
-        cd /app
+        # --- Use source entrypoints for the dev stack ---
+        # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
+        # issues from bun --compile inside Docker on macOS.
+        export OPENWORK_SERVER_BIN="/app/packages/server/src/cli.ts"
+        export OPENCODE_ROUTER_BIN="/app/packages/opencode-router/src/cli.ts"
 
         # --- Resolve tokens ---
         if [ -z "$$OPENWORK_TOKEN" ]; then

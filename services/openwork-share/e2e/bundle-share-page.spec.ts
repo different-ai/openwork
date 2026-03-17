@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const initialBody = `---
 name: agent-creator
@@ -10,7 +10,7 @@ description: Create new OpenCode agents with a gpt-5.2-codex default.
 Any markdown body is acceptable here.
 `;
 
-test("shows a read-only shared skill page with OpenWork import actions", async ({ page }) => {
+async function publishSkill(page: Page) {
   await page.goto("/");
 
   await page.locator('input[type="file"]').setInputFiles({
@@ -24,7 +24,11 @@ test("shows a read-only shared skill page with OpenWork import actions", async (
     page.getByRole("button", { name: /generate share link/i }).click(),
   ]);
 
-  const shareUrl = page.url();
+  return page.url();
+}
+
+test("shows a read-only shared skill page with OpenWork import actions", async ({ page }) => {
+  const shareUrl = await publishSkill(page);
 
   const jsonResponse = await page.request.get(shareUrl, {
     headers: { Accept: "application/json" },
@@ -62,4 +66,69 @@ test("shows a read-only shared skill page with OpenWork import actions", async (
   const deepLinkQuery = new URL((openInAppHref ?? "").replace("openwork://import-bundle?", "https://example.test/?"));
   expect(deepLinkQuery.searchParams.get("ow_bundle")).toBe(shareUrl);
   expect(deepLinkQuery.searchParams.get("ow_label")).toBe("agent-creator");
+});
+
+test("publishes a share page with a valid OG preview card for link unfurls", async ({ page }) => {
+  const shareUrl = await publishSkill(page);
+  const ogImageUrl = await page.locator('meta[property="og:image"]').getAttribute("content");
+  const ogTitle = await page.locator('meta[property="og:title"]').getAttribute("content");
+  const ogDescription = await page.locator('meta[property="og:description"]').getAttribute("content");
+  const twitterCard = await page.locator('meta[name="twitter:card"]').getAttribute("content");
+
+  expect(ogImageUrl).toBeTruthy();
+  expect(ogImageUrl).toContain("/og/");
+  expect(ogTitle).toBe("agent-creator");
+  expect(ogDescription).toBe("Create new OpenCode agents with a gpt-5.2-codex default.");
+  expect(twitterCard).toBe("summary_large_image");
+
+  const pngResponse = await page.request.get(ogImageUrl!);
+  expect(pngResponse.ok()).toBeTruthy();
+  expect(pngResponse.headers()["content-type"] ?? "").toContain("image/png");
+
+  const imageMetrics = await page.evaluate(async (url) => {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas context unavailable");
+
+    ctx.drawImage(img, 0, 0);
+    const titleRegion = ctx.getImageData(170, 210, 420, 150).data;
+    let darkPixels = 0;
+
+    for (let index = 0; index < titleRegion.length; index += 4) {
+      const r = titleRegion[index] ?? 255;
+      const g = titleRegion[index + 1] ?? 255;
+      const b = titleRegion[index + 2] ?? 255;
+      if (r < 70 && g < 90 && b < 110) darkPixels += 1;
+    }
+
+    return {
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+      darkPixels,
+    };
+  }, ogImageUrl!);
+
+  expect(imageMetrics.width).toBe(1200);
+  expect(imageMetrics.height).toBe(630);
+  expect(imageMetrics.darkPixels).toBeGreaterThan(2200);
+
+  const svgResponse = await page.request.get(`${ogImageUrl!}?format=svg`);
+  expect(svgResponse.ok()).toBeTruthy();
+  expect(svgResponse.headers()["content-type"] ?? "").toContain("image/svg+xml");
+
+  const svg = await svgResponse.text();
+  expect(svg).toContain("Agent Creator");
+  expect(svg).toContain("agent-creator.md");
+  expect(svg).toContain("SKILL.md");
+  expect(svg).toContain("share.openwork.software");
+  expect(svg).not.toContain("Any markdown body is acceptable here.");
+
+  const pastePreviewHtml = await page.content();
+  expect(pastePreviewHtml).toContain(shareUrl);
 });
