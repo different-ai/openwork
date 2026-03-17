@@ -919,7 +919,6 @@ export default function MessageList(props: MessageListProps) {
         <div class="flex items-start gap-3 text-[14px] text-gray-9">
           <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
           <div class="min-w-0 leading-relaxed">
-            <span class="mr-1">Execution timeline 1 step -</span>
             <span>{headline()}</span>
           </div>
         </div>
@@ -930,7 +929,6 @@ export default function MessageList(props: MessageListProps) {
       <div class="flex items-start gap-3 text-[14px] text-gray-9">
         <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
         <div class="min-w-0 flex-1 leading-relaxed">
-          <span class="mr-1">Execution timeline 1 step -</span>
           <span>{headline()}</span>
           <Show when={task().isTask && task().sessionId}>
             <SubagentThread part={rowProps.part} />
