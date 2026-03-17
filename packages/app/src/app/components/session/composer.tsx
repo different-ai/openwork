@@ -1541,7 +1541,7 @@ export default function Composer(props: ComposerProps) {
 
   createEffect(() => {
     const handler = () => {
-      editorRef?.focus();
+      focusEditorEnd();
     };
     window.addEventListener("openwork:focusPrompt", handler);
     onCleanup(() => window.removeEventListener("openwork:focusPrompt", handler));

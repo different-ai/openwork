@@ -21,6 +21,7 @@
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:local-file-path": "node scripts/local-file-path.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
+    "test:cmdk-focus": "node scripts/cmdk-focus.mjs",
     "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
     "bump:patch": "node scripts/bump-version.mjs patch",
     "bump:minor": "node scripts/bump-version.mjs minor",

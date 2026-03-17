@@ -507,7 +507,18 @@ export default function SessionView(props: SessionViewProps) {
     title: string;
     detail?: string;
     meta?: string;
-    action: () => void;
+    closePalette?: boolean;
+    action: () =>
+      | void
+      | {
+          focusComposer?: boolean;
+        }
+      | Promise<
+          | void
+          | {
+              focusComposer?: boolean;
+            }
+        >;
   };
 
   const messageIdFromInfo = (message: MessageWithParts) => {
@@ -2357,7 +2368,7 @@ export default function SessionView(props: SessionViewProps) {
           const item = commandPaletteItems()[commandPaletteActiveIndex()];
           if (!item) return;
           event.preventDefault();
-          item.action();
+          runCommandPaletteItem(item);
           return;
         }
         if (
@@ -2613,6 +2624,28 @@ export default function SessionView(props: SessionViewProps) {
     setCommandPaletteMode("root");
     setCommandPaletteQuery("");
     setCommandPaletteActiveIndex(0);
+  };
+
+  const runCommandPaletteItem = (item: CommandPaletteItem) => {
+    const shouldClosePalette = item.closePalette !== false;
+    if (shouldClosePalette) {
+      closeCommandPalette();
+    }
+
+    void Promise.resolve(item.action())
+      .then((result) => {
+        if (!shouldClosePalette) return;
+        if (result?.focusComposer) {
+          focusComposer();
+        }
+      })
+      .catch((error) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to run quick action";
+        setToastMessage(message);
+      });
   };
 
   const stepCommandPaletteIndex = (delta: number, total: number) => {
@@ -3550,29 +3583,19 @@ export default function SessionView(props: SessionViewProps) {
     props.setPrompt(draft.text);
   };
 
-  const openSessionFromList = (
+  const openSessionFromList = async (
     workspaceId: string,
     sessionId: string,
-    options?: { focusComposer?: boolean },
   ) => {
     if (!sessionId) return;
-    const shouldFocusComposer = options?.focusComposer === true;
     // Route-driven selection: navigate first and let the route effect own selectSession.
     if (workspaceId === props.activeWorkspaceId) {
       props.setView("session", sessionId);
-      if (shouldFocusComposer) {
-        focusComposer();
-      }
       return;
     }
     // For different workspace, activate workspace first
-    void (async () => {
-      await Promise.resolve(props.activateWorkspace(workspaceId));
-      props.setView("session", sessionId);
-      if (shouldFocusComposer) {
-        focusComposer();
-      }
-    })();
+    await Promise.resolve(props.activateWorkspace(workspaceId));
+    props.setView("session", sessionId);
   };
 
   const createTaskInWorkspace = (workspaceId: string) => {
@@ -3595,20 +3618,9 @@ export default function SessionView(props: SessionViewProps) {
         title: "Create new session",
         detail: "Start a fresh task in the current worker",
         meta: "Create",
-        action: () => {
-          closeCommandPalette();
-          void Promise.resolve(props.createSessionAndOpen())
-            .then((sessionId) => {
-              if (!sessionId) return;
-              focusComposer();
-            })
-            .catch((error) => {
-              const message =
-                error instanceof Error
-                  ? error.message
-                  : "Failed to create session";
-              setToastMessage(message);
-            });
+        action: async () => {
+          const sessionId = await Promise.resolve(props.createSessionAndOpen());
+          return { focusComposer: Boolean(sessionId) };
         },
       },
       {
@@ -3619,7 +3631,6 @@ export default function SessionView(props: SessionViewProps) {
           "Give your selected session a clearer name",
         meta: "Rename",
         action: () => {
-          closeCommandPalette();
           openRenameModal();
         },
       },
@@ -3628,6 +3639,7 @@ export default function SessionView(props: SessionViewProps) {
         title: "Search sessions",
         detail: `${totalSessionCount().toLocaleString()} available across workers`,
         meta: "Jump",
+        closePalette: false,
         action: () => {
           setCommandPaletteMode("sessions");
           setCommandPaletteQuery("");
@@ -3641,7 +3653,6 @@ export default function SessionView(props: SessionViewProps) {
         detail: `Current: ${props.selectedSessionModelLabel || "Model"}`,
         meta: "Open",
         action: () => {
-          closeCommandPalette();
           props.openSessionModelPicker();
         },
       },
@@ -3650,22 +3661,14 @@ export default function SessionView(props: SessionViewProps) {
         title: "Connect provider",
         detail: "Open provider connection flow",
         meta: "Open",
-        action: () => {
-          closeCommandPalette();
-          void props.openProviderAuthModal().catch((error) => {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Failed to load providers";
-            setToastMessage(message);
-          });
-        },
+        action: () => props.openProviderAuthModal(),
       },
       {
         id: "thinking",
         title: "Change thinking",
         detail: `Current: ${props.modelVariantLabel}`,
         meta: "Adjust",
+        closePalette: false,
         action: () => {
           setCommandPaletteMode("thinking");
           setCommandPaletteQuery("");
@@ -3698,11 +3701,9 @@ export default function SessionView(props: SessionViewProps) {
         item.workspaceId === props.activeWorkspaceId
           ? "Current worker"
           : "Switch",
-      action: () => {
-        closeCommandPalette();
-        openSessionFromList(item.workspaceId, item.sessionId, {
-          focusComposer: true,
-        });
+      action: async () => {
+        await openSessionFromList(item.workspaceId, item.sessionId);
+        return { focusComposer: true };
       },
     }));
   });
@@ -3725,8 +3726,8 @@ export default function SessionView(props: SessionViewProps) {
       meta: activeVariant === option.value ? "Current" : undefined,
       action: () => {
         props.setModelVariant(option.value);
-        closeCommandPalette();
         setToastMessage(`Thinking set to ${option.label}.`);
+        return { focusComposer: true };
       },
     }));
   });
@@ -4864,7 +4865,7 @@ export default function SessionView(props: SessionViewProps) {
                             : "text-dls-text hover:bg-dls-hover"
                         }`}
                         onMouseEnter={() => setCommandPaletteActiveIndex(idx())}
-                        onClick={item.action}
+                        onClick={() => runCommandPaletteItem(item)}
                       >
                         <div class="flex items-start justify-between gap-3">
                           <div class="min-w-0">
