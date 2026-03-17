@@ -17,6 +17,7 @@ export type SidebarSessionItem = {
   id: string;
   title: string;
   slug?: string | null;
+  parentID?: string | null;
   time?: {
     updated?: number | null;
     created?: number | null;
@@ -96,7 +97,8 @@ export type ComposerAttachment = {
   mimeType: string;
   size: number;
   kind: "image" | "file";
-  dataUrl: string;
+  file: File;
+  previewUrl?: string;
 };
 
 export type SlashCommandOption = {
@@ -153,7 +155,7 @@ export type DashboardTab =
   | "config"
   | "settings";
 
-export type SettingsTab = "general" | "model" | "advanced" | "debug";
+export type SettingsTab = "general" | "den" | "model" | "advanced" | "debug";
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
@@ -188,14 +190,17 @@ export type SkillCard = {
   trigger?: string;
 };
 
+export type HubSkillRepo = {
+  owner: string;
+  repo: string;
+  ref: string;
+};
+
 export type HubSkillCard = {
   name: string;
   description?: string;
   trigger?: string;
-  source: {
-    owner: string;
-    repo: string;
-    ref: string;
+  source: HubSkillRepo & {
     path: string;
   };
 };

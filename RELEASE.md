@@ -48,6 +48,8 @@ Use `pnpm release:review --json` when automating these checks in scripts or agen
 
 `Release App` publishes the Arch AUR package automatically after the Linux `.deb` asset is uploaded.
 
+For local AMD64 Arch builds without Docker, see `packaging/aur/README.md`.
+
 Required repo config:
 
 - GitHub Actions secret: `AUR_SSH_PRIVATE_KEY` (SSH key with push access to the AUR package repo)

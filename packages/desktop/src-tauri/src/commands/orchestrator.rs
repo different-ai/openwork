@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
 use std::io::Read;
@@ -28,6 +28,7 @@ const SANDBOX_PROGRESS_EVENT: &str = "openwork://sandbox-create-progress";
 pub struct OrchestratorDetachedHost {
     pub openwork_url: String,
     pub token: String,
+    pub owner_token: Option<String>,
     pub host_token: String,
     pub port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -719,14 +720,8 @@ fn format_sandbox_start_timeout_error(
         format!("stage=openwork.healthcheck"),
         format!("elapsed_ms={elapsed_ms}"),
         format!("url={openwork_url}"),
-        format!(
-            "last_error={}",
-            last_error.unwrap_or("none")
-        ),
-        format!(
-            "container_state={}",
-            container_state.unwrap_or("unknown")
-        ),
+        format!("last_error={}", last_error.unwrap_or("none")),
+        format!("container_state={}", container_state.unwrap_or("unknown")),
     ];
 
     if let Some(probe_error) = container_probe_error {
@@ -737,6 +732,25 @@ fn format_sandbox_start_timeout_error(
         "Timed out waiting for OpenWork server ({})",
         details.join(", ")
     )
+}
+
+fn issue_owner_token(openwork_url: &str, host_token: &str) -> Result<String, String> {
+    let response = ureq::post(&format!("{}/tokens", openwork_url.trim_end_matches('/')))
+        .set("X-OpenWork-Host-Token", host_token)
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"scope":"owner","label":"OpenWork detached owner token"}"#)
+        .map_err(|err| err.to_string())?;
+
+    let payload: Value = response
+        .into_json()
+        .map_err(|err| format!("Failed to parse owner token response: {err}"))?;
+
+    payload
+        .get("token")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "OpenWork server did not return an owner token".to_string())
 }
 
 #[tauri::command]
@@ -1052,9 +1066,12 @@ pub fn orchestrator_start_detached(
         openwork_url
     );
 
+    let owner_token = issue_owner_token(&openwork_url, &host_token).ok();
+
     Ok(OrchestratorDetachedHost {
         openwork_url,
         token,
+        owner_token,
         host_token,
         port,
         sandbox_backend: if wants_docker_sandbox {

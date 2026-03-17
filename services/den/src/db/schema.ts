@@ -103,6 +103,19 @@ export const session = AuthSessionTable
 export const account = AuthAccountTable
 export const verification = AuthVerificationTable
 
+export const DesktopHandoffGrantTable = mysqlTable(
+  "desktop_handoff_grant",
+  {
+    id: id().primaryKey(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    session_token: text("session_token").notNull(),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    consumed_at: timestamp("consumed_at", { fsp: 3 }),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [index("desktop_handoff_grant_user_id").on(table.user_id), index("desktop_handoff_grant_expires_at").on(table.expires_at)],
+)
+
 export const OrgTable = mysqlTable(
   "org",
   {
@@ -125,6 +138,17 @@ export const OrgMembershipTable = mysqlTable(
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [index("org_membership_org_id").on(table.org_id), index("org_membership_user_id").on(table.user_id)],
+)
+
+export const AdminAllowlistTable = mysqlTable(
+  "admin_allowlist",
+  {
+    id: id().primaryKey(),
+    email: varchar("email", { length: 255 }).notNull(),
+    note: varchar("note", { length: 255 }),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex("admin_allowlist_email").on(table.email)],
 )
 
 export const WorkerTable = mysqlTable(

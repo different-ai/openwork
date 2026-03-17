@@ -10,17 +10,33 @@ cp .env.example .env
 pnpm dev
 ```
 
+## Docker dev stack
+
+For a one-command local stack with MySQL + the Den cloud web app, run this from the repo root:
+
+```bash
+./packaging/docker/den-dev-up.sh
+```
+
+That brings up:
+- local MySQL for Den
+- the Den control plane on a randomized host port
+- the OpenWork Cloud web app on a randomized host port
+
+The script prints the exact URLs and `docker compose ... down` command to use for cleanup.
+
 ## Environment
 
 - `DATABASE_URL` MySQL connection URL
 - `BETTER_AUTH_SECRET` 32+ char secret
 - `BETTER_AUTH_URL` public base URL Better Auth uses for OAuth redirects and callbacks
+- `DEN_BETTER_AUTH_TRUSTED_ORIGINS` optional comma-separated trusted origins for Better Auth origin validation (defaults to `CORS_ORIGINS`)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
 - `GOOGLE_CLIENT_SECRET` optional OAuth app client secret for Google sign-in
 - `PORT` server port
-- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
+- `CORS_ORIGINS` comma-separated list of trusted browser origins for Express CORS
 - `PROVISIONER_MODE` `stub` or `render`
 - `WORKER_URL_TEMPLATE` template string with `{workerId}`
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)
@@ -31,7 +47,7 @@ pnpm dev
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
 - `RENDER_WORKER_REGION` Render region for worker services
-- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers
+- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers; the worker build uses its `opencodeVersion` metadata to bundle a matching `opencode` binary into the Render deploy
 - `RENDER_WORKER_NAME_PREFIX` service name prefix
 - `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `openwork.studio` -> `<worker-id>.openwork.studio`)
 - `RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` max time to wait for vanity URL health before falling back to Render URL
@@ -104,8 +120,9 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 Optional GitHub Actions variable:
 
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
-- `DEN_RENDER_WORKER_OPENWORK_VERSION` (defaults to `0.11.113`)
+- `DEN_RENDER_WORKER_OPENWORK_VERSION` pins the `openwork-orchestrator` npm version installed in workers; the worker build bundles the matching `opencode` release asset into the Render image
 - `DEN_CORS_ORIGINS` (defaults to `https://app.openwork.software,https://api.openwork.software,<render-service-url>`)
+- `DEN_BETTER_AUTH_TRUSTED_ORIGINS` (defaults to `DEN_CORS_ORIGINS`)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `openwork.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
 - `DEN_BETTER_AUTH_URL` (defaults to `https://app.openwork.software`)

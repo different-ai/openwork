@@ -20,11 +20,6 @@ English | [简体中文](./README_ZH.md) | [繁體中文](./README_ZH_hk.md)
 OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
 
 ## Alternate UIs
-
-- **OpenCode Router (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. Install with:
-  - `curl -fsSL https://raw.githubusercontent.com/different-ai/opencode-router/dev/install.sh | bash`
-  - run `opencode-router setup`, then `opencode-router whatsapp login`, then `opencode-router start`
-  - full setup: https://github.com/different-ai/opencode-router/blob/dev/README.md
 - **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
   - install: `npm install -g openwork-orchestrator`
   - run: `openwork start --workspace /path/to/workspace --approval auto`
@@ -32,7 +27,7 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
 
 ## Quick start
 
-Download the dmg here https://github.com/different-ai/openwork/releases (or install from source below)
+Download the correct version in [here](https://openworklabs.com/download), in the latest [releases](https://github.com/different-ai/openwork/releases) or install from source below.
 
 ## Why
 
@@ -235,7 +230,7 @@ First contribution checklist:
 
 ## For Teams & Businesses
 
-Interested in using OpenWork in your organization? We'd love to hear from you — reach out at [benjamin.shafii@gmail.com](mailto:benjamin.shafii@gmail.com) to chat about your use case.
+Interested in using OpenWork in your organization? We'd love to hear from you — reach out at [ben@openworklabs.com](mailto:ben@openworklabs.com) to chat about your use case.
 
 ## License
 

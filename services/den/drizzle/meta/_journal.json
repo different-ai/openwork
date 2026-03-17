@@ -22,6 +22,20 @@
       "when": 1771741800000,
       "tag": "0002_worker_created_by",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1773353100000,
+      "tag": "0003_admin_allowlist",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1773705000000,
+      "tag": "0004_desktop_handoff_grants",
+      "breakpoints": true
     }
   ]
 }

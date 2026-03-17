@@ -17,7 +17,11 @@ const DEFAULT_HUB_REPO: HubRepo = {
 };
 
 const CATALOG_TTL_MS = 5 * 60 * 1000;
-let cachedCatalog: { at: number; items: HubSkillItem[] } | null = null;
+const cachedCatalogByRepo = new Map<string, { at: number; items: HubSkillItem[] }>();
+
+function hubRepoKey(repo: HubRepo) {
+  return `${repo.owner}/${repo.repo}@${repo.ref}`;
+}
 
 function hubApiBase(repo: HubRepo) {
   return `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
@@ -98,6 +102,8 @@ async function mapWithConcurrency<T, R>(
 
 export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<HubSkillItem[]> {
   const now = Date.now();
+  const repoKey = hubRepoKey(repo);
+  const cachedCatalog = cachedCatalogByRepo.get(repoKey);
   if (cachedCatalog && now - cachedCatalog.at < CATALOG_TTL_MS) {
     return cachedCatalog.items;
   }
@@ -153,7 +159,7 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  cachedCatalog = { at: now, items: sorted };
+  cachedCatalogByRepo.set(repoKey, { at: now, items: sorted });
   return sorted;
 }
 

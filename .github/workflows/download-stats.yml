@@ -10,7 +10,7 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   stats:
     if: github.repository == 'different-ai/openwork'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
 

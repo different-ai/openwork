@@ -7,22 +7,26 @@
   color-scheme: light;
   --dls-surface: #ffffff;
   --dls-sidebar: #f9fafb;
-  --dls-border: #e2e8f0;
-  --dls-accent: #1b29ff;
-  --dls-accent-hover: #1d4ed8;
-  --dls-accent-rgb: 27 41 255;
+  --dls-app-bg: #ffffff;
+  --dls-border: #f3f4f6;
+  --dls-accent: #011627;
+  --dls-accent-hover: #000000;
+  --dls-accent-rgb: 1 22 39;
   --dls-text-primary: #111827;
-  --dls-text-secondary: #64748b;
-  --dls-hover: #f8fafc;
-  --dls-active: #eaebef;
-  --dls-radius: 8px;
-  --dls-radius-lg: 16px;
+  --dls-text-secondary: #6b7280;
+  --dls-hover: #f3f4f6;
+  --dls-active: #eef2f7;
+  --dls-radius: 16px;
+  --dls-radius-lg: 24px;
+  --dls-shell-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  --dls-card-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
   --dls-surface: #121212;
   --dls-sidebar: #1a1a1a;
+  --dls-app-bg: #161616;
   --dls-border: #262626;
   --dls-accent: #3b82f6;
   --dls-accent-hover: #2563eb;
@@ -31,6 +35,8 @@
   --dls-text-secondary: #9ca3af;
   --dls-hover: #1f1f1f;
   --dls-active: #2d2d2d;
+  --dls-shell-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  --dls-card-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
 }
 
 html,

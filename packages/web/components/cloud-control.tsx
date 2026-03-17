@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-type Step = 1 | 2;
+type Step = "auth" | "name" | "initializing" | "connect" | "workspace";
 type AuthMode = "sign-in" | "sign-up";
 type SocialAuthProvider = "github" | "google";
 type ShellView = "workers" | "billing";
@@ -67,6 +67,7 @@ type WorkerLaunch = {
   openworkUrl: string | null;
   workspaceId: string | null;
   clientToken: string | null;
+  ownerToken: string | null;
   hostToken: string | null;
 };
 
@@ -81,6 +82,7 @@ type WorkerSummary = {
 
 type WorkerTokens = {
   clientToken: string | null;
+  ownerToken: string | null;
   hostToken: string | null;
   openworkUrl: string | null;
   workspaceId: string | null;
@@ -158,8 +160,9 @@ const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
-const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.openwork.software").trim();
-
+const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
+const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
+const OPENWORK_DISCORD_URL = "https://discord.gg/VEhNQXxYMB";
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
   if (atIndex === -1 || atIndex + 1 >= email.length) {
@@ -228,19 +231,46 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
 
 function getSocialCallbackUrl(): string {
   try {
-    return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software").toString();
+    const origin = typeof window !== "undefined" ? window.location.origin : OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software";
+    const callbackUrl = new URL("/", origin);
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      for (const key of ["mode", "desktopAuth", "desktopScheme"]) {
+        const value = params.get(key)?.trim() ?? "";
+        if (value) callbackUrl.searchParams.set(key, value);
+      }
+    }
+    return callbackUrl.toString();
   } catch {
     return "https://app.openwork.software/";
   }
+}
+
+function normalizeAuthModeParam(value: string | null | undefined): AuthMode | null {
+  return value === "sign-in" || value === "sign-up" ? value : null;
 }
 
 function getSocialProviderLabel(provider: SocialAuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
 }
 
+function normalizeWorkerName(input: string): string {
+  const normalized = input.trim().replace(/\s+/g, " ");
+  return normalized || "Founder Ops Pilot";
+}
+
+function isDesktopContext(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const ua = window.navigator.userAgent || "";
+  return !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+}
+
 function GitHubLogo() {
   return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" className="ow-social-icon">
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="h-4 w-4 shrink-0">
       <path
         fill="currentColor"
         d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.5 7.5 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
@@ -251,7 +281,7 @@ function GitHubLogo() {
 
 function GoogleLogo() {
   return (
-    <svg viewBox="0 0 18 18" aria-hidden="true" className="ow-social-icon">
+    <svg viewBox="0 0 18 18" aria-hidden="true" className="h-4 w-4 shrink-0">
       <path
         fill="#4285F4"
         d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62Z"
@@ -267,6 +297,17 @@ function GoogleLogo() {
       <path
         fill="#EA4335"
         d="M9 3.58c1.32 0 2.5.45 3.43 1.33l2.57-2.57C13.46.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.03 2.33c.7-2.12 2.67-3.7 5.01-3.7Z"
+      />
+    </svg>
+  );
+}
+
+function DiscordLogo() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 shrink-0">
+      <path
+        fill="currentColor"
+        d="M20.317 4.369A19.791 19.791 0 0 0 15.558 3c-.206.375-.446.88-.61 1.275a18.27 18.27 0 0 0-5.896 0A12.62 12.62 0 0 0 8.44 3a19.736 19.736 0 0 0-4.76 1.37C.67 8.874-.142 13.268.264 17.6a19.9 19.9 0 0 0 5.84 2.962c.47-.63.89-1.296 1.252-1.994a12.97 12.97 0 0 1-1.972-.95c.166-.12.328-.246.486-.377 3.804 1.787 7.928 1.787 11.688 0 .16.13.322.257.487.377-.628.377-1.29.695-1.974.951.362.697.782 1.362 1.252 1.993a19.87 19.87 0 0 0 5.84-2.962c.477-5.02-.816-9.374-3.006-13.23ZM8.02 14.962c-1.14 0-2.074-1.05-2.074-2.337 0-1.286.915-2.337 2.074-2.337 1.168 0 2.093 1.06 2.074 2.337 0 1.287-.915 2.337-2.074 2.337Zm7.96 0c-1.14 0-2.074-1.05-2.074-2.337 0-1.286.916-2.337 2.074-2.337 1.169 0 2.094 1.06 2.075 2.337 0 1.287-.906 2.337-2.075 2.337Z"
       />
     </svg>
   );
@@ -428,6 +469,7 @@ function getWorker(payload: unknown): WorkerLaunch | null {
     openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
     workspaceId: null,
     clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
+    ownerToken: tokens && typeof tokens.owner === "string" ? tokens.owner : null,
     hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null
   };
 }
@@ -462,15 +504,16 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   const tokens = payload.tokens;
   const connect = isRecord(payload.connect) ? payload.connect : null;
   const clientToken = typeof tokens.client === "string" ? tokens.client : null;
+  const ownerToken = typeof tokens.owner === "string" ? tokens.owner : null;
   const hostToken = typeof tokens.host === "string" ? tokens.host : null;
   const openworkUrl = connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null;
   const workspaceId = connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null;
 
-  if (!clientToken && !hostToken) {
+  if (!clientToken && !ownerToken && !hostToken) {
     return null;
   }
 
-  return { clientToken, hostToken, openworkUrl, workspaceId };
+  return { clientToken, ownerToken, hostToken, openworkUrl, workspaceId };
 }
 
 function getWorkerRuntimeSnapshot(payload: unknown): WorkerRuntimeSnapshot | null {
@@ -671,7 +714,7 @@ function getWorkerStatusCopy(status: string): string {
   switch (normalized) {
     case "provisioning":
     case "starting":
-      return "Starting... This may take a minute.";
+      return "Starting... first runs usually take around 1-2 minutes.";
     case "healthy":
     case "ready":
       return "Ready to connect.";
@@ -682,18 +725,6 @@ function getWorkerStatusCopy(status: string): string {
       return "Worker is suspended.";
     default:
       return "Worker status unknown.";
-  }
-}
-
-function getWorkerAddressLabel(item: WorkerListItem): string {
-  if (!item.instanceUrl) {
-    return shortValue(item.workerId);
-  }
-
-  try {
-    return new URL(item.instanceUrl).host;
-  } catch {
-    return shortValue(item.instanceUrl);
   }
 }
 
@@ -711,6 +742,7 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     (typeof value.openworkUrl === "string" || value.openworkUrl === null || typeof value.openworkUrl === "undefined") &&
     (typeof value.workspaceId === "string" || value.workspaceId === null || typeof value.workspaceId === "undefined") &&
     (typeof value.clientToken === "string" || value.clientToken === null) &&
+    (typeof value.ownerToken === "string" || value.ownerToken === null || typeof value.ownerToken === "undefined") &&
     (typeof value.hostToken === "string" || value.hostToken === null)
   );
 }
@@ -725,6 +757,7 @@ function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | null = n
     openworkUrl: item.instanceUrl,
     workspaceId: null,
     clientToken: current?.workerId === item.workerId ? current.clientToken : null,
+    ownerToken: current?.workerId === item.workerId ? current.ownerToken : null,
     hostToken: current?.workerId === item.workerId ? current.hostToken : null
   };
 }
@@ -979,6 +1012,7 @@ function CredentialRow({
   label,
   value,
   placeholder,
+  hint,
   canCopy,
   copied,
   onCopy
@@ -986,6 +1020,7 @@ function CredentialRow({
   label: string;
   value: string | null;
   placeholder: string;
+  hint?: string;
   canCopy: boolean;
   copied: boolean;
   onCopy: () => void;
@@ -1002,19 +1037,20 @@ function CredentialRow({
         />
         <button
           type="button"
-          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-[#1B29FF] hover:text-[#1B29FF] disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={!canCopy}
           onClick={onCopy}
         >
           {copied ? "Copied" : canCopy ? "Copy" : "N/A"}
         </button>
       </div>
+      {hint ? <span className="px-0.5 text-[0.7rem] text-slate-500">{hint}</span> : null}
     </label>
   );
 }
 
 export function CloudControlPanel() {
-  const [step, setStep] = useState<Step>(1);
+  const [step, setStep] = useState<Step>("auth");
   const [shellView, setShellView] = useState<ShellView>("workers");
 
   const [authMode, setAuthMode] = useState<AuthMode>("sign-up");
@@ -1036,6 +1072,7 @@ export function CloudControlPanel() {
 
     return token;
   });
+  const [sessionHydrated, setSessionHydrated] = useState(false);
 
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
@@ -1059,15 +1096,27 @@ export function CloudControlPanel() {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [tokenFetchedForWorkerId, setTokenFetchedForWorkerId] = useState<string | null>(null);
   const [deleteBusyWorkerId, setDeleteBusyWorkerId] = useState<string | null>(null);
+  const [redeployBusyWorkerId, setRedeployBusyWorkerId] = useState<string | null>(null);
   const [workerQuery, setWorkerQuery] = useState("");
   const [workerStatusFilter, setWorkerStatusFilter] = useState<WorkerStatusBucket | "all">("all");
   const [showLaunchForm, setShowLaunchForm] = useState(false);
+  const [mobileWorkersExpanded, setMobileWorkersExpanded] = useState(false);
+  const [pendingRestoredWorkerId, setPendingRestoredWorkerId] = useState<string | null>(null);
   const [openAccordion, setOpenAccordion] = useState<"connect" | "actions" | "advanced" | null>(null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<WorkerRuntimeSnapshot | null>(null);
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
+  const [signupOnboardingActive, setSignupOnboardingActive] = useState(false);
+  const [autoLaunchPending, setAutoLaunchPending] = useState(false);
+  const [desktopContext, setDesktopContext] = useState(false);
+  const [desktopAuthRequested, setDesktopAuthRequested] = useState(false);
+  const [desktopAuthScheme, setDesktopAuthScheme] = useState("openwork");
+  const [desktopRedirectBusy, setDesktopRedirectBusy] = useState(false);
+  const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
+  const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
+  const [nameStepBusy, setNameStepBusy] = useState(false);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker: WorkerLaunch | null =
@@ -1077,22 +1126,29 @@ export function CloudControlPanel() {
         ? listItemToWorker(selectedWorker, worker)
         : worker;
 
-  const progressWidth = step === 1 ? "45%" : "100%";
-  const isShellStep = step === 2;
+  const isShellStep = step === "workspace";
   const defaultAuthInfo = getAuthInfoForMode(authMode);
   const showAuthFeedback = authInfo !== defaultAuthInfo || authError !== null;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
+  const preferredOpenworkToken = activeWorker?.ownerToken ?? activeWorker?.clientToken ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
+  const ownedWorkerCount = workers.filter((item) => item.isMine).length;
+  const additionalWorkerNeedsPlan = Boolean(
+    user &&
+    ownedWorkerCount > 0 &&
+    billingSummary?.featureGateEnabled &&
+    !billingSummary.hasActivePlan
+  );
   const openworkDeepLink = buildOpenworkDeepLink(
     openworkConnectUrl,
-    activeWorker?.clientToken ?? null,
+    preferredOpenworkToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
   );
   const openworkAppConnectUrl = buildOpenworkAppConnectUrl(
     OPENWORK_APP_CONNECT_BASE_URL,
     openworkConnectUrl,
-    activeWorker?.clientToken ?? null,
+    preferredOpenworkToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
   );
@@ -1115,8 +1171,75 @@ export function CloudControlPanel() {
     return getWorkerStatusMeta(item.status).bucket === workerStatusFilter;
   });
 
+  const selectWorker = (item: WorkerListItem, options: { collapseMobile?: boolean } = {}) => {
+    setWorkerLookupId(item.workerId);
+    setWorker((current) => listItemToWorker(item, current));
+    if (options.collapseMobile) {
+      setMobileWorkersExpanded(false);
+      setShowLaunchForm(false);
+    }
+  };
+
+  const mobilePreviewWorker = selectedWorker ?? filteredWorkers[0] ?? null;
+
+  const renderWorkerRow = (
+    item: WorkerListItem,
+    options: { collapseMobile?: boolean; dense?: boolean } = {}
+  ) => {
+    const meta = getWorkerStatusMeta(item.status);
+    const isActive = workerLookupId === item.workerId;
+    const statusPill =
+      meta.bucket === "ready"
+        ? "bg-[#E8F5E9] text-[#2E7D32]"
+        : meta.bucket === "starting"
+          ? "bg-amber-100 text-amber-700"
+          : meta.bucket === "attention"
+            ? "bg-rose-100 text-rose-700"
+            : "bg-slate-100 text-slate-500";
+
+      const statusDot =
+      meta.bucket === "ready"
+        ? "bg-[#2E7D32]"
+        : meta.bucket === "starting"
+          ? "bg-amber-500 animate-pulse"
+          : meta.bucket === "attention"
+            ? "bg-rose-500"
+            : "bg-slate-400";
+
+    return (
+      <button
+        key={item.workerId}
+        type="button"
+        onClick={() => selectWorker(item, { collapseMobile: options.collapseMobile })}
+        className={`w-full rounded-[20px] border ${options.dense ? "p-3" : "p-4"} text-left transition-all ${
+          isActive
+            ? "border-slate-900/10 bg-slate-900/[0.03] ring-1 ring-slate-900/10"
+            : "border-slate-100 bg-white hover:border-slate-300"
+        }`}
+      >
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <span className={`truncate pr-2 text-sm font-semibold ${isActive ? "text-slate-900" : "text-slate-700"}`}>
+            {item.workerName}
+          </span>
+          {item.isMine ? (
+            <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Yours
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-3 flex items-center justify-end">
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${statusPill}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
+            {meta.label}
+          </span>
+        </div>
+      </button>
+    );
+  };
+
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
+  const isSelectedWorkerFailed = selectedWorkerStatus.trim().toLowerCase() === "failed";
   const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
@@ -1159,7 +1282,7 @@ export function CloudControlPanel() {
       };
     }
 
-    const accessToken = candidate.clientToken?.trim() ?? "";
+    const accessToken = candidate.ownerToken?.trim() ?? candidate.clientToken?.trim() ?? "";
     if (!accessToken) {
       const mountedWorkspaceId = parseWorkspaceIdFromUrl(instanceUrl);
       return {
@@ -1216,6 +1339,9 @@ export function CloudControlPanel() {
       const nextWorkers = getWorkersList(payload);
       setWorkers(nextWorkers);
 
+      const restoredWorkerStillExists =
+        pendingRestoredWorkerId && nextWorkers.some((item) => item.workerId === pendingRestoredWorkerId);
+
       const currentSelection = options.keepSelection ? workerLookupId : "";
       const nextSelectedId =
         currentSelection && nextWorkers.some((item) => item.workerId === currentSelection)
@@ -1223,6 +1349,21 @@ export function CloudControlPanel() {
           : nextWorkers[0]?.workerId ?? "";
 
       setWorkerLookupId(nextSelectedId);
+
+      if (!nextSelectedId) {
+        setWorker(null);
+        setTokenFetchedForWorkerId(null);
+        setPendingRestoredWorkerId(null);
+        setLaunchStatus("Name your worker and click launch.");
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
+        }
+        return;
+      }
+
+      if (restoredWorkerStillExists) {
+        setPendingRestoredWorkerId(null);
+      }
 
       if (nextSelectedId && worker && worker.workerId === nextSelectedId) {
         const selected = nextWorkers.find((item) => item.workerId === nextSelectedId) ?? null;
@@ -1519,7 +1660,20 @@ export function CloudControlPanel() {
   }, [authToken]);
 
   useEffect(() => {
-    void refreshSession(true);
+    let cancelled = false;
+
+    const hydrateSession = async () => {
+      await refreshSession(true);
+      if (!cancelled) {
+        setSessionHydrated(true);
+      }
+    };
+
+    void hydrateSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [authToken]);
 
   useEffect(() => {
@@ -1534,14 +1688,14 @@ export function CloudControlPanel() {
 
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
-    if (!user || !targetWorkerId) {
+    if (!user || !targetWorkerId || pendingRestoredWorkerId === targetWorkerId) {
       setRuntimeSnapshot(null);
       setRuntimeError(null);
       return;
     }
 
     void refreshRuntime(targetWorkerId, { quiet: true });
-  }, [user?.id, authToken, activeWorker?.workerId, selectedWorker?.workerId]);
+  }, [user?.id, authToken, activeWorker?.workerId, pendingRestoredWorkerId, selectedWorker?.workerId]);
 
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
@@ -1598,7 +1752,39 @@ export function CloudControlPanel() {
       userId: user.id,
       authMethod: pendingSocialSignup
     });
-  }, [user?.id]);
+    if (desktopAuthRequested) {
+      setSignupOnboardingActive(false);
+      setStep("auth");
+      setAuthInfo("Signed in. Returning to OpenWork...");
+      return;
+    }
+
+    setSignupOnboardingActive(true);
+    setAutoLaunchPending(true);
+    setLaunchError(null);
+    setLaunchStatus("Creating your first worker now. First runs usually take around 1-2 minutes.");
+    setStep("name");
+  }, [desktopAuthRequested, user?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const requestedMode = normalizeAuthModeParam(params.get("mode"));
+    if (requestedMode) {
+      setAuthMode(requestedMode);
+      setAuthInfo(getAuthInfoForMode(requestedMode));
+      setAuthError(null);
+    }
+
+    setDesktopAuthRequested(params.get("desktopAuth") === "1");
+    const requestedScheme = params.get("desktopScheme")?.trim() ?? "";
+    if (/^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)) {
+      setDesktopAuthScheme(requestedScheme);
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1614,7 +1800,7 @@ export function CloudControlPanel() {
     setPaymentReturned(true);
     setCheckoutUrl(null);
     setShellView("billing");
-    setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
+    setLaunchStatus("Checkout return detected. Billing is refreshing now.");
     setAuthInfo("Checkout return detected. Sign in to continue to Billing.");
     appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
     trackPosthogEvent("den_paywall_checkout_returned", {
@@ -1633,7 +1819,8 @@ export function CloudControlPanel() {
       return;
     }
 
-    void refreshBilling({ quiet: true });
+    void refreshBilling({ includeCheckout: false, quiet: true });
+    setPaymentReturned(false);
   }, [paymentReturned, user?.id, authToken]);
 
   useEffect(() => {
@@ -1657,11 +1844,13 @@ export function CloudControlPanel() {
         openworkUrl: parsed.openworkUrl ?? parsed.instanceUrl,
         workspaceId: parsed.workspaceId ?? parseWorkspaceIdFromUrl(parsed.instanceUrl ?? ""),
         clientToken: null,
+        ownerToken: null,
         hostToken: null
       };
 
       setWorker(restored);
       setWorkerLookupId(restored.workerId);
+      setPendingRestoredWorkerId(restored.workerId);
       setLaunchStatus(`Recovered worker ${restored.workerName}. ${getWorkerStatusCopy(restored.status)}`);
       appendEvent("info", "Recovered worker context", `Worker ID ${restored.workerId}`);
     } catch {
@@ -1677,6 +1866,7 @@ export function CloudControlPanel() {
     const serializable: WorkerLaunch = {
       ...worker,
       clientToken: null,
+      ownerToken: null,
       hostToken: null
     };
 
@@ -1684,29 +1874,75 @@ export function CloudControlPanel() {
   }, [worker]);
 
   useEffect(() => {
-    if (user || checkoutUrl) {
-      setStep(2);
+    if (typeof window === "undefined") {
       return;
     }
 
-    setStep(1);
-  }, [user, checkoutUrl]);
+    setDesktopContext(isDesktopContext());
+  }, []);
 
   useEffect(() => {
-    if (step !== 2) {
+    if (user || checkoutUrl) {
+      if (desktopAuthRequested) {
+        return;
+      }
+      if (step === "auth" && !signupOnboardingActive) {
+        setStep("workspace");
+      }
       return;
     }
 
-    if (workers.length === 0) {
-      setShowLaunchForm(true);
+    if (!sessionHydrated) {
+      return;
     }
-  }, [step, workers.length]);
+
+    setStep("auth");
+    setSignupOnboardingActive(false);
+    setAutoLaunchPending(false);
+  }, [checkoutUrl, desktopAuthRequested, sessionHydrated, signupOnboardingActive, step, user]);
+
+  useEffect(() => {
+    if (step !== "workspace") {
+      return;
+    }
+
+    if (workers.length > 0) {
+      return;
+    }
+
+    setMobileWorkersExpanded(false);
+    setShowLaunchForm(pendingRestoredWorkerId === null);
+  }, [pendingRestoredWorkerId, step, workers.length]);
+
+  useEffect(() => {
+    if (!autoLaunchPending || !user || launchBusy) {
+      return;
+    }
+
+    setAutoLaunchPending(false);
+    void handleLaunchWorker({ source: "signup_auto" });
+  }, [autoLaunchPending, launchBusy, user?.id]);
+
+  useEffect(() => {
+    if (step !== "initializing" || !worker) {
+      return;
+    }
+
+    if (worker.status === "provisioning") {
+      return;
+    }
+
+    setStep(signupOnboardingActive ? "connect" : "workspace");
+  }, [signupOnboardingActive, step, worker?.status, worker?.workerId]);
 
   useEffect(() => {
     if (!user || !worker) {
       return;
     }
-    if (worker.clientToken) {
+    if (pendingRestoredWorkerId === worker.workerId) {
+      return;
+    }
+    if (worker.ownerToken || worker.clientToken) {
       return;
     }
     if (actionBusy !== null || launchBusy) {
@@ -1718,10 +1954,13 @@ export function CloudControlPanel() {
 
     setTokenFetchedForWorkerId(worker.workerId);
     void handleGenerateKey();
-  }, [actionBusy, launchBusy, tokenFetchedForWorkerId, user, worker]);
+  }, [actionBusy, launchBusy, pendingRestoredWorkerId, tokenFetchedForWorkerId, user, worker]);
 
   useEffect(() => {
     if (!user || !worker || worker.status !== "provisioning") {
+      return;
+    }
+    if (pendingRestoredWorkerId === worker.workerId) {
       return;
     }
     if (actionBusy !== null || launchBusy) {
@@ -1746,7 +1985,56 @@ export function CloudControlPanel() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [actionBusy, authToken, launchBusy, user?.id, worker?.workerId, worker?.status]);
+  }, [actionBusy, authToken, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status]);
+
+  useEffect(() => {
+    if (!desktopAuthRequested || !user || desktopRedirectUrl || desktopRedirectBusy || desktopRedirectAttempted) {
+      return;
+    }
+
+    void completeDesktopAuthHandoff();
+  }, [desktopAuthRequested, user?.id, authToken, desktopRedirectUrl, desktopRedirectBusy, desktopRedirectAttempted, desktopAuthScheme]);
+
+  async function completeDesktopAuthHandoff() {
+    if (!desktopAuthRequested || desktopRedirectBusy) {
+      return;
+    }
+
+    setDesktopRedirectBusy(true);
+    setDesktopRedirectAttempted(true);
+    setAuthError(null);
+
+    try {
+      const headers = new Headers();
+      if (authToken) {
+        headers.set("Authorization", `Bearer ${authToken}`);
+      }
+
+      const { response, payload } = await requestJson("/v1/auth/desktop-handoff", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ desktopScheme: desktopAuthScheme }),
+      });
+
+      if (!response.ok) {
+        setAuthError(getErrorMessage(payload, `Desktop handoff failed with ${response.status}.`));
+        return;
+      }
+
+      const openworkUrl = isRecord(payload) && typeof payload.openworkUrl === "string" ? payload.openworkUrl.trim() : "";
+      if (!openworkUrl) {
+        setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
+        return;
+      }
+
+      setDesktopRedirectUrl(openworkUrl);
+      window.location.assign(openworkUrl);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Failed to open OpenWork.");
+    } finally {
+      setDesktopRedirectBusy(false);
+    }
+  }
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1832,7 +2120,20 @@ export function CloudControlPanel() {
         }
       }
 
-      setStep(2);
+      if (desktopAuthRequested) {
+        setSignupOnboardingActive(false);
+        setStep("auth");
+        setAuthInfo("Signed in. Returning to OpenWork...");
+      } else if (authMode === "sign-up") {
+        setSignupOnboardingActive(true);
+        setAutoLaunchPending(true);
+        setLaunchError(null);
+        setLaunchStatus("Creating your first worker now. First runs usually take around 1-2 minutes.");
+        setStep("name");
+      } else {
+        setSignupOnboardingActive(false);
+        setStep("workspace");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
@@ -1968,11 +2269,17 @@ export function CloudControlPanel() {
     setDeleteBusyWorkerId(null);
     setActionBusy(null);
     setLaunchBusy(false);
-    setStep(1);
+    setStep("auth");
     setShellView("workers");
+    setSignupOnboardingActive(false);
+    setAutoLaunchPending(false);
+    setNameStepBusy(false);
+    setWorkerName("Founder Ops Pilot");
     setWorkerQuery("");
     setWorkerStatusFilter("all");
     setShowLaunchForm(false);
+    setMobileWorkersExpanded(false);
+    setPendingRestoredWorkerId(null);
     setAuthMode("sign-up");
     setEmail("");
     setPassword("");
@@ -1988,19 +2295,29 @@ export function CloudControlPanel() {
     }
   }
 
-  async function handleLaunchWorker() {
+  async function handleLaunchWorker(options: {
+    source?: "manual" | "signup_auto" | "onboarding_continue";
+    workerNameOverride?: string;
+  } = {}) {
     if (!user) {
       setAuthError("Sign in before launching a worker.");
       return;
     }
 
+    const resolvedLaunchName = options.workerNameOverride?.trim() || workerName.trim() || "Cloud Worker";
+
     setLaunchBusy(true);
     setLaunchError(null);
     setCheckoutUrl(null);
-    setLaunchStatus("Checking subscription and launch eligibility...");
-    appendEvent("info", "Launch requested", workerName.trim() || "Cloud worker");
+    setLaunchStatus(
+      options.source === "signup_auto"
+        ? "Creating your first worker..."
+        : "Checking subscription and launch eligibility..."
+    );
+    appendEvent("info", "Launch requested", resolvedLaunchName);
     trackPosthogEvent("den_worker_launch_requested", {
-      worker_name_present: Boolean(workerName.trim())
+      worker_name_present: Boolean(resolvedLaunchName),
+      source: options.source ?? "manual"
     });
 
     try {
@@ -2010,7 +2327,7 @@ export function CloudControlPanel() {
           method: "POST",
           headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
           body: JSON.stringify({
-            name: workerName.trim() || "Cloud Worker",
+            name: resolvedLaunchName,
             destination: "cloud"
           })
         },
@@ -2046,6 +2363,13 @@ export function CloudControlPanel() {
 
         return;
       }
+      if (response.status === 409) {
+        const message = getErrorMessage(payload, "This worker could not be launched because a conflicting worker already exists.");
+        setLaunchStatus("Worker launch blocked.");
+        setLaunchError(message);
+        appendEvent("warning", "Launch blocked", message);
+        return;
+      }
 
       if (!response.ok) {
         const message = getErrorMessage(payload, `Launch failed with ${response.status}.`);
@@ -2072,12 +2396,13 @@ export function CloudControlPanel() {
       const resolvedWorker = await withResolvedOpenworkCredentials(parsedWorker);
       setWorker(resolvedWorker);
       setWorkerLookupId(parsedWorker.workerId);
+      setPendingRestoredWorkerId(null);
       setPaymentReturned(false);
       setCheckoutUrl(null);
       setShowLaunchForm(false);
 
       if (resolvedWorker.status === "provisioning") {
-        setLaunchStatus("Provisioning started. This can take a few minutes, and we will keep checking automatically.");
+        setLaunchStatus("Provisioning started. First runs usually take around 1-2 minutes, and we will keep checking automatically.");
         appendEvent("info", "Provisioning started", `Worker ID ${parsedWorker.workerId}`);
       } else {
         setLaunchStatus(getWorkerStatusCopy(resolvedWorker.status));
@@ -2105,6 +2430,66 @@ export function CloudControlPanel() {
     } finally {
       setLaunchBusy(false);
       void refreshWorkers({ keepSelection: true });
+    }
+  }
+
+  async function continueFromName() {
+    const normalizedName = normalizeWorkerName(workerName);
+    setWorkerName(normalizedName);
+
+    trackPosthogEvent("den_worker_name_submitted", {
+      name_length: normalizedName.length
+    });
+
+    setNameStepBusy(true);
+
+    try {
+      if (worker && normalizedName !== worker.workerName) {
+        const { response, payload } = await requestJson(
+          `/v1/workers/${encodeURIComponent(worker.workerId)}`,
+          {
+            method: "PATCH",
+            headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+            body: JSON.stringify({
+              name: normalizedName
+            })
+          },
+          12000
+        );
+
+        if (response.ok) {
+          setWorker((current) => {
+            if (!current || current.workerId !== worker.workerId) {
+              return current;
+            }
+
+            return {
+              ...current,
+              workerName: normalizedName
+            };
+          });
+          setWorkers((current) => current.map((entry) => (
+            entry.workerId === worker.workerId
+              ? { ...entry, workerName: normalizedName }
+              : entry
+          )));
+          appendEvent("success", "Worker named", normalizedName);
+        } else {
+          appendEvent(
+            "warning",
+            "Worker naming deferred",
+            getErrorMessage(payload, "We could not save the worker name yet. You can rename it later in the app.")
+          );
+        }
+      } else if (!worker && !launchBusy && !autoLaunchPending && user) {
+        await handleLaunchWorker({ source: "onboarding_continue", workerNameOverride: normalizedName });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      appendEvent("warning", "Worker naming deferred", message);
+    } finally {
+      setNameStepBusy(false);
+      setStep("initializing");
     }
   }
 
@@ -2181,11 +2566,13 @@ export function CloudControlPanel() {
               openworkUrl: summary.instanceUrl,
               workspaceId: null,
               clientToken: null,
+              ownerToken: null,
               hostToken: null
             };
 
       const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
       setWorker(resolvedWorker);
+      setPendingRestoredWorkerId(null);
 
       setWorkerLookupId(summary.workerId);
 
@@ -2265,6 +2652,7 @@ export function CloudControlPanel() {
               openworkUrl: tokens.openworkUrl ?? worker.openworkUrl,
               workspaceId: tokens.workspaceId ?? worker.workspaceId,
               clientToken: tokens.clientToken,
+              ownerToken: tokens.ownerToken,
               hostToken: tokens.hostToken
             }
           : {
@@ -2276,14 +2664,16 @@ export function CloudControlPanel() {
               openworkUrl: tokens.openworkUrl,
               workspaceId: tokens.workspaceId,
               clientToken: tokens.clientToken,
+              ownerToken: tokens.ownerToken,
               hostToken: tokens.hostToken
             };
 
       const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
       setWorker(resolvedWorker);
+      setPendingRestoredWorkerId(null);
 
       setLaunchStatus("Worker is ready to connect.");
-      appendEvent("success", "Access token ready", `Worker ID ${id}`);
+      appendEvent("success", "Owner token ready", `Worker ID ${id}`);
       void refreshWorkers({ keepSelection: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
@@ -2300,7 +2690,7 @@ export function CloudControlPanel() {
       return;
     }
 
-    if (deleteBusyWorkerId || actionBusy !== null || launchBusy) {
+    if (deleteBusyWorkerId || redeployBusyWorkerId || actionBusy !== null || launchBusy) {
       return;
     }
 
@@ -2338,6 +2728,7 @@ export function CloudControlPanel() {
         }
         return null;
       });
+      setPendingRestoredWorkerId((current) => (current === workerId ? null : current));
 
       setWorkerLookupId((current) => (current === workerId ? "" : current));
 
@@ -2357,121 +2748,438 @@ export function CloudControlPanel() {
     }
   }
 
+  async function handleRedeployWorker(workerId: string) {
+    if (!user) {
+      setLaunchError("Sign in before redeploying a worker.");
+      return;
+    }
+
+    if (redeployBusyWorkerId || deleteBusyWorkerId || actionBusy !== null || launchBusy) {
+      return;
+    }
+
+    const target = workers.find((entry) => entry.workerId === workerId) ?? null;
+    const workerLabel = target?.workerName?.trim() || "Cloud Worker";
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Redeploy "${workerLabel}"? This removes the current worker and creates a new one with the same name.`
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setRedeployBusyWorkerId(workerId);
+    setLaunchError(null);
+    setCheckoutUrl(null);
+    setLaunchStatus(`Redeploying ${workerLabel}...`);
+    appendEvent("info", "Redeploy requested", workerLabel);
+
+    try {
+      const { response: deleteResponse, payload: deletePayload } = await requestJson(`/v1/workers/${encodeURIComponent(workerId)}`, {
+        method: "DELETE",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      });
+
+      if (deleteResponse.status !== 204 && !deleteResponse.ok) {
+        const message = getErrorMessage(deletePayload, `Redeploy failed while deleting (${deleteResponse.status}).`);
+        setLaunchError(message);
+        appendEvent("error", "Redeploy failed", message);
+        return;
+      }
+
+      const { response: createResponse, payload: createPayload } = await requestJson(
+        "/v1/workers",
+        {
+          method: "POST",
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+          body: JSON.stringify({
+            name: workerLabel,
+            destination: "cloud"
+          })
+        },
+        12000
+      );
+
+      if (!createResponse.ok) {
+        const message = getErrorMessage(createPayload, `Redeploy failed while creating (${createResponse.status}).`);
+        setLaunchError(message);
+        appendEvent("error", "Redeploy failed", message);
+        return;
+      }
+
+      const parsedWorker = getWorker(createPayload);
+      if (!parsedWorker) {
+        setLaunchError("Redeploy response was missing worker details.");
+        appendEvent("error", "Redeploy failed", "Worker payload missing");
+        return;
+      }
+
+      const resolvedWorker = await withResolvedOpenworkCredentials(parsedWorker, { quiet: true });
+      setWorker(resolvedWorker);
+      setWorkerLookupId(parsedWorker.workerId);
+      setPendingRestoredWorkerId(null);
+      setPaymentReturned(false);
+      setShowLaunchForm(false);
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LAST_WORKER_STORAGE_KEY, parsedWorker.workerId);
+      }
+
+      if (resolvedWorker.status === "provisioning") {
+        setLaunchStatus(`Redeploy started for ${workerLabel}. This can take a few minutes.`);
+        appendEvent("info", "Redeploy started", `Worker ID ${parsedWorker.workerId}`);
+      } else {
+        setLaunchStatus(getWorkerStatusCopy(resolvedWorker.status));
+        appendEvent("success", "Worker redeployed", workerLabel);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setLaunchError(message);
+      appendEvent("error", "Redeploy failed", message);
+    } finally {
+      setRedeployBusyWorkerId(null);
+      void refreshWorkers({ keepSelection: true });
+    }
+  }
+
   return (
-    <section className={`ow-card${isShellStep ? " ow-card-shell" : " ow-card-auth"}`}>
-      {!isShellStep ? (
-        <div className="ow-progress-track">
-          <span className="ow-progress-fill" style={{ width: progressWidth }} />
-        </div>
-      ) : null}
+    <section
+      className={
+        isShellStep
+          ? "flex min-h-0 w-full flex-1"
+          : step === "auth"
+            ? "mx-auto w-full max-w-[32rem] rounded-[32px] border border-[var(--dls-border)] bg-white/95 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] md:p-6"
+            : "mx-auto w-full max-w-[48rem] rounded-[32px] border border-[var(--dls-border)] bg-white/95 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] md:max-w-none md:p-6"
+      }
+    >
+      <div className={isShellStep ? "flex min-h-0 w-full flex-1" : ""}>
 
-      <div className="ow-card-body">
+        {step === "auth" ? (
+          <div className="mx-auto grid w-full max-w-[32rem] gap-6 px-1 py-2">
+            {sessionHydrated ? (
+              <div className="grid gap-6 rounded-[32px] border border-white/70 bg-white/92 p-5 shadow-[0_28px_80px_-44px_rgba(15,23,42,0.35)] backdrop-blur md:p-6">
+                <div className="grid gap-3 text-center">
+                  <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
+                    {authMode === "sign-up" ? "Create your OpenWork Den account." : "Sign in to OpenWork Den."}
+                  </h1>
+                  <p className="mx-auto max-w-[24rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                    Keep your tasks alive even when your computer sleeps.
+                  </p>
+                </div>
 
-        {step === 1 ? (
-          <div className="ow-stack ow-auth-panel">
-            <div className="ow-heading-block">
-              <span className="ow-icon-chip">01</span>
-              <h1 className="ow-title">{authMode === "sign-up" ? "Get started" : "Welcome back"}</h1>
-              <p className="ow-subtitle">
-                {authMode === "sign-up" ? (
-                  <>
-                    <span className="ow-subtitle-line">Create an account to launch</span>
-                    <span className="ow-subtitle-line">and manage cloud workers.</span>
-                  </>
-                ) : (
-                  getAuthInfoForMode("sign-in")
-                )}
-              </p>
-            </div>
+                {desktopAuthRequested ? (
+                  <div className="rounded-[24px] border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-900">
+                    Finish auth here and we&apos;ll bounce you back into the OpenWork desktop app automatically.
+                    {desktopRedirectUrl ? (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-medium text-sky-900 transition hover:border-sky-300 hover:bg-sky-50"
+                          onClick={() => window.location.assign(desktopRedirectUrl)}
+                        >
+                          Open OpenWork
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
-            <form className="ow-stack" onSubmit={handleAuthSubmit}>
-              <button
-                type="button"
-                className="ow-btn-secondary ow-social-btn"
-                onClick={() => void handleSocialSignIn("github")}
-                disabled={authBusy}
-              >
-                <GitHubLogo />
-                <span>Continue with GitHub</span>
-              </button>
+                <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
+                  <button
+                    type="button"
+                    className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handleSocialSignIn("github")}
+                    disabled={authBusy}
+                  >
+                    <GitHubLogo />
+                    <span>Continue with GitHub</span>
+                  </button>
 
-              <button
-                type="button"
-                className="ow-btn-secondary ow-social-btn"
-                onClick={() => void handleSocialSignIn("google")}
-                disabled={authBusy}
-              >
-                <GoogleLogo />
-                <span>Continue with Google</span>
-              </button>
+                  <button
+                    type="button"
+                    className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handleSocialSignIn("google")}
+                    disabled={authBusy}
+                  >
+                    <GoogleLogo />
+                    <span>Continue with Google</span>
+                  </button>
 
-              <div className="ow-divider" aria-hidden="true">
-                <span>or</span>
+                  <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
+                    <span className="h-px flex-1 bg-slate-200" />
+                    <span>or</span>
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+
+                  <label className="grid gap-2">
+                    <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Email</span>
+                    <input
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      autoComplete="email"
+                      required
+                    />
+                  </label>
+
+                  <label className="grid gap-2">
+                    <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Password</span>
+                    <input
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+                      required
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="inline-flex w-full items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={authBusy}
+                  >
+                    {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
+                  </button>
+                </form>
+
+                <div className="flex items-center justify-between gap-3 px-1 text-sm text-[var(--dls-text-secondary)]">
+                  <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
+                  <button
+                    type="button"
+                    className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                    onClick={() => {
+                      const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
+                      setAuthMode(nextMode);
+                      setAuthInfo(getAuthInfoForMode(nextMode));
+                      setAuthError(null);
+                    }}
+                  >
+                    {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
+                  </button>
+                </div>
+
+                {showAuthFeedback ? (
+                  <div className="grid gap-1 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
+                    {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
+                    {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+                  </div>
+                ) : null}
               </div>
-
-              <label className="ow-field-block">
-                <span className="ow-field-label">Email</span>
-                <input
-                  className="ow-input"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  autoComplete="email"
-                  required
-                />
-              </label>
-
-              <label className="ow-field-block">
-                <span className="ow-field-label">Password</span>
-                <input
-                  className="ow-input"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
-                  required
-                />
-              </label>
-
-              <button type="submit" className="ow-btn-primary" disabled={authBusy}>
-                {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
-              </button>
-            </form>
-
-            <div className="ow-inline-row">
-              <p className="ow-caption">{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
-              <button
-                type="button"
-                className="ow-link"
-                onClick={() => {
-                  const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
-                  setAuthMode(nextMode);
-                  setAuthInfo(getAuthInfoForMode(nextMode));
-                  setAuthError(null);
-                }}
-              >
-                {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
-              </button>
-            </div>
-
-            {showAuthFeedback ? (
-              <div className="ow-auth-feedback" aria-live="polite">
-                {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
-                {authError ? <p className="ow-error-text">{authError}</p> : null}
+            ) : (
+              <div className="grid gap-3 rounded-[32px] border border-white/70 bg-white/92 p-6 text-center shadow-[0_28px_80px_-44px_rgba(15,23,42,0.35)]">
+                <p className="text-sm text-slate-500">Checking your session...</p>
               </div>
-            ) : null}
+            )}
           </div>
         ) : null}
 
-        {step === 2 ? (
-          <div className="flex h-full flex-col gap-3">
-            <div className="mb-3 flex items-center justify-between rounded-[18px] border border-slate-200 bg-white p-2 lg:hidden">
+        {step === "name" ? (
+          <div className="mx-auto grid w-full max-w-[46rem] gap-6 px-1 py-2 md:max-w-none md:grid-cols-[minmax(0,1.05fr)_minmax(260px,0.95fr)]">
+            <div className="grid gap-5 rounded-[30px] border border-[var(--dls-border)] bg-white p-6 shadow-[var(--dls-card-shadow)] md:p-7">
+              <div className="grid gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Step 1 of 3 - Account ready</p>
+                <h2 className="text-[1.9rem] font-semibold leading-[1.04] tracking-[-0.04em] text-[var(--dls-text-primary)] md:text-[2.35rem]">
+                  Name your worker.
+                </h2>
+                <p className="max-w-[32rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                  Pick something recognizable. You can always rename it later.
+                </p>
+              </div>
+
+              <label className="grid gap-2">
+                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Worker name</span>
+                <input
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                  type="text"
+                  value={workerName}
+                  onChange={(event) => setWorkerName(event.target.value)}
+                  placeholder="Founder Ops Pilot"
+                  maxLength={64}
+                />
+              </label>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[13px] text-[var(--dls-text-secondary)]">You can rename it later if you want to refine this.</p>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void continueFromName()}
+                  disabled={nameStepBusy}
+                >
+                  {nameStepBusy ? "Saving..." : "Continue"}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid content-start gap-4 rounded-[30px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:p-6">
+              <div className="rounded-[24px] border border-white bg-white p-5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#011627] text-[11px] font-semibold text-white">OW</div>
+                  <div>
+                    <div className="text-sm font-semibold text-[var(--dls-text-primary)]">{normalizeWorkerName(workerName)}</div>
+                    <div className="text-[13px] text-[var(--dls-text-secondary)]">Provisioning in the background</div>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-[24px] border border-white/80 bg-white/70 p-5">
+                <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--dls-text-secondary)]">First run timing</div>
+                <p className="mt-2 text-[14px] leading-6 text-[var(--dls-text-secondary)]">
+                  First runs usually take around 1-2 minutes while we provision the environment and prepare the OpenWork connection.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {step === "initializing" ? (
+          <div className="mx-auto grid w-full max-w-[44rem] gap-6 px-1 py-1 md:grid-cols-[minmax(0,1.1fr)_minmax(250px,0.9fr)]">
+            <div className="grid gap-5 rounded-[28px] border border-[var(--dls-border)] bg-white p-6 shadow-[var(--dls-card-shadow)] md:p-7">
+              <div className="grid gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Step 2 of 3 - Launching worker</p>
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-700">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  Provisioning in progress
+                </div>
+                <h2 className="text-[1.9rem] font-semibold leading-[1.06] tracking-[-0.04em] text-[var(--dls-text-primary)] md:text-[2.3rem]">Your worker is coming online.</h2>
+                <p className="text-[15px] leading-7 text-[var(--dls-text-secondary)]">First runs usually take around 1-2 minutes while we provision the runtime, secure access, and prepare the OpenWork connection.</p>
+              </div>
+
+              <div className="rounded-[24px] border border-[var(--dls-border)] bg-[linear-gradient(180deg,#fbfcfd_0%,#ffffff_100%)] p-5">
+                <div className="flex items-center gap-4">
+                    <span className="relative inline-flex h-12 w-12 items-center justify-center" aria-hidden="true">
+                    <span className="absolute inset-0 animate-ping rounded-full bg-slate-900/8" />
+                    <span className="relative h-4 w-4 animate-pulse rounded-full bg-slate-900" />
+                  </span>
+                  <div>
+                    <p className="text-[15px] font-semibold text-[var(--dls-text-primary)]">{launchBusy ? "Creating worker" : "Provisioning in progress"}</p>
+                    <p className="mt-1 text-[13px] leading-6 text-[var(--dls-text-secondary)]">{launchStatus}</p>
+                  </div>
+                </div>
+                {launchError ? <p className="mt-4 text-[13px] font-medium text-rose-600">{launchError}</p> : null}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => setStep("workspace")}
+                  disabled={!worker}
+                >
+                  Open dashboard
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void handleLaunchWorker({ source: "onboarding_continue" })}
+                  disabled={launchBusy}
+                >
+                  {launchBusy ? "Working..." : "Retry provisioning"}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid content-start gap-4 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:p-6">
+              <div className="rounded-[22px] border border-white bg-white p-4 shadow-sm">
+                <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--dls-text-secondary)]">Live status</div>
+                <div className="mt-2 text-[1.1rem] font-semibold tracking-[-0.03em] text-[var(--dls-text-primary)]">{normalizeWorkerName(workerName)}</div>
+                <div className="mt-1 text-[13px] text-[var(--dls-text-secondary)]">{worker?.status ? getWorkerStatusCopy(worker.status) : "Preparing worker record"}</div>
+              </div>
+
+              {desktopContext ? (
+                <div className="grid gap-3">
+                  <a
+                    href={OPENWORK_DOWNLOAD_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex w-full items-center justify-center rounded-[20px] bg-slate-900 px-4 py-4 text-[15px] font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black"
+                  >
+                    Download OpenWork desktop
+                  </a>
+                  <a
+                    href={OPENWORK_DISCORD_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-[20px] border border-slate-200 bg-white px-4 py-4 text-[15px] font-semibold text-slate-900 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+                  >
+                    <DiscordLogo />
+                    Join Discord while it loads
+                  </a>
+                  <p className="rounded-[18px] border border-white bg-white px-4 py-3 text-[13px] leading-6 text-[var(--dls-text-secondary)] shadow-sm">
+                    First runs usually take around 1-2 minutes. The desktop app is instant if you want to get moving right away.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-[22px] border border-white bg-white p-4 text-[14px] leading-6 text-[var(--dls-text-secondary)] shadow-sm">
+                  First run is warming up. This usually takes around 1-2 minutes.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {step === "connect" ? (
+          <div className="mx-auto grid w-full max-w-[46rem] gap-6 px-1 py-2">
+            <div className="grid gap-5 rounded-[30px] border border-[var(--dls-border)] bg-white p-6 shadow-[var(--dls-card-shadow)] md:p-7">
+              <div className="grid gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Step 3 of 3 - Connect</p>
+                <h2 className="text-[1.9rem] font-semibold leading-[1.04] tracking-[-0.04em] text-[var(--dls-text-primary)] md:text-[2.35rem]">
+                  Your worker is live.
+                </h2>
+                <p className="max-w-[32rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                  Connect now to start using it in OpenWork.
+                </p>
+              </div>
+
+              <div className="grid gap-3">
+                <a
+                  href={openworkDeepLink ?? "#"}
+                  className={`inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition ${
+                    openworkDeepLink ? "bg-[#011627] hover:bg-black" : "pointer-events-none cursor-not-allowed bg-slate-300"
+                  }`}
+                  aria-disabled={!openworkDeepLink}
+                >
+                  {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
+                </a>
+
+                {openworkAppConnectUrl ? (
+                  <a
+                    href={openworkAppConnectUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  >
+                    Open in Web
+                  </a>
+                ) : null}
+
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  onClick={() => {
+                    setSignupOnboardingActive(false);
+                    setStep("workspace");
+                  }}
+                >
+                  Go to dashboard
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {step === "workspace" ? (
+          <div className="flex min-h-0 w-full flex-1 flex-col gap-3 rounded-[32px] bg-white/92 shadow-[0_20px_60px_rgba(15,23,42,0.08)] ring-1 ring-black/5">
+            <div className="mb-3 flex items-center justify-between rounded-[24px] border border-[var(--dls-border)] bg-white p-2.5 shadow-[var(--dls-card-shadow)] lg:hidden">
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => setShellView("workers")}
                   className={`rounded-[12px] px-3 py-1.5 text-sm font-medium transition ${
-                    shellView === "workers" ? "bg-[#1B29FF]/10 text-[#1B29FF]" : "text-slate-600 hover:bg-slate-100"
+                    shellView === "workers" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
                   }`}
                 >
                   Workers
@@ -2480,7 +3188,7 @@ export function CloudControlPanel() {
                   type="button"
                   onClick={() => setShellView("billing")}
                   className={`rounded-[12px] px-3 py-1.5 text-sm font-medium transition ${
-                    shellView === "billing" ? "bg-[#1B29FF]/10 text-[#1B29FF]" : "text-slate-600 hover:bg-slate-100"
+                    shellView === "billing" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
                   }`}
                 >
                   Billing
@@ -2488,7 +3196,7 @@ export function CloudControlPanel() {
               </div>
               <button
                 type="button"
-                className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void handleSignOut()}
                 disabled={authBusy}
               >
@@ -2497,17 +3205,17 @@ export function CloudControlPanel() {
             </div>
 
             {shellView === "workers" ? (
-              <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
-                <aside className="hidden h-full w-[260px] shrink-0 flex-col justify-between rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:flex">
+              <div className="flex h-full min-h-0 flex-col lg:flex-row">
+                <aside className="hidden h-full w-[260px] shrink-0 flex-col justify-between border-r border-[var(--dls-border)] bg-transparent p-6 lg:flex">
                   <div>
                     <div className="mb-6">
                       <div className="mb-3 flex items-center gap-2 px-2 text-xs font-medium uppercase tracking-[0.08em] text-slate-400">
-                        <span>Menu</span>
+                        <span>Den</span>
                       </div>
                       <nav className="space-y-1">
                         <button
                           type="button"
-                          className="w-full rounded-[14px] bg-[#1B29FF]/10 px-3 py-2.5 text-left text-sm font-medium text-[#1B29FF] transition"
+                          className="w-full rounded-[16px] bg-slate-900 px-3 py-2.5 text-left text-sm font-medium text-white transition"
                           onClick={() => setShellView("workers")}
                         >
                           Workers
@@ -2525,12 +3233,12 @@ export function CloudControlPanel() {
                     </div>
                   </div>
 
-                  <div className="rounded-[22px] border border-slate-200 bg-[#F8F9FA] p-4">
+                  <div className="mt-auto rounded-[24px] bg-[var(--dls-hover)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Signed in</p>
                     <p className="mt-1 break-all text-sm font-medium text-slate-700">{(user?.email ?? email) || "account"}</p>
                     <button
                       type="button"
-                      className="mt-4 w-full rounded-[12px] bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="mt-4 w-full rounded-[16px] bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => void handleSignOut()}
                       disabled={authBusy}
                     >
@@ -2539,12 +3247,158 @@ export function CloudControlPanel() {
                   </div>
                 </aside>
 
-                <section className="flex h-full w-full shrink-0 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:w-[340px]">
+                <section className="flex flex-col gap-3 lg:hidden">
+                  <div className="rounded-[28px] border border-[var(--dls-border)] bg-white p-4 shadow-[var(--dls-card-shadow)]">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-base font-semibold tracking-tight text-slate-900">Workers</h2>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {workers.length > 0
+                            ? mobileWorkersExpanded
+                              ? `Showing ${filteredWorkers.length} of ${workers.length}`
+                              : mobilePreviewWorker
+                                ? "Selected worker stays pinned here."
+                                : "Choose a worker to see its details."
+                            : "No workers yet."}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-black"
+                          onClick={() => {
+                            setShowLaunchForm((current) => !current);
+                            setMobileWorkersExpanded(true);
+                          }}
+                        >
+                          {showLaunchForm ? "Close" : "New"}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                          onClick={() => setMobileWorkersExpanded((current) => !current)}
+                          disabled={!mobilePreviewWorker && filteredWorkers.length === 0}
+                        >
+                          {mobileWorkersExpanded ? "Collapse" : `Show all${filteredWorkers.length > 1 ? ` (${filteredWorkers.length})` : ""}`}
+                        </button>
+                      </div>
+                    </div>
+
+                    {showLaunchForm ? (
+                      <div className="mt-4 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-4">
+                        <label className="mb-3 block">
+                          <span className="mb-1 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Worker Name</span>
+                          <input
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                            value={workerName}
+                            onChange={(event) => setWorkerName(event.target.value)}
+                            maxLength={80}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          className="w-full rounded-2xl bg-slate-900 px-3 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void handleLaunchWorker({ source: "manual" })}
+                          disabled={!user || launchBusy || worker?.status === "provisioning"}
+                        >
+                          {launchBusy
+                            ? "Starting worker..."
+                            : worker?.status === "provisioning"
+                              ? "Worker is starting..."
+                              : `Launch "${workerName || "Cloud Worker"}"`}
+                        </button>
+
+                        {(launchStatus || launchError) && showLaunchForm ? (
+                          <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                            <p className="text-xs text-slate-600">{launchStatus}</p>
+                            {launchError ? <p className="mt-1 text-xs font-medium text-rose-600">{launchError}</p> : null}
+                          </div>
+                        ) : null}
+
+                        {additionalWorkerNeedsPlan ? (
+                          <div className="mt-3 rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                            Your first worker is live. Additional workers require an active Den Cloud plan.
+                          </div>
+                        ) : null}
+
+                        {ownedWorkerCount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setShellView("billing")}
+                            className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                          >
+                            Request an additional worker
+                          </button>
+                        ) : null}
+
+                        {effectiveCheckoutUrl ? (
+                          <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2.5">
+                            <p className="text-sm font-semibold text-amber-800">Payment needed before launch</p>
+                            <a
+                              href={effectiveCheckoutUrl}
+                              rel="noreferrer"
+                              className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+                            >
+                              Continue to checkout
+                            </a>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {mobileWorkersExpanded || showLaunchForm ? (
+                      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                        <input
+                          className="min-w-[170px] rounded-xl border border-slate-200 bg-[var(--dls-hover)] px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-400"
+                          value={workerQuery}
+                          onChange={(event) => setWorkerQuery(event.target.value)}
+                          placeholder="Search..."
+                          aria-label="Search workers"
+                        />
+                        <select
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none"
+                          value={workerStatusFilter}
+                          onChange={(event) => setWorkerStatusFilter(event.target.value as WorkerStatusBucket | "all")}
+                        >
+                          <option value="all">All</option>
+                          <option value="ready">Ready</option>
+                          <option value="starting">Starting</option>
+                          <option value="attention">Attention</option>
+                        </select>
+                      </div>
+                    ) : null}
+
+                    {workersBusy ? <p className="mt-3 text-xs text-slate-500">Loading workers...</p> : null}
+                    {workersError ? <p className="mt-3 text-xs font-medium text-rose-600">{workersError}</p> : null}
+
+                    <div className="mt-4 space-y-3">
+                      {mobilePreviewWorker ? renderWorkerRow(mobilePreviewWorker, { collapseMobile: true, dense: true }) : null}
+
+                      {mobileWorkersExpanded ? (
+                        <div className="space-y-3 border-t border-slate-100 pt-3">
+                          {filteredWorkers
+                            .filter((item) => item.workerId !== mobilePreviewWorker?.workerId)
+                            .map((item) => renderWorkerRow(item, { collapseMobile: true, dense: true }))}
+                          {workers.length > 0 && filteredWorkers.length === 0 ? (
+                            <p className="text-xs text-slate-500">No workers match this filter.</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {workers.length === 0 && !workersBusy ? (
+                        <p className="text-xs text-slate-500">No workers yet. Create one to get started.</p>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="hidden h-full w-full shrink-0 flex-col border-r border-[var(--dls-border)] bg-transparent p-6 md:w-[340px] lg:flex">
                   <div className="mb-6 flex items-center justify-between">
                     <h2 className="text-xl font-semibold tracking-tight text-slate-900">Workers</h2>
                     <button
                       type="button"
-                      className="rounded-full bg-[#1B29FF] p-2.5 text-white transition hover:bg-[#151FDA]"
+                      className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 p-0 text-lg leading-none text-white transition hover:bg-black"
                       onClick={() => setShowLaunchForm((current) => !current)}
                     >
                       {showLaunchForm ? "-" : "+"}
@@ -2552,11 +3406,11 @@ export function CloudControlPanel() {
                   </div>
 
                   {showLaunchForm ? (
-                    <div className="mb-5 rounded-[20px] border border-slate-200 bg-slate-50 p-4">
+                    <div className="mb-5 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-4">
                       <label className="mb-3 block">
                         <span className="mb-1 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Worker Name</span>
                         <input
-                          className="w-full rounded-[12px] border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#1B29FF] focus:ring-2 focus:ring-[#1B29FF]/15"
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
                           value={workerName}
                           onChange={(event) => setWorkerName(event.target.value)}
                           maxLength={80}
@@ -2565,8 +3419,8 @@ export function CloudControlPanel() {
 
                       <button
                         type="button"
-                        className="w-full rounded-[12px] bg-[#1B29FF] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={handleLaunchWorker}
+                        className="w-full rounded-2xl bg-slate-900 px-3 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => void handleLaunchWorker({ source: "manual" })}
                         disabled={!user || launchBusy || worker?.status === "provisioning"}
                       >
                         {launchBusy
@@ -2577,10 +3431,26 @@ export function CloudControlPanel() {
                       </button>
 
                       {(launchStatus || launchError) && showLaunchForm ? (
-                        <div className="mt-3 rounded-[12px] border border-slate-200 bg-white px-3 py-2">
+                        <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-3">
                           <p className="text-xs text-slate-600">{launchStatus}</p>
                           {launchError ? <p className="mt-1 text-xs font-medium text-rose-600">{launchError}</p> : null}
                         </div>
+                      ) : null}
+
+                      {additionalWorkerNeedsPlan ? (
+                        <div className="mt-3 rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                          Your first worker is live. Additional workers require an active Den Cloud plan.
+                        </div>
+                      ) : null}
+
+                      {ownedWorkerCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setShellView("billing")}
+                          className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                        >
+                          Request an additional worker
+                        </button>
                       ) : null}
 
                       {effectiveCheckoutUrl ? (
@@ -2595,12 +3465,13 @@ export function CloudControlPanel() {
                           </a>
                         </div>
                       ) : null}
+
                     </div>
                   ) : null}
 
                   <div className="mb-5 flex gap-2 overflow-x-auto pb-1">
                     <input
-                      className="min-w-[170px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-[#1B29FF]"
+                      className="min-w-[170px] rounded-xl border border-slate-200 bg-[var(--dls-hover)] px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-400"
                       value={workerQuery}
                       onChange={(event) => setWorkerQuery(event.target.value)}
                       placeholder="Search..."
@@ -2622,61 +3493,7 @@ export function CloudControlPanel() {
                   {workersError ? <p className="mb-2 text-xs font-medium text-rose-600">{workersError}</p> : null}
 
                   <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                    {filteredWorkers.map((item) => {
-                      const meta = getWorkerStatusMeta(item.status);
-                      const isActive = workerLookupId === item.workerId;
-                      const statusPill =
-                        meta.bucket === "ready"
-                          ? "bg-[#E8F5E9] text-[#2E7D32]"
-                          : meta.bucket === "starting"
-                            ? "bg-amber-100 text-amber-700"
-                            : meta.bucket === "attention"
-                              ? "bg-rose-100 text-rose-700"
-                              : "bg-slate-100 text-slate-500";
-
-                      const statusDot =
-                        meta.bucket === "ready"
-                          ? "bg-[#2E7D32]"
-                          : meta.bucket === "starting"
-                            ? "bg-amber-500"
-                            : meta.bucket === "attention"
-                              ? "bg-rose-500"
-                              : "bg-slate-400";
-
-                      return (
-                        <button
-                          key={item.workerId}
-                          type="button"
-                          onClick={() => {
-                            setWorkerLookupId(item.workerId);
-                            setWorker((current) => listItemToWorker(item, current));
-                          }}
-                          className={`w-full rounded-[20px] border p-4 text-left transition-all ${
-                            isActive
-                              ? "border-[#1B29FF] bg-[#1B29FF]/[0.03] ring-1 ring-[#1B29FF]/30"
-                              : "border-slate-100 bg-white hover:border-slate-300"
-                          }`}
-                        >
-                          <div className="mb-1 flex items-center justify-between gap-2">
-                            <span className={`truncate pr-2 text-sm font-semibold ${isActive ? "text-[#1B29FF]" : "text-slate-700"}`}>
-                              {item.workerName}
-                            </span>
-                            {item.isMine ? (
-                              <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                                Yours
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="mt-3 flex items-center justify-between">
-                            <span className="font-mono text-xs font-medium text-slate-400">{getWorkerAddressLabel(item)}</span>
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${statusPill}`}>
-                              <span className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
-                              {meta.label}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
+                    {filteredWorkers.map((item) => renderWorkerRow(item))}
                   </div>
 
                   {workers.length > 0 && filteredWorkers.length === 0 ? (
@@ -2688,7 +3505,7 @@ export function CloudControlPanel() {
                   ) : null}
                 </section>
 
-                <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+                <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-transparent p-6 md:p-8">
                   {selectedWorker ? (
                     <>
                       <div className="mb-2 px-1">
@@ -2696,150 +3513,61 @@ export function CloudControlPanel() {
                       </div>
 
                       <div className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-2">
-                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
-                          <h2 className="mb-2 text-3xl font-bold tracking-tight text-slate-900">
-                            {activeWorker?.workerName ?? selectedWorker.workerName}
-                          </h2>
-                          <p className="mb-6 text-sm text-slate-500">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
-
-                          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                            <div className="rounded-[20px] border border-slate-100 bg-white p-4">
-                              <p className="text-sm font-medium text-slate-500">Status</p>
-                              <p className="mt-2 text-2xl font-bold text-slate-900">{selectedStatusMeta.label}</p>
-                            </div>
-                            <div className="rounded-[20px] border border-slate-100 bg-white p-4">
-                              <p className="text-sm font-medium text-slate-500">Connection</p>
-                              <p className="mt-2 text-2xl font-bold text-slate-900">{openworkDeepLink ? "Ready" : "Preparing"}</p>
-                            </div>
-                            <div className="rounded-[20px] border border-slate-100 bg-white p-4">
-                              <p className="text-sm font-medium text-slate-500">Runtime</p>
-                              <p className="mt-2 text-2xl font-bold text-slate-900">
-                                {runtimeBusy ? "Checking" : runtimeUpgradeCount > 0 ? `${runtimeUpgradeCount} update${runtimeUpgradeCount === 1 ? "" : "s"}` : "Current"}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
-                          <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <h3 className="text-lg font-bold tracking-tight text-slate-900">Worker runtime</h3>
-                              <p className="text-sm text-slate-500">Compare installed runtime versions with the versions this worker should be running.</p>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                className="rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                onClick={() => void refreshRuntime(selectedWorker.workerId)}
-                                disabled={runtimeBusy || runtimeUpgradeBusy}
+                        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-6">
+                          <div className="mb-2 flex items-start justify-between gap-4">
+                            <h2 className="text-3xl font-bold tracking-tight text-slate-900">
+                              {activeWorker?.workerName ?? selectedWorker.workerName}
+                            </h2>
+                            {openworkAppConnectUrl ? (
+                              <a
+                                href={openworkAppConnectUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={`shrink-0 rounded-[16px] px-6 py-3 text-base font-semibold transition ${
+                                  selectedStatusMeta.bucket === "ready"
+                                    ? "bg-slate-900 text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] hover:bg-black"
+                                    : "pointer-events-none cursor-not-allowed border border-slate-200 bg-white text-slate-400"
+                                }`}
+                                aria-disabled={selectedStatusMeta.bucket !== "ready"}
                               >
-                                {runtimeBusy ? "Checking..." : "Refresh runtime"}
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-[12px] bg-[#1B29FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-50"
-                                onClick={() => void handleRuntimeUpgrade()}
-                                disabled={runtimeUpgradeBusy || runtimeBusy || selectedStatusMeta.bucket !== "ready"}
-                              >
-                                {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
-                              </button>
-                            </div>
-                          </div>
-
-                          {runtimeError ? (
-                            <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{runtimeError}</div>
-                          ) : null}
-
-                          {runtimeSnapshot?.upgrade.status === "failed" && runtimeSnapshot.upgrade.error ? (
-                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                              Last upgrade failed: {runtimeSnapshot.upgrade.error}
-                            </div>
-                          ) : null}
-
-                          {runtimeUpgradeCount > 0 ? (
-                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                              This worker has {runtimeUpgradeCount} runtime component{runtimeUpgradeCount === 1 ? "" : "s"} behind the target version.
-                            </div>
-                          ) : null}
-
-                          <div className="space-y-3">
-                            {(runtimeSnapshot?.services ?? []).map((service) => (
-                              <div key={service.name} className="flex flex-col gap-3 rounded-[18px] border border-slate-100 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-900">{getRuntimeServiceLabel(service.name)}</p>
-                                  <p className="text-xs text-slate-500">
-                                    Installed {service.actualVersion ?? "unknown"} · Target {service.targetVersion ?? "unknown"}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
-                                  <span className={`rounded-full px-2.5 py-1 ${service.running ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
-                                    {service.running ? "Running" : service.enabled ? "Stopped" : "Disabled"}
-                                  </span>
-                                  <span className={`rounded-full px-2.5 py-1 ${service.upgradeAvailable ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
-                                    {service.upgradeAvailable ? "Upgrade available" : "Current"}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                            {!runtimeSnapshot && !runtimeBusy ? (
-                              <p className="text-sm text-slate-500">Runtime details appear after the worker is reachable.</p>
+                                <span className={`inline-flex items-center gap-2 ${selectedStatusMeta.bucket !== "ready" ? "animate-pulse" : ""}`}>
+                                  {selectedStatusMeta.bucket !== "ready" ? (
+                                    <span className="relative inline-flex h-2.5 w-2.5">
+                                      <span className="absolute inset-0 animate-ping rounded-full bg-amber-400/40" />
+                                      <span className="relative h-2.5 w-2.5 animate-pulse rounded-full bg-amber-500" />
+                                    </span>
+                                  ) : null}
+                                  <span>{selectedStatusMeta.bucket === "ready" ? "Open in Web" : "Preparing worker"}</span>
+                                </span>
+                              </a>
                             ) : null}
                           </div>
+                          <p className="mb-2 text-sm text-slate-500">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
+                          {selectedStatusMeta.bucket !== "ready" && openworkAppConnectUrl ? (
+                            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs font-medium text-amber-800">
+                              <span className="relative inline-flex h-2 w-2">
+                                <span className="absolute inset-0 animate-ping rounded-full bg-amber-400/40" />
+                                <span className="relative h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+                              </span>
+                              Browser access is being prepared - this button will light up automatically.
+                            </div>
+                          ) : null}
+                          {isSelectedWorkerFailed ? (
+                            <button
+                              type="button"
+                              className="rounded-[14px] bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() => void handleRedeployWorker(selectedWorker.workerId)}
+                              disabled={redeployBusyWorkerId !== null || deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                            >
+                              {redeployBusyWorkerId === selectedWorker.workerId ? "Redeploying..." : "Redeploy"}
+                            </button>
+                          ) : null}
                         </div>
 
-                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
-                          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <h3 className="text-lg font-bold tracking-tight text-slate-900">Connection Details</h3>
-                              <p className="text-sm text-slate-500">Access and manage your worker instance.</p>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                className="rounded-[14px] bg-[#1B29FF] px-6 py-3 text-sm font-semibold text-white shadow-md shadow-[#1B29FF]/25 transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                                onClick={() => {
-                                  if (!openworkDeepLink) {
-                                    return;
-                                  }
-                                  window.location.href = openworkDeepLink;
-                                }}
-                                disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
-                              >
-                                {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
-                              </button>
-
-                              {openworkAppConnectUrl ? (
-                                <a
-                                  href={openworkAppConnectUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className={`rounded-[14px] border px-5 py-3 text-sm font-semibold transition ${
-                                    selectedStatusMeta.bucket === "ready"
-                                      ? "border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:text-slate-900"
-                                      : "pointer-events-none cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                                  }`}
-                                  aria-disabled={selectedStatusMeta.bucket !== "ready"}
-                                >
-                                  Open in App
-                                </a>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          <div className="rounded-[14px] border border-slate-100 bg-slate-50 px-4 py-3">
-                            <p className="text-sm text-slate-600">
-                              {openworkDeepLink
-                                ? openworkAppConnectUrl
-                                  ? "You are all set. Open in OpenWork or Open in App to start working."
-                                  : "You are all set. Open in OpenWork to start working."
-                                : "We are still preparing your connection. The button will unlock when ready."}
-                            </p>
-                          </div>
-
+                        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-6">
                           <button
                             type="button"
-                            className="mt-4 text-sm font-semibold text-[#1B29FF] transition hover:text-[#151FDA]"
+                            className="flex w-full items-center justify-between gap-4 text-left"
                             onClick={() =>
                               setShowAdvancedOptions((current) => {
                                 if (current) {
@@ -2849,11 +3577,122 @@ export function CloudControlPanel() {
                               })
                             }
                           >
-                            {showAdvancedOptions ? "Hide advanced options" : "Need manual setup? Show advanced options"}
+                            <div>
+                              <h3 className="text-lg font-bold tracking-tight text-slate-900">Advanced settings</h3>
+                              <p className="text-sm text-slate-500">Runtime controls, connection details, and worker management.</p>
+                            </div>
+                            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-lg text-slate-500">
+                            <span className="sr-only">Toggle advanced settings</span>
+                              {showAdvancedOptions ? "-" : "+"}
+                            </span>
                           </button>
 
                           {showAdvancedOptions ? (
-                            <div className="mt-4 space-y-4">
+                            <div className="mt-5 space-y-6">
+                              <div className="rounded-[24px] border border-slate-200 bg-white p-5">
+                                <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                                  <div>
+                                    <h3 className="text-lg font-bold tracking-tight text-slate-900">Worker runtime</h3>
+                                    <p className="text-sm text-slate-500">Compare installed runtime versions with the versions this worker should be running.</p>
+                                  </div>
+                                  <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:flex-wrap md:items-center">
+                                    <button
+                                      type="button"
+                                      className="rounded-[14px] border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                      onClick={() => void refreshRuntime(selectedWorker.workerId)}
+                                      disabled={runtimeBusy || runtimeUpgradeBusy}
+                                    >
+                                      {runtimeBusy ? "Checking..." : "Refresh runtime"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="rounded-[14px] bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                                      onClick={() => void handleRuntimeUpgrade()}
+                                      disabled={runtimeUpgradeBusy || runtimeBusy || selectedStatusMeta.bucket !== "ready"}
+                                    >
+                                      {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {runtimeError ? (
+                                  <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{runtimeError}</div>
+                                ) : null}
+
+                                {runtimeSnapshot?.upgrade.status === "failed" && runtimeSnapshot.upgrade.error ? (
+                                  <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                    Last upgrade failed: {runtimeSnapshot.upgrade.error}
+                                  </div>
+                                ) : null}
+
+                                {runtimeUpgradeCount > 0 ? (
+                                  <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                    This worker has {runtimeUpgradeCount} runtime component{runtimeUpgradeCount === 1 ? "" : "s"} behind the target version.
+                                  </div>
+                                ) : null}
+
+                                <div className="space-y-3">
+                                  {(runtimeSnapshot?.services ?? []).map((service) => (
+                                    <div key={service.name} className="flex flex-col gap-3 rounded-[18px] border border-[var(--dls-border)] bg-white px-4 py-3 md:flex-row md:items-center md:justify-between">
+                                      <div>
+                                        <p className="text-sm font-semibold text-slate-900">{getRuntimeServiceLabel(service.name)}</p>
+                                        <p className="text-xs text-slate-500">
+                                          Installed {service.actualVersion ?? "unknown"} · Target {service.targetVersion ?? "unknown"}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                                        <span className={`rounded-full px-2.5 py-1 ${service.running ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                                          {service.running ? "Running" : service.enabled ? "Stopped" : "Disabled"}
+                                        </span>
+                                        <span className={`rounded-full px-2.5 py-1 ${service.upgradeAvailable ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
+                                          {service.upgradeAvailable ? "Upgrade available" : "Current"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {!runtimeSnapshot && !runtimeBusy ? (
+                                    <p className="text-sm text-slate-500">Runtime details appear after the worker is reachable.</p>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              <div className="rounded-[24px] border border-slate-200 bg-white p-5">
+                                <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                                  <div>
+                                    <div>
+                                      <h3 className="text-lg font-bold tracking-tight text-slate-900">Connection details</h3>
+                                      <p className="text-sm text-slate-500">Access and manage your worker instance.</p>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:flex-wrap md:items-center">
+                                    <button
+                                      type="button"
+                                      className="rounded-[16px] bg-slate-900 px-6 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                                      onClick={() => {
+                                        if (!openworkDeepLink) {
+                                          return;
+                                        }
+                                        window.location.href = openworkDeepLink;
+                                      }}
+                                      disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
+                                    >
+                                      {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="rounded-[16px] border border-slate-200 bg-[var(--dls-hover)] px-4 py-3">
+                                  <p className="text-sm text-slate-600">
+                                    {openworkDeepLink
+                                      ? openworkAppConnectUrl
+                                        ? "You are all set. Open in OpenWork or Open in Web to start working."
+                                        : "You are all set. Open in OpenWork to start working."
+                                      : "We are still preparing your connection. The button will unlock when ready."}
+                                  </p>
+                                </div>
+
+                                <div className="mt-4 space-y-4">
                               <div>
                                 <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">Connection URL</label>
                                 <div className="flex items-center gap-2 rounded-[14px] border border-slate-200 bg-[#F8F9FA] p-1.5">
@@ -2906,12 +3745,23 @@ export function CloudControlPanel() {
                                       />
 
                                       <CredentialRow
-                                        label="Access token"
+                                        label="Owner token"
+                                        value={activeWorker?.ownerToken ?? null}
+                                        placeholder="Use Worker actions to refresh"
+                                        hint="Use this token when the remote client must answer permission prompts."
+                                        canCopy={Boolean(activeWorker?.ownerToken)}
+                                        copied={copiedField === "owner-token"}
+                                        onCopy={() => void copyToClipboard("owner-token", activeWorker?.ownerToken ?? null)}
+                                      />
+
+                                      <CredentialRow
+                                        label="Collaborator token"
                                         value={activeWorker?.clientToken ?? null}
                                         placeholder="Use Worker actions to refresh"
+                                        hint="Routine remote access without owner-only actions."
                                         canCopy={Boolean(activeWorker?.clientToken)}
-                                        copied={copiedField === "access-token"}
-                                        onCopy={() => void copyToClipboard("access-token", activeWorker?.clientToken ?? null)}
+                                        copied={copiedField === "collaborator-token"}
+                                        onCopy={() => void copyToClipboard("collaborator-token", activeWorker?.clientToken ?? null)}
                                       />
                                     </div>
                                   ) : null}
@@ -2954,9 +3804,23 @@ export function CloudControlPanel() {
                                       </button>
                                       <button
                                         type="button"
+                                        className="rounded-[12px] border border-slate-200 bg-slate-900/5 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-900/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                        onClick={() => void handleRedeployWorker(selectedWorker.workerId)}
+                                        disabled={
+                                          !isSelectedWorkerFailed ||
+                                          redeployBusyWorkerId !== null ||
+                                          deleteBusyWorkerId !== null ||
+                                          actionBusy !== null ||
+                                          launchBusy
+                                        }
+                                      >
+                                        {redeployBusyWorkerId === selectedWorker.workerId ? "Redeploying..." : "Redeploy"}
+                                      </button>
+                                      <button
+                                        type="button"
                                         className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                                         onClick={() => void handleDeleteWorker(selectedWorker.workerId)}
-                                        disabled={deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                                        disabled={deleteBusyWorkerId !== null || redeployBusyWorkerId !== null || actionBusy !== null || launchBusy}
                                       >
                                         {deleteBusyWorkerId === selectedWorker.workerId ? "Deleting..." : "Delete worker"}
                                       </button>
@@ -3014,15 +3878,19 @@ export function CloudControlPanel() {
                                 </div>
                               </div>
                             </div>
+                              </div>
+                            </div>
                           ) : null}
                         </div>
                       </div>
                     </>
                   ) : (
-                    <div className="flex min-h-[360px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-slate-50">
-                      <div className="px-6 text-center">
-                        <p className="text-lg font-semibold text-slate-900">Select a worker</p>
-                        <p className="mt-1 text-sm text-slate-500">Pick a worker from the list to see details and connect.</p>
+                    <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+                      <div className="mx-auto max-w-[30rem] text-center">
+                        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">No workers yet</h2>
+                        <p className="mt-3 text-sm leading-6 text-slate-600">
+                          Create your first worker to unlock connection details and runtime controls.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -3189,7 +4057,7 @@ export function CloudControlPanel() {
                         <p className="mt-1 text-sm text-slate-600">Generate a fresh checkout session for this account.</p>
                         <button
                           type="button"
-                          className="mt-3 rounded-[10px] bg-[#1B29FF] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
+                          className="mt-3 rounded-[12px] bg-slate-900 px-3 py-2.5 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
                           onClick={() => void refreshBilling({ includeCheckout: true })}
                           disabled={billingCheckoutBusy || billingBusy}
                         >

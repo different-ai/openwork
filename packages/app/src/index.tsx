@@ -20,6 +20,10 @@ if (!root) {
 
 const RouterComponent = isTauriRuntime() ? HashRouter : Router;
 
+function shouldOpenInCurrentTab(url: string) {
+  return /^(mailto|tel):/i.test(url.trim());
+}
+
 const platform: Platform = {
   platform: isTauriRuntime() ? "desktop" : "web",
   openLink(url: string) {
@@ -27,6 +31,11 @@ const platform: Platform = {
       void import("@tauri-apps/plugin-opener")
         .then(({ openUrl }) => openUrl(url))
         .catch(() => undefined);
+      return;
+    }
+
+    if (shouldOpenInCurrentTab(url)) {
+      window.location.href = url;
       return;
     }
 

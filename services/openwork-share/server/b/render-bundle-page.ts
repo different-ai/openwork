@@ -8,72 +8,28 @@ import {
   collectBundleItems,
   escapeHtml,
   escapeJsonForScript,
-  getBundleCounts,
   humanizeType,
   parseBundle,
   wantsDownload,
-  wantsJsonResponse,
 } from "../_lib/share-utils.ts";
 import type { RequestLike } from "../_lib/types.ts";
-import type { PreviewItem } from "../../components/share-home-types.ts";
 
-export { buildBundleUrls, wantsDownload, wantsJsonResponse } from "../_lib/share-utils.ts";
-
-function toneInitial(kind: string): string {
-  if (kind === "Config") return "config";
-  if (kind === "MCP") return "mcp";
-  if (kind === "Command") return "command";
-  if (kind === "Agent") return "agent";
-  return "skill";
-}
-
-function renderItem(item: PreviewItem): string {
-  return `
-    <div class="included-item">
-      <div class="item-left">
-        <div class="item-dot dot-${escapeHtml(toneInitial(item.kind))}"></div>
-        <span class="item-title">${escapeHtml(item.name)}</span>
-      </div>
-      <span class="item-meta">${escapeHtml(item.kind)} · ${escapeHtml(item.meta)}</span>
-    </div>`;
-}
+export { buildBundleUrls, wantsDownload } from "../_lib/share-utils.ts";
 
 export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: string; req: RequestLike }): string {
   const bundle = parseBundle(rawJson);
   const urls = buildBundleUrls(req, id);
   const ogImageUrl = buildOgImageUrl(req, id);
-  const { openInAppDeepLink, openInWebAppUrl } = buildOpenInAppUrls(urls.shareUrl, {
+  const { openInAppDeepLink } = buildOpenInAppUrls(urls.shareUrl, {
     label: bundle.name || "Shared worker package",
   });
 
-  const counts = getBundleCounts(bundle);
   const schemaVersion = bundle.schemaVersion == null ? "unknown" : String(bundle.schemaVersion);
   const typeLabel = humanizeType(bundle.type);
   const title = bundle.name || `OpenWork ${typeLabel}`;
   const description = bundle.description || buildBundleNarrative(bundle);
   const items = collectBundleItems(bundle, 8);
-  const installHint =
-    bundle.type === "skill"
-      ? "Open in app to create a new worker and install this skill in one step."
-      : bundle.type === "skills-set"
-        ? "Open in app to create a new worker with this entire skills set already attached."
-        : "Open in app to create a new worker with these skills, agents, MCPs, and config already bundled.";
-  const metadataRows = [
-    ["ID", id],
-    ["Type", bundle.type || "unknown"],
-    ["Schema", schemaVersion],
-    counts.skillCount ? ["Skills", String(counts.skillCount)] : null,
-    counts.agentCount ? ["Agents", String(counts.agentCount)] : null,
-    counts.mcpCount ? ["MCPs", String(counts.mcpCount)] : null,
-    counts.commandCount ? ["Commands", String(counts.commandCount)] : null,
-    counts.configCount ? ["Configs", String(counts.configCount)] : null,
-  ]
-    .filter((row): row is [string, string] => row !== null)
-    .map(
-      ([label, value]) =>
-        `<div class="metadata-row"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`,
-    )
-    .join("");
+  const compactItem = bundle.type === "skill" ? "skill.md" : items[0]?.name || "OpenWork bundle";
 
   return `<!doctype html>
 <html lang="en">
@@ -466,12 +422,9 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
         <h1>${escapeHtml(title)} <em>ready</em></h1>
         <p class="hero-body">${escapeHtml(description)}</p>
         <div class="hero-actions">
-          <a class="button-primary" href="${escapeHtml(openInAppDeepLink)}">Open in app</a>
-          <a class="button-secondary" href="${escapeHtml(openInWebAppUrl)}" target="_blank" rel="noreferrer">Open in web app</a>
+          <a class="button-primary" href="${escapeHtml(openInAppDeepLink)}">Open in OpenWork app</a>
+          <a class="button-secondary" href="https://openworklabs.com/den" target="_blank" rel="noreferrer">Open in an OpenWork den</a>
         </div>
-        <p style="margin-top: 16px; font-size: 13px; color: var(--ow-muted);">
-          ${escapeHtml(installHint)}
-        </p>
       </div>
 
       <div class="hero-artifact">
@@ -486,9 +439,9 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
           </div>
           <div class="app-window-body">
             <div class="included-section">
-              <h4>Package Contents</h4>
+              <h4>Skills:</h4>
               <div class="included-list">
-                ${items.length ? items.map(renderItem).join("") : `<div class="included-item"><div class="item-left"><div class="item-dot dot-skill"></div><span class="item-title">OpenWork bundle</span></div><span class="item-meta">Shared config</span></div>`}
+                <div class="included-item"><div class="item-left"><div class="item-dot dot-skill"></div><span class="item-title">${escapeHtml(compactItem)}</span></div></div>
               </div>
             </div>
           </div>
@@ -498,19 +451,10 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
 
     <section class="results-grid">
       <div class="result-card">
-        <h3>Bundle details</h3>
-        <p>Stable metadata for parsing and direct OpenWork import.</p>
-        <dl class="metadata-list">
-          ${metadataRows}
-        </dl>
-      </div>
-      <div class="result-card">
-        <h3>Raw endpoints</h3>
-        <p>Keep the human page and machine payload side by side.</p>
-        <div class="url-box"><a href="${escapeHtml(urls.jsonUrl)}">JSON payload</a></div>
-        <div style="display: flex; gap: 12px;">
-          <a class="button-secondary" href="${escapeHtml(urls.downloadUrl)}">Download JSON</a>
-          <button class="button-secondary" id="copy-link" type="button">Copy share link</button>
+        <div class="step-list">
+          <div class="step-row"><span class="step-bullet">01</span><span>Open the bundle in OpenWork</span></div>
+          <div class="step-row"><span class="step-bullet">02</span><span>Choose the destination worker</span></div>
+          <div class="step-row"><span class="step-bullet">03</span><span>Happy OpenWorking!</span></div>
         </div>
       </div>
     </section>
@@ -519,29 +463,6 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
 
   <script id="openwork-bundle-json" type="application/json">${escapeJsonForScript(rawJson)}</script>
   <script>
-    const shareUrl = ${JSON.stringify(urls.shareUrl)};
-    const copyButton = document.getElementById("copy-link");
-    copyButton?.addEventListener("click", async () => {
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(shareUrl);
-          copyButton.textContent = "Copied!";
-          setTimeout(() => copyButton.textContent = "Copy share link", 2000);
-          return;
-        }
-      } catch {}
-
-      const input = document.createElement("textarea");
-      input.value = shareUrl;
-      input.style.position = "fixed";
-      input.style.left = "-99999px";
-      document.body.appendChild(input);
-      input.select();
-      document.execCommand("copy");
-      input.remove();
-      copyButton.textContent = "Copied!";
-      setTimeout(() => copyButton.textContent = "Copy share link", 2000);
-    });
   </script>
 </body>
 </html>`;

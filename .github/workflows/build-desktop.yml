@@ -10,9 +10,18 @@ permissions:
 jobs:
   build-linux:
     name: Tauri Build (Linux)
-    runs-on: ubuntu-22.04
+    # Set OPENWORK_LINUX_X64_RUNNER_LABEL to route this job to a larger GitHub-hosted runner.
+    runs-on: ${{ vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || 'ubuntu-22.04' }}
 
     steps:
+      - name: Log runner selection
+        run: |
+          echo "Requested larger runner label: ${RUNNER_LABEL:-<unset>}"
+          echo "Effective runs-on: ${EFFECTIVE_RUNS_ON}"
+        env:
+          RUNNER_LABEL: ${{ vars.OPENWORK_LINUX_X64_RUNNER_LABEL }}
+          EFFECTIVE_RUNS_ON: ${{ vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || 'ubuntu-22.04' }}
+
       - name: Checkout
         uses: actions/checkout@v4
 

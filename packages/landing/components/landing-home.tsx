@@ -1,6 +1,4 @@
 "use client";
-
-import Link from "next/link";
 import { AnimatePresence, motion, useInView } from "framer-motion";
 import { useMemo, useRef, useState } from "react";
 
@@ -135,7 +133,7 @@ export function LandingHome(props: Props) {
                 OpenWork is a desktop app. Sign up here from your phone and keep the
                 desktop install flow handy for when you switch to your computer.
               </p>
-              <WaitlistForm />
+              <WaitlistForm contactHref={props.callHref} />
               <p className="mt-4 text-[13px] leading-6 text-gray-500">
                 Best path on mobile: landing, signup, then download on desktop.
               </p>
@@ -234,14 +232,16 @@ export function LandingHome(props: Props) {
                 <h2 className="mb-3 text-2xl font-medium">OpenWork Den</h2>
                 <p className="mb-6 text-lg leading-relaxed text-gray-600">
                   Run those same workers in the cloud when you need them always
-                  on, without hosting them yourself.
+                  on, without hosting them yourself. Den signup is temporarily
+                  paused while we onboard teams directly.
                 </p>
-                <Link
-                  href="/den"
+                <a
+                  href={props.callHref}
                   className="secondary-button text-sm"
+                  {...callLinkProps}
                 >
-                  Learn More
-                </Link>
+                  Contact sales
+                </a>
               </div>
             </div>
           </section>
@@ -258,9 +258,9 @@ export function LandingHome(props: Props) {
               from our desktop app, Slack, or Telegram. All your skills,
               agents, and MCP integrations are directly available.
             </p>
-            <Link href="/den" className="doc-button">
-              Get started
-            </Link>
+            <a href={props.callHref} className="doc-button" {...callLinkProps}>
+              Contact sales
+            </a>
           </section>
 
           <section

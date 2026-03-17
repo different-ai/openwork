@@ -113,8 +113,19 @@ function highlightMarkdownLine(raw: string): string {
 export function highlightSyntax(text: string): string {
   if (!text) return "";
 
-  const trimmed = text.trimStart();
+  const normalized = text.replace(/\r\n/g, "\n");
+  const frontmatterMatch = normalized.match(/^(---\n[\s\S]*?\n---)(\n?)/);
+  const body = frontmatterMatch ? normalized.slice(frontmatterMatch[0].length) : normalized;
+  const trimmed = body.trimStart();
   const highlightLine = trimmed.startsWith("{") || trimmed.startsWith("[") ? highlightJsonLine : highlightMarkdownLine;
+  const bodyHtml = body.split("\n").map(highlightLine).join("\n");
 
-  return text.split("\n").map(highlightLine).join("\n");
+  if (!frontmatterMatch) return bodyHtml;
+
+  const frontmatterHtml = frontmatterMatch[1]
+    .split("\n")
+    .map((line) => span("hl-frontmatter", escapeHtml(line)))
+    .join("\n");
+
+  return body ? `${frontmatterHtml}\n${bodyHtml}` : frontmatterHtml;
 }

@@ -170,6 +170,9 @@ Incremental adoption loop
 - If steps repeat, factor them into a skill.
 - If the work becomes ongoing, create/refine an agent role.
 - If it should run regularly, schedule it and store outputs in private memory.
+
+Specific User Requests
+- If a user asks you to do something with a broswer, like 'open a new tab', check if you have access to the chrome-devtools-mcp - if not, then ask the user to add the 'Control Chrome' extension using the sidebar or via the worker settings.
 "#;
 
     fs::write(&agent_path, doc)
@@ -511,12 +514,12 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
                 _ => serde_json::Map::new(),
             };
 
-            if !mcp_obj.contains_key("control-chrome") {
+            if !mcp_obj.contains_key("chrome-devtools") {
                 mcp_obj.insert(
-                    "control-chrome".to_string(),
+                    "chrome-devtools".to_string(),
                     serde_json::json!({
                       "type": "local",
-                      "command": ["chrome-devtools-mcp"]
+                      "command": ["npx", "-y", "chrome-devtools-mcp@latest"]
                     }),
                 );
                 config_changed = true;

@@ -26,13 +26,14 @@ It keeps the existing bundle APIs, but the public share surface now runs as a si
   - Returns an HTML share page by default for browser requests.
   - Includes an **Open in app** action that opens `openwork://import-bundle` with:
     - `ow_bundle=<share-url>`
-    - `ow_intent=new_worker` (default import target)
+    - `ow_intent=new_worker` (desktop OpenWork converts single-skill bundles into a destination picker before import)
     - `ow_source=share_service`
   - Also includes a web fallback action that opens `PUBLIC_OPENWORK_APP_URL` with the same query params.
   - Returns raw JSON for API/programmatic requests:
     - send `Accept: application/json`, or
     - append `?format=json`.
-  - Supports `?format=json&download=1` to download the bundle as a file.
+  - The canonical raw endpoint is `/b/:id/data`.
+  - Supports `/b/:id/data?download=1` and the legacy `?format=json&download=1` compatibility path.
 
 ## Bundle Types
 
@@ -72,6 +73,10 @@ The packager rejects files that appear to contain secrets in shareable config.
   - Default: `https://app.openwork.software`
   - Target app URL for the Open in app action on bundle pages.
 
+- `LOCAL_BLOB_DIR`
+  - Optional local filesystem storage root for bundle JSON.
+  - When `BLOB_READ_WRITE_TOKEN` is unset in local/dev mode, the service falls back to local file storage automatically.
+
 ## Local development
 
 For local testing you can use:
@@ -82,6 +87,8 @@ pnpm --dir services/openwork-share dev
 ```
 
 Open `http://localhost:3000`.
+
+Without a `BLOB_READ_WRITE_TOKEN`, local development now stores bundles on disk in a local dev blob directory so publishing works out of the box.
 
 ## Deploy
 
@@ -105,6 +112,9 @@ pnpm --dir services/openwork-share test
 curl -i "http://localhost:3000/b/<id>" -H "Accept: text/html"
 
 # Machine-readable payload (OpenWork parser path)
+curl -i "http://localhost:3000/b/<id>/data"
+
+# Legacy compatibility path
 curl -i "http://localhost:3000/b/<id>?format=json"
 ```
 

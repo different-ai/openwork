@@ -1,13 +1,9 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
+import { Show, createMemo } from "solid-js";
+import { MessageCircle, Settings } from "lucide-solid";
 
 import { currentLocale, t } from "../../i18n";
 import type { OpenworkServerStatus } from "../lib/openwork-server";
-import type { OpenCodeRouterStatus } from "../lib/tauri";
 import type { McpStatusMap } from "../types";
-import { getOpenCodeRouterStatus } from "../lib/tauri";
-
-import Button from "./button";
 
 const tr = (key: string) => t(key, currentLocale());
 
@@ -15,240 +11,120 @@ type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
+  settingsOpen: boolean;
+  onSendFeedback: () => void;
   onOpenSettings: () => void;
   onOpenMessaging: () => void;
   onOpenProviders: () => Promise<void> | void;
   onOpenMcp: () => void;
   providerConnectedIds: string[];
   mcpStatuses: McpStatusMap;
+  statusLabel?: string;
+  statusDetail?: string;
+  statusDotClass?: string;
+  statusPingClass?: string;
+  statusPulse?: boolean;
 };
 
 export default function StatusBar(props: StatusBarProps) {
-  const [opencodeRouterStatus, setOpenCodeRouterStatus] = createSignal<OpenCodeRouterStatus | null>(null);
-  const [documentVisible, setDocumentVisible] = createSignal(true);
-
-  const opencodeStatusMeta = createMemo(() => ({
-    dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
-    text: props.clientConnected ? "text-green-11" : "text-gray-10",
-    label: props.clientConnected ? "Connected" : "Not connected",
-  }));
-
-  const openworkStatusMeta = createMemo(() => {
-    switch (props.openworkServerStatus) {
-      case "connected":
-        return { dot: "bg-green-9", text: "text-green-11", label: "Ready" };
-      case "limited":
-        return { dot: "bg-amber-9", text: "text-amber-11", label: "Limited access" };
-      default:
-        return { dot: "bg-gray-6", text: "text-gray-10", label: "Unavailable" };
-    }
-  });
-
-  const unifiedStatusMeta = createMemo(() => {
-    const allGreen =
-      props.clientConnected && props.openworkServerStatus === "connected";
-    return allGreen
-      ? { dot: "bg-green-9", text: "text-green-11", label: tr("status.ready") }
-      : { dot: "bg-red-9", text: "text-red-11", label: tr("status.unavailable") };
-  });
-  const messagingMeta = createMemo(() => {
-    const status = opencodeRouterStatus();
-    if (!status) {
-      return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge unavailable" };
-    }
-    const telegramConfigured = (status.telegram.items?.length ?? 0) > 0;
-    const slackConfigured = (status.slack.items?.length ?? 0) > 0;
-    const configuredCount = [telegramConfigured, slackConfigured].filter(Boolean).length;
-    if (status.running && configuredCount > 0) {
-      return { dot: "bg-green-9", text: "text-green-11", label: "Messaging bridge ready" };
-    }
-    if (configuredCount > 0 || status.running) {
-      return { dot: "bg-amber-9", text: "text-amber-11", label: "Messaging bridge setup" };
-    }
-    return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge offline" };
-  });
-
-  type ProTip = {
-    id: string;
-    label: string;
-    enabled: () => boolean;
-    action: () => void | Promise<void>;
-  };
-
   const providerConnectedCount = createMemo(() => props.providerConnectedIds?.length ?? 0);
-  const notionStatus = createMemo(() => props.mcpStatuses?.notion?.status ?? "disconnected");
+  const mcpConnectedCount = createMemo(
+    () => Object.values(props.mcpStatuses ?? {}).filter((status) => status?.status === "connected").length,
+  );
 
-  const runAction = (action?: () => void | Promise<void>) => {
-    if (!action) return;
-    const result = action();
-    if (result && typeof (result as Promise<void>).catch === "function") {
-      (result as Promise<void>).catch(() => undefined);
+  const statusCopy = createMemo(() => {
+    if (props.statusLabel) {
+      return {
+        label: props.statusLabel,
+        detail: props.statusDetail ?? "",
+        dotClass: props.statusDotClass ?? "bg-green-9",
+        pingClass: props.statusPingClass ?? "bg-green-9/45 animate-ping",
+        pulse: props.statusPulse ?? true,
+      };
     }
-  };
 
-  const proTips = createMemo<ProTip[]>(() => [
-    {
-      id: "slack",
-      label: tr("tip.connect_slack"),
-      enabled: () => {
-        const status = opencodeRouterStatus();
-        return Boolean(status && (status.slack.items?.length ?? 0) === 0);
-      },
-      action: () => runAction(props.onOpenMessaging),
-    },
-    {
-      id: "telegram",
-      label: tr("tip.connect_telegram"),
-      enabled: () => {
-        const status = opencodeRouterStatus();
-        return Boolean(status && (status.telegram.items?.length ?? 0) === 0);
-      },
-      action: () => runAction(props.onOpenMessaging),
-    },
-    {
-      id: "notion",
-      label: tr("tip.connect_notion"),
-      enabled: () => notionStatus() !== "connected",
-      action: () => runAction(props.onOpenMcp),
-    },
-    {
-      id: "providers",
-      label: tr("tip.use_own_models"),
-      enabled: () => props.clientConnected && providerConnectedCount() === 0,
-      action: () => runAction(props.onOpenProviders),
-    },
-  ]);
+    const providers = providerConnectedCount();
+    const mcp = mcpConnectedCount();
 
-  const availableTips = createMemo<ProTip[]>(() => proTips().filter((tip: ProTip) => tip.enabled()));
-  const [activeTip, setActiveTip] = createSignal<ProTip | null>(null);
-  const [tipVisible, setTipVisible] = createSignal(false);
-  const [tipCursor, setTipCursor] = createSignal(0);
-  let tipTimer: number | undefined;
-  let tipHideTimer: number | undefined;
-
-  const pickNextTip = () => {
-    const tips = availableTips();
-    if (!tips.length) return null;
-    const index = tipCursor() % tips.length;
-    const next = tips[index];
-    setTipCursor(index + 1);
-    setActiveTip(next);
-    return next;
-  };
-
-  const scheduleTips = (delayMs: number) => {
-    if (tipTimer) window.clearTimeout(tipTimer);
-    tipTimer = window.setTimeout(() => {
-      if (!availableTips().length) {
-        setTipVisible(false);
-        scheduleTips(20_000);
-        return;
+    if (props.clientConnected) {
+      const detailBits: string[] = [];
+      if (providers > 0) {
+        detailBits.push(`${providers} provider${providers === 1 ? "" : "s"} connected`);
       }
-      if (Math.random() < 0.55) {
-        pickNextTip();
-        setTipVisible(true);
-        if (tipHideTimer) window.clearTimeout(tipHideTimer);
-        tipHideTimer = window.setTimeout(() => setTipVisible(false), 9_000);
-      } else {
-        setTipVisible(false);
+      if (mcp > 0) {
+        detailBits.push(`${mcp} MCP connected`);
       }
-      scheduleTips(18_000 + Math.round(Math.random() * 10_000));
-    }, delayMs);
-  };
-
-  createEffect(() => {
-    const tips = availableTips();
-    const current = activeTip();
-    if (current && tips.some((tip: ProTip) => tip.id === current.id)) return;
-    if (!tips.length) {
-      setActiveTip(null);
-      setTipVisible(false);
-      return;
+      if (!detailBits.length) {
+        detailBits.push("Ready for new tasks");
+      }
+      if (props.developerMode) {
+        detailBits.push("Developer mode");
+      }
+      return {
+        label: "OpenWork Ready",
+        detail: detailBits.join(" · "),
+        dotClass: "bg-green-9",
+        pingClass: "bg-green-9/45 animate-ping",
+        pulse: true,
+      };
     }
-    setActiveTip(tips[0]);
-    setTipCursor(1);
-  });
 
-  const refreshOpenCodeRouter = async () => {
-    const next = await getOpenCodeRouterStatus();
-    setOpenCodeRouterStatus(next);
-  };
+    if (props.openworkServerStatus === "limited") {
+      return {
+        label: "Limited Mode",
+        detail:
+          mcp > 0
+            ? `${mcp} MCP connected · reconnect for full features`
+            : "Reconnect to restore full OpenWork features",
+        dotClass: "bg-amber-9",
+        pingClass: "bg-amber-9/35",
+        pulse: false,
+      };
+    }
 
-  createEffect(() => {
-    if (typeof document === "undefined") return;
-    const update = () => setDocumentVisible(document.visibilityState !== "hidden");
-    update();
-    document.addEventListener("visibilitychange", update);
-    onCleanup(() => document.removeEventListener("visibilitychange", update));
-  });
-
-  createEffect(() => {
-    if (!documentVisible()) return;
-    refreshOpenCodeRouter();
-    const interval = window.setInterval(refreshOpenCodeRouter, 15_000);
-    onCleanup(() => window.clearInterval(interval));
-  });
-
-  onMount(() => {
-    scheduleTips(6_000);
-    onCleanup(() => {
-      if (tipTimer) window.clearTimeout(tipTimer);
-      if (tipHideTimer) window.clearTimeout(tipHideTimer);
-    });
+    return {
+      label: "Disconnected",
+      detail: "Open settings to reconnect",
+      dotClass: "bg-red-9",
+      pingClass: "bg-red-9/35",
+      pulse: false,
+    };
   });
 
   return (
-    <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
-      <div class="px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
-        <div
-          class="flex items-center gap-2"
-          title={`OpenCode Engine: ${opencodeStatusMeta().label}`}
-        >
-          <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
-          <Cpu class="w-4 h-4 text-gray-11" />
-          <Show when={props.developerMode || !props.clientConnected}>
-            <span class="text-gray-11 font-medium">OpenCode</span>
-            <span class={opencodeStatusMeta().text}>{opencodeStatusMeta().label}</span>
-          </Show>
-        </div>
-        <div class="w-px h-4 bg-gray-6/70" />
-        <div
-          class="flex items-center gap-2"
-          title={`OpenWork Server: ${openworkStatusMeta().label}`}
-        >
-          <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
-          <Server class="w-4 h-4 text-gray-11" />
-          <Show when={props.developerMode || props.openworkServerStatus !== "connected"}>
-            <span class="text-gray-11 font-medium">OpenWork</span>
-            <span class={openworkStatusMeta().text}>{openworkStatusMeta().label}</span>
-          </Show>
-        </div>
-        <div class="ml-auto flex items-center gap-2">
-          <Show when={tipVisible() && activeTip()}>
-            <button
-              type="button"
-              class="flex h-7 items-center gap-2 rounded-full border border-gray-6/70 bg-gray-2/40 px-3 text-xs text-gray-10 transition-colors hover:bg-gray-2/60"
-              onClick={() => runAction(activeTip()?.action)}
-              title={activeTip()?.label}
-              aria-label={activeTip()?.label}
-            >
-              <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">
-                {tr("tip.label")}
-              </span>
-              <span class="text-gray-11 font-medium">{activeTip()?.label}</span>
-            </button>
-          </Show>
-          <Button
-            variant="ghost"
-            class="h-7 px-2.5 py-0 text-xs"
-            onClick={props.onOpenSettings}
-            title={tr("settings.title")}
-          >
-            <Settings class="w-4 h-4" />
-            <Show when={props.developerMode}>
-              <span class="text-gray-11 font-medium">Settings</span>
+    <div class="border-t border-dls-border bg-dls-surface">
+      <div class="flex h-12 items-center justify-between gap-3 px-4 md:px-6 text-[12px] text-dls-secondary">
+        <div class="flex min-w-0 items-center gap-2.5">
+          <span class="relative flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+            <Show when={statusCopy().pulse}>
+              <span class={`absolute inline-flex h-full w-full rounded-full ${statusCopy().pingClass}`} />
             </Show>
-          </Button>
+            <span class={`relative inline-flex h-2.5 w-2.5 rounded-full ${statusCopy().dotClass}`} />
+          </span>
+          <span class="shrink-0 font-medium text-dls-text">{statusCopy().label}</span>
+          <span class="truncate text-dls-secondary">{statusCopy().detail}</span>
+        </div>
+
+        <div class="flex items-center gap-1.5">
+          <button
+            type="button"
+            class="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            onClick={props.onSendFeedback}
+            title="Send feedback"
+            aria-label="Send feedback"
+          >
+            <MessageCircle class="h-4 w-4" />
+            <span class="text-[11px] font-medium">Feedback</span>
+          </button>
+          <button
+            type="button"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            onClick={props.onOpenSettings}
+            title={props.settingsOpen ? "Back to previous screen" : "Settings"}
+            aria-label={props.settingsOpen ? "Back to previous screen" : "Settings"}
+          >
+            <Settings class="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>

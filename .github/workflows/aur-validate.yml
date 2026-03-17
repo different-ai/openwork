@@ -1,0 +1,457 @@
+name: AUR Validate
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to validate (branch, SHA, or tag)"
+        required: false
+        type: string
+        default: dev
+      version:
+        description: "Package version override (e.g., 0.11.160)"
+        required: false
+        type: string
+      arch:
+        description: "Target architecture"
+        required: false
+        type: choice
+        options:
+          - x86_64
+        default: x86_64
+      mode:
+        description: "Validation mode"
+        required: false
+        type: choice
+        options:
+          - smoke
+          - publish-ready
+        default: smoke
+      artifact_source:
+        description: "Where to source desktop .deb"
+        required: false
+        type: choice
+        options:
+          - local-build-artifact
+          - release
+        default: local-build-artifact
+      release_tag:
+        description: "Release tag when artifact_source=release (e.g., v0.11.160)"
+        required: false
+        type: string
+      artifact_run_id:
+        description: "Workflow run ID to download artifact from when artifact_source=local-build-artifact"
+        required: false
+        type: string
+      artifact_name:
+        description: "Artifact name in artifact_run_id"
+        required: false
+        type: string
+        default: openwork-desktop-linux-amd64-deb
+      asset_url_x86_64:
+        description: "Optional explicit public URL for x86_64 .deb"
+        required: false
+        type: string
+      push_to_aur:
+        description: "Push validated PKGBUILD/.SRCINFO to AUR"
+        required: false
+        type: boolean
+        default: false
+      aur_repo:
+        description: "AUR repo name"
+        required: false
+        type: string
+        default: openwork
+
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+        default: dev
+      version:
+        required: false
+        type: string
+      arch:
+        required: false
+        type: string
+        default: x86_64
+      mode:
+        required: false
+        type: string
+        default: smoke
+      artifact_source:
+        required: false
+        type: string
+        default: local-build-artifact
+      release_tag:
+        required: false
+        type: string
+      artifact_run_id:
+        required: false
+        type: string
+      artifact_name:
+        required: false
+        type: string
+        default: openwork-desktop-linux-amd64-deb
+      asset_url_x86_64:
+        required: false
+        type: string
+      push_to_aur:
+        required: false
+        type: boolean
+        default: false
+      aur_repo:
+        required: false
+        type: string
+        default: openwork
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aur-validate-${{ github.workflow }}-${{ inputs.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  aur-validate:
+    name: Validate AUR package (${{ inputs.arch }}, ${{ inputs.mode }})
+    runs-on: ubuntu-22.04
+    container:
+      image: archlinux:latest
+    env:
+      TARGET_ARCH: ${{ inputs.arch || 'x86_64' }}
+      MODE: ${{ inputs.mode || 'smoke' }}
+      ARTIFACT_SOURCE: ${{ inputs.artifact_source || 'local-build-artifact' }}
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+      INPUT_ASSET_URL_X86_64: ${{ inputs.asset_url_x86_64 }}
+      INPUT_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+      INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name || 'openwork-desktop-linux-amd64-deb' }}
+      PUSH_TO_AUR: ${{ inputs.push_to_aur && 'true' || 'false' }}
+      AUR_REPO: ${{ inputs.aur_repo || 'openwork' }}
+    steps:
+      - name: Validate workflow inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${TARGET_ARCH}" != "x86_64" ]; then
+            echo "Only x86_64 is currently supported." >&2
+            exit 1
+          fi
+
+          if [ "${MODE}" != "smoke" ] && [ "${MODE}" != "publish-ready" ]; then
+            echo "mode must be smoke or publish-ready" >&2
+            exit 1
+          fi
+
+          if [ "${ARTIFACT_SOURCE}" != "local-build-artifact" ] && [ "${ARTIFACT_SOURCE}" != "release" ]; then
+            echo "artifact_source must be local-build-artifact or release" >&2
+            exit 1
+          fi
+
+          if [ "${ARTIFACT_SOURCE}" = "local-build-artifact" ] && [ -z "${INPUT_ASSET_URL_X86_64:-}" ] && [ -z "${INPUT_ARTIFACT_RUN_ID:-}" ]; then
+            echo "artifact_run_id is required when artifact_source=local-build-artifact and asset_url_x86_64 is empty" >&2
+            exit 1
+          fi
+
+          if [ "${PUSH_TO_AUR}" = "true" ] && [ "${ARTIFACT_SOURCE}" = "local-build-artifact" ] && [ -z "${INPUT_ASSET_URL_X86_64:-}" ]; then
+            echo "For push_to_aur with local-build-artifact, set asset_url_x86_64 to a public URL (or use artifact_source=release)." >&2
+            exit 1
+          fi
+
+      - name: Install Arch packaging dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed \
+            base-devel \
+            curl \
+            git \
+            jq \
+            namcap \
+            openssh \
+            python \
+            sudo \
+            xorg-server-xvfb
+
+      - name: Checkout target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Create non-root makepkg user
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd -m -s /bin/bash builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          chmod 0440 /etc/sudoers.d/builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Download release asset (.deb)
+        if: env.ARTIFACT_SOURCE == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          release_tag="${INPUT_RELEASE_TAG:-}"
+          if [ -z "$release_tag" ] && [ -n "${INPUT_VERSION:-}" ]; then
+            release_tag="v${INPUT_VERSION}"
+          fi
+
+          if [ -z "$release_tag" ]; then
+            echo "release_tag or version is required when artifact_source=release" >&2
+            exit 1
+          fi
+
+          case "$release_tag" in
+            v*) ;;
+            *) release_tag="v${release_tag}" ;;
+          esac
+
+          asset_url="${INPUT_ASSET_URL_X86_64:-}"
+          if [ -z "$asset_url" ]; then
+            asset_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/openwork-desktop-linux-amd64.deb"
+          fi
+
+          mkdir -p /tmp/aur-artifacts
+          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "$asset_url" -o /tmp/aur-artifacts/openwork-desktop-linux-amd64.deb
+
+          echo "RESOLVED_RELEASE_TAG=${release_tag}" >> "$GITHUB_ENV"
+          echo "RESOLVED_ASSET_URL_X86_64=${asset_url}" >> "$GITHUB_ENV"
+
+      - name: Download local workflow artifact
+        if: env.ARTIFACT_SOURCE == 'local-build-artifact' && env.INPUT_ASSET_URL_X86_64 == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name || 'openwork-desktop-linux-amd64-deb' }}
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: /tmp/aur-artifacts
+
+      - name: Download x86_64 asset URL override
+        if: env.ARTIFACT_SOURCE == 'local-build-artifact' && env.INPUT_ASSET_URL_X86_64 != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/aur-artifacts
+          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "${INPUT_ASSET_URL_X86_64}" -o /tmp/aur-artifacts/openwork-desktop-linux-amd64.deb
+
+      - name: Resolve local artifact path
+        if: env.ARTIFACT_SOURCE == 'local-build-artifact'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb_path=$(find /tmp/aur-artifacts -maxdepth 3 -type f -name '*.deb' | head -n 1)
+          if [ -z "${deb_path:-}" ]; then
+            echo "No .deb file found in /tmp/aur-artifacts" >&2
+            exit 1
+          fi
+
+          if [ "$deb_path" != "/tmp/aur-artifacts/openwork-desktop-linux-amd64.deb" ]; then
+            cp "$deb_path" /tmp/aur-artifacts/openwork-desktop-linux-amd64.deb
+          fi
+
+      - name: Resolve version, URL, and checksum
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          deb_path="/tmp/aur-artifacts/openwork-desktop-linux-amd64.deb"
+          if [ ! -f "$deb_path" ]; then
+            echo "Expected $deb_path to exist" >&2
+            exit 1
+          fi
+
+          version="${INPUT_VERSION:-}"
+          if [ -z "$version" ] && [ -n "${RESOLVED_RELEASE_TAG:-}" ]; then
+            version="${RESOLVED_RELEASE_TAG#v}"
+          fi
+          if [ -z "$version" ]; then
+            version="$(awk -F= '$1 == "pkgver" {print $2; exit}' packaging/aur/PKGBUILD)"
+          fi
+
+          if [ -z "$version" ]; then
+            echo "Unable to determine version. Pass inputs.version." >&2
+            exit 1
+          fi
+
+          sha256="$(sha256sum "$deb_path" | awk '{print $1}')"
+
+          source_url="${RESOLVED_ASSET_URL_X86_64:-}"
+          if [ -z "$source_url" ] && [ -n "${INPUT_ASSET_URL_X86_64:-}" ]; then
+            source_url="${INPUT_ASSET_URL_X86_64}"
+          fi
+          if [ -z "$source_url" ]; then
+            source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/openwork-desktop-linux-amd64.deb"
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+          echo "source_url=${source_url}" >> "$GITHUB_OUTPUT"
+
+      - name: Patch PKGBUILD for x86_64 validation
+        shell: bash
+        env:
+          RESOLVED_VERSION: ${{ steps.resolve.outputs.version }}
+          RESOLVED_SHA256: ${{ steps.resolve.outputs.sha256 }}
+          RESOLVED_SOURCE_URL: ${{ steps.resolve.outputs.source_url }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import os
+
+          path = pathlib.Path("packaging/aur/PKGBUILD")
+          text = path.read_text()
+
+          version = os.environ["RESOLVED_VERSION"]
+          sha256 = os.environ["RESOLVED_SHA256"]
+          source_url = os.environ["RESOLVED_SOURCE_URL"]
+
+          text = re.sub(r"^pkgver=.*$", f"pkgver={version}", text, flags=re.M)
+          text = re.sub(r"^pkgrel=.*$", "pkgrel=1", text, flags=re.M)
+          text = re.sub(r"^arch=.*$", "arch=('x86_64')", text, flags=re.M)
+          text = re.sub(
+              r"^source_x86_64=.*$",
+              "source_x86_64=(\"${pkgname}-${pkgver}.deb::" + source_url + "\")",
+              text,
+              flags=re.M,
+          )
+          text = re.sub(
+              r"^sha256sums_x86_64=.*$",
+              f"sha256sums_x86_64=('{sha256}')",
+              text,
+              flags=re.M,
+          )
+          text = re.sub(r"^source_aarch64=.*\n?", "", text, flags=re.M)
+          text = re.sub(r"^sha256sums_aarch64=.*\n?", "", text, flags=re.M)
+
+          path.write_text(text)
+          PY
+
+      - name: Regenerate .SRCINFO
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace_path="$GITHUB_WORKSPACE"
+          sudo -u builder bash -lc "cd '$workspace_path/packaging/aur' && makepkg --printsrcinfo > .SRCINFO"
+
+      - name: Build package with makepkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace_path="$GITHUB_WORKSPACE"
+          sudo -u builder bash -lc "cd '$workspace_path/packaging/aur' && makepkg -f --syncdeps --noconfirm --cleanbuild"
+
+      - name: Run namcap checks
+        if: env.MODE == 'publish-ready'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd packaging/aur
+          namcap PKGBUILD || true
+          pkg_file=$(ls -1 openwork-*.pkg.tar.* | head -n 1)
+          namcap "$pkg_file" || true
+
+      - name: Install built package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd packaging/aur
+          pkg_file=$(ls -1 openwork-*.pkg.tar.* | head -n 1)
+          pacman -U --noconfirm "$pkg_file"
+
+      - name: Smoke launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Ql openwork > /tmp/openwork-installed-files.txt
+
+          if [ ! -s /tmp/openwork-installed-files.txt ]; then
+            echo "openwork package install listing is empty" >&2
+            exit 1
+          fi
+
+          launch_bin=""
+          for candidate in \
+            "$(command -v openwork 2>/dev/null || true)" \
+            /usr/bin/openwork \
+            /opt/openwork/openwork \
+            /opt/openwork/openwork-desktop \
+            /opt/openwork/opencode
+          do
+            if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+              launch_bin="$candidate"
+              break
+            fi
+          done
+
+          if [ -n "$launch_bin" ]; then
+            xvfb-run -a bash -lc '"$1" --help >/tmp/openwork-help.txt 2>&1 || "$1" --version >/tmp/openwork-version.txt 2>&1 || true' -- "$launch_bin"
+          else
+            echo "No runnable desktop binary found; install sanity check passed." 
+          fi
+
+      - name: Publish to AUR
+        if: env.PUSH_TO_AUR == 'true'
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          RELEASE_TAG: v${{ steps.resolve.outputs.version }}
+          AUR_SKIP_UPDATE: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
+            echo "AUR_SSH_PRIVATE_KEY not set; cannot push to AUR." >&2
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.ssh"
+          touch "$HOME/.ssh/known_hosts"
+          ssh-keygen -R aur.archlinux.org >/dev/null 2>&1 || true
+          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> "$HOME/.ssh/known_hosts" 2>/dev/null
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          key_path="$tmp_dir/aur.key"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+
+          aur_remote="ssh://aur@aur.archlinux.org/${AUR_REPO}.git"
+          export GIT_SSH_COMMAND="ssh -i $key_path -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
+          git clone "$aur_remote" "$tmp_dir/aur"
+          cp packaging/aur/PKGBUILD "$tmp_dir/aur/PKGBUILD"
+          cp packaging/aur/.SRCINFO "$tmp_dir/aur/.SRCINFO"
+
+          cd "$tmp_dir/aur"
+          if git diff --quiet -- PKGBUILD .SRCINFO; then
+            echo "AUR already up to date for ${AUR_REPO}."
+            exit 0
+          fi
+
+          git add PKGBUILD .SRCINFO
+          git -c user.name="OpenWork Release Bot" \
+              -c user.email="release-bot@users.noreply.github.com" \
+              commit -m "chore(aur): update PKGBUILD for ${RELEASE_TAG#v}"
+
+          current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+          if [ -z "$current_branch" ]; then
+            current_branch="master"
+          fi
+
+          git push origin "HEAD:${current_branch}"

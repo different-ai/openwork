@@ -11,6 +11,12 @@ This skill is a template + checklist for creating skills in a workspace.
 
 A skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<skill-name>/` anchored by `SKILL.md`.
 
+## OpenWork behavior
+
+- In OpenWork, prefer creating the skill at `.opencode/skills/<skill-name>/SKILL.md`.
+- Use a file mutation tool (`write`, `edit`, or `apply_patch`) on the real skill path instead of pasting the whole skill into chat.
+- Writing the skill file lets OpenWork show the reload banner above the conversation so the user can activate the new skill immediately.
+
 ## Design goals
 
 - Portable: safe to copy between machines
@@ -69,3 +75,4 @@ description: |
 3. Include “Setup” steps if the skill needs local tooling.
 4. Add examples: at least 2 realistic user prompts.
 5. Keep it safe: avoid destructive defaults; ask for confirmation.
+6. In OpenWork, finish by writing the final `SKILL.md` file to `.opencode/skills/<skill-name>/SKILL.md` so the reload banner can appear.

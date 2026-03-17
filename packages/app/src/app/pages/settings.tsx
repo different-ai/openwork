@@ -3,7 +3,26 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, HardDrive, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import DenSettingsPanel from "../components/den-settings-panel";
+import { usePlatform } from "../context/platform";
+import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
+import {
+  ArrowUpRight,
+  CircleAlert,
+  Copy,
+  Cpu,
+  Download,
+  FolderOpen,
+  HardDrive,
+  LifeBuoy,
+  MessageCircle,
+  PlugZap,
+  RefreshCcw,
+  Server,
+  Smartphone,
+  X,
+  Zap,
+} from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
   OpenworkAuditEntry,
@@ -36,6 +55,7 @@ export type SettingsViewProps = {
   baseUrl: string;
   headerStatus: string;
   busy: boolean;
+  clientConnected: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   providers: ProviderListItem[];
@@ -131,7 +151,17 @@ export type SettingsViewProps = {
   notionBusy: boolean;
   connectNotion: () => void;
   engineDoctorVersion: string | null;
+  openDebugShareLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
+  connectRemoteWorkspace: (input: {
+    openworkHostUrl?: string | null;
+    openworkToken?: string | null;
+    directory?: string | null;
+    displayName?: string | null;
+  }) => Promise<boolean>;
 };
+
+const DISCORD_INVITE_URL = "https://discord.gg/VEhNQXxYMB";
+const BUG_REPORT_URL = "https://github.com/different-ai/openwork/issues/new?template=bug.yml";
 
 // OpenCodeRouter Settings Component
 //
@@ -160,8 +190,15 @@ export function OpenCodeRouterSettings(_props: {
 
 
 export default function SettingsView(props: SettingsViewProps) {
+  const platform = usePlatform();
   const translate = (key: string) => t(key, currentLocale());
   const engineCustomBinPathLabel = () => props.engineCustomBinPath.trim() || translate("settings.no_binary_selected");
+
+  const openExternalLink = (url: string) => {
+    const resolved = url.trim();
+    if (!resolved) return;
+    platform.openLink(resolved);
+  };
 
   const handlePickEngineBinary = async () => {
     if (!isTauriRuntime()) return;
@@ -387,7 +424,7 @@ export default function SettingsView(props: SettingsViewProps) {
     const confirmed =
       typeof window === "undefined"
         ? true
-        : window.confirm(`Disconnect ${resolved}? This removes the stored credentials.`);
+        : window.confirm(`Disconnect ${resolved}? This removes stored API keys or OAuth credentials for this provider.`);
     if (!confirmed) return;
     setProviderDisconnectError(null);
     setProviderDisconnectStatus(null);
@@ -461,6 +498,40 @@ export default function SettingsView(props: SettingsViewProps) {
       default:
         return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     }
+  });
+
+  const openworkStatusDot = createMemo(() => {
+    switch (props.openworkServerStatus) {
+      case "connected":
+        return "bg-green-9";
+      case "limited":
+        return "bg-amber-9";
+      default:
+        return "bg-gray-6";
+    }
+  });
+
+  const clientStatusLabel = createMemo(() => {
+    const status = props.opencodeConnectStatus?.status;
+    if (status === "connecting") return "Connecting";
+    if (status === "error") return "Connection failed";
+    return props.clientConnected ? "Connected" : "Not connected";
+  });
+
+  const clientStatusStyle = createMemo(() => {
+    const status = props.opencodeConnectStatus?.status;
+    if (status === "connecting") return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+    if (status === "error") return "bg-red-7/10 text-red-11 border-red-7/20";
+    return props.clientConnected
+      ? "bg-green-7/10 text-green-11 border-green-7/20"
+      : "bg-gray-4/60 text-gray-11 border-gray-7/50";
+  });
+
+  const clientStatusDot = createMemo(() => {
+    const status = props.opencodeConnectStatus?.status;
+    if (status === "connecting") return "bg-amber-9";
+    if (status === "error") return "bg-red-9";
+    return props.clientConnected ? "bg-green-9" : "bg-gray-6";
   });
 
   const engineStatusLabel = createMemo(() => {
@@ -619,6 +690,8 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const tabLabel = (tab: SettingsTab) => {
     switch (tab) {
+      case "den":
+        return "Cloud";
       case "model":
         return translate("settings.tab.model");
       case "advanced":
@@ -631,7 +704,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "model", "advanced"];
+    const tabs: SettingsTab[] = ["general", "den", "model", "advanced"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
@@ -747,6 +820,10 @@ export default function SettingsView(props: SettingsViewProps) {
   const [sandboxProbeStatus, setSandboxProbeStatus] = createSignal<string | null>(null);
   const [nukeDevConfigBusy, setNukeDevConfigBusy] = createSignal(false);
   const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<string | null>(null);
+  const [debugShareLinkOpen, setDebugShareLinkOpen] = createSignal(false);
+  const [debugShareLinkInput, setDebugShareLinkInput] = createSignal("");
+  const [debugShareLinkBusy, setDebugShareLinkBusy] = createSignal(false);
+  const [debugShareLinkStatus, setDebugShareLinkStatus] = createSignal<string | null>(null);
   const opencodeDevModeEnabled = createMemo(() => Boolean(buildInfo()?.openworkDevMode));
 
   const sandboxCreateSummary = createMemo(() => {
@@ -873,6 +950,39 @@ export default function SettingsView(props: SettingsViewProps) {
     } catch (error) {
       setNukeDevConfigStatus(error instanceof Error ? error.message : "Failed to nuke OpenCode dev config.");
       setNukeDevConfigBusy(false);
+    }
+  };
+
+  const runSandboxDebugProbe = async () => {
+    if (!isTauriRuntime() || sandboxProbeBusy()) return;
+    setSandboxProbeBusy(true);
+    setSandboxProbeStatus(null);
+    try {
+      const report = await sandboxDebugProbe();
+      setSandboxProbeResult(report);
+      if (report.ready) {
+        setSandboxProbeStatus("Sandbox probe succeeded. Export the debug report for support.");
+      } else {
+        setSandboxProbeStatus(report.error?.trim() || "Sandbox probe completed with errors.");
+      }
+    } catch (error) {
+      setSandboxProbeStatus(error instanceof Error ? error.message : "Sandbox probe failed.");
+    } finally {
+      setSandboxProbeBusy(false);
+    }
+  };
+
+  const submitDebugShareLink = async () => {
+    if (debugShareLinkBusy()) return;
+    setDebugShareLinkBusy(true);
+    setDebugShareLinkStatus(null);
+    try {
+      const result = await props.openDebugShareLink(debugShareLinkInput());
+      setDebugShareLinkStatus(result.message);
+    } catch (error) {
+      setDebugShareLinkStatus(error instanceof Error ? error.message : "Failed to open share link.");
+    } finally {
+      setDebugShareLinkBusy(false);
     }
   };
 
@@ -1056,7 +1166,63 @@ export default function SettingsView(props: SettingsViewProps) {
                 {translate("settings.theme_system_hint")}
               </div>
             </div>
+
+            <div class="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
+              <div class="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-6/20 blur-2xl" />
+              <div class="pointer-events-none absolute -bottom-12 left-6 h-24 w-24 rounded-full bg-cyan-6/20 blur-2xl" />
+
+              <div class="relative space-y-4">
+                <div class="space-y-2">
+                  <div class="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-11">
+                    <LifeBuoy size={12} />
+                    We read every message
+                  </div>
+                  <div class="text-sm font-semibold text-gray-12">Help shape OpenWork</div>
+                  <div class="max-w-[58ch] text-xs text-gray-10">
+                    Tell us what feels great and what feels rough. Feedback goes straight to the team and helps
+                    us prioritize what ships next.
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    class="h-9 rounded-xl bg-blue-10 px-4 text-xs font-semibold text-white hover:bg-blue-11"
+                    onClick={() => openExternalLink(FEEDBACK_EMAIL_URL)}
+                  >
+                    <MessageCircle size={14} />
+                    Send feedback
+                    <ArrowUpRight size={13} />
+                  </Button>
+
+                  <button
+                    type="button"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-blue-7/35 bg-gray-1/70 px-3 text-xs font-medium text-gray-11 transition-colors hover:border-blue-7/50 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-7/30"
+                    onClick={() => openExternalLink(DISCORD_INVITE_URL)}
+                  >
+                    Join Discord
+                    <ArrowUpRight size={13} />
+                  </button>
+
+                  <button
+                    type="button"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-gray-7/60 bg-gray-1/70 px-3 text-xs font-medium text-gray-10 transition-colors hover:border-gray-7/80 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-7/40"
+                    onClick={() => openExternalLink(BUG_REPORT_URL)}
+                  >
+                    Report an issue
+                    <ArrowUpRight size={13} />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
+        </Match>
+
+        <Match when={activeTab() === "den"}>
+          <DenSettingsPanel
+            developerMode={props.developerMode}
+            connectRemoteWorkspace={props.connectRemoteWorkspace}
+          />
         </Match>
 
         <Match when={activeTab() === "model"}>
@@ -1132,6 +1298,47 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "advanced"}>
           <div class="space-y-6">
+            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Runtime</div>
+                <div class="text-xs text-gray-9">Status for your local engine and OpenWork server.</div>
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
+                      <Cpu size={18} />
+                    </div>
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenCode engine</div>
+                      <div class="text-xs text-gray-9">Local runtime for agents, tools, and model providers.</div>
+                    </div>
+                  </div>
+                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${clientStatusStyle()}`}>
+                    <span class={`h-2 w-2 rounded-full ${clientStatusDot()}`} />
+                    {clientStatusLabel()}
+                  </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
+                      <Server size={18} />
+                    </div>
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenWork server</div>
+                      <div class="text-xs text-gray-9">Session control plane for app sync, workers, and remote access.</div>
+                    </div>
+                  </div>
+                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${openworkStatusStyle()}`}>
+                    <span class={`h-2 w-2 rounded-full ${openworkStatusDot()}`} />
+                    {openworkStatusLabel()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
               <div class="text-sm font-medium text-gray-12">{translate("settings.developer_mode")}</div>
               <div class="text-xs text-gray-9">
@@ -1171,6 +1378,59 @@ export default function SettingsView(props: SettingsViewProps) {
                 </div>
                 <Show when={nukeDevConfigStatus()}>
                   {(value) => <div class="text-xs text-red-11">{value()}</div>}
+                </Show>
+
+                <Show when={props.developerMode}>
+                  <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                      <div>
+                        <div class="text-sm font-medium text-gray-12">Open share link</div>
+                        <div class="text-xs text-gray-9">
+                          Paste an existing <span class="font-mono">openwork://</span> share link and route it through the dev app.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        class={compactOutlineActionClass}
+                        onClick={() => {
+                          setDebugShareLinkOpen((value) => !value);
+                          setDebugShareLinkStatus(null);
+                        }}
+                        disabled={props.busy || debugShareLinkBusy()}
+                      >
+                        {debugShareLinkOpen() ? "Hide" : "Open share link"}
+                      </button>
+                    </div>
+
+                    <Show when={debugShareLinkOpen()}>
+                      <div class="space-y-3">
+                        <textarea
+                          value={debugShareLinkInput()}
+                          onInput={(event) => setDebugShareLinkInput(event.currentTarget.value)}
+                          rows={3}
+                          placeholder="openwork://import-bundle?ow_bundle=..."
+                          class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
+                        />
+                        <div class="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            class="text-xs h-8 py-0 px-3"
+                            onClick={() => void submitDebugShareLink()}
+                            disabled={props.busy || debugShareLinkBusy() || !debugShareLinkInput().trim()}
+                          >
+                            {debugShareLinkBusy() ? "Opening..." : "Open link"}
+                          </Button>
+                          <div class="text-[11px] text-gray-8">
+                            Accepts <span class="font-mono">openwork://</span>, <span class="font-mono">openwork-dev://</span>, or a raw <span class="font-mono">https://share.openwork.software/b/...</span> URL.
+                          </div>
+                        </div>
+                      </div>
+                    </Show>
+
+                    <Show when={debugShareLinkStatus()}>
+                      {(value) => <div class="text-xs text-gray-10">{value()}</div>}
+                    </Show>
+                  </div>
                 </Show>
               </Show>
             </div>

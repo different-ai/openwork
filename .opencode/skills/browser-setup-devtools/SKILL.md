@@ -24,7 +24,7 @@ description: Guide users through browser automation setup using Chrome DevTools 
 4. If DevTools MCP calls fail:
    - Ask the user to open Chrome and keep it running.
    - Retry `chrome-devtools_list_pages`.
-   - If it still fails, ensure `opencode.jsonc` includes `mcp.control-chrome` with command `['chrome-devtools-mcp']` and ask the user to restart OpenWork/OpenCode.
+   - If it still fails, ensure `opencode.jsonc` includes `mcp["chrome-devtools"]` with command `['npx', '-y', 'chrome-devtools-mcp@latest']` and ask the user to restart OpenWork/OpenCode.
    - Retry the DevTools MCP check.
 5. If DevTools MCP is ready:
    - Offer a first task ("Let's try opening a webpage").

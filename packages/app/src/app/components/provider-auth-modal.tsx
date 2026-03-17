@@ -3,6 +3,7 @@ import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { isTauriRuntime } from "../utils";
+import { compareProviders } from "../utils/providers";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -93,12 +94,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           env: Array.isArray(provider?.env) ? provider.env : [],
         };
       })
-      .sort((a, b) => {
-        const aIsOpencode = a.id === "opencode";
-        const bIsOpencode = b.id === "opencode";
-        if (aIsOpencode !== bIsOpencode) return aIsOpencode ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
+      .sort(compareProviders);
   });
 
   const methodLabel = (method: ProviderAuthMethod) =>

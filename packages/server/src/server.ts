@@ -3113,8 +3113,15 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse(result);
   });
 
-  addRoute(routes, "GET", "/hub/skills", "client", async () => {
-    const items = await listHubSkills();
+  addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
+    const owner = ctx.url.searchParams.get("owner")?.trim();
+    const repo = ctx.url.searchParams.get("repo")?.trim();
+    const ref = ctx.url.searchParams.get("ref")?.trim();
+    const items = await listHubSkills({
+      owner: owner || "different-ai",
+      repo: repo || "openwork-hub",
+      ref: ref || "main",
+    });
     return jsonResponse({ items });
   });
 

@@ -11,6 +11,7 @@
 #   OPENWORK_WORKSPACE    — host path to mount as workspace (default: ./workspace)
 #   OPENWORK_PORT         — host port to map to container :8787 (default: 8787)
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
+#   SHARE_PORT            — host port to map to the share service :3000 (default: 3006)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
 #   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state (set by dev-up.sh)
 #   OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
@@ -151,6 +152,8 @@ services:
     depends_on:
       orchestrator:
         condition: service_healthy
+      share:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -184,6 +187,7 @@ services:
 
         export VITE_OPENWORK_URL="http://localhost:${OPENWORK_PORT:-8787}"
         export VITE_OPENWORK_PORT="${OPENWORK_PORT:-8787}"
+        export VITE_OPENWORK_PUBLISHER_BASE_URL="http://localhost:${SHARE_PORT:-3006}"
         export VITE_ALLOWED_HOSTS="all"
         export HOST="0.0.0.0"
         export PORT="5173"
@@ -196,6 +200,49 @@ services:
       - "${WEB_PORT:-5173}:5173"
     environment:
       OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
+
+  share:
+    <<: *shared
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+          curl ca-certificates >/dev/null 2>&1
+
+        corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+        echo "[share] Installing dependencies..."
+        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+
+        mkdir -p /app/tmp/share-service-blobs
+
+        echo "[share] Building Next app..."
+        pnpm --dir services/openwork-share build
+
+        echo ""
+        echo "============================================"
+        echo "  OpenWork share service"
+        echo "  URL: http://localhost:${SHARE_PORT:-3006}"
+        echo "============================================"
+        echo ""
+
+        exec pnpm --dir services/openwork-share exec next start --hostname 0.0.0.0 --port 3000
+    ports:
+      - "${SHARE_PORT:-3006}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 180s
+    environment:
+      CI: "true"
+      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
+      LOCAL_BLOB_DIR: /app/tmp/share-service-blobs
+      PUBLIC_BASE_URL: http://localhost:${SHARE_PORT:-3006}
+      PUBLIC_OPENWORK_APP_URL: http://localhost:${WEB_PORT:-5173}
 
 volumes:
   pnpm-store:

@@ -8,7 +8,9 @@ function GitHubMark() {
   );
 }
 
-export default function ShareNav({ stars = "—" }: { stars?: string }) {
+export default function ShareNav({ stars = "" }: { stars?: string }) {
+  const githubLabel = stars ? `GitHub ${stars}` : "GitHub";
+
   return (
     <nav className="nav">
       <a className="brand" href="/" aria-label="OpenWork Share home">
@@ -40,7 +42,7 @@ export default function ShareNav({ stars = "—" }: { stars?: string }) {
           aria-label="OpenWork GitHub stars"
         >
           <GitHubMark />
-          GitHub {stars}
+          {githubLabel}
         </a>
       </div>
     </nav>

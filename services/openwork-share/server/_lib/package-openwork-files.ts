@@ -9,6 +9,31 @@ const SECRET_KEY_RE = /(token|secret|password|api[-_]?key|authorization|bearer|p
 const SAFE_SECRET_VALUE_RE = /^(\$\{|\{env:|env\.|process\.env\.|<|YOUR_|REPLACE_ME|example|changeme)/i;
 const AGENT_FRONTMATTER_KEYS = new Set(["mode", "model", "tools", "permission", "temperature", "color", "prompt"]);
 const OPENCODE_CONFIG_KEYS = new Set(["model", "autoupdate", "server", "provider", "plugin", "mcp", "agent", "permission"]);
+const SKILL_NAME_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "from",
+  "how",
+  "identity",
+  "into",
+  "my",
+  "of",
+  "or",
+  "parameters",
+  "scope",
+  "skill",
+  "skills",
+  "that",
+  "the",
+  "this",
+  "to",
+  "trigger",
+  "when",
+  "with",
+  "your",
+]);
 
 function normalizePath(input: unknown): string {
   return String(input ?? "")
@@ -100,6 +125,41 @@ function resolveName(preferred: unknown, fallback: unknown): string {
   return `item-${Date.now()}`;
 }
 
+function normalizeNameTokens(value: string): string[] {
+  return String(value)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((token) => token && token.length > 2 && !SKILL_NAME_STOPWORDS.has(token));
+}
+
+function inferSkillName(file: NormalizedFile, frontmatter: Frontmatter): string {
+  const candidateLines = [
+    ...Array.from(frontmatter.body.matchAll(/^#{1,6}\s+(.+)$/gm)).map((match) => match[1] ?? ""),
+    ...frontmatter.body
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 12),
+  ];
+
+  for (const line of candidateLines) {
+    const tokens = normalizeNameTokens(line);
+    if (tokens.length >= 2) {
+      return `${tokens[0]}-${tokens[1]}`;
+    }
+    if (tokens.length === 1) {
+      return tokens[0];
+    }
+  }
+
+  const stemName = slugify(stem(file.path));
+  if (stemName && stemName !== "skill" && stemName !== "clipboard") {
+    return stemName;
+  }
+
+  return "shared-skill";
+}
+
 function buildPreviewItem(name: string, kind: PreviewItem["kind"], meta: string, tone: PreviewItem["tone"]): PreviewItem {
   return { name, kind, meta, tone };
 }
@@ -151,17 +211,20 @@ interface SkillRecord {
 
 function buildSkillRecord(file: NormalizedFile, warnings: string[], frontmatter: Frontmatter): SkillRecord | null {
   const { data } = frontmatter;
-  const parentName = basename(dirname(file.path));
-  const name = resolveName(data.name, parentName || stem(file.path));
-  const description = typeof data.description === "string" ? data.description.trim() : "";
+  const name = maybeString(data.name).trim();
+  const description = maybeString(data.description).trim();
   const trigger = typeof data.trigger === "string" ? data.trigger.trim() : "";
   const version = typeof data.version === "string" ? data.version.trim() : "";
-  if (!file.content.trim()) {
+  if (!name || !description) {
+    warnings.push(`Skill files need frontmatter with both name and description: ${file.path}`);
+    return null;
+  }
+  if (!frontmatter.body.trim()) {
     warnings.push(`Ignored empty skill file: ${file.path}`);
     return null;
   }
   return {
-    name,
+    name: resolveName(name, name),
     description,
     trigger,
     content: file.content,
@@ -480,10 +543,13 @@ function buildBundleDescription(bundleType: string, summary: PackageSummary): st
 export function packageOpenworkFiles(input: PackageInput): PackageResult {
   const rawFiles = Array.isArray(input?.files) ? input.files : [];
   if (!rawFiles.length) {
-    throw new Error("Drop one or more OpenWork files to package them.");
+    throw new Error("Upload or paste a single skill to continue.");
   }
   if (rawFiles.length > MAX_FILES) {
     throw new Error(`Too many files. Package up to ${MAX_FILES} files at once.`);
+  }
+  if (rawFiles.length !== 1) {
+    throw new Error("Upload or paste a single skill to continue.");
   }
 
   const warnings: string[] = [];
@@ -500,67 +566,16 @@ export function packageOpenworkFiles(input: PackageInput): PackageResult {
   for (let index = 0; index < rawFiles.length; index += 1) {
     const file = normalizeFile(rawFiles[index], index);
     if (!file.content.trim()) {
-      warnings.push(`Ignored empty file: ${file.path}`);
-      continue;
+      throw new Error("Skills need frontmatter with name and description.");
     }
 
-    if (isMarkdownFile(file)) {
-      const frontmatter = parseFrontmatter(file.content);
-      const markdownKind = isCommandFile(file)
-        ? "command"
-        : isSkillFile(file)
-          ? "skill"
-          : isAgentFile(file, frontmatter.data)
-            ? "agent"
-            : inferMarkdownKind(file, frontmatter.data);
-
-      if (markdownKind === "skill") {
-        const record = buildSkillRecord(file, warnings, frontmatter);
-        if (record) {
-          skills.push(record);
-          previewItems.push(record.preview);
-        }
-        continue;
-      }
-
-      if (markdownKind === "agent") {
-        const record = buildAgentRecord(file, warnings, frontmatter);
-        if (record) {
-          opencodeAgent[record.name] = record.config;
-          previewItems.push(record.preview);
-        }
-        continue;
-      }
-
-      if (markdownKind === "command") {
-        const record = buildCommandRecord(file, warnings, frontmatter);
-        if (record) {
-          commands.push(record);
-          previewItems.push(record.preview);
-        }
-        continue;
-      }
-
-      warnings.push(`Ignored unsupported markdown file: ${file.path}`);
-      continue;
+    const frontmatter = parseFrontmatter(file.content);
+    const record = buildSkillRecord(file, warnings, frontmatter);
+    if (!record) {
+      throw new Error("Skills need frontmatter with name and description.");
     }
-
-    if (isJsonFile(file)) {
-      const record = readConfigSection(file, warnings);
-      if (!record) continue;
-      if (record.opencode) {
-        opencodeConfig = mergeConfigSections(opencodeConfig, record.opencode);
-      }
-      mergeNamedObjects(opencodeAgent, (record.opencode?.agent ?? {}) as Record<string, unknown>);
-      mergeNamedObjects(opencodeMcp, (record.opencode?.mcp ?? {}) as Record<string, unknown>);
-      if (record.openwork) openwork = record.openwork;
-      mergeNamedObjects(genericConfig, record.config ?? {});
-      configCount += record.configCount ?? 0;
-      previewItems.push(...record.preview);
-      continue;
-    }
-
-    warnings.push(`Ignored unsupported file type: ${file.path}`);
+    skills.push(record);
+    previewItems.push(record.preview);
   }
 
   const cleanSkills = skills.map(({ preview: _preview, ...skill }) => skill);

@@ -1,6 +1,7 @@
 import {
   buildBundleNarrative,
   buildBundlePreview,
+  buildBundlePreviewSelections,
   buildBundleUrls,
   buildOgImageUrl,
   buildOpenInAppUrls,
@@ -34,7 +35,7 @@ export function buildMissingBundlePageProps(requestLike: RequestLike, id = "miss
   return {
     missing: true,
     canonicalUrl: buildBundleUrls(requestLike, id).shareUrl,
-    ogImageUrl: buildOgImageUrl(requestLike, "root")
+    ogImageUrl: buildOgImageUrl(requestLike, id)
   };
 }
 
@@ -60,9 +61,9 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
     const description = bundle.description || buildBundleNarrative(bundle);
     const installHint =
       bundle.type === "skill"
-        ? "Open in app to create a new worker and install this skill in one step."
+        ? "Open in app to choose where to add this skill."
         : bundle.type === "skills-set"
-          ? "Open in app to create a new worker with this entire skills set already attached."
+          ? "Open in app to add this full skills set to an existing worker or create a new worker with it attached."
           : "Open in app to create a new worker with these skills, agents, MCPs, and config already bundled.";
 
     return {
@@ -86,6 +87,7 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
       previewText: preview.text,
       previewLabel: preview.label,
       previewTone: preview.tone,
+      previewSelections: buildBundlePreviewSelections(bundle),
       metadataRows: buildMetadataRows(normalizedId, bundle, counts, schemaVersion)
     };
   } catch {

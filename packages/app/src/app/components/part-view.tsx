@@ -334,11 +334,15 @@ const applyTextHighlights = (root: HTMLElement, query: string) => {
 function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) = 80) {
   const [state, setState] = createSignal<T>(value());
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let hasEmitted = false;
 
   createEffect(() => {
     const next = value();
     const delay = typeof delayMs === "function" ? delayMs() : delayMs;
-    if (!delay) {
+    // Always apply the first non-empty value synchronously so the initial
+    // render never falls through to the raw-text fallback.
+    if (!delay || !hasEmitted) {
+      hasEmitted = true;
       setState(() => next);
       return;
     }
@@ -466,6 +470,8 @@ function createCustomRenderer(tone: "light" | "dark") {
         src="${safeHref}"
         alt="${escapeHtml(text || "")}"
         ${safeTitle ? `title="${safeTitle}"` : ""}
+        loading="lazy"
+        decoding="async"
         class="max-w-full h-auto rounded-lg my-4"
       />
     `;
@@ -602,6 +608,11 @@ export default function PartView(props: Props) {
       }
 
       const html = typeof result === "string" ? result : "";
+      // If marked returned empty HTML for non-empty source, treat as a parse
+      // failure so the fallback renders plain text instead of blank space.
+      if (!html && text.trim()) {
+        return null;
+      }
       writeMarkdownCache(cacheKey, html);
       return html;
     } catch (error) {
@@ -889,23 +900,18 @@ export default function PartView(props: Props) {
             </div>
           }
         >
-          <Show
-            when={renderedMarkdown()}
-            fallback={
-              <div
-                ref={(el) => {
-                  textContainerEl = el;
-                }}
-                class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
-              >
-                {renderTextWithLinks()}
-              </div>
-            }
-          >
+          {/* null = parse error → plain text; "" = empty/pending → nothing; string = rendered HTML */}
+          <Show when={renderedMarkdown() === null}>
             <div
-              ref={(el) => {
-                textContainerEl = el;
-              }}
+              ref={(el) => { textContainerEl = el; }}
+              class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
+            >
+              {renderTextWithLinks()}
+            </div>
+          </Show>
+          <Show when={typeof renderedMarkdown() === "string" && renderedMarkdown()}>
+            <div
+              ref={(el) => { textContainerEl = el; }}
               class={`markdown-content max-w-none ${textClass()}
                 [&_strong]:font-semibold
                 [&_em]:italic
@@ -1067,6 +1073,8 @@ export default function PartView(props: Props) {
                     <img
                       src={image.src}
                       alt={image.alt || ""}
+                      loading="lazy"
+                      decoding="async"
                       class="max-w-full h-auto rounded-lg border border-gray-6/50"
                     />
                   )}
@@ -1122,6 +1130,8 @@ export default function PartView(props: Props) {
         <img
           src={inlineImage()!}
           alt=""
+          loading="lazy"
+          decoding="async"
           class="max-w-full h-auto rounded-xl border border-gray-6/50"
         />
       </Match>

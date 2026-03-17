@@ -1,7 +1,6 @@
 export type ItemKind = "Agent" | "Skill" | "MCP" | "Config" | "Command";
 export type ItemTone = "agent" | "skill" | "mcp" | "config" | "command";
 export type StatusSeverity = "success" | "warn" | "info" | "neutral";
-export type CopyState = "ready-not-copied" | "copied" | "copy-failed";
 export type BusyMode = "preview" | "publish" | null;
 
 export interface PreviewItem {
@@ -18,15 +17,8 @@ export interface PackageStatus {
   items: string[];
 }
 
-export interface ShareFeedback {
-  badge: string;
-  detail: string;
-  copyLabel: string;
-  isSuccess: boolean;
-}
-
 export interface PackageStatusInput {
-  generatedUrl: string;
+  errorMessage: string;
   warnings: string[];
   effectiveEntryCount: number;
 }

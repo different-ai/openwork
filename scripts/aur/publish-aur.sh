@@ -32,7 +32,7 @@ TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 KEY_PATH="${TMP_DIR}/aur.key"
-printf '%s' "$AUR_SSH_PRIVATE_KEY" > "$KEY_PATH"
+printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$KEY_PATH"
 chmod 600 "$KEY_PATH"
 
 mkdir -p "$HOME/.ssh"
