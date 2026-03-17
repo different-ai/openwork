@@ -4217,93 +4217,89 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
 
           <Show when={props.showSkillReloadBanner}>
-            <div class="border-b border-dls-border/70 bg-dls-surface px-4 py-3 sm:px-6 lg:px-10">
-              <div class="mx-auto w-full max-w-[980px]">
-                <div class="w-full overflow-hidden rounded-[1.2rem] border border-white/70 bg-white/92 shadow-[0_20px_56px_-32px_rgba(15,23,42,0.36)] backdrop-blur-xl animate-in fade-in slide-in-from-top-3 duration-300">
-                  <div class="flex items-start gap-3 px-4 py-4">
-                    <div
-                      class={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${
-                        props.reloadBannerBlocked
-                          ? "border-amber-6/40 bg-amber-4/80 text-amber-11"
-                          : "border-sky-6/40 bg-sky-4/80 text-sky-11"
-                      }`.trim()}
-                    >
-                      <RefreshCcw size={18} class={props.reloadBusy ? "animate-spin" : ""} />
-                    </div>
+            <div class="border-b border-dls-border/70 bg-dls-surface animate-in fade-in slide-in-from-top-3 duration-300">
+              <div class="flex min-h-[104px] items-start gap-3 px-4 py-5 sm:px-6 lg:px-10">
+                <div
+                  class={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${
+                    props.reloadBannerBlocked
+                      ? "border-amber-6/40 bg-amber-4/80 text-amber-11"
+                      : "border-sky-6/40 bg-sky-4/80 text-sky-11"
+                  }`.trim()}
+                >
+                  <RefreshCcw size={18} class={props.reloadBusy ? "animate-spin" : ""} />
+                </div>
 
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
-                          <div class="flex items-center gap-2">
-                            <span class="truncate text-sm font-semibold text-gray-12">{props.reloadBannerTitle}</span>
-                            <Show when={props.reloadBannerBlocked}>
-                              <span class="inline-flex items-center gap-1 rounded-full bg-amber-4 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-11">
-                                Active tasks
-                              </span>
-                            </Show>
-                          </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="truncate text-sm font-semibold text-gray-12">{props.reloadBannerTitle}</span>
+                        <Show when={props.reloadBannerBlocked}>
+                          <span class="inline-flex items-center gap-1 rounded-full bg-amber-4 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-11">
+                            Active tasks
+                          </span>
+                        </Show>
+                      </div>
 
-                          <div class="mt-1 space-y-1 text-sm leading-relaxed text-gray-10">
-                            <div>
-                              <Show
-                                when={props.reloadBannerBlocked}
-                                fallback={
-                                  <Show when={props.reloadError} fallback={props.reloadBannerBody}>
-                                    <span class="font-medium text-red-11">{props.reloadError}</span>
-                                  </Show>
-                                }
-                              >
-                                <span class="font-medium text-amber-11">Reloading will stop active tasks.</span>
+                      <div class="mt-1 space-y-1 text-sm leading-relaxed text-gray-10">
+                        <div>
+                          <Show
+                            when={props.reloadBannerBlocked}
+                            fallback={
+                              <Show when={props.reloadError} fallback={props.reloadBannerBody}>
+                                <span class="font-medium text-red-11">{props.reloadError}</span>
                               </Show>
-                            </div>
-
-                            <Show when={props.reloadBannerBlocked}>
-                              <div class="flex items-start gap-2 rounded-2xl border border-amber-6/40 bg-amber-3/70 px-3 py-2 text-xs text-amber-11">
-                                <AlertTriangle size={14} class="mt-0.5 shrink-0" />
-                                <span>
-                                  {`Reloading stops ${props.reloadBannerActiveCount} active conversation${props.reloadBannerActiveCount === 1 ? "" : "s"}.`}
-                                </span>
-                              </div>
-                            </Show>
-                          </div>
+                            }
+                          >
+                            <span class="font-medium text-amber-11">Reloading will stop active tasks.</span>
+                          </Show>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={props.dismissReloadBanner}
-                          class="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
-                          aria-label="Dismiss reload prompt"
-                        >
-                          <X size={16} />
-                        </button>
-                      </div>
-
-                      <div class="mt-3 flex flex-wrap items-center gap-2">
-                        <Button
-                          variant={props.reloadBannerBlocked ? "danger" : "primary"}
-                          class="rounded-full px-3 py-1.5 text-xs"
-                          disabled={!props.canReloadWorkspace || props.reloadBusy}
-                          onClick={() =>
-                            void (props.reloadBannerBlocked
-                              ? props.forceStopActiveConversations()
-                              : props.reloadWorkspaceEngine())
-                          }
-                        >
-                          {props.reloadBusy
-                            ? "Reloading..."
-                            : props.reloadBannerBlocked
-                              ? "Reload & Stop Tasks"
-                              : "Reload now"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          class="rounded-full px-3 py-1.5 text-xs"
-                          onClick={props.dismissReloadBanner}
-                        >
-                          Later
-                        </Button>
+                        <Show when={props.reloadBannerBlocked}>
+                          <div class="flex items-start gap-2 rounded-2xl border border-amber-6/40 bg-amber-3/70 px-3 py-2 text-xs text-amber-11">
+                            <AlertTriangle size={14} class="mt-0.5 shrink-0" />
+                            <span>
+                              {`Reloading stops ${props.reloadBannerActiveCount} active conversation${props.reloadBannerActiveCount === 1 ? "" : "s"}.`}
+                            </span>
+                          </div>
+                        </Show>
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={props.dismissReloadBanner}
+                      class="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
+                      aria-label="Dismiss reload prompt"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div class="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      variant={props.reloadBannerBlocked ? "danger" : "primary"}
+                      class="rounded-full px-3 py-1.5 text-xs"
+                      disabled={!props.canReloadWorkspace || props.reloadBusy}
+                      onClick={() =>
+                        void (props.reloadBannerBlocked
+                          ? props.forceStopActiveConversations()
+                          : props.reloadWorkspaceEngine())
+                      }
+                    >
+                      {props.reloadBusy
+                        ? "Reloading..."
+                        : props.reloadBannerBlocked
+                          ? "Reload & Stop Tasks"
+                          : "Reload now"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      class="rounded-full px-3 py-1.5 text-xs"
+                      onClick={props.dismissReloadBanner}
+                    >
+                      Later
+                    </Button>
                   </div>
                 </div>
               </div>
