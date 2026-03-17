@@ -1,3 +1,8 @@
+# Deploy Den workflow intentionally disabled.
+#
+# Render is responsible for building and deploying the legacy Den service,
+# so this repository workflow should not trigger any deploy automation.
+
 name: Deploy Den (disabled)
 
 on:
@@ -10,8 +15,4 @@ jobs:
     steps:
       - name: Disabled
         run: |
-          echo "deploy-den.yml is intentionally disabled"
-
-# Historical workflow intentionally commented out.
-# The previous Render deployment automation for the legacy Den service
-# should not run anymore.
+          echo "deploy-den.yml is intentionally disabled; Render handles Den deploys"
