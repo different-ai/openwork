@@ -25,6 +25,10 @@ const createSchema = z.object({
   imageVersion: z.string().optional(),
 })
 
+const updateSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+})
+
 const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
@@ -640,6 +644,58 @@ workersRouter.get("/:id", asyncRoute(async (req, res) => {
   res.json({
     worker: toWorkerResponse(rows[0], session.user.id),
     instance: toInstanceResponse(instance),
+  })
+}))
+
+workersRouter.patch("/:id", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const parsed = updateSchema.safeParse(req.body ?? {})
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+    return
+  }
+
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, orgId)))
+    .limit(1)
+
+  if (rows.length === 0) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  await db
+    .update(WorkerTable)
+    .set({ name: parsed.data.name })
+    .where(eq(WorkerTable.id, workerId))
+
+  res.json({
+    worker: toWorkerResponse(
+      {
+        ...rows[0],
+        name: parsed.data.name,
+        updated_at: new Date(),
+      },
+      session.user.id,
+    ),
   })
 }))
 

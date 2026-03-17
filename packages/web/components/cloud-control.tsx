@@ -159,6 +159,7 @@ const PENDING_SOCIAL_SIGNUP_STORAGE_KEY = "openwork:web:pending-social-signup";
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
+const DEFAULT_WORKER_NAME = "My Worker";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
 const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
@@ -256,7 +257,7 @@ function getSocialProviderLabel(provider: SocialAuthProvider): string {
 
 function normalizeWorkerName(input: string): string {
   const normalized = input.trim().replace(/\s+/g, " ");
-  return normalized || "Founder Ops Pilot";
+  return normalized || DEFAULT_WORKER_NAME;
 }
 
 function isDesktopContext(): boolean {
@@ -1090,7 +1091,7 @@ export function CloudControlPanel() {
   });
   const [sessionHydrated, setSessionHydrated] = useState(false);
 
-  const [workerName, setWorkerName] = useState("Founder Ops Pilot");
+  const [workerName, setWorkerName] = useState(DEFAULT_WORKER_NAME);
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
   const [workerLookupId, setWorkerLookupId] = useState("");
   const [workers, setWorkers] = useState<WorkerListItem[]>([]);
@@ -2290,7 +2291,7 @@ export function CloudControlPanel() {
     setSignupOnboardingActive(false);
     setAutoLaunchPending(false);
     setNameStepBusy(false);
-    setWorkerName("Founder Ops Pilot");
+    setWorkerName(DEFAULT_WORKER_NAME);
     setWorkerQuery("");
     setWorkerStatusFilter("all");
     setShowLaunchForm(false);
@@ -2320,7 +2321,7 @@ export function CloudControlPanel() {
       return;
     }
 
-    const resolvedLaunchName = options.workerNameOverride?.trim() || workerName.trim() || "Cloud Worker";
+    const resolvedLaunchName = options.workerNameOverride?.trim() || workerName.trim() || DEFAULT_WORKER_NAME;
 
     setLaunchBusy(true);
     setLaunchError(null);
@@ -2775,7 +2776,7 @@ export function CloudControlPanel() {
     }
 
     const target = workers.find((entry) => entry.workerId === workerId) ?? null;
-    const workerLabel = target?.workerName?.trim() || "Cloud Worker";
+    const workerLabel = target?.workerName?.trim() || DEFAULT_WORKER_NAME;
 
     if (typeof window !== "undefined") {
       const confirmed = window.confirm(
@@ -3013,7 +3014,7 @@ export function CloudControlPanel() {
                   type="text"
                   value={workerName}
                   onChange={(event) => setWorkerName(event.target.value)}
-                  placeholder="Founder Ops Pilot"
+                  placeholder={DEFAULT_WORKER_NAME}
                   maxLength={64}
                 />
               </label>
@@ -3322,7 +3323,7 @@ export function CloudControlPanel() {
                             ? "Starting worker..."
                             : worker?.status === "provisioning"
                               ? "Worker is starting..."
-                              : `Launch "${workerName || "Cloud Worker"}"`}
+                              : `Launch "${workerName || DEFAULT_WORKER_NAME}"`}
                         </button>
 
                         {(launchStatus || launchError) && showLaunchForm ? (
@@ -3443,7 +3444,7 @@ export function CloudControlPanel() {
                           ? "Starting worker..."
                           : worker?.status === "provisioning"
                             ? "Worker is starting..."
-                            : `Launch "${workerName || "Cloud Worker"}"`}
+                            : `Launch "${workerName || DEFAULT_WORKER_NAME}"`}
                       </button>
 
                       {(launchStatus || launchError) && showLaunchForm ? (
