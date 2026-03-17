@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
-import { ArrowUpRight, Cloud, LogIn, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
+import { ArrowUpRight, Cloud, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
 import Button from "./button";
 import TextInput from "./text-input";
 import {
@@ -21,8 +21,6 @@ type DenSettingsPanelProps = {
     displayName?: string | null;
   }) => Promise<boolean>;
 };
-
-type AuthMode = "sign-in" | "sign-up";
 
 function statusBadgeClass(kind: "ready" | "warning" | "neutral" | "error") {
   switch (kind) {
@@ -67,9 +65,6 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [baseUrlError, setBaseUrlError] = createSignal<string | null>(null);
   const [authToken, setAuthToken] = createSignal(initial.authToken?.trim() || "");
   const [activeOrgId, setActiveOrgId] = createSignal(initial.activeOrgId?.trim() || "");
-  const [authMode, setAuthMode] = createSignal<AuthMode>("sign-in");
-  const [email, setEmail] = createSignal("");
-  const [password, setPassword] = createSignal("");
   const [authBusy, setAuthBusy] = createSignal(false);
   const [sessionBusy, setSessionBusy] = createSignal(false);
   const [orgsBusy, setOrgsBusy] = createSignal(false);
@@ -128,6 +123,16 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const openControlPlane = () => {
     const target = normalizeDenBaseUrl(baseUrl()) ?? DEFAULT_DEN_BASE_URL;
     platform.openLink(target);
+  };
+
+  const openBrowserAuth = (mode: "sign-in" | "sign-up") => {
+    const target = new URL(normalizeDenBaseUrl(baseUrl()) ?? DEFAULT_DEN_BASE_URL);
+    target.searchParams.set("mode", mode);
+    target.searchParams.set("desktopAuth", "1");
+    target.searchParams.set("desktopScheme", import.meta.env.DEV ? "openwork-dev" : "openwork");
+    platform.openLink(target.toString());
+    setStatusMessage(mode === "sign-up" ? "Finish account creation in your browser to connect OpenWork." : "Finish signing in in your browser to connect OpenWork.");
+    setAuthError(null);
   };
 
   const clearSessionState = () => {
@@ -275,38 +280,29 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     void refreshWorkers(true);
   });
 
-  const submitAuth = async () => {
-    const trimmedEmail = email().trim();
-    const currentPassword = password();
-    if (!trimmedEmail || !currentPassword) {
-      setAuthError("Email and password are required.");
-      return;
-    }
-
-    setAuthBusy(true);
-    setAuthError(null);
-    setStatusMessage(null);
-
-    try {
-      const result =
-        authMode() === "sign-up"
-          ? await client().signUpEmail(trimmedEmail, currentPassword)
-          : await client().signInEmail(trimmedEmail, currentPassword);
-
-      if (!result.token) {
-        throw new Error("Den did not return a desktop access token.");
+  createEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ status?: string; email?: string | null; message?: string | null }>;
+      const nextSettings = readDenSettings();
+      setBaseUrl(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
+      setBaseUrlDraft(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
+      setAuthToken(nextSettings.authToken?.trim() || "");
+      setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
+      if (customEvent.detail?.status === "success") {
+        setAuthError(null);
+        setStatusMessage(
+          customEvent.detail.email?.trim()
+            ? `Connected OpenWork Den as ${customEvent.detail.email.trim()}.`
+            : "Connected OpenWork Den.",
+        );
+      } else if (customEvent.detail?.status === "error") {
+        setAuthError(customEvent.detail.message?.trim() || "Failed to finish OpenWork Den sign-in.");
       }
+    };
 
-      setAuthToken(result.token);
-      setUser(result.user);
-      setPassword("");
-      setStatusMessage(authMode() === "sign-up" ? "Account created. Loading orgs..." : "Signed in. Loading orgs...");
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Sign-in failed.");
-    } finally {
-      setAuthBusy(false);
-    }
-  };
+    window.addEventListener("openwork-den-session-updated", handler as EventListener);
+    return () => window.removeEventListener("openwork-den-session-updated", handler as EventListener);
+  });
 
   const signOut = async () => {
     setAuthBusy(true);
@@ -319,10 +315,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
 
     setAuthToken("");
-    setPassword("");
-    setEmail("");
     clearSessionState();
-    setStatusMessage("Signed out of OpenWork Cloud.");
+    setStatusMessage("Signed out of OpenWork Den.");
     setAuthError(null);
   };
 
@@ -372,13 +366,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
             <div class="space-y-2">
               <div class="inline-flex items-center gap-2 rounded-full border border-sky-7/25 bg-sky-3/20 px-2.5 py-1 text-[11px] font-medium text-sky-11">
                 <Cloud size={12} />
-                OpenWork Cloud
+                OpenWork Den
               </div>
               <div>
                 <div class="text-sm font-semibold text-gray-12">Sign in, pick an org, and open Den workers from Settings.</div>
-                <div class="mt-1 max-w-[60ch] text-xs text-gray-10">
-                  This is the foundation for desktop OpenWork Cloud access. It stores your Den URL, session token, and active org locally on this device.
-                </div>
+                <div class="mt-1 max-w-[60ch] text-xs text-gray-10">Sign in to OpenWork Den to keep your tasks alive even when your computer sleeps.</div>
               </div>
             </div>
             <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusBadgeClass(summaryTone())}`}>
@@ -389,18 +381,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
           <Show
             when={props.developerMode}
-            fallback={
-              <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-6/60 bg-gray-1/60 px-3 py-3 text-xs text-gray-10">
-                <div>
-                  <div class="font-medium text-gray-12">Hosted control plane</div>
-                  <div>{DEFAULT_DEN_BASE_URL}</div>
-                </div>
-                <Button variant="outline" class="h-9 px-3 text-xs" onClick={openControlPlane}>
-                  Open in browser
-                  <ArrowUpRight size={13} />
-                </Button>
-              </div>
-            }
+            fallback={<></>}
           >
             <>
               <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
@@ -438,75 +419,27 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       </div>
 
       <Show when={!isSignedIn()}>
-        <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
-          <div class="rounded-2xl border border-gray-7/60 bg-gray-2/30 p-5 space-y-4">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Sign in to OpenWork Cloud</div>
-                <div class="text-xs text-gray-9 mt-1">
-                  Email/password auth works directly in the app. Social sign-in can stay in Den web for now.
-                </div>
-              </div>
-              <div class="flex rounded-xl border border-gray-6/60 bg-gray-1/60 p-1">
-                <button
-                  class={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${authMode() === "sign-in" ? "bg-gray-12/10 text-gray-12" : "text-gray-9 hover:text-gray-12"}`}
-                  onClick={() => setAuthMode("sign-in")}
-                  disabled={authBusy()}
-                >
-                  Sign in
-                </button>
-                <button
-                  class={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${authMode() === "sign-up" ? "bg-gray-12/10 text-gray-12" : "text-gray-9 hover:text-gray-12"}`}
-                  onClick={() => setAuthMode("sign-up")}
-                  disabled={authBusy()}
-                >
-                  Sign up
-                </button>
-              </div>
-            </div>
-
-            <div class="grid gap-4 sm:grid-cols-2">
-              <TextInput
-                label="Email"
-                type="email"
-                value={email()}
-                onInput={(event) => setEmail(event.currentTarget.value)}
-                placeholder="you@example.com"
-                disabled={authBusy()}
-              />
-              <TextInput
-                label="Password"
-                type="password"
-                value={password()}
-                onInput={(event) => setPassword(event.currentTarget.value)}
-                placeholder={authMode() === "sign-up" ? "Create a password" : "Enter your password"}
-                disabled={authBusy()}
-              />
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={() => void submitAuth()} disabled={authBusy() || sessionBusy()}>
-                <LogIn size={14} />
-                {authBusy() ? (authMode() === "sign-up" ? "Creating account..." : "Signing in...") : authMode() === "sign-up" ? "Create account" : "Sign in"}
-              </Button>
-              <Button variant="outline" class="text-xs h-9 px-3" onClick={openControlPlane}>
-                Continue in browser
-                <ArrowUpRight size={13} />
-              </Button>
-            </div>
-
-            <Show when={authError()}>
-              {(value) => <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{value()}</div>}
-            </Show>
+        <div class="rounded-2xl border border-gray-7/60 bg-gray-2/30 p-5 space-y-4">
+          <div class="space-y-2">
+            <div class="text-sm font-medium text-gray-12">Sign in to OpenWork Den</div>
+            <div class="max-w-[54ch] text-sm text-gray-10">Sign in to OpenWork Den to keep your tasks alive even when your computer sleeps.</div>
           </div>
 
-          <div class="rounded-2xl border border-gray-7/60 bg-gray-2/20 p-5 space-y-3">
-            <div class="text-sm font-medium text-gray-12">What this unlocks</div>
-            <div class="space-y-2 text-xs text-gray-10">
-              <div class="rounded-xl border border-gray-6/50 bg-gray-1/50 px-3 py-2">List the workers visible to your org.</div>
-              <div class="rounded-xl border border-gray-6/50 bg-gray-1/50 px-3 py-2">Click <span class="font-medium text-gray-12">Open</span> to jump into a Den worker in OpenWork.</div>
-              <div class="rounded-xl border border-gray-6/50 bg-gray-1/50 px-3 py-2">Prepare the app for org marketplace access in the next PR.</div>
-            </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => openBrowserAuth("sign-in")}>
+              Sign in
+              <ArrowUpRight size={13} />
+            </Button>
+            <Button variant="outline" class="text-xs h-9 px-3" onClick={() => openBrowserAuth("sign-up")}>
+              Create account
+              <ArrowUpRight size={13} />
+            </Button>
+          </div>
+
+          <Show when={authError()}>
+            {(value) => <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{value()}</div>}</Show>
+          <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-10">
+            Finish auth in your browser and OpenWork will reconnect here automatically.
           </div>
         </div>
       </Show>

@@ -43,6 +43,7 @@ import SessionView from "./pages/session";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
+import { createDenClient, normalizeDenBaseUrl, writeDenSettings, DEFAULT_DEN_BASE_URL } from "./lib/den";
 import {
   abortSession as abortSessionTyped,
   abortSessionSafe,
@@ -641,6 +642,41 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
     directory: null,
     displayName: displayName || null,
   };
+}
+
+type DenAuthDeepLink = {
+  grant: string;
+  denBaseUrl: string;
+};
+
+function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const protocol = url.protocol.toLowerCase();
+  if (protocol !== "openwork:" && protocol !== "openwork-dev:" && protocol !== "https:" && protocol !== "http:") {
+    return null;
+  }
+
+  const routeHost = url.hostname.toLowerCase();
+  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
+  const routeSegments = routePath.split("/").filter(Boolean);
+  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
+  if (routeHost !== "den-auth" && routePath !== "den-auth" && routeTail !== "den-auth") {
+    return null;
+  }
+
+  const grant = url.searchParams.get("grant")?.trim() ?? "";
+  const denBaseUrl = normalizeDenBaseUrl(url.searchParams.get("denBaseUrl")?.trim() ?? "") ?? DEFAULT_DEN_BASE_URL;
+  if (!grant) {
+    return null;
+  }
+
+  return { grant, denBaseUrl };
 }
 
 function normalizeDebugShareLinkInput(rawValue: string): string {
@@ -3796,6 +3832,8 @@ export default function App() {
   const [editRemoteWorkspaceError, setEditRemoteWorkspaceError] = createSignal<string | null>(null);
   const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
+  const [pendingDenAuthDeepLink, setPendingDenAuthDeepLink] = createSignal<DenAuthDeepLink | null>(null);
+  const [processingDenAuthDeepLink, setProcessingDenAuthDeepLink] = createSignal(false);
   const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
   const [sharedBundleCreateWorkerRequest, setSharedBundleCreateWorkerRequest] =
     createSignal<SharedBundleCreateWorkerRequest | null>(null);
@@ -3886,6 +3924,15 @@ export default function App() {
       return false;
     }
     setPendingRemoteConnectDeepLink(parsed);
+    return true;
+  };
+
+  const queueDenAuthDeepLink = (rawUrl: string): boolean => {
+    const parsed = parseDenAuthDeepLink(rawUrl);
+    if (!parsed) {
+      return false;
+    }
+    setPendingDenAuthDeepLink(parsed);
     return true;
   };
 
@@ -4082,6 +4129,55 @@ export default function App() {
       setSharedBundleImportBusy(false);
     }
   };
+
+  createEffect(() => {
+    const pending = pendingDenAuthDeepLink();
+    if (!pending || booting() || processingDenAuthDeepLink()) {
+      return;
+    }
+
+    setProcessingDenAuthDeepLink(true);
+    setPendingDenAuthDeepLink(null);
+    setView("dashboard");
+    setSettingsTab("den");
+    goToDashboard("settings");
+
+    void createDenClient({ baseUrl: pending.denBaseUrl })
+      .exchangeDesktopHandoff(pending.grant)
+      .then((result) => {
+        if (!result.token) {
+          throw new Error("Desktop sign-in completed, but Den did not return a session token.");
+        }
+
+        writeDenSettings({
+          baseUrl: pending.denBaseUrl,
+          authToken: result.token,
+          activeOrgId: null,
+        });
+
+        window.dispatchEvent(
+          new CustomEvent("openwork-den-session-updated", {
+            detail: {
+              status: "success",
+              email: result.user?.email ?? null,
+            },
+          }),
+        );
+      })
+      .catch((error) => {
+        window.dispatchEvent(
+          new CustomEvent("openwork-den-session-updated", {
+            detail: {
+              status: "error",
+              message: error instanceof Error ? error.message : "Failed to complete OpenWork Den sign-in.",
+            },
+          }),
+        );
+      })
+      .finally(() => {
+        setProcessingDenAuthDeepLink(false);
+      });
+  });
 
   createEffect(() => {
     const pending = pendingRemoteConnectDeepLink();
@@ -5891,7 +5987,7 @@ export default function App() {
               continue;
             }
             recentDeepLinkEvents.set(url, now);
-            if (queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
+            if (queueDenAuthDeepLink(url) || queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
               break;
             }
           }
@@ -5925,10 +6021,11 @@ export default function App() {
     }
 
     if (!isTauriRuntime()) {
-      const currentUrl = typeof window === "undefined" ? "" : window.location.href;
-      if (currentUrl) {
-        queueRemoteConnectDeepLink(currentUrl);
-        queueSharedBundleDeepLink(currentUrl);
+        const currentUrl = typeof window === "undefined" ? "" : window.location.href;
+        if (currentUrl) {
+        queueDenAuthDeepLink(currentUrl);
+          queueRemoteConnectDeepLink(currentUrl);
+          queueSharedBundleDeepLink(currentUrl);
         const remoteStripped = stripRemoteConnectQuery(currentUrl) ?? currentUrl;
         const bundleStripped = stripSharedBundleQuery(remoteStripped) ?? remoteStripped;
         if (bundleStripped !== currentUrl) {

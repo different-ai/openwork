@@ -54,6 +54,11 @@ type DenAuthResult = {
   token: string | null;
 };
 
+export type DenDesktopHandoffExchange = {
+  user: DenUser | null;
+  token: string | null;
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -370,6 +375,14 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_session_payload", "Session response did not include a user.");
       }
       return user;
+    },
+
+    async exchangeDesktopHandoff(grant: string): Promise<DenDesktopHandoffExchange> {
+      const payload = await requestJson<unknown>(baseUrl, "/v1/auth/desktop-handoff/exchange", {
+        method: "POST",
+        body: { grant },
+      });
+      return { user: getUser(payload), token: getToken(payload) };
     },
 
     async listOrgs(): Promise<{ orgs: DenOrgSummary[]; defaultOrgId: string | null }> {

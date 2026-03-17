@@ -231,13 +231,23 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
 
 function getSocialCallbackUrl(): string {
   try {
-    const origin = typeof window !== "undefined"
-      ? window.location.origin
-      : OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software";
-    return new URL("/", origin).toString();
+    const origin = typeof window !== "undefined" ? window.location.origin : OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software";
+    const callbackUrl = new URL("/", origin);
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      for (const key of ["mode", "desktopAuth", "desktopScheme"]) {
+        const value = params.get(key)?.trim() ?? "";
+        if (value) callbackUrl.searchParams.set(key, value);
+      }
+    }
+    return callbackUrl.toString();
   } catch {
     return "https://app.openwork.software/";
   }
+}
+
+function normalizeAuthModeParam(value: string | null | undefined): AuthMode | null {
+  return value === "sign-in" || value === "sign-up" ? value : null;
 }
 
 function getSocialProviderLabel(provider: SocialAuthProvider): string {
@@ -1101,6 +1111,11 @@ export function CloudControlPanel() {
   const [signupOnboardingActive, setSignupOnboardingActive] = useState(false);
   const [autoLaunchPending, setAutoLaunchPending] = useState(false);
   const [desktopContext, setDesktopContext] = useState(false);
+  const [desktopAuthRequested, setDesktopAuthRequested] = useState(false);
+  const [desktopAuthScheme, setDesktopAuthScheme] = useState("openwork");
+  const [desktopRedirectBusy, setDesktopRedirectBusy] = useState(false);
+  const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
+  const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
   const [nameStepBusy, setNameStepBusy] = useState(false);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
@@ -1737,12 +1752,39 @@ export function CloudControlPanel() {
       userId: user.id,
       authMethod: pendingSocialSignup
     });
+    if (desktopAuthRequested) {
+      setSignupOnboardingActive(false);
+      setStep("auth");
+      setAuthInfo("Signed in. Returning to OpenWork...");
+      return;
+    }
+
     setSignupOnboardingActive(true);
     setAutoLaunchPending(true);
     setLaunchError(null);
     setLaunchStatus("Creating your first worker now. First runs usually take around 1-2 minutes.");
     setStep("name");
-  }, [user?.id]);
+  }, [desktopAuthRequested, user?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const requestedMode = normalizeAuthModeParam(params.get("mode"));
+    if (requestedMode) {
+      setAuthMode(requestedMode);
+      setAuthInfo(getAuthInfoForMode(requestedMode));
+      setAuthError(null);
+    }
+
+    setDesktopAuthRequested(params.get("desktopAuth") === "1");
+    const requestedScheme = params.get("desktopScheme")?.trim() ?? "";
+    if (/^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)) {
+      setDesktopAuthScheme(requestedScheme);
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1841,6 +1883,9 @@ export function CloudControlPanel() {
 
   useEffect(() => {
     if (user || checkoutUrl) {
+      if (desktopAuthRequested) {
+        return;
+      }
       if (step === "auth" && !signupOnboardingActive) {
         setStep("workspace");
       }
@@ -1854,7 +1899,7 @@ export function CloudControlPanel() {
     setStep("auth");
     setSignupOnboardingActive(false);
     setAutoLaunchPending(false);
-  }, [checkoutUrl, sessionHydrated, signupOnboardingActive, step, user]);
+  }, [checkoutUrl, desktopAuthRequested, sessionHydrated, signupOnboardingActive, step, user]);
 
   useEffect(() => {
     if (step !== "workspace") {
@@ -1942,6 +1987,55 @@ export function CloudControlPanel() {
     };
   }, [actionBusy, authToken, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status]);
 
+  useEffect(() => {
+    if (!desktopAuthRequested || !user || desktopRedirectUrl || desktopRedirectBusy || desktopRedirectAttempted) {
+      return;
+    }
+
+    void completeDesktopAuthHandoff();
+  }, [desktopAuthRequested, user?.id, authToken, desktopRedirectUrl, desktopRedirectBusy, desktopRedirectAttempted, desktopAuthScheme]);
+
+  async function completeDesktopAuthHandoff() {
+    if (!desktopAuthRequested || desktopRedirectBusy) {
+      return;
+    }
+
+    setDesktopRedirectBusy(true);
+    setDesktopRedirectAttempted(true);
+    setAuthError(null);
+
+    try {
+      const headers = new Headers();
+      if (authToken) {
+        headers.set("Authorization", `Bearer ${authToken}`);
+      }
+
+      const { response, payload } = await requestJson("/v1/auth/desktop-handoff", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ desktopScheme: desktopAuthScheme }),
+      });
+
+      if (!response.ok) {
+        setAuthError(getErrorMessage(payload, `Desktop handoff failed with ${response.status}.`));
+        return;
+      }
+
+      const openworkUrl = isRecord(payload) && typeof payload.openworkUrl === "string" ? payload.openworkUrl.trim() : "";
+      if (!openworkUrl) {
+        setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
+        return;
+      }
+
+      setDesktopRedirectUrl(openworkUrl);
+      window.location.assign(openworkUrl);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Failed to open OpenWork.");
+    } finally {
+      setDesktopRedirectBusy(false);
+    }
+  }
+
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -2026,7 +2120,11 @@ export function CloudControlPanel() {
         }
       }
 
-      if (authMode === "sign-up") {
+      if (desktopAuthRequested) {
+        setSignupOnboardingActive(false);
+        setStep("auth");
+        setAuthInfo("Signed in. Returning to OpenWork...");
+      } else if (authMode === "sign-up") {
         setSignupOnboardingActive(true);
         setAutoLaunchPending(true);
         setLaunchError(null);
@@ -2764,14 +2862,29 @@ export function CloudControlPanel() {
               <div className="grid gap-6 rounded-[32px] border border-white/70 bg-white/92 p-5 shadow-[0_28px_80px_-44px_rgba(15,23,42,0.35)] backdrop-blur md:p-6">
                 <div className="grid gap-3 text-center">
                   <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
-                    {authMode === "sign-up" ? "Create your account." : "Sign in to Den."}
+                    {authMode === "sign-up" ? "Create your OpenWork Den account." : "Sign in to OpenWork Den."}
                   </h1>
                   <p className="mx-auto max-w-[24rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
-                    {authMode === "sign-up"
-                      ? "Sign up to launch your first worker and connect it in minutes."
-                      : "Sign in to launch and connect your worker."}
+                    Keep your tasks alive even when your computer sleeps.
                   </p>
                 </div>
+
+                {desktopAuthRequested ? (
+                  <div className="rounded-[24px] border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-900">
+                    Finish auth here and we&apos;ll bounce you back into the OpenWork desktop app automatically.
+                    {desktopRedirectUrl ? (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-medium text-sky-900 transition hover:border-sky-300 hover:bg-sky-50"
+                          onClick={() => window.location.assign(desktopRedirectUrl)}
+                        >
+                          Open OpenWork
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
                   <button
