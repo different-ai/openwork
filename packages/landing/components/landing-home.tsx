@@ -46,9 +46,11 @@ export function LandingHome(props: Props) {
 
   const downloadLinkProps = externalLinkProps(props.downloadHref);
   const callLinkProps = externalLinkProps(props.callHref);
-  const primaryCtaHref = props.isMobileVisitor ? "#mobile-signup" : props.downloadHref;
+  const primaryCtaHref = props.isMobileVisitor
+    ? "https://app.openworklabs.com"
+    : props.downloadHref;
   const primaryCtaLabel = props.isMobileVisitor
-    ? "Sign up for desktop access"
+    ? "Open the app"
     : "Download for free";
   const primaryCtaLinkProps = props.isMobileVisitor ? {} : downloadLinkProps;
 
@@ -58,14 +60,14 @@ export function LandingHome(props: Props) {
 
       <div className="relative z-10 flex min-h-screen flex-col items-center pb-3 pt-1 md:pb-4 md:pt-2">
         <div className="w-full">
-          <SiteNav
-            stars={props.stars}
-            downloadHref={props.downloadHref}
-            callUrl={props.callHref}
-            mobilePrimaryHref="#mobile-signup"
-            mobilePrimaryLabel="Sign up"
-            active="home"
-          />
+            <SiteNav
+              stars={props.stars}
+              downloadHref={props.downloadHref}
+              callUrl={props.callHref}
+              mobilePrimaryHref="https://app.openworklabs.com"
+              mobilePrimaryLabel="Open app"
+              active="home"
+            />
         </div>
 
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
