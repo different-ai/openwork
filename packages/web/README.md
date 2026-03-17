@@ -19,17 +19,6 @@ Frontend for `app.openwork.software`.
 3. Open:
    `http://localhost:3005`
 
-## Deployment mode utility
-
-- Shared helper path: `packages/web/lib/openwork-deployment.ts`
-- Main API: `getOpenWorkDeployment()`
-- Convenience APIs: `isWebDeployment()` and `isDesktopDeployment()`
-- Runtime values: `desktop` (default) or `web`
-- Environment resolution order:
-  - `NEXT_PUBLIC_OPENWORK_DEPLOYMENT` (client + server)
-  - `OPENWORK_DEPLOYMENT` (server-only fallback)
-  - `desktop` (final fallback)
-
 ### Optional env vars
 
 - `DEN_API_BASE` (server-only): upstream API base used by proxy route.
@@ -44,13 +33,6 @@ Frontend for `app.openwork.software`.
 - `NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
   - default: `https://app.openwork.software`
   - this host must serve `/api/auth/*`; the included proxy route does that
-- `NEXT_PUBLIC_OPENWORK_DEPLOYMENT` (client + server): Deployment mode used by shared helpers.
-  - allowed values: `desktop` | `web`
-  - default: `desktop`
-  - set to `web` in Vercel to indicate hosted web deployment
-- `OPENWORK_DEPLOYMENT` (server-only): Optional server override when `NEXT_PUBLIC_OPENWORK_DEPLOYMENT` is unset.
-  - allowed values: `desktop` | `web`
-  - default: `desktop`
 - `NEXT_PUBLIC_POSTHOG_KEY` (client): PostHog project key used for Den analytics.
   - optional override; defaults to the same project key used by `packages/landing`
 - `NEXT_PUBLIC_POSTHOG_HOST` (client): PostHog ingest host or same-origin proxy path.

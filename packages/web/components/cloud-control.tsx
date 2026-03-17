@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { isDesktopDeployment } from "../lib/openwork-deployment";
 
 type Step = "auth" | "name" | "initializing" | "connect" | "workspace";
 type AuthMode = "sign-in" | "sign-up";
@@ -261,10 +260,6 @@ function normalizeWorkerName(input: string): string {
 }
 
 function isDesktopContext(): boolean {
-  if (!isDesktopDeployment()) {
-    return false;
-  }
-
   if (typeof window === "undefined") {
     return false;
   }

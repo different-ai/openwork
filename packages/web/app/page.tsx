@@ -1,15 +1,9 @@
 import Image from "next/image";
 import { CloudControlPanel } from "../components/cloud-control";
-import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 
 export default function HomePage() {
-  const deployment = getOpenWorkDeployment();
-
   return (
-    <main
-      className="relative min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] text-[var(--dls-text-primary)]"
-      data-openwork-deployment={deployment}
-    >
+    <main className="relative min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] text-[var(--dls-text-primary)]">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
         <span className="absolute -left-24 top-[-8rem] h-[24rem] w-[24rem] rounded-full bg-[#e2e8f0]/90 blur-[120px]" />
         <span className="absolute right-[-6rem] top-20 h-[20rem] w-[20rem] rounded-full bg-[#c7d2fe]/50 blur-[120px]" />
