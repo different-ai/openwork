@@ -1,0 +1,93 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+@import "../../app/src/styles/colors.css";
+
+:root {
+  color-scheme: light;
+  --ow-shell-bg: #f4f7fb;
+  --ow-shell-ink: #0f172a;
+  --ow-shell-muted: #5f6b7a;
+  --ow-shell-panel: rgba(255, 255, 255, 0.88);
+  --ow-shell-panel-strong: rgba(255, 255, 255, 0.96);
+  --ow-shell-border: rgba(148, 163, 184, 0.18);
+  --ow-shell-shadow: 0 24px 70px -30px rgba(15, 23, 42, 0.22);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "IBM Plex Sans",
+    Geist,
+    "Avenir Next",
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: var(--ow-shell-ink);
+  background:
+    radial-gradient(circle at top left, rgba(125, 211, 252, 0.2), transparent 34%),
+    radial-gradient(circle at top right, rgba(251, 191, 36, 0.14), transparent 28%),
+    linear-gradient(180deg, #f8fbff 0%, var(--ow-shell-bg) 100%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+a,
+input,
+select {
+  font: inherit;
+}
+
+.playbook-panel {
+  background: var(--ow-shell-panel);
+  border: 1px solid var(--ow-shell-border);
+  box-shadow: var(--ow-shell-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.playbook-panel-strong {
+  background: var(--ow-shell-panel-strong);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 24px 70px -36px rgba(15, 23, 42, 0.2);
+}
+
+.playbook-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.playbook-button {
+  transition:
+    background-color 300ms cubic-bezier(0.31, 0.325, 0, 0.92),
+    border-color 300ms cubic-bezier(0.31, 0.325, 0, 0.92),
+    color 300ms cubic-bezier(0.31, 0.325, 0, 0.92),
+    box-shadow 300ms cubic-bezier(0.31, 0.325, 0, 0.92),
+    transform 300ms cubic-bezier(0.31, 0.325, 0, 0.92);
+}
+
+.playbook-button:hover {
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playbook-button {
+    transition: none;
+  }
+
+  .playbook-button:hover {
+    transform: none;
+  }
+}
