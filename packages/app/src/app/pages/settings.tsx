@@ -63,7 +63,9 @@ export type SettingsViewProps = {
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
-  openProviderAuthModal: () => Promise<void>;
+  openProviderAuthModal: (options?: {
+    returnFocusTarget?: "none" | "composer";
+  }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;

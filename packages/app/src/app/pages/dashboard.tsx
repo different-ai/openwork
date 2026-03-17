@@ -83,9 +83,11 @@ export type DashboardViewProps = {
   providerAuthModalOpen: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
-  openProviderAuthModal: () => Promise<void>;
+  openProviderAuthModal: (options?: {
+    returnFocusTarget?: "none" | "composer";
+  }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
-  closeProviderAuthModal: () => void;
+  closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
     providerId: string,
@@ -1499,7 +1501,7 @@ export default function DashboardView(props: DashboardViewProps) {
           onSubmitApiKey={handleProviderAuthApiKey}
           onSubmitOAuth={handleProviderAuthOAuth}
           onRefreshProviders={props.refreshProviders}
-          onClose={props.closeProviderAuthModal}
+          onClose={() => props.closeProviderAuthModal()}
         />
 
         <ShareWorkspaceModal

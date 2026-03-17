@@ -17,7 +17,7 @@ export type ModelPickerModalProps = {
   current: ModelRef;
   onSelect: (model: ModelRef) => void;
   onOpenSettings: () => void;
-  onClose: () => void;
+  onClose: (options?: { restorePromptFocus?: boolean }) => void;
 };
 
 export default function ModelPickerModal(props: ModelPickerModalProps) {
@@ -157,7 +157,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         event.preventDefault();
         event.stopPropagation();
         if (item.kind === "provider") {
-          props.onClose();
+          props.onClose({ restorePromptFocus: false });
           props.onOpenSettings();
           return;
         }
@@ -238,7 +238,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         setActiveIndex(index);
       }}
       onClick={() => {
-        props.onClose();
+        props.onClose({ restorePromptFocus: false });
         props.onOpenSettings();
       }}
     >
@@ -270,7 +270,11 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                   {props.target === "default" ? translate("settings.model_description_default") : translate("settings.model_description_session")}
                 </p>
               </div>
-              <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
+              <Button
+                variant="ghost"
+                class="!p-2 rounded-full"
+                onClick={() => props.onClose()}
+              >
                 <X size={16} />
               </Button>
             </div>
@@ -323,7 +327,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
 
             <div class="mt-5 flex justify-end shrink-0">
-              <Button variant="outline" onClick={props.onClose}>
+              <Button variant="outline" onClick={() => props.onClose()}>
                 {translate("settings.done")}
               </Button>
             </div>

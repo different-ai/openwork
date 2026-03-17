@@ -1343,11 +1343,15 @@ export default function App() {
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
+  type PromptFocusReturnTarget = "none" | "composer";
+
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
   const [providerAuthModalOpen, setProviderAuthModalOpen] = createSignal(false);
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
+  const [providerAuthReturnFocusTarget, setProviderAuthReturnFocusTarget] =
+    createSignal<PromptFocusReturnTarget>("none");
 
   createEffect(() => {
     const view = currentView();
@@ -2471,7 +2475,19 @@ export default function App() {
     }
   }
 
-  async function openProviderAuthModal() {
+  function focusSessionPromptSoon() {
+    if (typeof window === "undefined" || currentView() !== "session") return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
+      });
+    });
+  }
+
+  async function openProviderAuthModal(options?: {
+    returnFocusTarget?: PromptFocusReturnTarget;
+  }) {
+    setProviderAuthReturnFocusTarget(options?.returnFocusTarget ?? "none");
     setProviderAuthBusy(true);
     setProviderAuthError(null);
     try {
@@ -2479,6 +2495,7 @@ export default function App() {
       setProviderAuthMethods(methods);
       setProviderAuthModalOpen(true);
     } catch (error) {
+      setProviderAuthReturnFocusTarget("none");
       const message = describeProviderError(error, "Failed to load providers");
       setProviderAuthError(message);
       throw error;
@@ -2487,9 +2504,16 @@ export default function App() {
     }
   }
 
-  function closeProviderAuthModal() {
+  function closeProviderAuthModal(options?: { restorePromptFocus?: boolean }) {
+    const shouldFocusPrompt =
+      options?.restorePromptFocus ??
+      providerAuthReturnFocusTarget() === "composer";
     setProviderAuthModalOpen(false);
     setProviderAuthError(null);
+    setProviderAuthReturnFocusTarget("none");
+    if (shouldFocusPrompt) {
+      focusSessionPromptSoon();
+    }
   }
 
   async function saveSessionExport(sessionID: string) {
@@ -2745,6 +2769,8 @@ export default function App() {
     "session" | "default"
   >("session");
   const [modelPickerQuery, setModelPickerQuery] = createSignal("");
+  const [modelPickerReturnFocusTarget, setModelPickerReturnFocusTarget] =
+    createSignal<PromptFocusReturnTarget>("none");
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
@@ -4934,23 +4960,39 @@ export default function App() {
     });
   });
 
-  function openSessionModelPicker() {
+  function closeModelPicker(options?: { restorePromptFocus?: boolean }) {
+    const shouldFocusPrompt =
+      options?.restorePromptFocus ??
+      modelPickerReturnFocusTarget() === "composer";
+    setModelPickerOpen(false);
+    setModelPickerReturnFocusTarget("none");
+    if (shouldFocusPrompt) {
+      focusSessionPromptSoon();
+    }
+  }
+
+  function openSessionModelPicker(options?: {
+    returnFocusTarget?: PromptFocusReturnTarget;
+  }) {
     setModelPickerTarget("session");
     setModelPickerQuery("");
+    setModelPickerReturnFocusTarget(options?.returnFocusTarget ?? "composer");
     setModelPickerOpen(true);
   }
 
   function openDefaultModelPicker() {
     setModelPickerTarget("default");
     setModelPickerQuery("");
+    setModelPickerReturnFocusTarget("none");
     setModelPickerOpen(true);
   }
 
   function applyModelSelection(next: ModelRef) {
+    const restorePromptFocus = modelPickerTarget() === "session";
     if (modelPickerTarget() === "default") {
       setDefaultModelExplicit(true);
       setDefaultModel(next);
-      setModelPickerOpen(false);
+      closeModelPicker({ restorePromptFocus: false });
       return;
     }
 
@@ -4959,20 +5001,14 @@ export default function App() {
       setPendingSessionModel(next);
       setDefaultModelExplicit(true);
       setDefaultModel(next);
-      setModelPickerOpen(false);
+      closeModelPicker({ restorePromptFocus });
       return;
     }
 
     setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
     setDefaultModelExplicit(true);
     setDefaultModel(next);
-    setModelPickerOpen(false);
-
-    if (typeof window !== "undefined" && currentView() === "session") {
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
-      });
-    }
+    closeModelPicker({ restorePromptFocus });
   }
 
   function openSettingsFromModelPicker() {
@@ -7172,7 +7208,7 @@ export default function App() {
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
         onOpenSettings={openSettingsFromModelPicker}
-        onClose={() => setModelPickerOpen(false)}
+        onClose={closeModelPicker}
       />
 
       <ResetModal
