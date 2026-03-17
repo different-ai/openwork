@@ -1,1 +1,1 @@
-export * from "../../utils/dist/typeid.js"
+export * from "@different-ai/openwork-utils/typeid"

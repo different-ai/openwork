@@ -3,7 +3,7 @@ import {
   type DenTypeId,
   type DenTypeIdName,
   normalizeDenTypeId,
-} from "../../utils/dist/typeid.js"
+} from "@different-ai/openwork-utils/typeid"
 
 const INTERNAL_ID_LENGTH = 64
 const AUTH_EXTERNAL_ID_LENGTH = 36

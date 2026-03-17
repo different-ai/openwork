@@ -6,7 +6,11 @@ import { createDenDb, DaytonaSandboxTable } from "../../../packages/den-db/dist/
 import { normalizeDenTypeId } from "../../../packages/utils/dist/typeid.js"
 import { env } from "./env.js"
 
-const { db } = createDenDb(env.databaseUrl, { mode: env.dbMode })
+const { db } = createDenDb({
+  databaseUrl: env.databaseUrl,
+  mode: env.dbMode,
+  planetscale: env.planetscale,
+})
 const app = new Hono()
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
 const signedPreviewRefreshLeadMs = 5 * 60 * 1000

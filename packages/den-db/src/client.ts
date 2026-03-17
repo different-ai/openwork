@@ -3,10 +3,16 @@ import { drizzle } from "drizzle-orm/mysql2"
 import { drizzle as drizzlePlanetScale } from "drizzle-orm/planetscale-serverless"
 import type { FieldPacket, QueryOptions, QueryResult } from "mysql2"
 import mysql from "mysql2/promise"
+import { parseMySqlConnectionConfig } from "./mysql-config.js"
 import * as schema from "./schema.js"
 
 export type DenDbMode = "mysql" | "planetscale"
 type DenDb = ReturnType<typeof drizzlePlanetScale>
+export type PlanetScaleCredentials = {
+  host: string
+  username: string
+  password: string
+}
 
 const TRANSIENT_DB_ERROR_CODES = new Set([
   "ECONNRESET",
@@ -81,7 +87,7 @@ async function retryReadQuery<T>(label: "query" | "execute", sql: string | null,
   }
 }
 
-function parsePlanetScaleConfigFromDatabaseUrl(databaseUrl: string) {
+function parsePlanetScaleConfigFromDatabaseUrl(databaseUrl: string): PlanetScaleCredentials {
   const parsed = new URL(databaseUrl)
   if (!parsed.hostname || !parsed.username) {
     throw new Error("DATABASE_URL must include host and username when DB_MODE=planetscale")
@@ -94,19 +100,40 @@ function parsePlanetScaleConfigFromDatabaseUrl(databaseUrl: string) {
   }
 }
 
-export function createDenDb(databaseUrl: string, options?: { mode?: DenDbMode }) {
-  const mode = options?.mode ?? "mysql"
+function resolveDbMode(input: { mode?: DenDbMode; databaseUrl?: string | null }): DenDbMode {
+  if (input.mode) {
+    return input.mode
+  }
+
+  return input.databaseUrl ? "mysql" : "planetscale"
+}
+
+export function createDenDb(input: {
+  databaseUrl?: string | null
+  mode?: DenDbMode
+  planetscale?: PlanetScaleCredentials | null
+}) {
+  const mode = resolveDbMode(input)
 
   if (mode === "planetscale") {
-    const client = new Client(parsePlanetScaleConfigFromDatabaseUrl(databaseUrl))
+    const credentials = input.planetscale ?? (input.databaseUrl ? parsePlanetScaleConfigFromDatabaseUrl(input.databaseUrl) : null)
+    if (!credentials) {
+      throw new Error("PlanetScale mode requires DATABASE_HOST, DATABASE_USERNAME, and DATABASE_PASSWORD")
+    }
+
+    const client = new Client(credentials)
     return {
       client,
       db: drizzlePlanetScale(client, { schema }) as unknown as DenDb,
     }
   }
 
+  if (!input.databaseUrl) {
+    throw new Error("MySQL mode requires DATABASE_URL")
+  }
+
   const client = mysql.createPool({
-    uri: databaseUrl,
+    ...parseMySqlConnectionConfig(input.databaseUrl),
     waitForConnections: true,
     connectionLimit: 10,
     maxIdle: 10,
