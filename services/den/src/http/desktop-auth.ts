@@ -19,6 +19,62 @@ const exchangeGrantSchema = z.object({
   grant: z.string().trim().min(12).max(128),
 })
 
+function readSingleHeader(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null
+  }
+  const first = value.split(",")[0]?.trim() ?? ""
+  return first || null
+}
+
+function isWebAppHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase()
+  return normalized === "app.openworklabs.com"
+    || normalized === "app.openwork.software"
+    || normalized.startsWith("app.")
+}
+
+function withDenProxyPath(origin: string): string {
+  const url = new URL(origin)
+  const pathname = url.pathname.replace(/\/+$/, "")
+  if (pathname.toLowerCase().endsWith("/api/den")) {
+    return url.toString().replace(/\/+$/, "")
+  }
+  url.pathname = `${pathname}/api/den`.replace(/\/+/g, "/")
+  return url.toString().replace(/\/+$/, "")
+}
+
+function resolveDesktopDenBaseUrl(req: express.Request): string {
+  const originHeader = readSingleHeader(req.headers.origin)
+  if (originHeader) {
+    try {
+      const originUrl = new URL(originHeader)
+      if ((originUrl.protocol === "https:" || originUrl.protocol === "http:") && isWebAppHost(originUrl.hostname)) {
+        return withDenProxyPath(originUrl.origin)
+      }
+    } catch {}
+  }
+
+  const forwardedProto = readSingleHeader(req.headers["x-forwarded-proto"])
+  const forwardedHost = readSingleHeader(req.headers["x-forwarded-host"])
+  const host = readSingleHeader(req.headers.host)
+  const protocol = forwardedProto ?? req.protocol ?? "https"
+  const targetHost = forwardedHost ?? host
+  if (!targetHost) {
+    return "https://app.openworklabs.com/api/den"
+  }
+
+  const origin = `${protocol}://${targetHost}`
+  try {
+    const url = new URL(origin)
+    if (isWebAppHost(url.hostname)) {
+      return withDenProxyPath(url.origin)
+    }
+  } catch {}
+
+  return origin
+}
+
 function buildOpenworkDeepLink(input: { scheme?: string | null; grant: string; denBaseUrl: string }) {
   const requestedScheme = input.scheme?.trim() || "openwork"
   const scheme = /^[a-z][a-z0-9+.-]*$/i.test(requestedScheme) ? requestedScheme : "openwork"
@@ -51,10 +107,7 @@ desktopAuthRouter.post("/desktop-handoff", asyncRoute(async (req, res) => {
     consumed_at: null,
   })
 
-  const forwardedProto = typeof req.headers["x-forwarded-proto"] === "string" ? req.headers["x-forwarded-proto"] : null
-  const host = typeof req.headers.host === "string" ? req.headers.host : null
-  const protocol = forwardedProto ?? req.protocol ?? "https"
-  const denBaseUrl = host ? `${protocol}://${host}` : "https://app.openworklabs.com"
+  const denBaseUrl = resolveDesktopDenBaseUrl(req)
   res.json({
     grant,
     expiresAt: expiresAt.toISOString(),
