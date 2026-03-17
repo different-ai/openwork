@@ -23,9 +23,9 @@ const deploymentModes = [
     icon: Users
   },
   {
-    title: "Self-hosted or managed",
+    title: "Preconfigured environment",
     description:
-      "Deploy inside your own environment or work with us on a managed rollout, with your gateway, MCP servers, skills, and internal data sources connected.",
+      "Start with your gateway, MCP servers, skills, and internal data sources already connected.",
     icon: PlugZap
   },
   {
@@ -157,20 +157,37 @@ export function LandingEnterprise(props: Props) {
               })}
             </div>
 
-            <div className="landing-shell rounded-[2rem] p-6 md:p-8">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                <ShieldCheck size={12} />
-                Information security
+            <div className="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              <div className="landing-shell rounded-[2rem] p-6 md:p-8">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                  <ShieldCheck size={12} />
+                  Information security
+                </div>
+                <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
+                  Compliance-ready agentic workflows
+                </h3>
+                <p className="max-w-3xl text-[15px] leading-relaxed text-slate-600">
+                  OpenWork helps organizations run agentic workflows with a
+                  local-first, permission-aware architecture built for privacy,
+                  access control, and deployment flexibility across HIPAA, SOC 2
+                  Type II, ISO 27001, CCPA, and GDPR-sensitive environments.
+                </p>
               </div>
-              <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
-                Compliance-ready agentic workflows
-              </h3>
-              <p className="max-w-3xl text-[15px] leading-relaxed text-slate-600">
-                OpenWork helps organizations run agentic workflows with a
-                local-first, permission-aware architecture built for privacy,
-                access control, and deployment flexibility across HIPAA, SOC 2
-                Type II, ISO 27001, CCPA, and GDPR-sensitive environments.
-              </p>
+
+              <div className="landing-shell rounded-[2rem] p-6">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">
+                  <PlugZap size={12} />
+                  Deployment
+                </div>
+                <h3 className="mb-3 text-[1.35rem] font-medium tracking-tight text-[#011627]">
+                  Self-hosted or managed
+                </h3>
+                <p className="text-[14px] leading-relaxed text-slate-600">
+                  Deploy inside your own environment or work with us on a
+                  managed rollout, with your gateway, MCP servers, skills, and
+                  internal data sources connected.
+                </p>
+              </div>
             </div>
 
             <BookCallForm />
