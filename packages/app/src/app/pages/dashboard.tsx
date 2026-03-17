@@ -87,7 +87,6 @@ export type DashboardViewProps = {
     returnFocusTarget?: "none" | "composer";
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
-<<<<<<< HEAD
   openExternalUrl: (url: string) => Promise<string>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
