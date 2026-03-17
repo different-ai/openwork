@@ -10,6 +10,7 @@ import {
   readDenSettings,
   writeDenSettings,
 } from "../lib/den";
+import { isDesktopDeployment } from "../lib/openwork-deployment";
 import { usePlatform } from "../context/platform";
 
 type DenSettingsPanelProps = {
@@ -128,8 +129,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const openBrowserAuth = (mode: "sign-in" | "sign-up") => {
     const target = new URL(normalizeDenBaseUrl(baseUrl()) ?? DEFAULT_DEN_BASE_URL);
     target.searchParams.set("mode", mode);
-    target.searchParams.set("desktopAuth", "1");
-    target.searchParams.set("desktopScheme", "openwork");
+    if (isDesktopDeployment()) {
+      target.searchParams.set("desktopAuth", "1");
+      target.searchParams.set("desktopScheme", "openwork");
+    }
     platform.openLink(target.toString());
     setStatusMessage(mode === "sign-up" ? "Finish account creation in your browser to connect OpenWork." : "Finish signing in in your browser to connect OpenWork.");
     setAuthError(null);

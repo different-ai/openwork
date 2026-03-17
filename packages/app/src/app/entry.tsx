@@ -3,6 +3,7 @@ import { GlobalSDKProvider } from "./context/global-sdk";
 import { GlobalSyncProvider } from "./context/global-sync";
 import { LocalProvider } from "./context/local";
 import { ServerProvider } from "./context/server";
+import { isWebDeployment } from "./lib/openwork-deployment";
 import { isTauriRuntime } from "./utils";
 
 export default function AppEntry() {
@@ -20,9 +21,9 @@ export default function AppEntry() {
       return `${openworkUrl.replace(/\/+$/, "")}/opencode`;
     }
 
-    // When the UI is served by the OpenWork server (Docker "remote" mode),
+    // When the hosted web deployment is served by the OpenWork server,
     // OpenCode is proxied at same-origin `/opencode`.
-    if (import.meta.env.PROD && typeof window !== "undefined") {
+    if (isWebDeployment() && import.meta.env.PROD && typeof window !== "undefined") {
       return `${window.location.origin}/opencode`;
     }
 
