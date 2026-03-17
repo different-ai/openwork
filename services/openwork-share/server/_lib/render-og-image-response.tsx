@@ -1,183 +1,201 @@
 import { ImageResponse } from "next/og";
 import type { CSSProperties, ReactElement } from "react";
 
-import type { OgImageModel, OgTokenClass } from "./render-og-image.ts";
+import { computeOgImageLayout, type OgImageModel } from "./render-og-image.ts";
 
 const canvasStyle: CSSProperties = {
   width: "1200px",
   height: "630px",
   position: "relative",
   display: "flex",
-  background: "#f6f9fc",
   overflow: "hidden",
+  background: "linear-gradient(135deg, #f6f9fc 0%, #edf1f7 32%, #e2e8f0 66%, #f6f9fc 100%)",
+};
+
+const brandTextStyle: CSSProperties = {
+  fontFamily: "sans-serif",
+  fontSize: "22px",
+  fontWeight: 600,
+  color: "#334155",
 };
 
 const monoStyle: CSSProperties = {
   fontFamily: "monospace",
-  fontSize: "24px",
-  lineHeight: "34px",
-  color: "#475569",
+  color: "#64748b",
 };
 
-const sansStyle: CSSProperties = {
-  fontFamily: "sans-serif",
-  color: "#0f172a",
-};
-
-function circleStyle(options: {
-  left?: number;
-  right?: number;
-  top: number;
-  size: number;
-  background: string;
-  opacity?: number;
-}): CSSProperties {
-  const style: CSSProperties = {
-    position: "absolute",
-    top: `${options.top}px`,
-    width: `${options.size}px`,
-    height: `${options.size}px`,
-    borderRadius: "999px",
-    background: options.background,
-    opacity: options.opacity ?? 1,
-  };
-
-  if (options.left != null) style.left = `${options.left}px`;
-  if (options.right != null) style.right = `${options.right}px`;
-
-  return style;
-}
-
-function segmentStyle(className: OgTokenClass): CSSProperties {
-  switch (className) {
-    case "hl-frontmatter":
-      return { color: "#94a3b8" };
-    case "hl-key":
-      return { color: "#be123c" };
-    case "hl-url":
-      return { color: "#2563eb" };
-    case "hl-string":
-      return { color: "#0f766e" };
-    case "hl-bracket":
-      return { color: "#94a3b8" };
-    case "hl-punctuation":
-      return { color: "#94a3b8" };
-    case "hl-number":
-      return { color: "#f97316" };
-    case "hl-keyword":
-      return { color: "#7c3aed", fontWeight: 600 };
-    case "hl-comment":
-      return { color: "#94a3b8", fontStyle: "italic" };
-    case "hl-heading":
-      return { color: "#0f172a", fontWeight: 700 };
-    case "hl-field":
-      return { color: "#be123c" };
-    case "hl-inline-code":
-      return { color: "#0891b2", background: "rgba(8,145,178,0.08)", borderRadius: "4px", paddingLeft: "2px", paddingRight: "2px" };
-    case "hl-bold":
-      return { color: "#0f172a", fontWeight: 700 };
-    case "hl-type":
-      return { color: "#0ea5e9", fontStyle: "italic" };
-    case "hl-cta":
-      return { color: "#0f172a" };
-    case "hl-cta-skill":
-      return { color: "#0f172a", fontWeight: 700 };
-    case "hl-cta-url":
-      return { color: "#0f172a", fontWeight: 700, textDecoration: "underline" };
-    case "hl-codeblock":
-      return {
-        color: "#F99D16",
-        background: "#f8fafc",
-        border: "1px solid #cbd5e1",
-        borderRadius: "5px",
-        paddingRight: "6px",
-      };
-    default:
-      return { color: "#475569" };
-  }
+function OpenWorkMark(): ReactElement {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <rect width="24" height="24" rx="6" fill="#011627" />
+      <circle cx="8" cy="8" r="2.5" fill="#f6f9fc" />
+      <circle cx="16" cy="8" r="2.5" fill="#f6f9fc" />
+      <circle cx="8" cy="16" r="2.5" fill="#f6f9fc" />
+      <circle cx="16" cy="16" r="2.5" fill="#f6f9fc" />
+    </svg>
+  );
 }
 
 function OgImage({ model }: { model: OgImageModel }): ReactElement {
+  const layout = computeOgImageLayout(model);
+
   return (
     <div style={canvasStyle}>
-      <div style={circleStyle({ left: -42, top: -90, size: 420, background: "#F99D16", opacity: 0.22 })} />
-      <div style={circleStyle({ right: -46, top: -92, size: 400, background: "#111827", opacity: 0.09 })} />
       <div
         style={{
           position: "absolute",
-          left: "48px",
-          top: "44px",
-          width: "1104px",
-          height: "542px",
-          borderRadius: "42px",
-          background: "rgba(255,255,255,0.72)",
-          border: "1px solid rgba(255,255,255,0.9)",
-          boxShadow: "0 36px 56px rgba(15, 23, 42, 0.14)",
+          inset: "-18%",
+          transform: "rotate(-18deg)",
+          background:
+            "linear-gradient(90deg, rgba(255,255,255,0) 26%, rgba(148,163,184,0.08) 45%, rgba(203,213,225,0.14) 50%, rgba(148,163,184,0.08) 55%, rgba(255,255,255,0) 74%)",
         }}
       />
+
       <div
         style={{
           position: "absolute",
-          left: "18px",
-          top: "12px",
-          width: "1164px",
-          height: "606px",
-          borderRadius: "38px",
-          background: "rgba(255,255,255,0.96)",
-          border: "1px solid rgba(148,163,184,0.16)",
+          inset: "0",
+          opacity: 0.6,
+          backgroundImage:
+            "radial-gradient(circle at 3px 3px, rgba(148,163,184,0.16) 1.2px, transparent 1.2px)",
+          backgroundSize: "32px 32px",
+        }}
+      />
+
+      <div
+        style={{
+          position: "absolute",
+          top: "30px",
+          left: "58px",
           display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
+          alignItems: "center",
+          gap: "10px",
         }}
       >
-        <div
-          style={{
-            height: "78px",
-            borderBottom: "1px solid rgba(226,232,240,0.92)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 28px",
-          }}
-        >
-          <div style={{ ...sansStyle, fontSize: "40px", fontWeight: 900, letterSpacing: "-1.2px" }}>SKILL.md</div>
-          <div style={{ display: "flex", alignItems: "center", gap: "13px" }}>
+        <OpenWorkMark />
+        <span style={brandTextStyle}>openwork</span>
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          right: "58px",
+          bottom: "32px",
+          ...monoStyle,
+          fontSize: "14px",
+        }}
+      >
+        {model.domain}
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          left: "108px",
+          top: "82px",
+          width: "984px",
+          height: "466px",
+          borderRadius: "28px",
+          background: "rgba(255,255,255,0.72)",
+          border: "1px solid rgba(226,232,240,0.85)",
+          boxShadow: "0 18px 40px rgba(1,22,39,0.08), 0 4px 12px rgba(1,22,39,0.04)",
+          display: "flex",
+          flexDirection: "column",
+          padding: "44px 72px 42px 72px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ ...monoStyle, fontSize: "18px" }}>{model.fileName}</div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              height: "34px",
+              padding: "0 16px",
+              borderRadius: "999px",
+              background: "rgba(255,255,255,0.82)",
+              border: "1px solid rgba(226,232,240,0.72)",
+            }}
+          >
             <div
               style={{
-                width: "18px",
-                height: "18px",
+                width: "10px",
+                height: "10px",
                 borderRadius: "999px",
-                background: "linear-gradient(135deg, #f97316 0%, #facc15 100%)",
+                background: "#011627",
               }}
             />
-            <div style={{ ...monoStyle, fontSize: "30px", fontWeight: 700, color: "#94a3b8", lineHeight: "34px" }}>{model.filename}</div>
+            <span style={{ ...monoStyle, fontSize: "15px", color: "#334155" }}>{model.fileType}</span>
           </div>
         </div>
 
         <div
           style={{
+            flex: 1,
             display: "flex",
             flexDirection: "column",
-            padding: "48px 34px 0 34px",
-            gap: "0px",
-            ...monoStyle,
+            justifyContent: "center",
+            maxWidth: "720px",
           }}
         >
-          {model.lines.map((line, index) => (
-            <div key={index} style={{ display: "flex", minHeight: `${line.height}px`, alignItems: "baseline" }}>
-              <div style={{ display: "flex", whiteSpace: "pre", flexWrap: "nowrap", letterSpacing: "-0.3px" }}>
-                {line.segments.length ? (
-                  line.segments.map((segment, segmentIndex) => (
-                    <span key={segmentIndex} style={segmentStyle(segment.className)}>
-                      {segment.text}
-                    </span>
-                  ))
-                ) : (
-                  <span>{" "}</span>
-                )}
-              </div>
+          {layout.titleLines.map((line, index) => (
+            <div
+              key={`${line}-${index}`}
+              style={{
+                fontFamily: "sans-serif",
+                fontSize: `${layout.titleFontSize}px`,
+                lineHeight: `${layout.titleLineHeight}px`,
+                fontWeight: 700,
+                letterSpacing: "-0.04em",
+                color: "#011627",
+              }}
+            >
+              {line}
             </div>
           ))}
+
+          {layout.showDescription ? (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+                marginTop: "18px",
+                maxWidth: "620px",
+              }}
+            >
+              {layout.descriptionLines.map((line, index) => (
+                <div
+                  key={`${line}-${index}`}
+                  style={{
+                    fontFamily: "sans-serif",
+                    fontSize: "19px",
+                    lineHeight: "24px",
+                    fontWeight: 500,
+                    color: "#475569",
+                  }}
+                >
+                  {line}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
+          <span
+            style={{
+              ...monoStyle,
+              fontSize: "15px",
+              letterSpacing: "0.16em",
+              color: "#64748b",
+            }}
+          >
+            {model.category.toUpperCase()}
+          </span>
+          <span style={{ ...monoStyle, fontSize: "15px", color: "#cbd5e1" }}>/</span>
+          <span style={{ ...monoStyle, fontSize: "15px" }}>{model.tag}</span>
         </div>
       </div>
     </div>
