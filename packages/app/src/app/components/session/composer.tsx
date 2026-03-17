@@ -1541,27 +1541,7 @@ export default function Composer(props: ComposerProps) {
 
   createEffect(() => {
     const handler = () => {
-      const beforeFocus = document.activeElement;
-      console.debug("[focus-debug] composer received openwork:focusPrompt", {
-        activeElement:
-          beforeFocus instanceof HTMLElement ? beforeFocus.tagName : beforeFocus?.nodeName,
-        activeId: beforeFocus instanceof HTMLElement ? beforeFocus.id : undefined,
-        activeClass:
-          beforeFocus instanceof HTMLElement ? beforeFocus.className || undefined : undefined,
-        hasEditorRef: Boolean(editorRef),
-      });
       editorRef?.focus();
-      requestAnimationFrame(() => {
-        const afterFocus = document.activeElement;
-        console.debug("[focus-debug] composer focus applied", {
-          activeElement:
-            afterFocus instanceof HTMLElement ? afterFocus.tagName : afterFocus?.nodeName,
-          activeId: afterFocus instanceof HTMLElement ? afterFocus.id : undefined,
-          activeClass:
-            afterFocus instanceof HTMLElement ? afterFocus.className || undefined : undefined,
-          editorIsActive: afterFocus === editorRef,
-        });
-      });
     };
     window.addEventListener("openwork:focusPrompt", handler);
     onCleanup(() => window.removeEventListener("openwork:focusPrompt", handler));

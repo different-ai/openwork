@@ -2600,14 +2600,6 @@ export default function SessionView(props: SessionViewProps) {
     if (typeof window === "undefined") return;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const active = document.activeElement;
-        console.debug("[focus-debug] dispatch openwork:focusPrompt", {
-          source: "session.focusComposer",
-          activeElement: active instanceof HTMLElement ? active.tagName : active?.nodeName,
-          activeId: active instanceof HTMLElement ? active.id : undefined,
-          activeClass:
-            active instanceof HTMLElement ? active.className || undefined : undefined,
-        });
         window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
       });
     });
@@ -2854,39 +2846,9 @@ export default function SessionView(props: SessionViewProps) {
   const finishRenameModal = (
     restoreComposerFocus = renameReturnFocusToComposer(),
   ) => {
-    const activeBeforeClose = document.activeElement;
-    console.debug("[focus-debug] finish rename modal", {
-      restoreComposerFocus,
-      activeElement:
-        activeBeforeClose instanceof HTMLElement
-          ? activeBeforeClose.tagName
-          : activeBeforeClose?.nodeName,
-      activeId:
-        activeBeforeClose instanceof HTMLElement ? activeBeforeClose.id : undefined,
-      activeClass:
-        activeBeforeClose instanceof HTMLElement
-          ? activeBeforeClose.className || undefined
-          : undefined,
-    });
     setRenameModalOpen(false);
     setRenameSessionId(null);
     setRenameReturnFocusToComposer(false);
-    requestAnimationFrame(() => {
-      const activeAfterClose = document.activeElement;
-      console.debug("[focus-debug] rename modal closed", {
-        restoreComposerFocus,
-        activeElement:
-          activeAfterClose instanceof HTMLElement
-            ? activeAfterClose.tagName
-            : activeAfterClose?.nodeName,
-        activeId:
-          activeAfterClose instanceof HTMLElement ? activeAfterClose.id : undefined,
-        activeClass:
-          activeAfterClose instanceof HTMLElement
-            ? activeAfterClose.className || undefined
-            : undefined,
-      });
-    });
     if (restoreComposerFocus) {
       focusComposer();
     }
