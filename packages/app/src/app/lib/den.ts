@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 
 const STORAGE_BASE_URL = "openwork.den.baseUrl";
+const STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
 const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
@@ -14,8 +15,14 @@ export const DEFAULT_DEN_BASE_URL =
 
 export type DenSettings = {
   baseUrl: string;
+  apiBaseUrl?: string;
   authToken?: string | null;
   activeOrgId?: string | null;
+};
+
+type DenBaseUrls = {
+  baseUrl: string;
+  apiBaseUrl: string;
 };
 
 export type DenUser = {
@@ -97,13 +104,96 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
   }
 }
 
-export function readDenSettings(): DenSettings {
-  if (typeof window === "undefined") {
-    return { baseUrl: DEFAULT_DEN_BASE_URL };
+function isWebAppHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "app.openworklabs.com" || normalized === "app.openwork.software" || normalized.startsWith("app.");
+}
+
+function stripDenApiBasePath(input: string | null | undefined): string | null {
+  const normalized = normalizeDenBaseUrl(input);
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    const suffix = "/api/den";
+    if (!pathname.toLowerCase().endsWith(suffix)) {
+      return normalized;
+    }
+
+    const nextPathname = pathname.slice(0, -suffix.length) || "/";
+    url.pathname = nextPathname;
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return normalized;
+  }
+}
+
+function ensureDenApiBasePath(input: string | null | undefined): string | null {
+  const normalized = normalizeDenBaseUrl(input);
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    if (pathname.toLowerCase().endsWith("/api/den")) {
+      return normalized;
+    }
+    url.pathname = `${pathname}/api/den`.replace(/\/+/g, "/");
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return normalized;
+  }
+}
+
+function deriveDenApiBaseUrl(input: string | null | undefined): string {
+  const normalized = normalizeDenBaseUrl(input) ?? DEFAULT_DEN_BASE_URL;
+
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    if (pathname.toLowerCase().endsWith("/api/den")) {
+      return normalized;
+    }
+    if (isWebAppHost(url.hostname)) {
+      return ensureDenApiBasePath(normalized) ?? normalized;
+    }
+  } catch {
+    return normalized;
   }
 
+  return normalized;
+}
+
+export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?: string | null } | string | null | undefined): DenBaseUrls {
+  const rawBaseUrl = typeof input === "string" ? input : input?.baseUrl;
+  const rawApiBaseUrl = typeof input === "string" ? null : input?.apiBaseUrl;
+  const normalizedBaseUrl = normalizeDenBaseUrl(rawBaseUrl);
+  const normalizedApiBaseUrl = normalizeDenBaseUrl(rawApiBaseUrl);
+  const seedUrl = normalizedBaseUrl ?? normalizedApiBaseUrl ?? DEFAULT_DEN_BASE_URL;
+
   return {
-    baseUrl: normalizeDenBaseUrl(window.localStorage.getItem(STORAGE_BASE_URL) ?? "") ?? DEFAULT_DEN_BASE_URL,
+    baseUrl: stripDenApiBasePath(normalizedBaseUrl ?? seedUrl) ?? DEFAULT_DEN_BASE_URL,
+    apiBaseUrl: normalizedApiBaseUrl ?? deriveDenApiBaseUrl(seedUrl),
+  };
+}
+
+function resolveRequestBaseUrl(baseUrls: DenBaseUrls, path: string): string {
+  return path.startsWith("/api/") ? baseUrls.baseUrl : baseUrls.apiBaseUrl;
+}
+
+export function readDenSettings(): DenSettings {
+  if (typeof window === "undefined") {
+    return resolveDenBaseUrls(DEFAULT_DEN_BASE_URL);
+  }
+
+  const baseUrls = resolveDenBaseUrls({
+    baseUrl: window.localStorage.getItem(STORAGE_BASE_URL) ?? "",
+    apiBaseUrl: window.localStorage.getItem(STORAGE_API_BASE_URL) ?? "",
+  });
+
+  return {
+    ...baseUrls,
     authToken: (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() || null,
     activeOrgId: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_ID) ?? "").trim() || null,
   };
@@ -114,11 +204,12 @@ export function writeDenSettings(next: DenSettings) {
     return;
   }
 
-  const baseUrl = normalizeDenBaseUrl(next.baseUrl) ?? DEFAULT_DEN_BASE_URL;
+  const { baseUrl, apiBaseUrl } = resolveDenBaseUrls(next);
   const authToken = next.authToken?.trim() ?? "";
   const activeOrgId = next.activeOrgId?.trim() ?? "";
 
   window.localStorage.setItem(STORAGE_BASE_URL, baseUrl);
+  window.localStorage.setItem(STORAGE_API_BASE_URL, apiBaseUrl);
   if (authToken) {
     window.localStorage.setItem(STORAGE_AUTH_TOKEN, authToken);
   } else {
@@ -277,12 +368,12 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
 }
 
 async function requestJsonRaw<T>(
-  baseUrl: string,
+  input: string | DenBaseUrls,
   path: string,
   options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
 ): Promise<RawJsonResponse<T>> {
-  const normalizedBaseUrl = normalizeDenBaseUrl(baseUrl) ?? DEFAULT_DEN_BASE_URL;
-  const url = `${normalizedBaseUrl}${path}`;
+  const baseUrls = typeof input === "string" ? resolveDenBaseUrls(input) : input;
+  const url = `${resolveRequestBaseUrl(baseUrls, path)}${path}`;
   const headers: Record<string, string> = { Accept: "application/json" };
   const token = options.token?.trim() ?? "";
   if (token) {
@@ -315,11 +406,11 @@ async function requestJsonRaw<T>(
 }
 
 async function requestJson<T>(
-  baseUrl: string,
+  input: string | DenBaseUrls,
   path: string,
   options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
 ): Promise<T> {
-  const raw = await requestJsonRaw<T>(baseUrl, path, options);
+  const raw = await requestJsonRaw<T>(input, path, options);
   if (!raw.ok) {
     const payload = raw.json;
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
@@ -330,12 +421,12 @@ async function requestJson<T>(
 }
 
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {
-  const baseUrl = normalizeDenBaseUrl(options.baseUrl) ?? DEFAULT_DEN_BASE_URL;
+  const baseUrls = resolveDenBaseUrls(options.baseUrl);
   const token = options.token?.trim() ?? null;
 
   return {
     async signInEmail(email: string, password: string): Promise<DenAuthResult> {
-      const payload = await requestJson<unknown>(baseUrl, "/api/auth/sign-in/email", {
+      const payload = await requestJson<unknown>(baseUrls, "/api/auth/sign-in/email", {
         method: "POST",
         body: {
           email: email.trim(),
@@ -346,7 +437,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async signUpEmail(email: string, password: string): Promise<DenAuthResult> {
-      const payload = await requestJson<unknown>(baseUrl, "/api/auth/sign-up/email", {
+      const payload = await requestJson<unknown>(baseUrls, "/api/auth/sign-up/email", {
         method: "POST",
         body: {
           name: DEFAULT_DEN_AUTH_NAME,
@@ -358,7 +449,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async signOut() {
-      await requestJsonRaw(baseUrl, "/api/auth/sign-out", {
+      await requestJsonRaw(baseUrls, "/api/auth/sign-out", {
         method: "POST",
         token,
         body: {},
@@ -366,7 +457,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async getSession(): Promise<DenUser> {
-      const payload = await requestJson<unknown>(baseUrl, "/v1/me", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me", {
         method: "GET",
         token,
       });
@@ -378,7 +469,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async exchangeDesktopHandoff(grant: string): Promise<DenDesktopHandoffExchange> {
-      const payload = await requestJson<unknown>(baseUrl, "/v1/auth/desktop-handoff/exchange", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/auth/desktop-handoff/exchange", {
         method: "POST",
         body: { grant },
       });
@@ -386,7 +477,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgs(): Promise<{ orgs: DenOrgSummary[]; defaultOrgId: string | null }> {
-      const payload = await requestJson<unknown>(baseUrl, "/v1/me/orgs", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me/orgs", {
         method: "GET",
         token,
       });
@@ -400,7 +491,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       const params = new URLSearchParams();
       params.set("limit", String(limit));
       params.set("orgId", orgId);
-      const payload = await requestJson<unknown>(baseUrl, `/v1/workers?${params.toString()}`, {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
         method: "GET",
         token,
       });
@@ -410,7 +501,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
       const params = new URLSearchParams();
       params.set("orgId", orgId);
-      const payload = await requestJson<unknown>(baseUrl, `/v1/workers/${encodeURIComponent(workerId)}/tokens?${params.toString()}`, {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens?${params.toString()}`, {
         method: "POST",
         token,
         body: {},

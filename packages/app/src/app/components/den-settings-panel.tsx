@@ -8,6 +8,7 @@ import {
   createDenClient,
   normalizeDenBaseUrl,
   readDenSettings,
+  resolveDenBaseUrls,
   writeDenSettings,
 } from "../lib/den";
 import { isDesktopDeployment } from "../lib/openwork-deployment";
@@ -122,12 +123,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   });
 
   const openControlPlane = () => {
-    const target = normalizeDenBaseUrl(baseUrl()) ?? DEFAULT_DEN_BASE_URL;
-    platform.openLink(target);
+    platform.openLink(resolveDenBaseUrls(baseUrl()).baseUrl);
   };
 
   const openBrowserAuth = (mode: "sign-in" | "sign-up") => {
-    const target = new URL(normalizeDenBaseUrl(baseUrl()) ?? DEFAULT_DEN_BASE_URL);
+    const target = new URL(resolveDenBaseUrls(baseUrl()).baseUrl);
     target.searchParams.set("mode", mode);
     if (isDesktopDeployment()) {
       target.searchParams.set("desktopAuth", "1");
@@ -154,14 +154,16 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       return;
     }
 
+    const resolved = resolveDenBaseUrls(normalized);
+
     setBaseUrlError(null);
-    if (normalized === baseUrl()) {
-      setBaseUrlDraft(normalized);
+    if (resolved.baseUrl === baseUrl()) {
+      setBaseUrlDraft(resolved.baseUrl);
       return;
     }
 
-    setBaseUrl(normalized);
-    setBaseUrlDraft(normalized);
+    setBaseUrl(resolved.baseUrl);
+    setBaseUrlDraft(resolved.baseUrl);
     setAuthToken("");
     clearSessionState();
     setAuthError(null);
