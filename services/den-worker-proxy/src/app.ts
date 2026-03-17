@@ -146,7 +146,12 @@ async function proxyRequest(workerId: WorkerId, request: Request) {
 }
 
 app.all("*", async (c) => {
-  const segments = new URL(c.req.url).pathname.split("/").filter(Boolean)
+  const requestUrl = new URL(c.req.url)
+  if (requestUrl.pathname === "/") {
+    return Response.redirect("https://openworklabs.com", 302)
+  }
+
+  const segments = requestUrl.pathname.split("/").filter(Boolean)
   const workerId = segments[0]?.trim()
 
   if (!workerId) {
