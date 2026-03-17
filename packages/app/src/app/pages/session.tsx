@@ -112,7 +112,6 @@ import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
-import ArtifactsPanel from "../components/session/artifacts-panel";
 import InboxPanel from "../components/session/inbox-panel";
 
 export type SessionViewProps = {
@@ -4776,17 +4775,6 @@ export default function SessionView(props: SessionViewProps) {
                   client={props.openworkServerClient}
                   workspaceId={props.openworkServerWorkspaceId}
                   onToast={(message) => setToastMessage(message)}
-                />
-              </div>
-
-              <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-                <ArtifactsPanel
-                  id="sidebar-artifacts"
-                  files={touchedFiles()}
-                  workspaceRoot={props.activeWorkspaceRoot}
-                  onRevealArtifact={revealArtifact}
-                  onOpenInObsidian={openArtifactInObsidian}
-                  obsidianAvailable={obsidianAvailable()}
                 />
               </div>
             </Show>
