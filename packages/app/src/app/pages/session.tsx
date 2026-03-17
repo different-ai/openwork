@@ -4468,7 +4468,14 @@ export default function SessionView(props: SessionViewProps) {
                               role="status"
                               aria-live="polite"
                             >
-                              <span class="truncate">
+                              <span
+                                class={`truncate ${
+                                  runPhase() === "thinking" ||
+                                  runPhase() === "responding"
+                                    ? "animate-pulse"
+                                    : ""
+                                }`}
+                              >
                                 {thinkingStatus() || runLabel()}
                               </span>
                               <Show when={props.developerMode}>
