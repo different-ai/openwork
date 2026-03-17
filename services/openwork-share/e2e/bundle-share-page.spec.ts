@@ -1,4 +1,13 @@
+import { writeFile } from "node:fs/promises";
+
 import { expect, test, type Page } from "@playwright/test";
+
+import {
+  buildPngDataUrl,
+  buildSocialPreviewGalleryHtml,
+  getScenarioTitleRegion,
+  SOCIAL_PREVIEW_SCENARIOS,
+} from "./social-preview-simulator.ts";
 
 const initialBody = `---
 name: agent-creator
@@ -131,4 +140,76 @@ test("publishes a share page with a valid OG preview card for link unfurls", asy
 
   const pastePreviewHtml = await page.content();
   expect(pastePreviewHtml).toContain(shareUrl);
+});
+
+test("keeps the OG title legible across simulated social preview sizes", async ({ page }, testInfo) => {
+  await publishSkill(page);
+  const ogImageUrl = await page.locator('meta[property="og:image"]').getAttribute("content");
+
+  expect(ogImageUrl).toBeTruthy();
+
+  const pngResponse = await page.request.get(ogImageUrl!);
+  expect(pngResponse.ok()).toBeTruthy();
+
+  const ogPng = Buffer.from(await pngResponse.body());
+  const socialPreviewPage = await page.context().newPage();
+  await socialPreviewPage.setViewportSize({ width: 2080, height: 520 });
+  await socialPreviewPage.setContent(
+    buildSocialPreviewGalleryHtml({
+      imageUrl: buildPngDataUrl(ogPng),
+    }),
+    { waitUntil: "load" },
+  );
+  await socialPreviewPage.screenshot({
+    path: testInfo.outputPath("social-preview-gallery.png"),
+  });
+
+  for (const scenario of SOCIAL_PREVIEW_SCENARIOS) {
+    const metrics = await socialPreviewPage.evaluate((currentScenario) => {
+      const tile = document.querySelector<HTMLElement>(`[data-scenario="${currentScenario.key}"]`);
+      const image = tile?.querySelector<HTMLImageElement>("img");
+      if (!image) throw new Error(`Missing image for ${currentScenario.key}`);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = currentScenario.previewWidth;
+      canvas.height = currentScenario.previewHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas context unavailable");
+
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const region = {
+        left: Math.round(currentScenario.previewWidth * (170 / 1200)),
+        top: Math.round(currentScenario.previewHeight * (210 / 630)),
+        width: Math.max(1, Math.round(currentScenario.previewWidth * (420 / 1200))),
+        height: Math.max(1, Math.round(currentScenario.previewHeight * (150 / 630))),
+      };
+      const titleRegion = ctx.getImageData(region.left, region.top, region.width, region.height).data;
+
+      let darkPixels = 0;
+      for (let index = 0; index < titleRegion.length; index += 4) {
+        const r = titleRegion[index] ?? 255;
+        const g = titleRegion[index + 1] ?? 255;
+        const b = titleRegion[index + 2] ?? 255;
+        if (r < 70 && g < 90 && b < 110) darkPixels += 1;
+      }
+
+      return {
+        darkPixels,
+        totalPixels: region.width * region.height,
+        ratio: darkPixels / Math.max(1, region.width * region.height),
+      };
+    }, scenario);
+
+    const region = getScenarioTitleRegion(scenario);
+    await writeFile(
+      testInfo.outputPath(`${scenario.key}.json`),
+      JSON.stringify({ scenario, region, metrics }, null, 2),
+      "utf8",
+    );
+
+    expect(metrics.darkPixels).toBeGreaterThan(100);
+    expect(metrics.ratio).toBeGreaterThan(scenario.minDarkPixelRatio);
+  }
+
+  await socialPreviewPage.close();
 });
