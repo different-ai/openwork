@@ -8,7 +8,8 @@ test("renderRootOgImage uses the simplified metadata-first card", () => {
 
   assert.match(svg, /Share OpenWork skills/);
   assert.match(svg, />beautifully</);
-  assert.match(svg, /agent-creator\.md/);
+  assert.match(svg, /#257CE9/);
+  assert.doesNotMatch(svg, /agent-creator\.md/);
   assert.match(svg, /openwork preview/);
   assert.doesNotMatch(svg, /Before we start, use the question tool/);
 });
@@ -30,7 +31,7 @@ test("renderBundleOgImage focuses on bundle metadata instead of bundle body text
   assert.equal(model.fileName, "follow-up-reminder.md");
   assert.equal(model.tag, "trigger: idle");
   assert.match(svg, /Follow Up Reminder/);
-  assert.match(svg, /follow-up-reminder\.md/);
+  assert.doesNotMatch(svg, /follow-up-reminder\.md/);
   assert.match(svg, /trigger: idle/);
   assert.doesNotMatch(svg, /Runs after the conversation is idle for 24h/);
 });

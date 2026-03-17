@@ -172,7 +172,7 @@ test("publishes a share page with a valid OG preview card for link unfurls", asy
 
   const svg = await svgResponse.text();
   expect(svg).toContain("Agent Creator");
-  expect(svg).toContain("agent-creator.md");
+  expect(svg).not.toContain("agent-creator.md");
   expect(svg).toContain("SKILL.md");
   expect(svg).toContain("share.openwork.software");
   expect(svg).not.toContain("Any markdown body is acceptable here.");
