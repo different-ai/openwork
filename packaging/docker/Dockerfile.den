@@ -1,31 +1,26 @@
 FROM node:22-bookworm-slim
 
+RUN corepack enable
+
 WORKDIR /app
 
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
+COPY .npmrc /app/.npmrc
+COPY patches /app/patches
 COPY packages/utils/package.json /app/packages/utils/package.json
 COPY packages/den-db/package.json /app/packages/den-db/package.json
 COPY services/den/package.json /app/services/den/package.json
 
-WORKDIR /app/packages/utils
-
-RUN npm install --no-package-lock --no-fund --no-audit
-
-WORKDIR /app/packages/den-db
-
-RUN npm install --no-package-lock --no-fund --no-audit
-
-WORKDIR /app/services/den
-
-RUN npm install --no-package-lock --no-fund --no-audit
+RUN pnpm install --frozen-lockfile
 
 COPY packages/utils /app/packages/utils
 COPY packages/den-db /app/packages/den-db
 COPY services/den /app/services/den
 
-RUN npm --prefix /app/packages/utils run build
-RUN npm --prefix /app/packages/den-db run build
-RUN npm run build
+RUN pnpm --dir /app/packages/utils run build
+RUN pnpm --dir /app/packages/den-db run build
+RUN pnpm --dir /app/services/den run build
 
 EXPOSE 8788
 
-CMD ["sh", "-lc", "node scripts/run-sql-migrations.mjs && node dist/index.js"]
+CMD ["sh", "-lc", "node dist/index.js"]

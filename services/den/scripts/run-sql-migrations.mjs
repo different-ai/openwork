@@ -27,13 +27,32 @@ async function appliedMigrations(connection) {
   return new Set(rows.map((row) => row.id))
 }
 
-async function run() {
+function connectionConfigFromEnv() {
   const databaseUrl = process.env.DATABASE_URL?.trim()
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required")
+  if (databaseUrl) {
+    return databaseUrl
   }
 
-  const connection = await mysql.createConnection(databaseUrl)
+  const host = process.env.DATABASE_HOST?.trim()
+  const user = process.env.DATABASE_USERNAME?.trim()
+  const password = process.env.DATABASE_PASSWORD ?? ""
+
+  if (!host || !user) {
+    throw new Error("DATABASE_URL or DATABASE_HOST/DATABASE_USERNAME/DATABASE_PASSWORD is required")
+  }
+
+  return {
+    host,
+    user,
+    password,
+    ssl: {
+      rejectUnauthorized: true,
+    },
+  }
+}
+
+async function run() {
+  const connection = await mysql.createConnection(connectionConfigFromEnv())
 
   try {
     await ensureMigrationsTable(connection)
