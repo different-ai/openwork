@@ -14,6 +14,16 @@ const { db } = createDenDb({
 const app = new Hono()
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
 const signedPreviewRefreshLeadMs = 5 * 60 * 1000
+const publicCorsAllowMethods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+const publicCorsAllowHeaders = [
+  "Authorization",
+  "Content-Type",
+  "X-OpenWork-Host-Token",
+  "X-OpenWork-Client-Id",
+  "X-OpenCode-Directory",
+  "X-Opencode-Directory",
+  "x-opencode-directory",
+]
 type WorkerId = typeof DaytonaSandboxTable.$inferSelect.worker_id
 
 function assertDaytonaConfig() {
@@ -44,6 +54,21 @@ function noCacheHeaders(headers: Headers) {
   headers.set("Pragma", "no-cache")
   headers.set("Expires", "0")
   headers.set("Surrogate-Control", "no-store")
+}
+
+function applyPublicCorsHeaders(headers: Headers, request: Request) {
+  const requestedHeaders = (request.headers.get("access-control-request-headers") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  const allowHeaders = Array.from(new Set([...publicCorsAllowHeaders, ...requestedHeaders]))
+
+  headers.delete("Access-Control-Allow-Credentials")
+  headers.set("Access-Control-Allow-Origin", "*")
+  headers.set("Access-Control-Allow-Headers", allowHeaders.join(", "))
+  headers.set("Access-Control-Allow-Methods", publicCorsAllowMethods.join(","))
+  headers.set("Access-Control-Max-Age", "86400")
 }
 
 function stripProxyHeaders(input: Headers) {
@@ -103,6 +128,7 @@ async function proxyRequest(workerId: WorkerId, request: Request) {
   } catch (error) {
     const headers = new Headers({ "Content-Type": "application/json" })
     noCacheHeaders(headers)
+    applyPublicCorsHeaders(headers, request)
     return new Response(JSON.stringify({
       error: "worker_proxy_refresh_failed",
       message: error instanceof Error ? error.message : "unknown_error",
@@ -112,6 +138,7 @@ async function proxyRequest(workerId: WorkerId, request: Request) {
   if (!baseUrl) {
     const headers = new Headers({ "Content-Type": "application/json" })
     noCacheHeaders(headers)
+    applyPublicCorsHeaders(headers, request)
     return new Response(JSON.stringify({ error: "worker_proxy_unavailable" }), {
       status: 404,
       headers,
@@ -129,6 +156,7 @@ async function proxyRequest(workerId: WorkerId, request: Request) {
   } catch (error) {
     const headers = new Headers({ "Content-Type": "application/json" })
     noCacheHeaders(headers)
+    applyPublicCorsHeaders(headers, request)
     return new Response(JSON.stringify({
       error: "worker_proxy_upstream_failed",
       message: error instanceof Error ? error.message : "unknown_error",
@@ -136,8 +164,16 @@ async function proxyRequest(workerId: WorkerId, request: Request) {
   }
 
   const headers = new Headers(upstream.headers)
+  headers.delete("access-control-allow-origin")
+  headers.delete("access-control-allow-credentials")
+  headers.delete("access-control-allow-headers")
+  headers.delete("access-control-allow-methods")
+  headers.delete("access-control-max-age")
   headers.delete("content-length")
+  headers.delete("set-cookie")
+  headers.delete("vary")
   noCacheHeaders(headers)
+  applyPublicCorsHeaders(headers, request)
 
   return new Response(upstream.body, {
     status: upstream.status,
@@ -151,12 +187,20 @@ app.all("*", async (c) => {
     return Response.redirect("https://openworklabs.com", 302)
   }
 
+  if (c.req.method === "OPTIONS") {
+    const headers = new Headers()
+    noCacheHeaders(headers)
+    applyPublicCorsHeaders(headers, c.req.raw)
+    return new Response(null, { status: 204, headers })
+  }
+
   const segments = requestUrl.pathname.split("/").filter(Boolean)
   const workerId = segments[0]?.trim()
 
   if (!workerId) {
     const headers = new Headers({ "Content-Type": "application/json" })
     noCacheHeaders(headers)
+    applyPublicCorsHeaders(headers, c.req.raw)
     return new Response(JSON.stringify({ error: "worker_id_required" }), {
       status: 400,
       headers,
@@ -168,6 +212,7 @@ app.all("*", async (c) => {
   } catch {
     const headers = new Headers({ "Content-Type": "application/json" })
     noCacheHeaders(headers)
+    applyPublicCorsHeaders(headers, c.req.raw)
     return new Response(JSON.stringify({ error: "worker_not_found" }), {
       status: 404,
       headers,
