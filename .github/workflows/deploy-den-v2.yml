@@ -33,10 +33,9 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ inputs.render_service_id || 'srv-d6sajsua2pns7383mis0' }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
-          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL || secrets.DATABASE_URL }}
-          DEN_DATABASE_HOST: ${{ secrets.DEN_DATABASE_HOST || secrets.DATABASE_HOST }}
-          DEN_DATABASE_USERNAME: ${{ secrets.DEN_DATABASE_USERNAME || secrets.DATABASE_USERNAME }}
-          DEN_DATABASE_PASSWORD: ${{ secrets.DEN_DATABASE_PASSWORD || secrets.DATABASE_PASSWORD }}
+          DATABASE_HOST: ${{ secrets.DATABASE_HOST }}
+          DATABASE_USERNAME: ${{ secrets.DATABASE_USERNAME }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
@@ -60,14 +59,12 @@ jobs:
             fi
           done
 
-          if [ -z "$DEN_DATABASE_URL" ]; then
-            for key in DEN_DATABASE_HOST DEN_DATABASE_USERNAME DEN_DATABASE_PASSWORD; do
-              if [ -z "${!key}" ]; then
-                echo "::error::Missing required database secret: $key (required when DEN_DATABASE_URL is not set)"
-                missing=1
-              fi
-            done
-          fi
+          for key in DATABASE_HOST DATABASE_USERNAME DATABASE_PASSWORD; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required database secret: $key"
+              missing=1
+            fi
+          done
 
           vanity_suffix="${DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX:-openwork.studio}"
           if [ -n "$vanity_suffix" ] && [ -z "$VERCEL_TOKEN" ]; then
@@ -130,10 +127,9 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ inputs.render_service_id || 'srv-d6sajsua2pns7383mis0' }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
-          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL || secrets.DATABASE_URL }}
-          DEN_DATABASE_HOST: ${{ secrets.DEN_DATABASE_HOST || secrets.DATABASE_HOST }}
-          DEN_DATABASE_USERNAME: ${{ secrets.DEN_DATABASE_USERNAME || secrets.DATABASE_USERNAME }}
-          DEN_DATABASE_PASSWORD: ${{ secrets.DEN_DATABASE_PASSWORD || secrets.DATABASE_PASSWORD }}
+          DATABASE_HOST: ${{ secrets.DATABASE_HOST }}
+          DATABASE_USERNAME: ${{ secrets.DATABASE_USERNAME }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
@@ -336,21 +332,18 @@ jobs:
               {"key": "POLAR_RETURN_URL", "value": polar_return_url},
           ]
 
-          database_url = os.environ.get("DEN_DATABASE_URL") or ""
-          database_host = os.environ.get("DEN_DATABASE_HOST") or ""
-          database_username = os.environ.get("DEN_DATABASE_USERNAME") or ""
-          database_password = os.environ.get("DEN_DATABASE_PASSWORD") or ""
+          database_host = os.environ.get("DATABASE_HOST") or ""
+          database_username = os.environ.get("DATABASE_USERNAME") or ""
+          database_password = os.environ.get("DATABASE_PASSWORD") or ""
 
-          if database_url:
-              env_vars.append({"key": "DATABASE_URL", "value": database_url})
-          else:
-              env_vars.extend(
-                  [
-                      {"key": "DATABASE_HOST", "value": database_host},
-                      {"key": "DATABASE_USERNAME", "value": database_username},
-                      {"key": "DATABASE_PASSWORD", "value": database_password},
-                  ]
-              )
+          env_vars.extend(
+              [
+                  {"key": "DATABASE_HOST", "value": database_host},
+                  {"key": "DATABASE_USERNAME", "value": database_username},
+                  {"key": "DATABASE_PASSWORD", "value": database_password},
+                  {"key": "DB_MODE", "value": "planetscale"},
+              ]
+          )
 
           if provisioner_mode == "daytona":
               env_vars.extend(

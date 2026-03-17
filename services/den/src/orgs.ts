@@ -6,6 +6,19 @@ import { createDenTypeId } from "./db/typeid.js"
 type UserId = typeof AuthUserTable.$inferSelect.id
 type OrgId = typeof OrgTable.$inferSelect.id
 
+function personalSlugFromOrgId(orgId: OrgId) {
+  return orgId
+}
+
+function isDuplicateSlugError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false
+  }
+
+  const message = error.message.toLowerCase()
+  return message.includes("duplicate entry") && message.includes("org.org_slug")
+}
+
 export async function ensureDefaultOrg(userId: UserId, name: string): Promise<OrgId> {
   const existing = await db
     .select()
@@ -17,14 +30,33 @@ export async function ensureDefaultOrg(userId: UserId, name: string): Promise<Or
     return existing[0].org_id
   }
 
-  const orgId = createDenTypeId("org")
-  const slug = `personal-${orgId.slice(0, 8)}`
-  await db.insert(OrgTable).values({
-    id: orgId,
-    name,
-    slug,
-    owner_user_id: userId,
-  })
+  let orgId: OrgId | null = null
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const candidateOrgId = createDenTypeId("org")
+    const slug = personalSlugFromOrgId(candidateOrgId)
+
+    try {
+      await db.insert(OrgTable).values({
+        id: candidateOrgId,
+        name,
+        slug,
+        owner_user_id: userId,
+      })
+      orgId = candidateOrgId
+      break
+    } catch (error) {
+      if (isDuplicateSlugError(error) && attempt < 4) {
+        continue
+      }
+      throw error
+    }
+  }
+
+  if (!orgId) {
+    throw new Error("failed to create default org")
+  }
+
   await db.insert(OrgMembershipTable).values({
     id: createDenTypeId("orgMembership"),
     org_id: orgId,
