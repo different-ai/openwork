@@ -4139,7 +4139,7 @@ export default function App() {
     setProcessingDenAuthDeepLink(true);
     setPendingDenAuthDeepLink(null);
     setView("dashboard");
-    setSettingsTab("den");
+    setSettingsTab(developerMode() ? "den" : "general");
     goToDashboard("settings");
 
     void createDenClient({ baseUrl: pending.denBaseUrl })

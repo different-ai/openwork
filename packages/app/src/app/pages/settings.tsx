@@ -708,7 +708,8 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "den", "model", "advanced"];
+    const tabs: SettingsTab[] = ["general", "model", "advanced"];
+    if (props.developerMode) tabs.splice(1, 0, "den");
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
