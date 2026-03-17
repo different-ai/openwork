@@ -1,5 +1,5 @@
 import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
@@ -33,6 +33,19 @@ const FILE_SESSION_MAX_BATCH_ITEMS = 64;
 const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
+const CALLBACK_BRIDGE_DEFAULT_TTL_MS = 5 * 60 * 1000;
+const CALLBACK_BRIDGE_MIN_TTL_MS = 30 * 1000;
+const CALLBACK_BRIDGE_MAX_TTL_MS = 10 * 60 * 1000;
+
+type CallbackBridgeEntry = {
+  token: string;
+  workspaceId: string;
+  targetUrl: string;
+  methods: string[];
+  singleUse: boolean;
+  createdAt: number;
+  expiresAt: number;
+};
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -339,6 +352,10 @@ export function startServer(config: ServerConfig) {
           errorMessage = "not_found";
           return finalize(jsonResponse({ code: "not_found", message: "Not found" }, 404));
         }
+        url.pathname = mount.restPath;
+      }
+
+      if (mount && mount.restPath.startsWith("/callback-bridge/")) {
         url.pathname = mount.restPath;
       }
 
@@ -1221,6 +1238,7 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
 function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
+  const callbackBridge = new Map<string, CallbackBridgeEntry>();
 
   const serializeFileSession = (session: {
     id: string;
@@ -1258,6 +1276,63 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   const recordWorkspaceFileEvent = (workspaceId: string, input: { type: "write" | "delete" | "rename" | "mkdir"; path: string; toPath?: string; revision?: string }) => {
     return fileSessions.recordWorkspaceEvent({ workspaceId, ...input });
   };
+
+  const cleanupExpiredCallbackBridge = () => {
+    const now = Date.now();
+    for (const [token, entry] of callbackBridge.entries()) {
+      if (entry.expiresAt <= now) {
+        callbackBridge.delete(token);
+      }
+    }
+  };
+
+  const handleCallbackBridgeRequest = async (ctx: RequestContext) => {
+    cleanupExpiredCallbackBridge();
+    const token = (ctx.params.token ?? "").trim();
+    if (!token) {
+      throw new ApiError(404, "not_found", "Not found");
+    }
+
+    const entry = callbackBridge.get(token);
+    if (!entry || entry.expiresAt <= Date.now()) {
+      callbackBridge.delete(token);
+      throw new ApiError(404, "callback_bridge_not_found", "Callback bridge not found or expired");
+    }
+
+    const method = ctx.request.method.toUpperCase();
+    if (!entry.methods.includes(method)) {
+      throw new ApiError(405, "method_not_allowed", "Method not allowed for callback bridge", {
+        methods: entry.methods,
+      });
+    }
+
+    if (entry.singleUse) {
+      callbackBridge.delete(token);
+    }
+
+    await resolveWorkspace(config, entry.workspaceId);
+
+    const incomingUrl = new URL(ctx.request.url);
+    const targetUrl = buildCallbackBridgeTargetUrl(entry.targetUrl, incomingUrl);
+    const headers = new Headers(ctx.request.headers);
+    headers.delete("host");
+    headers.delete("origin");
+    headers.delete("authorization");
+    headers.delete("x-openwork-host-token");
+    headers.delete("x-openwork-client-id");
+
+    const body = method === "GET" || method === "HEAD" ? undefined : ctx.request.body;
+    const upstream = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+      redirect: "manual",
+    });
+    return upstream;
+  };
+
+  addRoute(routes, "GET", "/callback-bridge/:token", "none", handleCallbackBridgeRequest);
+  addRoute(routes, "POST", "/callback-bridge/:token", "none", handleCallbackBridgeRequest);
 
   addRoute(routes, "GET", "/health", "none", async () => {
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
@@ -1650,6 +1725,43 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     });
 
     return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/callback-bridge/register", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+
+    const targetUrl = normalizeCallbackBridgeTargetUrl(body.targetUrl);
+    const methods = normalizeCallbackBridgeMethods(body.methods);
+    const ttlMs = normalizeCallbackBridgeTtlMs(body.ttlMs);
+    const singleUse = body.singleUse !== false;
+    const now = Date.now();
+    const token = createCallbackBridgeToken();
+    const expiresAt = now + ttlMs;
+
+    callbackBridge.set(token, {
+      token,
+      workspaceId: workspace.id,
+      targetUrl,
+      methods,
+      singleUse,
+      createdAt: now,
+      expiresAt,
+    });
+    cleanupExpiredCallbackBridge();
+
+    return jsonResponse({
+      ok: true,
+      token,
+      path: `/callback-bridge/${encodeURIComponent(token)}`,
+      workspaceId: workspace.id,
+      targetUrl,
+      methods,
+      ttlMs,
+      expiresAt,
+      singleUse,
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/opencode-router/telegram", "client", async (ctx) => {
@@ -3795,6 +3907,72 @@ function parseInteger(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeCallbackBridgeTtlMs(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return CALLBACK_BRIDGE_DEFAULT_TTL_MS;
+  }
+  const rounded = Math.trunc(value);
+  if (rounded < CALLBACK_BRIDGE_MIN_TTL_MS) return CALLBACK_BRIDGE_MIN_TTL_MS;
+  if (rounded > CALLBACK_BRIDGE_MAX_TTL_MS) return CALLBACK_BRIDGE_MAX_TTL_MS;
+  return rounded;
+}
+
+function normalizeCallbackBridgeMethods(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return ["GET"];
+  }
+  const methods = value
+    .map((item) => (typeof item === "string" ? item.trim().toUpperCase() : ""))
+    .filter((item) => item === "GET" || item === "POST");
+  return methods.length ? Array.from(new Set(methods)) : ["GET"];
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1" || normalized === "[::1]";
+}
+
+function normalizeCallbackBridgeTargetUrl(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new ApiError(400, "invalid_payload", "targetUrl is required");
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new ApiError(400, "invalid_payload", "targetUrl is required");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new ApiError(400, "invalid_payload", "targetUrl must be a valid URL");
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ApiError(400, "invalid_payload", "targetUrl must use http or https");
+  }
+  if (!isLoopbackHostname(url.hostname)) {
+    throw new ApiError(400, "invalid_payload", "targetUrl must point to localhost");
+  }
+  if (url.username || url.password) {
+    throw new ApiError(400, "invalid_payload", "targetUrl credentials are not allowed");
+  }
+
+  return url.toString();
+}
+
+function createCallbackBridgeToken(): string {
+  return randomBytes(24).toString("base64url");
+}
+
+function buildCallbackBridgeTargetUrl(targetUrl: string, incoming: URL): string {
+  const target = new URL(targetUrl);
+  for (const [key, value] of incoming.searchParams.entries()) {
+    target.searchParams.append(key, value);
+  }
+  return target.toString();
 }
 
 function expandHome(value: string): string {

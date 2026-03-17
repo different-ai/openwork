@@ -87,6 +87,8 @@ export type DashboardViewProps = {
     returnFocusTarget?: "none" | "composer";
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
+<<<<<<< HEAD
+  openExternalUrl: (url: string) => Promise<string>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
@@ -1501,6 +1503,7 @@ export default function DashboardView(props: DashboardViewProps) {
           onSubmitApiKey={handleProviderAuthApiKey}
           onSubmitOAuth={handleProviderAuthOAuth}
           onRefreshProviders={props.refreshProviders}
+          openExternalUrl={props.openExternalUrl}
           onClose={() => props.closeProviderAuthModal()}
         />
 

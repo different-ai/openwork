@@ -198,8 +198,11 @@ import {
   type OpenworkServerStatus,
   type OpenworkServerSettings,
   type OpenworkWorkspaceExport,
+  type OpenworkCallbackBridgeRegisterResult,
   OpenworkServerError,
 } from "./lib/openwork-server";
+import { openExternalUrl } from "./lib/open-external-url";
+import { generateWorkerLinkUrl } from "./lib/worker-link-url";
 
 type RemoteWorkspaceDefaults = {
   openworkHostUrl?: string | null;
@@ -2212,6 +2215,48 @@ export default function App() {
       next[sessionID] = trimmed;
       return next;
     });
+  }
+
+  async function generateWorkerAuthLinkUrl(inputUrl: string): Promise<string> {
+    const raw = inputUrl.trim();
+    if (!raw) return inputUrl;
+
+    const workspace = workspaceStore.activeWorkspaceDisplay();
+    const callbackBaseUrl = (
+      workspace.openworkHostUrl?.trim() ||
+      workspace.baseUrl?.trim() ||
+      openworkServerBaseUrl().trim() ||
+      ""
+    ).replace(/\/+$/, "");
+    if (!callbackBaseUrl) return inputUrl;
+
+    const workspaceId =
+      openworkServerWorkspaceId()?.trim() ||
+      workspace.openworkWorkspaceId?.trim() ||
+      workspace.id?.trim() ||
+      parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
+      parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+      "";
+    if (!workspaceId) return inputUrl;
+
+    const owClient = openworkServerClient();
+    if (!owClient) return inputUrl;
+
+    return generateWorkerLinkUrl(raw, async (targetUrl) => {
+      const registered: OpenworkCallbackBridgeRegisterResult = await owClient.registerCallbackBridge(workspaceId, {
+        targetUrl,
+        methods: ["GET"],
+        singleUse: true,
+        ttlMs: 5 * 60_000,
+      });
+      const callbackPath = registered.path.startsWith("/") ? registered.path : `/${registered.path}`;
+      return `${callbackBaseUrl}${callbackPath}`;
+    });
+  }
+
+  async function openExternalBrowserUrl(inputUrl: string): Promise<string> {
+    const rewrittenUrl = await generateWorkerAuthLinkUrl(inputUrl);
+    return openExternalUrl(rewrittenUrl);
   }
 
   const buildProviderAuthMethods = (
@@ -6676,6 +6721,7 @@ export default function App() {
       openProviderAuthModal,
       disconnectProvider,
       closeProviderAuthModal,
+      openExternalUrl: openExternalBrowserUrl,
       startProviderAuth,
       completeProviderAuthOAuth,
       refreshProviders,
@@ -7029,6 +7075,7 @@ export default function App() {
     submitProviderApiKey: submitProviderApiKey,
     openProviderAuthModal: openProviderAuthModal,
     closeProviderAuthModal: closeProviderAuthModal,
+    openExternalUrl: openExternalBrowserUrl,
     providerAuthModalOpen: providerAuthModalOpen(),
     providerAuthBusy: providerAuthBusy(),
     providerAuthError: providerAuthError(),
@@ -7238,6 +7285,7 @@ export default function App() {
         reloadBlocked={activeReloadBlockingSessions().length > 0}
         activeSessions={activeReloadBlockingSessions()}
         isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
+        openExternalUrl={openExternalBrowserUrl}
         onForceStopSession={(sessionID) => abortSession(sessionID)}
         onClose={() => {
           setMcpAuthModalOpen(false);
@@ -7355,12 +7403,7 @@ export default function App() {
         workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
         onWorkerCta={async () => {
           const url = "https://www.docker.com/products/docker-desktop/";
-          if (isTauriRuntime()) {
-            const { openUrl } = await import("@tauri-apps/plugin-opener");
-            await openUrl(url);
-          } else {
-            window.open(url, "_blank", "noopener,noreferrer");
-          }
+          await openExternalBrowserUrl(url);
         }}
         workerRetryLabel={t("common.retry", currentLocale())}
         workerDebugLines={(() => {

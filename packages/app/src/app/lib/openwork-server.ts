@@ -108,6 +108,25 @@ export type OpenworkWorkspaceList = {
   activeId?: string | null;
 };
 
+export type OpenworkCallbackBridgeRegisterInput = {
+  targetUrl: string;
+  ttlMs?: number;
+  methods?: string[];
+  singleUse?: boolean;
+};
+
+export type OpenworkCallbackBridgeRegisterResult = {
+  ok: boolean;
+  token: string;
+  path: string;
+  workspaceId: string;
+  targetUrl: string;
+  methods: string[];
+  ttlMs: number;
+  expiresAt: number;
+  singleUse: boolean;
+};
+
 export type OpenworkPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
@@ -1167,6 +1186,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
+    callbackBridge: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
     binary: 60_000,
@@ -1213,6 +1233,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
+      ),
+    registerCallbackBridge: (workspaceId: string, input: OpenworkCallbackBridgeRegisterInput) =>
+      requestJson<OpenworkCallbackBridgeRegisterResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/callback-bridge/register`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: input,
+          timeoutMs: timeouts.callbackBridge,
+        },
       ),
     exportWorkspace: (workspaceId: string) =>
       requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {

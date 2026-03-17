@@ -4,6 +4,7 @@ import Button from "./button";
 import TextInput from "./text-input";
 import type { Client } from "../types";
 import type { McpDirectoryInfo } from "../constants";
+import { openExternalUrl as openExternalUrlDirect } from "../lib/open-external-url";
 import { unwrap } from "../lib/opencode";
 import { opencodeMcpAuth } from "../lib/tauri";
 import { validateMcpServerName } from "../mcp";
@@ -28,6 +29,7 @@ export type McpAuthModalProps = {
   projectDir: string;
   language: Language;
   onForceStopSession?: (sessionID: string) => void | Promise<void>;
+  openExternalUrl?: (url: string) => Promise<string>;
 };
 
 export default function McpAuthModal(props: McpAuthModalProps) {
@@ -86,15 +88,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   });
 
   const openAuthorizationUrl = async (url: string) => {
-    if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
-      return;
-    }
-
-    if (typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
+    return (props.openExternalUrl ?? openExternalUrlDirect)(url);
   };
 
   const handleCopyAuthorizationUrl = async () => {
@@ -273,8 +267,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         return;
       }
 
-      setAuthorizationUrl(auth.authorizationUrl);
-      await openAuthorizationUrl(auth.authorizationUrl);
+      const launchUrl = await openAuthorizationUrl(auth.authorizationUrl);
+
+      setAuthorizationUrl(launchUrl || auth.authorizationUrl);
       startStatusPolling(slug);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");

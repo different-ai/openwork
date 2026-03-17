@@ -2,7 +2,7 @@ import type { ProviderAuthAuthorization } from "@opencode-ai/sdk/v2/client";
 import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { isTauriRuntime } from "../utils";
+import { openExternalUrl as openExternalUrlDirect } from "../lib/open-external-url";
 import { compareProviders } from "../utils/providers";
 
 import Button from "./button";
@@ -50,6 +50,7 @@ export type ProviderAuthModalProps = {
     code?: string
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
+  openExternalUrl?: (url: string) => Promise<string>;
   onClose: () => void;
 };
 
@@ -269,12 +270,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const openOauthUrl = async (url: string) => {
     if (!url) return;
-    if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
+    return (props.openExternalUrl ?? openExternalUrlDirect)(url);
   };
 
   const submitOauth = async (providerId: string, methodIndex: number, code?: string) => {
@@ -331,8 +327,15 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         methodIndex: started.methodIndex,
         authorization: started.authorization,
       };
-      setOauthSession(nextSession);
-      await openOauthUrl(started.authorization.url);
+      const openedUrl = await openOauthUrl(started.authorization.url);
+      setOauthSession(
+        openedUrl && openedUrl !== started.authorization.url
+          ? {
+              ...nextSession,
+              authorization: { ...started.authorization, url: openedUrl },
+            }
+          : nextSession,
+      );
 
       if (started.authorization.method === "code") {
         setView("oauth-code");

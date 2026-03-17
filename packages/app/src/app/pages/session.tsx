@@ -258,6 +258,7 @@ export type SessionViewProps = {
     returnFocusTarget?: "none" | "composer";
   }) => Promise<void>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
+  openExternalUrl: (url: string) => Promise<string>;
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
   providerAuthError: string | null;
@@ -4925,6 +4926,7 @@ export default function SessionView(props: SessionViewProps) {
         onSubmitApiKey={handleProviderAuthApiKey}
         onSubmitOAuth={handleProviderAuthOAuth}
         onRefreshProviders={props.refreshProviders}
+        openExternalUrl={props.openExternalUrl}
         onClose={() => props.closeProviderAuthModal()}
       />
 
