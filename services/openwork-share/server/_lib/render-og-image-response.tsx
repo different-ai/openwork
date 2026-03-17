@@ -14,8 +14,8 @@ const canvasStyle: CSSProperties = {
 
 const monoStyle: CSSProperties = {
   fontFamily: "monospace",
-  fontSize: "15px",
-  lineHeight: "22px",
+  fontSize: "24px",
+  lineHeight: "34px",
   color: "#475569",
 };
 
@@ -53,7 +53,7 @@ function segmentStyle(className: OgTokenClass): CSSProperties {
     case "hl-frontmatter":
       return { color: "#94a3b8" };
     case "hl-key":
-      return { color: "#475569" };
+      return { color: "#be123c" };
     case "hl-url":
       return { color: "#2563eb" };
     case "hl-string":
@@ -65,7 +65,7 @@ function segmentStyle(className: OgTokenClass): CSSProperties {
     case "hl-number":
       return { color: "#f97316" };
     case "hl-keyword":
-      return { color: "#be123c" };
+      return { color: "#7c3aed", fontWeight: 600 };
     case "hl-comment":
       return { color: "#94a3b8", fontStyle: "italic" };
     case "hl-heading":
@@ -73,7 +73,7 @@ function segmentStyle(className: OgTokenClass): CSSProperties {
     case "hl-field":
       return { color: "#be123c" };
     case "hl-inline-code":
-      return { color: "#7c3aed" };
+      return { color: "#0891b2", background: "rgba(8,145,178,0.08)", borderRadius: "4px", paddingLeft: "2px", paddingRight: "2px" };
     case "hl-bold":
       return { color: "#0f172a", fontWeight: 700 };
     case "hl-type":
@@ -132,25 +132,25 @@ function OgImage({ model }: { model: OgImageModel }): ReactElement {
       >
         <div
           style={{
-            height: "66px",
+            height: "78px",
             borderBottom: "1px solid rgba(226,232,240,0.92)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "0 34px",
+            padding: "0 28px",
           }}
         >
-          <div style={{ ...sansStyle, fontSize: "28px", fontWeight: 800, letterSpacing: "-1.2px" }}>SKILL.md</div>
+          <div style={{ ...sansStyle, fontSize: "40px", fontWeight: 900, letterSpacing: "-1.2px" }}>SKILL.md</div>
           <div style={{ display: "flex", alignItems: "center", gap: "13px" }}>
             <div
               style={{
-                width: "14px",
-                height: "14px",
+                width: "18px",
+                height: "18px",
                 borderRadius: "999px",
                 background: "linear-gradient(135deg, #f97316 0%, #facc15 100%)",
               }}
             />
-            <div style={{ ...monoStyle, fontSize: "16px", color: "#94a3b8" }}>{model.filename}</div>
+            <div style={{ ...monoStyle, fontSize: "30px", fontWeight: 700, color: "#94a3b8", lineHeight: "34px" }}>{model.filename}</div>
           </div>
         </div>
 
@@ -158,25 +158,14 @@ function OgImage({ model }: { model: OgImageModel }): ReactElement {
           style={{
             display: "flex",
             flexDirection: "column",
-            padding: "50px 34px 0 34px",
+            padding: "48px 34px 0 34px",
             gap: "0px",
             ...monoStyle,
           }}
         >
           {model.lines.map((line, index) => (
-            <div key={index} style={{ display: "flex", minHeight: "22px", alignItems: "baseline" }}>
-              <div
-                style={{
-                  width: "44px",
-                  color: "#cbd5e1",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  lineHeight: "22px",
-                }}
-              >
-                {line.lineNumber == null ? "" : String(line.lineNumber).padStart(2, "0")}
-              </div>
-              <div style={{ display: "flex", whiteSpace: "pre", flexWrap: "nowrap" }}>
+            <div key={index} style={{ display: "flex", minHeight: `${line.height}px`, alignItems: "baseline" }}>
+              <div style={{ display: "flex", whiteSpace: "pre", flexWrap: "nowrap", letterSpacing: "-0.3px" }}>
                 {line.segments.length ? (
                   line.segments.map((segment, segmentIndex) => (
                     <span key={segmentIndex} style={segmentStyle(segment.className)}>

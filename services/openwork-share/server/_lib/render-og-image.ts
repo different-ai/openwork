@@ -30,6 +30,7 @@ type TokenSegment = {
 type WrappedLine = {
   lineNumber: number | null;
   segments: TokenSegment[];
+  height: number;
 };
 
 export type OgTokenClass = TokenClass;
@@ -47,13 +48,13 @@ type SkillCardInput = {
   shareUrl: string;
 };
 
-const FONT_SIZE = 15;
-const LINE_HEIGHT = 22;
+const FONT_SIZE = 24;
+const LINE_HEIGHT = 34;
 const BODY_X = 34;
-const BODY_Y = 116;
-const BODY_WIDTH = 1084;
-const BODY_HEIGHT = 454;
-const CHAR_WIDTH = 8.9;
+const BODY_Y = 126;
+const BODY_WIDTH = 1110;
+const BODY_HEIGHT = 410;
+const CHAR_WIDTH = 12.2;
 const OG_SANS_FONT = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
 const OG_MONO_FONT = "DejaVu Sans Mono, Liberation Mono, Courier New, monospace";
 const MAX_LINES = Math.floor(BODY_HEIGHT / LINE_HEIGHT);
@@ -242,6 +243,17 @@ function buildWrappedLines(text: string, shareUrl: string): WrappedLine[] {
   let truncated = false;
 
   for (const [index, htmlLine] of htmlLines.entries()) {
+    if (!(rawLines[index] ?? "").trim()) {
+      if (wrapped.length && wrapped[wrapped.length - 1]?.segments.length) {
+        wrapped.push({
+          lineNumber: null,
+          segments: [],
+          height: 14,
+        });
+      }
+      continue;
+    }
+
     const quotedCodeSegments = detectQuotedCodeSegments(rawLines[index] ?? "");
     const parsed = quotedCodeSegments
       ? quotedCodeSegments
@@ -255,6 +267,7 @@ function buildWrappedLines(text: string, shareUrl: string): WrappedLine[] {
       wrapped.push({
         lineNumber: wrapped.length + 1,
         segments: lineGroup,
+        height: LINE_HEIGHT,
       });
     }
     if (truncated) break;
@@ -264,11 +277,13 @@ function buildWrappedLines(text: string, shareUrl: string): WrappedLine[] {
     wrapped.push({
       lineNumber: null,
       segments: [],
+      height: 18,
     });
     for (const continuationLine of continuationLines) {
       wrapped.push({
         lineNumber: null,
         segments: continuationLine,
+        height: LINE_HEIGHT,
       });
     }
   }
@@ -288,7 +303,7 @@ function classStyle(className: TokenClass): { fill: string; weight?: string; sty
     case "hl-frontmatter":
       return { fill: "#94a3b8" };
     case "hl-key":
-      return { fill: "#475569" };
+      return { fill: "#be123c" };
     case "hl-url":
       return { fill: "#2563eb" };
     case "hl-string":
@@ -300,7 +315,7 @@ function classStyle(className: TokenClass): { fill: string; weight?: string; sty
     case "hl-number":
       return { fill: "#f97316" };
     case "hl-keyword":
-      return { fill: "#be123c" };
+      return { fill: "#7c3aed", weight: "600" };
     case "hl-comment":
       return { fill: "#94a3b8", style: "italic" };
     case "hl-heading":
@@ -308,7 +323,7 @@ function classStyle(className: TokenClass): { fill: string; weight?: string; sty
     case "hl-field":
       return { fill: "#be123c" };
     case "hl-inline-code":
-      return { fill: "#7c3aed" };
+      return { fill: "#0891b2" };
     case "hl-bold":
       return { fill: "#0f172a", weight: "700" };
     case "hl-type":
@@ -328,8 +343,7 @@ function classStyle(className: TokenClass): { fill: string; weight?: string; sty
 
 function renderLine(line: WrappedLine, y: number): string {
   let x = BODY_X;
-  const gutter = line.lineNumber == null ? "" : `<text x="${BODY_X}" y="${y}" fill="#cbd5e1" font-family="${OG_MONO_FONT}" font-size="13" font-weight="600">${String(line.lineNumber).padStart(2, "0")}</text>`;
-  x += 44;
+  const gutter = "";
 
   return `${gutter}${line.segments
     .map((segment, index) => {
@@ -337,7 +351,9 @@ function renderLine(line: WrappedLine, y: number): string {
       const width = segmentWidth(segment.text);
       const pill =
         segment.className === "hl-codeblock"
-          ? `<rect x="${x - 1}" y="${y - 14}" width="${width + 8}" height="22" rx="5" fill="#f8fafc" stroke="#cbd5e1" />`
+          ? `<rect x="${x - 1}" y="${y - 18}" width="${width + 10}" height="28" rx="6" fill="#f8fafc" stroke="#cbd5e1" />`
+          : segment.className === "hl-inline-code"
+            ? `<rect x="${x - 2}" y="${y - 18}" width="${width + 6}" height="28" rx="5" fill="rgba(8,145,178,0.08)" />`
           : "";
       const node = `<text x="${x}" y="${y}" fill="${style.fill}" font-family="${OG_MONO_FONT}" font-size="${FONT_SIZE}"${style.weight ? ` font-weight="${style.weight}"` : ""}${style.style ? ` font-style="${style.style}"` : ""}${segment.className === "hl-cta-url" ? ` text-decoration="underline"` : ""}>${escapeSvgText(segment.text)}</text>`;
       x += width;
@@ -348,15 +364,22 @@ function renderLine(line: WrappedLine, y: number): string {
 
 function renderPreviewSurface(input: { title: string; filename: string; text: string; shareUrl: string }): string {
   const model = buildSkillCardModel(input);
+  let currentY = BODY_Y;
 
   return `
     <g transform="translate(18 12)">
       <rect width="1164" height="606" rx="38" fill="rgba(255,255,255,0.96)" stroke="rgba(148,163,184,0.16)" />
-      <path d="M0 66H1164" stroke="rgba(226,232,240,0.92)" />
-      <text x="34" y="42" fill="#0f172a" font-family="${OG_SANS_FONT}" font-size="28" font-weight="800" letter-spacing="-1.2">SKILL.md</text>
-      <circle cx="930" cy="33" r="7" fill="url(#skillGradient)" />
-      <text x="950" y="40" fill="#94a3b8" font-family="${OG_MONO_FONT}" font-size="16">${escapeSvgText(input.filename)}</text>
-      ${model.lines.map((line, index) => renderLine(line, BODY_Y + index * LINE_HEIGHT)).join("")}
+      <path d="M0 78H1164" stroke="rgba(226,232,240,0.92)" />
+      <text x="34" y="52" fill="#0f172a" font-family="${OG_SANS_FONT}" font-size="40" font-weight="900" letter-spacing="-1.2">SKILL.md</text>
+      <circle cx="888" cy="39" r="9" fill="url(#skillGradient)" />
+      <text x="912" y="48" fill="#94a3b8" font-family="${OG_MONO_FONT}" font-size="30" font-weight="700">${escapeSvgText(input.filename)}</text>
+      ${model.lines
+        .map((line) => {
+          const y = currentY;
+          currentY += line.height;
+          return renderLine(line, y);
+        })
+        .join("")}
     </g>`;
 }
 
