@@ -593,6 +593,7 @@ export const DEFAULT_OPENWORK_CONNECT_APP_URL = "https://app.openwork.software";
 const OPENWORK_INVITE_PARAM_URL = "ow_url";
 const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
 const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
+const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
 const OPENWORK_INVITE_PARAM_BUNDLE = "ow_bundle";
 const OPENWORK_INVITE_PARAM_BUNDLE_INTENT = "ow_intent";
 const OPENWORK_INVITE_PARAM_BUNDLE_SOURCE = "ow_source";
@@ -603,6 +604,7 @@ export type OpenworkConnectInvite = {
   url: string;
   token?: string;
   startup?: "server";
+  autoConnect?: boolean;
 };
 
 export type OpenworkBundleInviteIntent = "new_worker" | "import_current";
@@ -628,6 +630,7 @@ export function buildOpenworkConnectInviteUrl(input: {
   token?: string | null;
   appUrl?: string | null;
   startup?: "server";
+  autoConnect?: boolean;
 }) {
   const workspaceUrl = normalizeOpenworkServerUrl(input.workspaceUrl ?? "") ?? "";
   if (!workspaceUrl) return "";
@@ -646,6 +649,9 @@ export function buildOpenworkConnectInviteUrl(input: {
 
     const startup = input.startup ?? "server";
     search.set(OPENWORK_INVITE_PARAM_STARTUP, startup);
+    if (input.autoConnect) {
+      search.set(OPENWORK_INVITE_PARAM_AUTO_CONNECT, "1");
+    }
 
     url.search = search.toString();
     return url.toString();
@@ -657,6 +663,9 @@ export function buildOpenworkConnectInviteUrl(input: {
       search.set(OPENWORK_INVITE_PARAM_TOKEN, token);
     }
     search.set(OPENWORK_INVITE_PARAM_STARTUP, input.startup ?? "server");
+    if (input.autoConnect) {
+      search.set(OPENWORK_INVITE_PARAM_AUTO_CONNECT, "1");
+    }
     return `${DEFAULT_OPENWORK_CONNECT_APP_URL}?${search.toString()}`;
   }
 }
@@ -674,11 +683,13 @@ export function readOpenworkConnectInviteFromSearch(input: string | URLSearchPar
   const token = search.get(OPENWORK_INVITE_PARAM_TOKEN)?.trim() ?? "";
   const startupRaw = search.get(OPENWORK_INVITE_PARAM_STARTUP)?.trim() ?? "";
   const startup = startupRaw === "server" ? "server" : undefined;
+  const autoConnect = search.get(OPENWORK_INVITE_PARAM_AUTO_CONNECT)?.trim() === "1";
 
   return {
     url,
     token: token || undefined,
     startup,
+    autoConnect: autoConnect || undefined,
   } satisfies OpenworkConnectInvite;
 }
 
@@ -791,6 +802,7 @@ export function stripOpenworkConnectInviteFromUrl(input: string) {
     url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
+    url.searchParams.delete(OPENWORK_INVITE_PARAM_AUTO_CONNECT);
     return url.toString();
   } catch {
     return input;

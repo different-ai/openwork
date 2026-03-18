@@ -206,6 +206,7 @@ type RemoteWorkspaceDefaults = {
   openworkToken?: string | null;
   directory?: string | null;
   displayName?: string | null;
+  autoConnect?: boolean;
 };
 
 type SharedSkillItem = {
@@ -635,12 +636,19 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
   const workerName = url.searchParams.get("workerName")?.trim() ?? "";
   const workerId = url.searchParams.get("workerId")?.trim() ?? "";
   const displayName = workerName || (workerId ? `Worker ${workerId.slice(0, 8)}` : "");
+  const autoConnectRaw =
+    url.searchParams.get("autoConnect") ??
+    url.searchParams.get("bypassModal") ??
+    url.searchParams.get("bypassAddWorkerModal") ??
+    "";
+  const autoConnect = ["1", "true", "yes", "on"].includes(autoConnectRaw.trim().toLowerCase());
 
   return {
     openworkHostUrl: normalizedHostUrl,
     openworkToken: token,
     directory: null,
     displayName: displayName || null,
+    autoConnect,
   };
 }
 
@@ -760,6 +768,9 @@ function stripRemoteConnectQuery(rawUrl: string): string | null {
     "accessToken",
     "workerId",
     "workerName",
+    "autoConnect",
+    "bypassModal",
+    "bypassAddWorkerModal",
     "source",
   ]) {
     if (url.searchParams.has(key)) {
@@ -983,6 +994,16 @@ export default function App() {
         label: bundleInvite.label,
       });
       setSharedBundleNoticeShown(false);
+    }
+
+    if (invite?.autoConnect) {
+      setPendingRemoteConnectDeepLink({
+        openworkHostUrl: invite.url,
+        openworkToken: invite.token ?? null,
+        directory: null,
+        displayName: null,
+        autoConnect: true,
+      });
     }
 
     const cleanedConnect = stripOpenworkConnectInviteFromUrl(window.location.href);
@@ -3953,6 +3974,31 @@ export default function App() {
     return true;
   };
 
+  const completeRemoteConnectDeepLink = async (pending: RemoteWorkspaceDefaults) => {
+    const input = {
+      openworkHostUrl: pending.openworkHostUrl,
+      openworkToken: pending.openworkToken,
+      directory: pending.directory,
+      displayName: pending.displayName,
+    };
+
+    if (!pending.autoConnect) {
+      setDeepLinkRemoteWorkspaceDefaults(input);
+      workspaceStore.setCreateRemoteWorkspaceOpen(true);
+      return;
+    }
+
+    setError(null);
+    const ok = await workspaceStore.createRemoteWorkspaceFlow(input);
+    if (ok) {
+      setDeepLinkRemoteWorkspaceDefaults(null);
+      return;
+    }
+
+    setDeepLinkRemoteWorkspaceDefaults(input);
+    workspaceStore.setCreateRemoteWorkspaceOpen(true);
+  };
+
   const queueDenAuthDeepLink = (rawUrl: string): boolean => {
     const parsed = parseDenAuthDeepLink(rawUrl);
     if (!parsed) {
@@ -4213,9 +4259,8 @@ export default function App() {
 
     setView("dashboard");
     setTab("scheduled");
-    setDeepLinkRemoteWorkspaceDefaults(pending);
-    workspaceStore.setCreateRemoteWorkspaceOpen(true);
     setPendingRemoteConnectDeepLink(null);
+    void completeRemoteConnectDeepLink(pending);
   });
 
   createEffect(() => {

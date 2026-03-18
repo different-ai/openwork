@@ -848,6 +848,7 @@ function buildOpenworkAppConnectUrl(
   accessToken: string | null,
   workerId: string | null,
   workerName: string | null,
+  options?: { autoConnect?: boolean },
 ): string | null {
   if (!appConnectBaseUrl || !openworkUrl || !accessToken) {
     return null;
@@ -872,6 +873,9 @@ function buildOpenworkAppConnectUrl(
 
   connectUrl.searchParams.set("openworkHostUrl", openworkUrl);
   connectUrl.searchParams.set("openworkToken", accessToken);
+  if (options?.autoConnect) {
+    connectUrl.searchParams.set("autoConnect", "1");
+  }
   connectUrl.searchParams.set("source", "openwork-web");
 
   if (workerId) {
@@ -1168,6 +1172,7 @@ export function CloudControlPanel() {
     preferredOpenworkToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
+    { autoConnect: true },
   );
 
   const filteredWorkers = workers.filter((item) => {
