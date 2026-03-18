@@ -264,9 +264,9 @@ export function DashboardScreen() {
 
   return (
     <section className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[32px] border border-white/70 bg-[#f3f4f6]/95 shadow-[0_28px_80px_-44px_rgba(15,23,42,0.2)] md:min-h-[calc(100vh-8.5rem)] md:flex-row">
-      <aside className="w-full shrink-0 border-b border-gray-200 bg-[#f9fafb] md:w-[280px] md:border-b-0 md:border-r">
-        <div className="flex h-full flex-col justify-between gap-6 p-5 md:p-6">
-          <div className="flex flex-col gap-6">
+      <aside className="order-2 w-full shrink-0 border-t border-gray-200 bg-[#f9fafb] md:order-1 md:w-[280px] md:border-r md:border-t-0">
+        <div className="flex h-full flex-col justify-between gap-4 p-4 md:gap-6 md:p-6">
+          <div className="flex flex-col gap-4 md:gap-6">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#011627] text-white">
@@ -283,13 +283,13 @@ export function DashboardScreen() {
               </button>
             </div>
 
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 md:gap-4">
               <div>
-                <div className="mb-3 text-[11px] font-bold uppercase tracking-[0.16em] text-gray-400">Dashboard</div>
-                <span className="text-xl font-medium text-[#011627]">Workers</span>
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-gray-400">Dashboard</div>
+                <span className="text-lg font-medium text-[#011627] md:text-xl">Workers</span>
               </div>
 
-              <nav className="flex flex-col gap-2">
+              <nav className="flex flex-col gap-1.5 md:gap-2">
                 {filteredWorkers.map((item) => {
                   const meta = getWorkerStatusMeta(item.status);
                   const selected = selectedWorker?.workerId === item.workerId;
@@ -298,7 +298,7 @@ export function DashboardScreen() {
                       key={item.workerId}
                       type="button"
                       onClick={() => selectWorker(item)}
-                      className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-left transition-colors ${
+                      className={`flex items-center justify-between rounded-2xl border px-3.5 py-3 text-left transition-colors md:px-4 ${
                         selected
                           ? "border-blue-100 bg-blue-50"
                           : "border-transparent bg-transparent hover:border-gray-200 hover:bg-white"
@@ -331,19 +331,19 @@ export function DashboardScreen() {
             {workers.length === 0 && !workersBusy ? <p className="text-xs text-slate-500">No workers yet. Create one to get started.</p> : null}
           </div>
 
-          <div className="text-xs text-gray-500 md:text-sm">
-            Signed in as <span className="font-medium text-[#011627]">{user.email}</span>
-            <div className="mt-2 text-xs text-slate-400">
-              {billingSummary?.featureGateEnabled && !billingSummary.hasActivePlan
-                ? "Billing required before the next launch."
-                : `${ownedWorkerCount} worker${ownedWorkerCount === 1 ? "" : "s"} in your account.`}
+            <div className="text-xs text-gray-500 md:text-sm">
+              Signed in as <span className="font-medium text-[#011627]">{user.email}</span>
+              <div className="mt-2 text-xs text-slate-400">
+                {billingSummary?.featureGateEnabled && !billingSummary.hasActivePlan
+                  ? "Billing required before the next launch."
+                  : `${ownedWorkerCount} worker${ownedWorkerCount === 1 ? "" : "s"} in your account.`}
             </div>
           </div>
         </div>
       </aside>
 
-      <main className="min-h-0 flex-1 overflow-y-auto bg-[#f3f4f6]">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 p-5 md:p-12">
+      <main className="order-1 min-h-0 flex-1 overflow-y-auto bg-[#f3f4f6] md:order-2">
+        <div className="mx-auto flex max-w-5xl flex-col gap-5 p-4 md:gap-6 md:p-12">
           {selectedWorker ? (
             <>
               <div className="flex items-center justify-between gap-4">
@@ -379,13 +379,13 @@ export function DashboardScreen() {
                     <ProvisioningGraphic ready={isReady} />
                   </div>
 
-                  <div className="flex w-full flex-col gap-3 md:w-[220px] md:shrink-0">
+                  <div className="flex w-full flex-col gap-3 md:w-[200px] md:shrink-0 md:items-end">
                     {openworkAppConnectUrl ? (
                       <a
                         href={openworkAppConnectUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className={`flex w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 font-medium shadow-md transition-all ${
+                        className={`flex w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-medium shadow-md transition-all md:min-h-[52px] md:text-sm ${
                           webDisabled ? "pointer-events-none border border-gray-200 bg-white text-gray-400 shadow-sm" : "bg-[#011627] text-white hover:bg-black"
                         }`}
                         aria-disabled={webDisabled}
@@ -404,11 +404,11 @@ export function DashboardScreen() {
                       </button>
                     )}
 
-                    <div className="flex flex-col items-center">
+                    <div className="hidden w-full flex-col items-center md:flex">
                       <button
                         type="button"
-                        className={`flex w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 font-medium transition-all ${
-                          desktopDisabled ? "border border-gray-200 bg-white text-gray-400 shadow-sm" : "border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+                        className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${
+                          desktopDisabled ? "border border-gray-200 bg-white text-gray-400 shadow-sm" : "border border-gray-200 bg-white text-gray-600 shadow-sm hover:bg-gray-50 hover:text-[#011627]"
                         }`}
                         onClick={() => {
                           if (!desktopDisabled && openworkDeepLink) {
@@ -417,7 +417,7 @@ export function DashboardScreen() {
                         }}
                         disabled={desktopDisabled}
                       >
-                        <MonitorIcon className="h-[18px] w-[18px]" />
+                        <MonitorIcon className="h-4 w-4" />
                         {desktopDisabled ? "Preparing desktop launch" : "Open in Desktop"}
                       </button>
                       <span className="mt-2 text-[11px] font-medium text-gray-400">requires the OpenWork desktop app</span>
