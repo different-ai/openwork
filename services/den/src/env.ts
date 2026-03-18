@@ -159,7 +159,7 @@ export const env = {
   port: Number(parsed.PORT ?? "8788"),
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins: corsOrigins ?? [],
-  provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
+  provisionerMode: parsed.PROVISIONER_MODE ?? "daytona",
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
   render: {
     apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",

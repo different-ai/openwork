@@ -23,4 +23,4 @@ RUN pnpm --dir /app/services/den run build
 
 EXPOSE 8788
 
-CMD ["sh", "-lc", "node dist/index.js"]
+CMD ["sh", "-lc", "node services/den/dist/index.js"]

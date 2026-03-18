@@ -1,12 +1,12 @@
-import { randomBytes } from "crypto"
+import { randomBytes } from "node:crypto"
 import express from "express"
-import { and, eq, gt, isNull } from "drizzle-orm"
-import { z } from "zod"
+import { and, eq, gt, isNull } from "../db/drizzle.js"
 import { db } from "../db/index.js"
-import { AuthSessionTable, DesktopHandoffGrantTable, AuthUserTable } from "../db/schema.js"
+import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable } from "../db/schema.js"
 import { normalizeDenTypeId } from "../db/typeid.js"
 import { asyncRoute } from "./errors.js"
 import { getRequestSession } from "./session.js"
+import { z } from "zod"
 
 const desktopAuthRouter = express.Router()
 
@@ -75,96 +75,123 @@ function resolveDesktopDenBaseUrl(req: express.Request): string {
   return origin
 }
 
-function buildOpenworkDeepLink(input: { scheme?: string | null; grant: string; denBaseUrl: string }) {
+function buildOpenworkDeepLink(input: {
+  scheme?: string | null
+  grant: string
+  denBaseUrl: string
+}) {
   const requestedScheme = input.scheme?.trim() || "openwork"
-  const scheme = /^[a-z][a-z0-9+.-]*$/i.test(requestedScheme) ? requestedScheme : "openwork"
+  const scheme = /^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)
+    ? requestedScheme
+    : "openwork"
   const url = new URL(`${scheme}://den-auth`)
   url.searchParams.set("grant", input.grant)
   url.searchParams.set("denBaseUrl", input.denBaseUrl)
   return url.toString()
 }
 
-desktopAuthRouter.post("/desktop-handoff", asyncRoute(async (req, res) => {
-  const session = await getRequestSession(req)
-  if (!session?.user?.id || !session.session?.token) {
-    res.status(401).json({ error: "unauthorized" })
-    return
-  }
+desktopAuthRouter.post(
+  "/desktop-handoff",
+  asyncRoute(async (req, res) => {
+    const session = await getRequestSession(req)
+    if (!session?.user?.id || !session.session?.token) {
+      res.status(401).json({ error: "unauthorized" })
+      return
+    }
 
-  const parsed = createGrantSchema.safeParse(req.body ?? {})
-  if (!parsed.success) {
-    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
-    return
-  }
+    const parsed = createGrantSchema.safeParse(req.body ?? {})
+    if (!parsed.success) {
+      res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+      return
+    }
 
-  const grant = randomBytes(24).toString("base64url")
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
-  await db.insert(DesktopHandoffGrantTable).values({
-    id: grant,
-    user_id: normalizeDenTypeId("user", session.user.id),
-    session_token: session.session.token,
-    expires_at: expiresAt,
-    consumed_at: null,
-  })
-
-  const denBaseUrl = resolveDesktopDenBaseUrl(req)
-  res.json({
-    grant,
-    expiresAt: expiresAt.toISOString(),
-    openworkUrl: buildOpenworkDeepLink({
-      scheme: parsed.data.desktopScheme || "openwork",
-      grant,
-      denBaseUrl,
-    }),
-  })
-}))
-
-desktopAuthRouter.post("/desktop-handoff/exchange", asyncRoute(async (req, res) => {
-  const parsed = exchangeGrantSchema.safeParse(req.body ?? {})
-  if (!parsed.success) {
-    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
-    return
-  }
-
-  const now = new Date()
-  const rows = await db
-    .select({
-      grant: DesktopHandoffGrantTable,
-      session: AuthSessionTable,
-      user: AuthUserTable,
+    const grant = randomBytes(24).toString("base64url")
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
+    await db.insert(DesktopHandoffGrantTable).values({
+      id: grant,
+      user_id: normalizeDenTypeId("user", session.user.id),
+      session_token: session.session.token,
+      expires_at: expiresAt,
+      consumed_at: null,
     })
-    .from(DesktopHandoffGrantTable)
-    .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
-    .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
-    .where(
-      and(
-        eq(DesktopHandoffGrantTable.id, parsed.data.grant),
-        isNull(DesktopHandoffGrantTable.consumed_at),
-        gt(DesktopHandoffGrantTable.expires_at, now),
-        gt(AuthSessionTable.expiresAt, now),
-      ),
-    )
-    .limit(1)
 
-  const row = rows[0]
-  if (!row) {
-    res.status(404).json({ error: "grant_not_found", message: "This desktop sign-in link is missing, expired, or already used." })
-    return
-  }
+    const denBaseUrl = resolveDesktopDenBaseUrl(req)
 
-  await db
-    .update(DesktopHandoffGrantTable)
-    .set({ consumed_at: now })
-    .where(and(eq(DesktopHandoffGrantTable.id, parsed.data.grant), isNull(DesktopHandoffGrantTable.consumed_at)))
+    res.json({
+      grant,
+      expiresAt: expiresAt.toISOString(),
+      openworkUrl: buildOpenworkDeepLink({
+        scheme: parsed.data.desktopScheme || "openwork",
+        grant,
+        denBaseUrl,
+      }),
+    })
+  }),
+)
 
-  res.json({
-    token: row.session.token,
-    user: {
-      id: row.user.id,
-      email: row.user.email,
-      name: row.user.name,
-    },
-  })
-}))
+desktopAuthRouter.post(
+  "/desktop-handoff/exchange",
+  asyncRoute(async (req, res) => {
+    const parsed = exchangeGrantSchema.safeParse(req.body ?? {})
+    if (!parsed.success) {
+      res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+      return
+    }
+
+    const now = new Date()
+    const rows = await db
+      .select({
+        grant: DesktopHandoffGrantTable,
+        session: AuthSessionTable,
+        user: AuthUserTable,
+      })
+      .from(DesktopHandoffGrantTable)
+      .innerJoin(
+        AuthSessionTable,
+        eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token),
+      )
+      .innerJoin(
+        AuthUserTable,
+        eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id),
+      )
+      .where(
+        and(
+          eq(DesktopHandoffGrantTable.id, parsed.data.grant),
+          isNull(DesktopHandoffGrantTable.consumed_at),
+          gt(DesktopHandoffGrantTable.expires_at, now),
+          gt(AuthSessionTable.expiresAt, now),
+        ),
+      )
+      .limit(1)
+
+    const row = rows[0]
+    if (!row) {
+      res.status(404).json({
+        error: "grant_not_found",
+        message: "This desktop sign-in link is missing, expired, or already used.",
+      })
+      return
+    }
+
+    await db
+      .update(DesktopHandoffGrantTable)
+      .set({ consumed_at: now })
+      .where(
+        and(
+          eq(DesktopHandoffGrantTable.id, parsed.data.grant),
+          isNull(DesktopHandoffGrantTable.consumed_at),
+        ),
+      )
+
+    res.json({
+      token: row.session.token,
+      user: {
+        id: row.user.id,
+        email: row.user.email,
+        name: row.user.name,
+      },
+    })
+  }),
+)
 
 export { desktopAuthRouter }
