@@ -267,6 +267,20 @@ export function writeDenSettings(next: DenSettings) {
   }
 }
 
+export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (options?.includeBaseUrls) {
+    window.localStorage.removeItem(STORAGE_BASE_URL);
+    window.localStorage.removeItem(STORAGE_API_BASE_URL);
+  }
+
+  window.localStorage.removeItem(STORAGE_AUTH_TOKEN);
+  window.localStorage.removeItem(STORAGE_ACTIVE_ORG_ID);
+}
+
 function getErrorMessage(payload: unknown, fallback: string): string {
   if (typeof payload === "string" && payload.trim()) {
     return payload.trim();

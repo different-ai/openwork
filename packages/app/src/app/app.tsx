@@ -1,5 +1,6 @@
 import {
   Match,
+  Show,
   Switch,
   createEffect,
   createMemo,
@@ -687,7 +688,7 @@ function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
   return { grant, denBaseUrl };
 }
 
-function normalizeDebugShareLinkInput(rawValue: string): string {
+function normalizeDebugDeepLinkInput(rawValue: string): string {
   const trimmed = rawValue.trim();
   if (!trimmed) return "";
 
@@ -700,12 +701,18 @@ function normalizeDebugShareLinkInput(rawValue: string): string {
   return trimmed;
 }
 
-function parseDebugShareLinkInput(rawValue: string):
+function parseDebugDeepLinkInput(rawValue: string):
   | { kind: "bundle"; link: SharedBundleDeepLink }
   | { kind: "remote"; link: RemoteWorkspaceDefaults }
+  | { kind: "auth"; link: DenAuthDeepLink }
   | null {
-  const normalized = normalizeDebugShareLinkInput(rawValue);
+  const normalized = normalizeDebugDeepLinkInput(rawValue);
   if (!normalized) return null;
+
+  const denAuthLink = parseDenAuthDeepLink(normalized);
+  if (denAuthLink) {
+    return { kind: "auth", link: denAuthLink };
+  }
 
   const sharedBundleLink = parseSharedBundleDeepLink(normalized);
   if (sharedBundleLink) {
@@ -4057,8 +4064,8 @@ export default function App() {
     return true;
   };
 
-  const openDebugShareLink = async (rawUrl: string): Promise<{ ok: boolean; message: string }> => {
-    const parsed = parseDebugShareLinkInput(rawUrl);
+  const openDebugDeepLink = async (rawUrl: string): Promise<{ ok: boolean; message: string }> => {
+    const parsed = parseDebugDeepLinkInput(rawUrl);
     if (!parsed) {
       return { ok: false, message: "That link is not a recognized OpenWork deep link or share URL." };
     }
@@ -4097,6 +4104,11 @@ export default function App() {
         setSharedBundleImportBusy(false);
       }
     }
+    if (parsed.kind === "auth") {
+      setPendingDenAuthDeepLink(parsed.link);
+      return { ok: true, message: "Queued the Cloud auth deep link for OpenWork." };
+    }
+
     setPendingRemoteConnectDeepLink(parsed.kind === "remote" ? parsed.link : null);
     setTab("scheduled");
     return { ok: true, message: "Queued remote worker link. OpenWork should move into the connect flow." };
@@ -4245,7 +4257,7 @@ export default function App() {
     setProcessingDenAuthDeepLink(true);
     setPendingDenAuthDeepLink(null);
     setView("dashboard");
-    setSettingsTab(developerMode() ? "den" : "general");
+    setSettingsTab("den");
     goToDashboard("settings");
 
     void createDenClient({ baseUrl: pending.denBaseUrl })
@@ -6958,7 +6970,7 @@ export default function App() {
       notionError: notionError(),
       notionBusy: notionBusy(),
       connectNotion,
-      openDebugShareLink,
+      openDebugDeepLink,
       mcpServers: mcpServers(),
       mcpStatus: mcpStatus(),
       mcpLastUpdatedAt: mcpLastUpdatedAt(),

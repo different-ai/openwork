@@ -3,6 +3,7 @@ import { ArrowUpRight, Cloud, CreditCard, LogOut, RefreshCcw, Server, Users } fr
 import Button from "./button";
 import TextInput from "./text-input";
 import {
+  clearDenSession,
   DEFAULT_DEN_BASE_URL,
   DenApiError,
   type DenBillingSummary,
@@ -230,6 +231,20 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     platform.openLink(normalized);
   };
 
+  const clearSignedInState = (message?: string | null) => {
+    clearDenSession({ includeBaseUrls: !props.developerMode });
+    if (!props.developerMode) {
+      setBaseUrl(DEFAULT_DEN_BASE_URL);
+      setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
+    }
+    setAuthToken("");
+    setOpeningWorkerId(null);
+    clearSessionState();
+    setBaseUrlError(null);
+    setAuthError(null);
+    setStatusMessage(message ?? null);
+  };
+
   const applyBaseUrl = () => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft());
     if (!normalized) {
@@ -247,10 +262,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    setAuthToken("");
-    clearSessionState();
-    setAuthError(null);
-    setStatusMessage("Updated the Den control plane URL. Sign in again to continue.");
+    clearSignedInState("Updated the Den control plane URL. Sign in again to continue.");
   };
 
   const refreshOrgs = async (quiet = false) => {
@@ -398,9 +410,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       })
       .catch((error) => {
         if (cancelled) return;
-        clearSessionState();
         if (error instanceof DenApiError && error.status === 401) {
-          setAuthToken("");
+          clearSignedInState();
+        } else {
+          clearSessionState();
         }
         setAuthError(error instanceof Error ? error.message : "No active Den session found.");
       })
@@ -461,19 +474,22 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   });
 
   const signOut = async () => {
+    if (authBusy()) {
+      return;
+    }
+
     setAuthBusy(true);
     try {
-      await client().signOut();
+      if (authToken().trim()) {
+        await client().signOut();
+      }
     } catch {
       // Ignore remote sign-out failures and clear local state anyway.
     } finally {
       setAuthBusy(false);
     }
 
-    setAuthToken("");
-    clearSessionState();
-    setStatusMessage("Signed out of OpenWork Den.");
-    setAuthError(null);
+    clearSignedInState("Signed out and cleared your OpenWork Den session on this device.");
   };
 
   const handleOpenWorker = async (workerId: string, workerName: string) => {
@@ -607,11 +623,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="text-sm font-medium text-gray-12">Account</div>
-                  <div class="text-xs text-gray-9 mt-1">Desktop session hydrated from Den.</div>
+                  <div class="text-xs text-gray-9 mt-1">Desktop session hydrated from Den. Signing out clears saved Cloud auth on this device.</div>
                 </div>
-                <Button variant="outline" class="text-xs h-8 px-3" onClick={() => void signOut()} disabled={authBusy()}>
+                <Button variant="outline" class="text-xs h-8 px-3" onClick={() => void signOut()} disabled={authBusy() || sessionBusy()}>
                   <LogOut size={13} />
-                  Sign out
+                  {authBusy() ? "Signing out..." : "Sign out"}
                 </Button>
               </div>
               <div class="rounded-xl border border-gray-6/60 bg-gray-1/50 px-4 py-3">

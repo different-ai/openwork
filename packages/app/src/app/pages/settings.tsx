@@ -178,7 +178,7 @@ export type SettingsViewProps = {
   notionBusy: boolean;
   connectNotion: () => void;
   engineDoctorVersion: string | null;
-  openDebugShareLink: (
+  openDebugDeepLink: (
     rawUrl: string,
   ) => Promise<{ ok: boolean; message: string }>;
   connectRemoteWorkspace: (input: {
@@ -805,8 +805,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "model", "advanced"];
-    if (props.developerMode) tabs.splice(1, 0, "den");
+    const tabs: SettingsTab[] = ["general", "den", "model", "advanced"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
@@ -957,10 +956,10 @@ export default function SettingsView(props: SettingsViewProps) {
   const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<
     string | null
   >(null);
-  const [debugShareLinkOpen, setDebugShareLinkOpen] = createSignal(false);
-  const [debugShareLinkInput, setDebugShareLinkInput] = createSignal("");
-  const [debugShareLinkBusy, setDebugShareLinkBusy] = createSignal(false);
-  const [debugShareLinkStatus, setDebugShareLinkStatus] = createSignal<
+  const [debugDeepLinkOpen, setDebugDeepLinkOpen] = createSignal(false);
+  const [debugDeepLinkInput, setDebugDeepLinkInput] = createSignal("");
+  const [debugDeepLinkBusy, setDebugDeepLinkBusy] = createSignal(false);
+  const [debugDeepLinkStatus, setDebugDeepLinkStatus] = createSignal<
     string | null
   >(null);
   const opencodeDevModeEnabled = createMemo(() =>
@@ -1221,19 +1220,19 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const submitDebugShareLink = async () => {
-    if (debugShareLinkBusy()) return;
-    setDebugShareLinkBusy(true);
-    setDebugShareLinkStatus(null);
+  const submitDebugDeepLink = async () => {
+    if (debugDeepLinkBusy()) return;
+    setDebugDeepLinkBusy(true);
+    setDebugDeepLinkStatus(null);
     try {
-      const result = await props.openDebugShareLink(debugShareLinkInput());
-      setDebugShareLinkStatus(result.message);
+      const result = await props.openDebugDeepLink(debugDeepLinkInput());
+      setDebugDeepLinkStatus(result.message);
     } catch (error) {
-      setDebugShareLinkStatus(
-        error instanceof Error ? error.message : "Failed to open share link.",
+      setDebugDeepLinkStatus(
+        error instanceof Error ? error.message : "Failed to open deep link.",
       );
     } finally {
-      setDebugShareLinkBusy(false);
+      setDebugDeepLinkBusy(false);
     }
   };
 
@@ -1721,56 +1720,54 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
                     <div class="flex items-start justify-between gap-3">
                       <div>
-                        <div class="text-sm font-medium text-gray-12">
-                          Open share link
+                          <div class="text-sm font-medium text-gray-12">
+                          Open Deeplink
+                          </div>
+                          <div class="text-xs text-gray-9">
+                          Paste any supported <span class="font-mono">openwork://</span> deeplink and route it through the dev app.
+                          </div>
                         </div>
-                        <div class="text-xs text-gray-9">
-                          Paste an existing{" "}
-                          <span class="font-mono">openwork://</span> share link
-                          and route it through the dev app.
-                        </div>
-                      </div>
                       <button
                         type="button"
                         class={compactOutlineActionClass}
                         onClick={() => {
-                          setDebugShareLinkOpen((value) => !value);
-                          setDebugShareLinkStatus(null);
+                          setDebugDeepLinkOpen((value) => !value);
+                          setDebugDeepLinkStatus(null);
                         }}
-                        disabled={props.busy || debugShareLinkBusy()}
+                        disabled={props.busy || debugDeepLinkBusy()}
                       >
-                        {debugShareLinkOpen() ? "Hide" : "Open share link"}
+                        {debugDeepLinkOpen() ? "Hide" : "Open Deeplink"}
                       </button>
                     </div>
 
-                    <Show when={debugShareLinkOpen()}>
+                    <Show when={debugDeepLinkOpen()}>
                       <div class="space-y-3">
                         <textarea
-                          value={debugShareLinkInput()}
+                          value={debugDeepLinkInput()}
                           onInput={(event) =>
-                            setDebugShareLinkInput(event.currentTarget.value)
+                            setDebugDeepLinkInput(event.currentTarget.value)
                           }
                           rows={3}
-                          placeholder="openwork://import-bundle?ow_bundle=..."
+                          placeholder="openwork://..."
                           class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
                         />
                         <div class="flex flex-wrap items-center gap-2">
                           <Button
                             variant="secondary"
                             class="text-xs h-8 py-0 px-3"
-                            onClick={() => void submitDebugShareLink()}
+                            onClick={() => void submitDebugDeepLink()}
                             disabled={
                               props.busy ||
-                              debugShareLinkBusy() ||
-                              !debugShareLinkInput().trim()
+                              debugDeepLinkBusy() ||
+                              !debugDeepLinkInput().trim()
                             }
                           >
-                            {debugShareLinkBusy() ? "Opening..." : "Open link"}
+                            {debugDeepLinkBusy() ? "Opening..." : "Open deeplink"}
                           </Button>
                           <div class="text-[11px] text-gray-8">
                             Accepts <span class="font-mono">openwork://</span>,{" "}
                             <span class="font-mono">openwork-dev://</span>, or a
-                            raw{" "}
+                            raw supported{" "}
                             <span class="font-mono">
                               https://share.openwork.software/b/...
                             </span>{" "}
@@ -1780,7 +1777,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                     </Show>
 
-                    <Show when={debugShareLinkStatus()}>
+                    <Show when={debugDeepLinkStatus()}>
                       {(value) => (
                         <div class="text-xs text-gray-10">{value()}</div>
                       )}
