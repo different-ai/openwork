@@ -427,194 +427,227 @@ export function DashboardScreen() {
               </div>
 
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-                <div className={`rounded-[28px] border border-gray-200 p-8 shadow-sm transition-all ${isReady ? "bg-white" : "bg-gray-50/60 opacity-80"}`}>
-                  <div className="mb-4 flex items-center gap-3">
-                    <div className="rounded-xl border border-gray-200 bg-white p-2.5 text-slate-500 shadow-sm">
-                      <LockIcon className="h-[18px] w-[18px]" />
+                <div className={`rounded-[28px] border border-gray-200 shadow-sm transition-all ${isReady ? "bg-white" : "bg-gray-50/60 opacity-80"}`}>
+                  <details className="group" open>
+                    <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-none [&::-webkit-details-marker]:hidden">
+                      <div>
+                        <div className="mb-4 flex items-center gap-3">
+                          <div className="rounded-xl border border-gray-200 bg-white p-2.5 text-slate-500 shadow-sm">
+                            <LockIcon className="h-[18px] w-[18px]" />
+                          </div>
+                          <h3 className="text-xl font-semibold tracking-tight text-slate-900">Connection details</h3>
+                        </div>
+                        <p className="text-[15px] leading-relaxed text-gray-500">
+                          Connect now or copy manual credentials for another client.
+                        </p>
+                      </div>
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-400 transition-transform group-open:rotate-180">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 4 4 4 4-4"/></svg>
+                      </div>
+                    </summary>
+                    
+                    <div className="px-8 pb-8 pt-0">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="rounded-[16px] bg-[#011627] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => {
+                            if (openworkDeepLink) {
+                              window.location.href = openworkDeepLink;
+                            }
+                          }}
+                          disabled={!openworkDeepLink || !isReady}
+                        >
+                          {openworkDeepLink ? "Open in Desktop" : "Preparing connection..."}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void generateWorkerToken()}
+                          disabled={actionBusy !== null}
+                        >
+                          {actionBusy === "token" ? "Refreshing token..." : "Refresh token"}
+                        </button>
+                      </div>
+
+                      <div className="mt-6 space-y-4">
+                        <CredentialRow
+                          label="Connection URL"
+                          value={activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null}
+                          placeholder="Connection URL is still preparing..."
+                          hint={showConnectionHint ? (!openworkDeepLink ? "Getting connection details ready..." : "Finishing your workspace URL...") : undefined}
+                          canCopy={Boolean(activeWorker?.openworkUrl ?? activeWorker?.instanceUrl)}
+                          copied={copiedField === "openwork-url"}
+                          onCopy={() => void copyToClipboard("openwork-url", activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null)}
+                          muted={!isReady}
+                        />
+
+                        <CredentialRow
+                          label="Owner token"
+                          value={activeWorker?.ownerToken ?? null}
+                          placeholder="Use refresh token"
+                          hint="Use this token when the remote client must answer permission prompts."
+                          canCopy={Boolean(activeWorker?.ownerToken)}
+                          copied={copiedField === "owner-token"}
+                          onCopy={() => void copyToClipboard("owner-token", activeWorker?.ownerToken ?? null)}
+                          muted={!isReady}
+                        />
+
+                        <CredentialRow
+                          label="Collaborator token"
+                          value={activeWorker?.clientToken ?? null}
+                          placeholder="Use refresh token"
+                          hint="Routine remote access without owner-only actions."
+                          canCopy={Boolean(activeWorker?.clientToken)}
+                          copied={copiedField === "client-token"}
+                          onCopy={() => void copyToClipboard("client-token", activeWorker?.clientToken ?? null)}
+                          muted={!isReady}
+                        />
+                      </div>
                     </div>
-                    <h3 className="text-xl font-semibold tracking-tight text-slate-900">Connection details</h3>
-                  </div>
-                  <p className="mb-6 text-[15px] leading-relaxed text-gray-500">
-                    Connect now or copy manual credentials for another client.
-                  </p>
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="rounded-[16px] bg-[#011627] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
-                      onClick={() => {
-                        if (openworkDeepLink) {
-                          window.location.href = openworkDeepLink;
-                        }
-                      }}
-                      disabled={!openworkDeepLink || !isReady}
-                    >
-                      {openworkDeepLink ? "Open in Desktop" : "Preparing connection..."}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => void generateWorkerToken()}
-                      disabled={actionBusy !== null}
-                    >
-                      {actionBusy === "token" ? "Refreshing token..." : "Refresh token"}
-                    </button>
-                  </div>
-
-                  <div className="mt-4 space-y-4">
-                    <CredentialRow
-                      label="Connection URL"
-                      value={activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null}
-                      placeholder="Connection URL is still preparing..."
-                      hint={showConnectionHint ? (!openworkDeepLink ? "Getting connection details ready..." : "Finishing your workspace URL...") : undefined}
-                      canCopy={Boolean(activeWorker?.openworkUrl ?? activeWorker?.instanceUrl)}
-                      copied={copiedField === "openwork-url"}
-                      onCopy={() => void copyToClipboard("openwork-url", activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null)}
-                      muted={!isReady}
-                    />
-
-                    <CredentialRow
-                      label="Owner token"
-                      value={activeWorker?.ownerToken ?? null}
-                      placeholder="Use refresh token"
-                      hint="Use this token when the remote client must answer permission prompts."
-                      canCopy={Boolean(activeWorker?.ownerToken)}
-                      copied={copiedField === "owner-token"}
-                      onCopy={() => void copyToClipboard("owner-token", activeWorker?.ownerToken ?? null)}
-                      muted={!isReady}
-                    />
-
-                    <CredentialRow
-                      label="Collaborator token"
-                      value={activeWorker?.clientToken ?? null}
-                      placeholder="Use refresh token"
-                      hint="Routine remote access without owner-only actions."
-                      canCopy={Boolean(activeWorker?.clientToken)}
-                      copied={copiedField === "client-token"}
-                      onCopy={() => void copyToClipboard("client-token", activeWorker?.clientToken ?? null)}
-                      muted={!isReady}
-                    />
-                  </div>
+                  </details>
                 </div>
 
                 <div className="flex flex-col gap-6">
-                  <div className={`rounded-[28px] border border-gray-200 p-8 shadow-sm transition-all ${isReady ? "bg-white" : "bg-gray-50/60 opacity-80"}`}>
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="rounded-xl border border-gray-200 bg-white p-2.5 text-slate-500 shadow-sm">
-                        <ActivityIcon className="h-[18px] w-[18px]" />
+                  <div className={`rounded-[28px] border border-gray-200 shadow-sm transition-all ${isReady ? "bg-white" : "bg-gray-50/60 opacity-80"}`}>
+                    <details className="group">
+                      <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-none [&::-webkit-details-marker]:hidden">
+                        <div>
+                          <div className="mb-4 flex items-center gap-3">
+                            <div className="rounded-xl border border-gray-200 bg-white p-2.5 text-slate-500 shadow-sm">
+                              <ActivityIcon className="h-[18px] w-[18px]" />
+                            </div>
+                            <h3 className="text-xl font-semibold tracking-tight text-slate-900">Worker actions</h3>
+                          </div>
+                          <p className="text-[15px] leading-relaxed text-gray-500">
+                            Refresh state, recover tokens, or replace the worker. Controls unlock as the worker becomes reachable.
+                          </p>
+                        </div>
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-400 transition-transform group-open:rotate-180">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 4 4 4 4-4"/></svg>
+                        </div>
+                      </summary>
+                      
+                      <div className="px-8 pb-8 pt-0">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void refreshWorkers({ keepSelection: true })}
+                            disabled={workersBusy || actionBusy !== null}
+                          >
+                            {workersBusy ? "Refreshing..." : "Refresh list"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void checkWorkerStatus({ workerId: selectedWorker.workerId })}
+                            disabled={actionBusy !== null}
+                          >
+                            {actionBusy === "status" ? "Checking..." : "Check status"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void generateWorkerToken()}
+                            disabled={actionBusy !== null}
+                          >
+                            {actionBusy === "token" ? "Fetching..." : "Refresh token"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-[12px] border border-slate-200 bg-slate-900/5 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-900/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void redeployWorker(selectedWorker.workerId)}
+                            disabled={!isSelectedWorkerFailed || redeployBusyWorkerId !== null || deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                          >
+                            {redeployBusyWorkerId === selectedWorker.workerId ? "Redeploying..." : "Redeploy"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-[12px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void deleteWorker(selectedWorker.workerId)}
+                            disabled={deleteBusyWorkerId !== null || redeployBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                          >
+                            {deleteBusyWorkerId === selectedWorker.workerId ? "Deleting..." : "Delete worker"}
+                          </button>
+                        </div>
                       </div>
-                      <h3 className="text-xl font-semibold tracking-tight text-slate-900">Worker actions</h3>
-                    </div>
-                    <p className="mb-6 text-[15px] leading-relaxed text-gray-500">
-                      Refresh state, recover tokens, or replace the worker. Controls unlock as the worker becomes reachable.
-                    </p>
-
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => void refreshWorkers({ keepSelection: true })}
-                        disabled={workersBusy || actionBusy !== null}
-                      >
-                        {workersBusy ? "Refreshing..." : "Refresh list"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => void checkWorkerStatus({ workerId: selectedWorker.workerId })}
-                        disabled={actionBusy !== null}
-                      >
-                        {actionBusy === "status" ? "Checking..." : "Check status"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => void generateWorkerToken()}
-                        disabled={actionBusy !== null}
-                      >
-                        {actionBusy === "token" ? "Fetching..." : "Refresh token"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-[12px] border border-slate-200 bg-slate-900/5 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-900/10 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => void redeployWorker(selectedWorker.workerId)}
-                        disabled={!isSelectedWorkerFailed || redeployBusyWorkerId !== null || deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
-                      >
-                        {redeployBusyWorkerId === selectedWorker.workerId ? "Redeploying..." : "Redeploy"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-[12px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => void deleteWorker(selectedWorker.workerId)}
-                        disabled={deleteBusyWorkerId !== null || redeployBusyWorkerId !== null || actionBusy !== null || launchBusy}
-                      >
-                        {deleteBusyWorkerId === selectedWorker.workerId ? "Deleting..." : "Delete worker"}
-                      </button>
-                    </div>
+                    </details>
                   </div>
 
-                  <div className={`rounded-[28px] border border-gray-200 p-8 shadow-sm transition-all ${isReady ? "bg-white" : "bg-gray-50/60 opacity-80"}`}>
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="rounded-xl border border-gray-200 bg-white p-2.5 text-slate-500 shadow-sm">
-                        <TerminalIcon className="h-[18px] w-[18px]" />
-                      </div>
-                      <h3 className="text-xl font-semibold tracking-tight text-slate-900">Worker runtime</h3>
-                    </div>
-                    <p className="mb-6 text-[15px] leading-relaxed text-gray-500">
-                      Compare installed runtime versions with the versions this worker should be running.
-                    </p>
-
-                    <div className="mb-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => void refreshRuntime(selectedWorker.workerId)}
-                        disabled={runtimeBusy || runtimeUpgradeBusy}
-                      >
-                        {runtimeBusy ? "Checking..." : "Refresh runtime"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-[12px] bg-[#011627] px-3 py-2 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => void upgradeRuntime()}
-                        disabled={runtimeUpgradeBusy || runtimeBusy || !isReady}
-                      >
-                        {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
-                      </button>
-                    </div>
-
-                    {runtimeError ? <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{runtimeError}</div> : null}
-
-                    <div className="space-y-3">
-                      {(runtimeSnapshot?.services ?? []).map((service) => (
-                        <div key={service.name} className="rounded-[18px] border border-slate-200 bg-white px-4 py-3">
-                          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">{getRuntimeServiceLabel(service.name)}</p>
-                              <p className="text-xs text-slate-500">
-                                Installed {service.actualVersion ?? "unknown"} · Target {service.targetVersion ?? "unknown"}
-                              </p>
+                  <div className={`rounded-[28px] border border-gray-200 shadow-sm transition-all ${isReady ? "bg-white" : "bg-gray-50/60 opacity-80"}`}>
+                    <details className="group">
+                      <summary className="flex cursor-pointer list-none items-center justify-between p-8 outline-none [&::-webkit-details-marker]:hidden">
+                        <div>
+                          <div className="mb-4 flex items-center gap-3">
+                            <div className="rounded-xl border border-gray-200 bg-white p-2.5 text-slate-500 shadow-sm">
+                              <TerminalIcon className="h-[18px] w-[18px]" />
                             </div>
-                            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
-                              <span className={`rounded-full px-2.5 py-1 ${service.running ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
-                                {service.running ? "Running" : service.enabled ? "Stopped" : "Disabled"}
-                              </span>
-                              <span className={`rounded-full px-2.5 py-1 ${service.upgradeAvailable ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
-                                {service.upgradeAvailable ? "Upgrade available" : "Current"}
-                              </span>
-                            </div>
+                            <h3 className="text-xl font-semibold tracking-tight text-slate-900">Worker runtime</h3>
                           </div>
+                          <p className="text-[15px] leading-relaxed text-gray-500">
+                            Compare installed runtime versions with the versions this worker should be running.
+                          </p>
                         </div>
-                      ))}
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-400 transition-transform group-open:rotate-180">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 4 4 4 4-4"/></svg>
+                        </div>
+                      </summary>
 
-                      {!runtimeSnapshot && !runtimeBusy ? (
-                        <div className="space-y-3">
-                          <SkeletonBar widthClass="w-full" />
-                          <SkeletonBar widthClass="w-4/5" />
-                          <p className="text-sm text-slate-500">Runtime details appear after the worker is reachable.</p>
+                      <div className="px-8 pb-8 pt-0">
+                        <div className="mb-4 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void refreshRuntime(selectedWorker.workerId)}
+                            disabled={runtimeBusy || runtimeUpgradeBusy}
+                          >
+                            {runtimeBusy ? "Checking..." : "Refresh runtime"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-[12px] bg-[#011627] px-3 py-2 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void upgradeRuntime()}
+                            disabled={runtimeUpgradeBusy || runtimeBusy || !isReady}
+                          >
+                            {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
+                          </button>
                         </div>
-                      ) : null}
-                    </div>
+
+                        {runtimeError ? <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{runtimeError}</div> : null}
+
+                        <div className="space-y-3">
+                          {(runtimeSnapshot?.services ?? []).map((service) => (
+                            <div key={service.name} className="rounded-[18px] border border-slate-200 bg-white px-4 py-3">
+                              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">{getRuntimeServiceLabel(service.name)}</p>
+                                  <p className="text-xs text-slate-500">
+                                    Installed {service.actualVersion ?? "unknown"} · Target {service.targetVersion ?? "unknown"}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                                  <span className={`rounded-full px-2.5 py-1 ${service.running ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                                    {service.running ? "Running" : service.enabled ? "Stopped" : "Disabled"}
+                                  </span>
+                                  <span className={`rounded-full px-2.5 py-1 ${service.upgradeAvailable ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
+                                    {service.upgradeAvailable ? "Upgrade available" : "Current"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+
+                          {!runtimeSnapshot && !runtimeBusy ? (
+                            <div className="space-y-3">
+                              <SkeletonBar widthClass="w-full" />
+                              <SkeletonBar widthClass="w-4/5" />
+                              <p className="text-sm text-slate-500">Runtime details appear after the worker is reachable.</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </details>
                   </div>
 
                   <SectionBadge
