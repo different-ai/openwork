@@ -56,7 +56,7 @@ use opencode_router::manager::OpenCodeRouterManager;
 use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
 
@@ -129,10 +129,21 @@ pub fn run() {
             let mut tray = TrayIconBuilder::with_id("main-tray")
                 .menu(&menu)
                 .tooltip("OpenWork")
+                .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "tray-show" => show_main_window(app),
                     "tray-quit" => app.exit(0),
                     _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
                 });
 
             if let Some(icon) = app.default_window_icon().cloned() {
