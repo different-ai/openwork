@@ -1,4 +1,4 @@
-import { DEN_WORKER_POLL_INTERVAL_MS } from "@different-ai/openwork-utils";
+import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS";
 
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";

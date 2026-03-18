@@ -3,10 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npm run build:den-db && npm run build:utils && OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
-    "build": "npm run build:den-db && npm run build:utils && tsc -p tsconfig.json",
+    "dev": "npm run build:den-db && OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
+    "build": "npm run build:den-db && tsc -p tsconfig.json",
     "build:den-db": "npm --prefix ../../packages/den-db run build",
-    "build:utils": "npm --prefix ../../packages/utils run build",
     "start": "node dist/index.js",
     "db:migrate:sql": "node scripts/run-sql-migrations.mjs",
     "test:smoke:daytona": "pnpm build && node scripts/daytona-provisioner-smoke.mjs",
@@ -17,7 +16,6 @@
     "auth:generate": "npx @better-auth/cli@latest generate --config src/auth.ts --output src/db/better-auth.schema.ts --yes"
   },
   "dependencies": {
-    "@different-ai/openwork-utils": "workspace:*",
     "@daytonaio/sdk": "^0.150.0",
     "better-auth": "^1.4.18",
     "cors": "^2.8.5",
