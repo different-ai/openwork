@@ -23,4 +23,4 @@ RUN pnpm --dir /app/services/den-worker-proxy run build
 
 EXPOSE 8789
 
-CMD ["sh", "-lc", "node dist/server.js"]
+CMD ["sh", "-lc", "node services/den-worker-proxy/dist/server.js"]

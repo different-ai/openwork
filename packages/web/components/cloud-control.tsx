@@ -3037,7 +3037,7 @@ export function CloudControlPanel() {
               </div>
             </div>
 
-            <div className="grid content-start gap-4 rounded-[30px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:p-6">
+            <div className="hidden content-start gap-4 rounded-[30px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:grid md:p-6">
               <div className="rounded-[24px] border border-white bg-white p-5 shadow-sm">
                 <div className="flex items-center gap-3">
                   <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#011627] text-[11px] font-semibold text-white">OW</div>
