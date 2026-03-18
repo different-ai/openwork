@@ -56,6 +56,50 @@ export type DenWorkerTokens = {
   workspaceId: string | null;
 };
 
+export type DenBillingPrice = {
+  amount: number | null;
+  currency: string | null;
+  recurringInterval: string | null;
+  recurringIntervalCount: number | null;
+};
+
+export type DenBillingSubscription = {
+  id: string;
+  status: string;
+  amount: number | null;
+  currency: string | null;
+  recurringInterval: string | null;
+  recurringIntervalCount: number | null;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  canceledAt: string | null;
+  endedAt: string | null;
+};
+
+export type DenBillingInvoice = {
+  id: string;
+  createdAt: string | null;
+  status: string;
+  totalAmount: number | null;
+  currency: string | null;
+  invoiceNumber: string | null;
+  invoiceUrl: string | null;
+};
+
+export type DenBillingSummary = {
+  featureGateEnabled: boolean;
+  hasActivePlan: boolean;
+  checkoutRequired: boolean;
+  checkoutUrl: string | null;
+  portalUrl: string | null;
+  price: DenBillingPrice | null;
+  subscription: DenBillingSubscription | null;
+  invoices: DenBillingInvoice[];
+  productId: string | null;
+  benefitId: string | null;
+};
+
 type DenAuthResult = {
   user: DenUser | null;
   token: string | null;
@@ -335,6 +379,85 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
   };
 }
 
+function getBillingPrice(value: unknown): DenBillingPrice | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    amount: typeof value.amount === "number" ? value.amount : null,
+    currency: typeof value.currency === "string" ? value.currency : null,
+    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
+    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
+  };
+}
+
+function getBillingSubscription(value: unknown): DenBillingSubscription | null {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    status: typeof value.status === "string" ? value.status : "unknown",
+    amount: typeof value.amount === "number" ? value.amount : null,
+    currency: typeof value.currency === "string" ? value.currency : null,
+    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
+    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
+    currentPeriodStart: typeof value.currentPeriodStart === "string" ? value.currentPeriodStart : null,
+    currentPeriodEnd: typeof value.currentPeriodEnd === "string" ? value.currentPeriodEnd : null,
+    cancelAtPeriodEnd: value.cancelAtPeriodEnd === true,
+    canceledAt: typeof value.canceledAt === "string" ? value.canceledAt : null,
+    endedAt: typeof value.endedAt === "string" ? value.endedAt : null,
+  };
+}
+
+function getBillingInvoice(value: unknown): DenBillingInvoice | null {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+    status: typeof value.status === "string" ? value.status : "unknown",
+    totalAmount: typeof value.totalAmount === "number" ? value.totalAmount : null,
+    currency: typeof value.currency === "string" ? value.currency : null,
+    invoiceNumber: typeof value.invoiceNumber === "string" ? value.invoiceNumber : null,
+    invoiceUrl: typeof value.invoiceUrl === "string" ? value.invoiceUrl : null,
+  };
+}
+
+function getBillingSummary(payload: unknown): DenBillingSummary | null {
+  if (!isRecord(payload) || !isRecord(payload.billing)) {
+    return null;
+  }
+
+  const billing = payload.billing;
+  if (
+    typeof billing.featureGateEnabled !== "boolean" ||
+    typeof billing.hasActivePlan !== "boolean" ||
+    typeof billing.checkoutRequired !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    featureGateEnabled: billing.featureGateEnabled,
+    hasActivePlan: billing.hasActivePlan,
+    checkoutRequired: billing.checkoutRequired,
+    checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
+    portalUrl: typeof billing.portalUrl === "string" ? billing.portalUrl : null,
+    price: getBillingPrice(billing.price),
+    subscription: getBillingSubscription(billing.subscription),
+    invoices: Array.isArray(billing.invoices)
+      ? billing.invoices.map((item) => getBillingInvoice(item)).filter((item): item is DenBillingInvoice => item !== null)
+      : [],
+    productId: typeof billing.productId === "string" ? billing.productId : null,
+    benefitId: typeof billing.benefitId === "string" ? billing.benefitId : null,
+  };
+}
+
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -511,6 +634,47 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
+    },
+
+    async getBillingStatus(options: { includeCheckout?: boolean; includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
+      const params = new URLSearchParams();
+      if (options.includeCheckout) {
+        params.set("includeCheckout", "1");
+      }
+      if (options.includePortal === false) {
+        params.set("excludePortal", "1");
+      }
+      if (options.includeInvoices === false) {
+        params.set("excludeInvoices", "1");
+      }
+
+      const path = params.size > 0 ? `/v1/workers/billing?${params.toString()}` : "/v1/workers/billing";
+      const payload = await requestJson<unknown>(baseUrls, path, {
+        method: "GET",
+        token,
+      });
+      const summary = getBillingSummary(payload);
+      if (!summary) {
+        throw new DenApiError(500, "invalid_billing_payload", "Billing response was missing details.");
+      }
+      return summary;
+    },
+
+    async updateSubscriptionCancellation(cancelAtPeriodEnd: boolean): Promise<{ subscription: DenBillingSubscription | null; billing: DenBillingSummary }> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/workers/billing/subscription", {
+        method: "POST",
+        token,
+        body: { cancelAtPeriodEnd },
+      });
+      const billing = getBillingSummary(payload);
+      if (!billing) {
+        throw new DenApiError(500, "invalid_billing_payload", "Subscription update response was missing billing details.");
+      }
+
+      return {
+        subscription: isRecord(payload) ? getBillingSubscription(payload.subscription) : null,
+        billing,
+      };
     },
   };
 }

@@ -1,10 +1,11 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
-import { ArrowUpRight, Cloud, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
+import { ArrowUpRight, Cloud, CreditCard, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
 import Button from "./button";
 import TextInput from "./text-input";
 import {
   DEFAULT_DEN_BASE_URL,
   DenApiError,
+  type DenBillingSummary,
   createDenClient,
   normalizeDenBaseUrl,
   readDenSettings,
@@ -57,6 +58,67 @@ function workerStatusMeta(status: string) {
   }
 }
 
+function formatMoneyMinor(amount: number | null, currency: string | null): string {
+  if (typeof amount !== "number" || !Number.isFinite(amount)) {
+    return "Not available";
+  }
+
+  const normalizedCurrency = (currency ?? "USD").toUpperCase();
+  const majorValue = amount / 100;
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: normalizedCurrency,
+    }).format(majorValue);
+  } catch {
+    return `${majorValue.toFixed(2)} ${normalizedCurrency}`;
+  }
+}
+
+function formatIsoDate(value: string | null): string {
+  if (!value) {
+    return "Not available";
+  }
+
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "Not available";
+    }
+    return date.toLocaleDateString();
+  } catch {
+    return "Not available";
+  }
+}
+
+function formatRecurringInterval(interval: string | null, count: number | null): string {
+  if (!interval) {
+    return "billing cycle";
+  }
+
+  const normalizedInterval = interval.replace(/_/g, " ");
+  const normalizedCount = typeof count === "number" && Number.isFinite(count) ? count : 1;
+  if (normalizedCount <= 1) {
+    return `per ${normalizedInterval}`;
+  }
+
+  const pluralSuffix = normalizedInterval.endsWith("s") ? "" : "s";
+  return `every ${normalizedCount} ${normalizedInterval}${pluralSuffix}`;
+}
+
+function formatSubscriptionStatus(status: string): string {
+  const normalized = status.trim().toLowerCase();
+  if (!normalized) {
+    return "Unknown";
+  }
+
+  return normalized
+    .split("_")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
 export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
   const initial = readDenSettings();
@@ -71,6 +133,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [sessionBusy, setSessionBusy] = createSignal(false);
   const [orgsBusy, setOrgsBusy] = createSignal(false);
   const [workersBusy, setWorkersBusy] = createSignal(false);
+  const [billingBusy, setBillingBusy] = createSignal(false);
+  const [billingCheckoutBusy, setBillingCheckoutBusy] = createSignal(false);
+  const [billingSubscriptionBusy, setBillingSubscriptionBusy] = createSignal(false);
   const [openingWorkerId, setOpeningWorkerId] = createSignal<string | null>(null);
   const [user, setUser] = createSignal<{ id: string; email: string; name: string | null } | null>(null);
   const [orgs, setOrgs] = createSignal<Array<{ id: string; name: string; slug: string; role: "owner" | "member" }>>([]);
@@ -89,18 +154,23 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [authError, setAuthError] = createSignal<string | null>(null);
   const [orgsError, setOrgsError] = createSignal<string | null>(null);
   const [workersError, setWorkersError] = createSignal<string | null>(null);
+  const [billingSummary, setBillingSummary] = createSignal<DenBillingSummary | null>(null);
+  const [billingError, setBillingError] = createSignal<string | null>(null);
 
   const activeOrg = createMemo(() => orgs().find((org) => org.id === activeOrgId()) ?? null);
   const client = createMemo(() => createDenClient({ baseUrl: baseUrl(), token: authToken() }));
   const isSignedIn = createMemo(() => Boolean(user() && authToken().trim()));
+  const billingSubscription = createMemo(() => billingSummary()?.subscription ?? null);
+  const billingCheckoutUrl = createMemo(() => billingSummary()?.checkoutUrl ?? null);
   const summaryTone = createMemo(() => {
-    if (authError() || workersError() || orgsError()) return "error" as const;
-    if (sessionBusy() || orgsBusy() || workersBusy()) return "warning" as const;
+    if (authError() || workersError() || orgsError() || billingError()) return "error" as const;
+    if (sessionBusy() || orgsBusy() || workersBusy() || billingBusy() || billingCheckoutBusy() || billingSubscriptionBusy()) return "warning" as const;
     if (isSignedIn()) return "ready" as const;
     return "neutral" as const;
   });
   const summaryLabel = createMemo(() => {
     if (authError()) return "Needs attention";
+    if (billingError()) return "Billing issue";
     if (sessionBusy()) return "Checking session";
     if (isSignedIn()) return "Connected";
     return "Signed out";
@@ -142,9 +212,22 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setUser(null);
     setOrgs([]);
     setWorkers([]);
+    setBillingSummary(null);
     setActiveOrgId("");
     setOrgsError(null);
     setWorkersError(null);
+    setBillingError(null);
+    setBillingBusy(false);
+    setBillingCheckoutBusy(false);
+    setBillingSubscriptionBusy(false);
+  };
+
+  const openExternalUrl = (url: string | null | undefined) => {
+    const normalized = (url ?? "").trim();
+    if (!normalized) {
+      return;
+    }
+    platform.openLink(normalized);
   };
 
   const applyBaseUrl = () => {
@@ -230,6 +313,67 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
   };
 
+  const refreshBilling = async (options: { quiet?: boolean; includeCheckout?: boolean } = {}) => {
+    if (!authToken().trim()) {
+      setBillingSummary(null);
+      return null;
+    }
+
+    const quiet = options.quiet === true;
+    if (options.includeCheckout) {
+      setBillingCheckoutBusy(true);
+    } else {
+      setBillingBusy(true);
+    }
+    if (!quiet) {
+      setBillingError(null);
+    }
+
+    try {
+      const summary = await client().getBillingStatus({ includeCheckout: options.includeCheckout });
+      setBillingSummary(summary);
+      return summary;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load billing.";
+      if (!quiet) {
+        setBillingError(message);
+      }
+      return null;
+    } finally {
+      if (options.includeCheckout) {
+        setBillingCheckoutBusy(false);
+      } else {
+        setBillingBusy(false);
+      }
+    }
+  };
+
+  const handleSubscriptionCancellation = async (cancelAtPeriodEnd: boolean) => {
+    if (!user() || billingSubscriptionBusy()) {
+      return;
+    }
+
+    if (cancelAtPeriodEnd && typeof window !== "undefined") {
+      const confirmed = window.confirm("Cancel subscription at period end? You can still use your current billing period.");
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setBillingSubscriptionBusy(true);
+    setBillingError(null);
+
+    try {
+      const next = await client().updateSubscriptionCancellation(cancelAtPeriodEnd);
+      setBillingSummary(next.billing);
+      setStatusMessage(cancelAtPeriodEnd ? "Subscription will cancel at period end." : "Subscription auto-renew resumed.");
+    } catch (error) {
+      setBillingError(error instanceof Error ? error.message : "Failed to update subscription.");
+    } finally {
+      setBillingSubscriptionBusy(false);
+    }
+  };
+
   createEffect(() => {
     const token = authToken().trim();
     const currentBaseUrl = baseUrl();
@@ -283,6 +427,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       return;
     }
     void refreshWorkers(true);
+  });
+
+  createEffect(() => {
+    if (!user()) {
+      return;
+    }
+    void refreshBilling({ quiet: true });
   });
 
   createEffect(() => {
@@ -417,7 +568,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               </Show>
             </>
           </Show>
-          <Show when={statusMessage() && !authError() && !workersError() && !orgsError()}>
+          <Show when={statusMessage() && !authError() && !workersError() && !orgsError() && !billingError()}>
             {(value) => <div class="rounded-xl border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-xs text-gray-11">{value()}</div>}
           </Show>
         </div>
@@ -510,6 +661,175 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
             <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
+                  <CreditCard size={15} class="text-gray-11" />
+                  Billing
+                </div>
+                <div class="text-xs text-gray-9 mt-1">Manage checkout, subscription renewal, and invoice access for additional Den cloud workers.</div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <Show when={billingSummary()?.featureGateEnabled && billingSummary()?.checkoutRequired && !billingCheckoutUrl()}>
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 px-3"
+                    onClick={() => void refreshBilling({ includeCheckout: true })}
+                    disabled={billingBusy() || billingCheckoutBusy() || billingSubscriptionBusy()}
+                  >
+                    {billingCheckoutBusy() ? "Generating checkout..." : "Generate checkout"}
+                  </Button>
+                </Show>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 px-3"
+                  onClick={() => void refreshBilling()}
+                  disabled={billingBusy() || billingCheckoutBusy() || billingSubscriptionBusy()}
+                >
+                  <RefreshCcw size={13} class={billingBusy() ? "animate-spin" : ""} />
+                  Refresh billing
+                </Button>
+              </div>
+            </div>
+
+            <Show when={billingError()}>
+              {(value) => <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{value()}</div>}
+            </Show>
+
+            <Show when={billingBusy() && !billingSummary()}>
+              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-4 text-sm text-gray-10">Loading billing details...</div>
+            </Show>
+
+            <Show when={!billingBusy() && !billingSummary() && !billingError()}>
+              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-4 text-sm text-gray-10">Billing details are not available yet. Refresh billing to try again.</div>
+            </Show>
+
+            <Show when={billingSummary()}>
+              {(summaryAccessor) => {
+                const summary = summaryAccessor();
+                return (
+                  <div class="space-y-4">
+                    <div class="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                      <div class="rounded-2xl border border-gray-6/60 bg-gray-1/50 p-4 space-y-2">
+                        <div class="text-xs font-medium uppercase tracking-[0.08em] text-gray-9">Plan status</div>
+                        <div class="text-lg font-semibold text-gray-12">
+                          {!summary.featureGateEnabled ? "Billing disabled" : summary.hasActivePlan ? "Active plan" : "Payment required"}
+                        </div>
+                        <div class="text-sm text-gray-10">
+                          {!summary.featureGateEnabled
+                            ? "Cloud billing gates are disabled in this environment."
+                            : summary.hasActivePlan
+                              ? "This account can launch additional cloud workers right now."
+                              : "Complete checkout to unlock additional cloud worker launches."}
+                        </div>
+                        <div class="text-sm font-medium text-gray-11">
+                          {summary.price && summary.price.amount !== null
+                            ? `${formatMoneyMinor(summary.price.amount, summary.price.currency)} ${formatRecurringInterval(summary.price.recurringInterval, summary.price.recurringIntervalCount)}`
+                            : "Current plan amount is unavailable."}
+                        </div>
+                      </div>
+
+                      <div class="rounded-2xl border border-gray-6/60 bg-gray-1/50 p-4 space-y-2">
+                        <div class="text-xs font-medium uppercase tracking-[0.08em] text-gray-9">Subscription</div>
+                        <Show
+                          when={billingSubscription()}
+                          fallback={<div class="text-sm text-gray-10">No active subscription found yet.</div>}
+                        >
+                          {(subscriptionAccessor) => {
+                            const subscription = subscriptionAccessor();
+                            return (
+                              <>
+                                <div class="text-base font-semibold text-gray-12">{formatSubscriptionStatus(subscription.status)}</div>
+                                <div class="text-sm text-gray-10">
+                                  {formatMoneyMinor(subscription.amount, subscription.currency)} {formatRecurringInterval(subscription.recurringInterval, subscription.recurringIntervalCount)}
+                                </div>
+                                <div class="text-xs text-gray-9">
+                                  {subscription.cancelAtPeriodEnd
+                                    ? `Cancels on ${formatIsoDate(subscription.currentPeriodEnd)}`
+                                    : `Renews on ${formatIsoDate(subscription.currentPeriodEnd)}`}
+                                </div>
+                              </>
+                            );
+                          }}
+                        </Show>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                      <Show when={billingCheckoutUrl()}>
+                        {(checkoutUrl) => (
+                          <Button variant="secondary" class="text-xs h-9 px-3" onClick={() => openExternalUrl(checkoutUrl())}>
+                            Continue checkout
+                            <ArrowUpRight size={13} />
+                          </Button>
+                        )}
+                      </Show>
+                      <Show when={summary.portalUrl}>
+                        {(portalUrl) => (
+                          <Button variant="outline" class="text-xs h-9 px-3" onClick={() => openExternalUrl(portalUrl())}>
+                            Open billing portal
+                            <ArrowUpRight size={13} />
+                          </Button>
+                        )}
+                      </Show>
+                      <Show when={billingSubscription()}>
+                        {(subscriptionAccessor) => {
+                          const subscription = subscriptionAccessor();
+                          return (
+                            <Button
+                              variant={subscription.cancelAtPeriodEnd ? "outline" : "secondary"}
+                              class="text-xs h-9 px-3"
+                              onClick={() => void handleSubscriptionCancellation(!subscription.cancelAtPeriodEnd)}
+                              disabled={billingBusy() || billingCheckoutBusy() || billingSubscriptionBusy()}
+                            >
+                              {billingSubscriptionBusy()
+                                ? "Updating..."
+                                : subscription.cancelAtPeriodEnd
+                                  ? "Resume auto-renew"
+                                  : "Cancel at period end"}
+                            </Button>
+                          );
+                        }}
+                      </Show>
+                    </div>
+
+                    <Show when={summary.invoices.length > 0}>
+                      <div class="space-y-2">
+                        <div class="text-xs font-medium uppercase tracking-[0.08em] text-gray-9">Invoices</div>
+                        <div class="space-y-2">
+                          <For each={summary.invoices}>
+                            {(invoice) => (
+                              <div class="flex flex-col gap-2 rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <div class="text-sm font-medium text-gray-12">{invoice.invoiceNumber ?? formatSubscriptionStatus(invoice.status)}</div>
+                                  <div class="text-xs text-gray-9">
+                                    {formatIsoDate(invoice.createdAt)} · {formatMoneyMinor(invoice.totalAmount, invoice.currency)} · {formatSubscriptionStatus(invoice.status)}
+                                  </div>
+                                </div>
+                                <Show
+                                  when={invoice.invoiceUrl}
+                                  fallback={<div class="text-xs font-medium text-gray-9">Invoice link unavailable</div>}
+                                >
+                                  {(invoiceUrl) => (
+                                    <Button variant="outline" class="text-xs h-8 px-3" onClick={() => openExternalUrl(invoiceUrl())}>
+                                      Open invoice
+                                      <ArrowUpRight size={13} />
+                                    </Button>
+                                  )}
+                                </Show>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </Show>
+                  </div>
+                );
+              }}
+            </Show>
+          </div>
+
+          <div class="rounded-2xl border border-gray-7/60 bg-gray-2/30 p-5 space-y-4">
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
                   <Server size={15} class="text-gray-11" />
                   Den workers
                 </div>
@@ -533,7 +853,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             <Show when={!workersBusy() && workers().length === 0}>
               <div class="rounded-2xl border border-dashed border-gray-6/60 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
-                No cloud workers are visible for this org yet. Create one in Den, then refresh this tab.
+                {billingSummary()?.featureGateEnabled && billingSummary()?.checkoutRequired
+                  ? "No cloud workers are visible yet. Finish billing in Den, create a worker, then refresh this tab."
+                  : "No cloud workers are visible for this org yet. Create one in Den, then refresh this tab."}
               </div>
             </Show>
 
