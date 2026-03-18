@@ -1,10 +1,29 @@
-[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
+English | [简体中文](./README_ZH.md) | [日本語](./TRANSLATIONS.md) | [Tiếng Việt](./TRANSLATIONS.md) | [Hindi](./TRANSLATIONS.md) | [Spanish](./TRANSLATIONS.md) | [French](./TRANSLATIONS.md) | [German](./TRANSLATIONS.md) | [Farsi](./TRANSLATIONS.md) | [Turkish](./TRANSLATIONS.md) | [Thai](./TRANSLATIONS.md) | [繁體中文](./README_ZH_hk.md) | [Catalan](./TRANSLATIONS.md)
 
-English | [简体中文](./README_ZH.md) | [繁體中文](./README_ZH_hk.md)
+![OpenWork banner](./.github/assets/github-banner.png)
 
-# OpenWork
+> OpenWork is an AI coworker for you an your team. It helps you run your agents, skills, and MCPs. It's an open-source alternative to Claude Cowork/Codex (desktop app).
 
-> OpenWork helps you run your agents, skills, and MCP. It's an open-source alternative to Claude Cowork/Codex (desktop app).
+<div align="center">
+   <div>
+      <a href="https://openworklabs.com/docs"><strong>Docs</strong></a> ·
+      <a href="https://github.com/different-ai/openwork/issues/new?template=bug.yml"><strong>Report Bug</strong></a> |
+      <a href="https://github.com/different-ai/openwork/issues/new?template=feature.yml"><strong>Request a Feature</strong></a> |
+      <a href="https://discord.gg/VEhNQXxYMB"><strong>Join Discord</strong></a> |
+      <a href="https://openworklabs.com/download"><strong>Download App</strong></a>
+   </div>
+   <br />
+   <p align="center">
+    <a href="https://openwork.software/docs"><img src="https://img.shields.io/badge/docs.sciphi.ai-3F16E4" alt="Docs"></a>
+    <a href="https://discord.gg/VEhNQXxYMB"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://github.com/different-ai/openwork/"><img src="https://img.shields.io/github/stars/different-ai/openwork
+" alt="Github Stars"></a>
+    <a href="https://github.com/different-ai/openwork/pulse"><img src="https://img.shields.io/github/commit-activity/w/different-ai/openwork" alt="Commits-per-week"></a>
+    <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-purple.svg" alt="License: MIT"></a>
+  </p>
+</div>
+
+
 
 ## Core Philosophy
 
