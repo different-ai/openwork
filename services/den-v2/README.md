@@ -36,7 +36,6 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
 - `GOOGLE_CLIENT_SECRET` optional OAuth app client secret for Google sign-in
 - `PORT` server port
-<<<<<<< HEAD
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
 - `PROVISIONER_MODE` `stub`, `render`, or `daytona`
 - `OPENWORK_DAYTONA_ENV_PATH` optional path to a shared `.env.daytona` file; when unset, Den searches upwards from the repo for `.env.daytona`
@@ -178,7 +177,7 @@ pnpm db:migrate:sql
 
 ## CI deployment (dev == prod)
 
-The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
+The workflow `.github/workflows/deploy-den-v2.yml` is intentionally disabled because Render handles Den v2 deploys outside this repository.
 
 Required GitHub Actions secrets:
 

@@ -330,7 +330,7 @@ importers:
         specifier: 5.4.5
         version: 5.4.5
 
-  services/den:
+  services/den-v2:
     dependencies:
       '@daytonaio/sdk':
         specifier: ^0.150.0

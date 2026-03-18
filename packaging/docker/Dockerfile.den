@@ -9,18 +9,18 @@ COPY .npmrc /app/.npmrc
 COPY patches /app/patches
 COPY packages/utils/package.json /app/packages/utils/package.json
 COPY packages/den-db/package.json /app/packages/den-db/package.json
-COPY services/den/package.json /app/services/den/package.json
+COPY services/den-v2/package.json /app/services/den-v2/package.json
 
 RUN pnpm install --frozen-lockfile
 
 COPY packages/utils /app/packages/utils
 COPY packages/den-db /app/packages/den-db
-COPY services/den /app/services/den
+COPY services/den-v2 /app/services/den-v2
 
 RUN pnpm --dir /app/packages/utils run build
 RUN pnpm --dir /app/packages/den-db run build
-RUN pnpm --dir /app/services/den run build
+RUN pnpm --dir /app/services/den-v2 run build
 
 EXPOSE 8788
 
-CMD ["sh", "-lc", "node dist/index.js"]
+CMD ["sh", "-lc", "node services/den-v2/dist/index.js"]
