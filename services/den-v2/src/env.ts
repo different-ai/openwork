@@ -1,3 +1,4 @@
+import { DEN_WORKER_POLL_INTERVAL_MS } from "@different-ai/openwork-utils";
 import { z } from "zod";
 
 const schema = z.object({
@@ -74,7 +75,6 @@ const schema = z.object({
   DAYTONA_CREATE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
-  DAYTONA_POLL_INTERVAL_MS: z.string().optional(),
 }).superRefine((value, ctx) => {
   const inferredMode = value.DB_MODE ?? (value.DATABASE_URL ? "mysql" : "planetscale")
 
@@ -248,6 +248,6 @@ export const env = {
     healthcheckTimeoutMs: Number(
       parsed.DAYTONA_HEALTHCHECK_TIMEOUT_MS ?? "300000",
     ),
-    pollIntervalMs: Number(parsed.DAYTONA_POLL_INTERVAL_MS ?? "5000"),
+    pollIntervalMs: DEN_WORKER_POLL_INTERVAL_MS,
   },
 };

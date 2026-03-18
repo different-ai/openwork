@@ -1688,7 +1688,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     const timer = window.setInterval(() => {
       void refreshRuntime(targetWorkerId, { quiet: true });
-    }, 5000);
+    }, WORKER_STATUS_POLL_MS);
 
     return () => window.clearInterval(timer);
   }, [activeWorker?.workerId, selectedWorker?.workerId, runtimeSnapshot?.upgrade.status]);

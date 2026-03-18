@@ -1,3 +1,5 @@
+import { DEN_WORKER_POLL_INTERVAL_MS } from "@different-ai/openwork-utils";
+
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";
 export type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
@@ -153,7 +155,7 @@ export const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
 export const PENDING_SOCIAL_SIGNUP_STORAGE_KEY = "openwork:web:pending-social-signup";
 export const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 export const ONBOARDING_INTENT_STORAGE_KEY = "openwork:web:onboarding-intent";
-export const WORKER_STATUS_POLL_MS = 5000;
+export const WORKER_STATUS_POLL_MS = DEN_WORKER_POLL_INTERVAL_MS;
 export const DEFAULT_AUTH_NAME = "OpenWork User";
 export const DEFAULT_WORKER_NAME = "My Worker";
 export const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();

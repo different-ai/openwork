@@ -298,6 +298,9 @@ importers:
 
   packages/web:
     dependencies:
+      '@different-ai/openwork-utils':
+        specifier: workspace:*
+        version: link:../utils
       next:
         specifier: 14.2.5
         version: 14.2.5(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
@@ -330,57 +333,14 @@ importers:
         specifier: 5.4.5
         version: 5.4.5
 
-  services/den:
-    dependencies:
-      '@daytonaio/sdk':
-        specifier: ^0.150.0
-        version: 0.150.0(ws@8.19.0)
-      better-auth:
-        specifier: ^1.4.18
-        version: 1.4.18(drizzle-kit@0.31.9)(drizzle-orm@0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4))(mysql2@3.17.4)(next@16.1.6(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(solid-js@1.9.10)
-      cors:
-        specifier: ^2.8.5
-        version: 2.8.6
-      dotenv:
-        specifier: ^16.4.5
-        version: 16.6.1
-      drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4)
-      express:
-        specifier: ^4.19.2
-        version: 4.22.1
-      mysql2:
-        specifier: ^3.11.3
-        version: 3.17.4
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
-      '@types/cors':
-        specifier: ^2.8.17
-        version: 2.8.19
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
-      '@types/node':
-        specifier: ^20.11.30
-        version: 20.12.12
-      drizzle-kit:
-        specifier: ^0.31.9
-        version: 0.31.9
-      tsx:
-        specifier: ^4.15.7
-        version: 4.21.0
-      typescript:
-        specifier: ^5.5.4
-        version: 5.9.3
-
   services/den-v2:
     dependencies:
       '@daytonaio/sdk':
         specifier: ^0.150.0
         version: 0.150.0(ws@8.19.0)
+      '@different-ai/openwork-utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       better-auth:
         specifier: ^1.4.18
         version: 1.4.18(drizzle-kit@0.31.9)(drizzle-orm@0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4))(mysql2@3.17.4)(next@16.1.6(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(solid-js@1.9.10)

@@ -1,1 +1,2 @@
-export * from "./typeid.js"
+export * from "./CONSTS.js";
+export * from "./typeid.js";

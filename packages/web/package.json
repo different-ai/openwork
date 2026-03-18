@@ -3,12 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
-    "build": "next build",
+    "build:utils": "npm --prefix ../utils run build",
+    "dev": "npm run build:utils && OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
+    "build": "npm run build:utils && next build",
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "next lint"
   },
   "dependencies": {
+    "@different-ai/openwork-utils": "workspace:*",
     "next": "14.2.5",
     "react": "18.2.0",
     "react-dom": "18.2.0"
