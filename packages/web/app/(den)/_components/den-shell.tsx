@@ -1,7 +1,7 @@
 import Image from "next/image";
-import { CloudControlPanel } from "../components/cloud-control";
+import type { ReactNode } from "react";
 
-export default function HomePage() {
+export function DenShell({ children }: { children: ReactNode }) {
   return (
     <main className="relative min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] text-[var(--dls-text-primary)]">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
@@ -28,11 +28,10 @@ export default function HomePage() {
             <div className="text-[12px] text-[var(--dls-text-secondary)]">Den cloud workers</div>
           </div>
         </div>
-
       </header>
 
       <div className="relative z-10 flex min-h-[calc(100vh-72px)] min-h-[calc(100dvh-72px)] w-full px-3 pb-3 pt-4 md:px-6 md:pb-6 md:pt-5">
-        <CloudControlPanel />
+        {children}
       </div>
     </main>
   );
