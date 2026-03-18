@@ -55,7 +55,9 @@ use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
-use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
 
 #[cfg(target_os = "macos")]
@@ -74,6 +76,19 @@ fn set_dev_app_name() {
 
 #[cfg(not(target_os = "macos"))]
 fn set_dev_app_name() {}
+
+fn show_main_window(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn hide_main_window(app_handle: &AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
 
 fn stop_managed_services(app_handle: &tauri::AppHandle) {
     if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
@@ -104,8 +119,28 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
 
     let app = builder
-        .setup(|_| {
+        .setup(|app| {
             set_dev_app_name();
+
+            let show_item = MenuItemBuilder::with_id("tray-show", "Show OpenWork").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("tray-quit", "Quit OpenWork").build(app)?;
+            let menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
+
+            let mut tray = TrayIconBuilder::with_id("main-tray")
+                .menu(&menu)
+                .tooltip("OpenWork")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "tray-show" => show_main_window(app),
+                    "tray-quit" => app.exit(0),
+                    _ => {}
+                });
+
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray = tray.icon(icon);
+            }
+
+            let tray = tray.build(app)?;
+            app.manage(tray);
             Ok(())
         })
         .manage(EngineManager::default())
@@ -181,14 +216,14 @@ pub fn run() {
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/opencode/openwork-server processes and stale ports.
     app.run(|app_handle, event| match event {
-        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
-            stop_managed_services(&app_handle);
-        }
-        tauri::RunEvent::WindowEvent {
-            event: tauri::WindowEvent::CloseRequested { .. },
+        RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
             ..
-        } => {
-            stop_managed_services(&app_handle);
+        } if label == "main" => {
+            api.prevent_close();
+            hide_main_window(&app_handle);
         }
         _ => {}
     });
