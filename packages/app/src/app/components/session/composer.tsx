@@ -1526,8 +1526,8 @@ export default function Composer(props: ComposerProps) {
                       class="bg-transparent border-none p-0 pb-8 pr-4 text-dls-text focus:ring-0 text-sm leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
                     />
 
-                    <div class="mt-3 flex items-center justify-between px-2 pb-2">
-                      <div class="flex items-center gap-2">
+                    <div class="mt-3 flex items-center px-2 pb-2">
+                      <div class="flex min-w-0 items-center gap-1.5 sm:gap-2">
                         <input
                           ref={inboxFileInputRef}
                           type="file"
@@ -1574,7 +1574,7 @@ export default function Composer(props: ComposerProps) {
                           <Paperclip size={16} />
                         </button>
 
-                        <div class="relative" ref={(el) => props.setAgentPickerRef(el)}>
+                        <div class="relative hidden md:block" ref={(el) => props.setAgentPickerRef(el)}>
                           <button
                             type="button"
                             class="flex items-center gap-1.5 px-2 py-1 hover:bg-dls-hover rounded-md text-xs font-medium text-dls-secondary hover:text-dls-text"
@@ -1657,14 +1657,14 @@ export default function Composer(props: ComposerProps) {
 
                         <button
                           type="button"
-                          class="flex items-center gap-1.5 px-2 py-1 hover:bg-dls-hover rounded-md text-xs font-medium text-dls-secondary hover:text-dls-text"
+                          class="flex min-w-0 items-center gap-1.5 px-2 py-1 hover:bg-dls-hover rounded-md text-xs font-medium text-dls-secondary hover:text-dls-text"
                           onClick={props.onModelClick}
                           disabled={props.busy}
                         >
-                          {props.selectedModelLabel}
-                          <ChevronDown size={14} />
+                          <span class="max-w-[96px] truncate sm:max-w-none">{props.selectedModelLabel}</span>
+                          <ChevronDown size={14} class="shrink-0" />
                         </button>
-                        <div class="relative" ref={(el) => (variantPickerRef = el)}>
+                        <div class="relative hidden md:block" ref={(el) => (variantPickerRef = el)}>
                           <button
                             type="button"
                             class="flex items-center gap-1.5 px-2 py-1 hover:bg-dls-hover rounded-md text-xs font-medium text-dls-secondary hover:text-dls-text"
@@ -1707,7 +1707,7 @@ export default function Composer(props: ComposerProps) {
                           </Show>
                         </div>
                       </div>
-                      <div class="flex items-center gap-3 text-dls-secondary">
+                      <div class="ml-auto flex shrink-0 items-center gap-3 text-dls-secondary">
                         <Show
                           when={props.isStreaming}
                           fallback={
