@@ -260,12 +260,14 @@ export type SessionViewProps = {
   refreshProviders: () => Promise<unknown>;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
+    preferredProviderId?: string;
   }) => Promise<void>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
+  providerAuthPreferredProviderId: string | null;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
@@ -3907,16 +3909,21 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
-  const openProviderAuth = () => {
-    void props.openProviderAuthModal().catch((error) => {
+  const openProviderAuth = (preferredProviderId?: string) => {
+    void props.openProviderAuthModal({ preferredProviderId }).catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
       setToastMessage(message);
     });
   };
 
-  const hasOpenAIProviderConnected = createMemo(() =>
-    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
+  const openNewSessionProviderCta = () => {
+    openProviderAuth("anthropic");
+  };
+
+  const hasAnthropicProviderConnected = createMemo(() =>
+    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "anthropic")
   );
+  const showNewSessionProviderCta = createMemo(() => !hasAnthropicProviderConnected());
   const rightSidebarNavButton = (
     label: string,
     icon: any,
@@ -4532,17 +4539,17 @@ export default function SessionView(props: SessionViewProps) {
                         </p>
                       </div>
                       <div class="grid gap-3 max-w-lg mx-auto text-left">
-                        <Show when={!hasOpenAIProviderConnected()}>
+                        <Show when={showNewSessionProviderCta()}>
                           <button
                             type="button"
                             class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                            onClick={openProviderAuth}
+                            onClick={openNewSessionProviderCta}
                           >
                             <div class="text-sm font-semibold text-dls-text">
-                              Connect ChatGPT
+                              Connect Claude
                             </div>
                             <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                              Add your OpenAI provider so ChatGPT-style models are ready in new sessions.
+                              Add your Anthropic provider so Claude models are ready in new sessions.
                             </div>
                           </button>
                         </Show>
@@ -4967,6 +4974,7 @@ export default function SessionView(props: SessionViewProps) {
         loading={props.providerAuthBusy}
         submitting={providerAuthActionBusy()}
         error={props.providerAuthError}
+        preferredProviderId={props.providerAuthPreferredProviderId}
         providers={props.providers}
         connectedProviderIds={props.providerConnectedIds}
         authMethods={props.providerAuthMethods}

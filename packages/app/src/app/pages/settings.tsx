@@ -85,6 +85,7 @@ export type SettingsViewProps = {
   providerAuthBusy: boolean;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
+    preferredProviderId?: string;
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
   openworkServerStatus: OpenworkServerStatus;

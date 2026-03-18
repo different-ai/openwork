@@ -91,8 +91,10 @@ export type DashboardViewProps = {
   providerAuthModalOpen: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
+  providerAuthPreferredProviderId: string | null;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
+    preferredProviderId?: string;
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
@@ -1586,6 +1588,7 @@ export default function DashboardView(props: DashboardViewProps) {
           loading={props.providerAuthBusy}
           submitting={providerAuthActionBusy()}
           error={props.providerAuthError}
+          preferredProviderId={props.providerAuthPreferredProviderId}
           providers={props.providers}
           connectedProviderIds={props.providerConnectedIds}
           authMethods={props.providerAuthMethods}

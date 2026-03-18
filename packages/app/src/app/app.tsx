@@ -1375,6 +1375,7 @@ export default function App() {
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
+  const [providerAuthPreferredProviderId, setProviderAuthPreferredProviderId] = createSignal<string | null>(null);
   const [providerAuthReturnFocusTarget, setProviderAuthReturnFocusTarget] =
     createSignal<PromptFocusReturnTarget>("none");
 
@@ -2530,8 +2531,10 @@ export default function App() {
 
   async function openProviderAuthModal(options?: {
     returnFocusTarget?: PromptFocusReturnTarget;
+    preferredProviderId?: string;
   }) {
     setProviderAuthReturnFocusTarget(options?.returnFocusTarget ?? "none");
+    setProviderAuthPreferredProviderId(options?.preferredProviderId?.trim() || null);
     setProviderAuthBusy(true);
     setProviderAuthError(null);
     try {
@@ -2539,6 +2542,7 @@ export default function App() {
       setProviderAuthMethods(methods);
       setProviderAuthModalOpen(true);
     } catch (error) {
+      setProviderAuthPreferredProviderId(null);
       setProviderAuthReturnFocusTarget("none");
       const message = describeProviderError(error, "Failed to load providers");
       setProviderAuthError(message);
@@ -2554,6 +2558,7 @@ export default function App() {
       providerAuthReturnFocusTarget() === "composer";
     setProviderAuthModalOpen(false);
     setProviderAuthError(null);
+    setProviderAuthPreferredProviderId(null);
     setProviderAuthReturnFocusTarget("none");
     if (shouldFocusPrompt) {
       focusSessionPromptSoon();
@@ -6741,6 +6746,7 @@ export default function App() {
       providerAuthModalOpen: providerAuthModalOpen(),
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
+      providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
       openProviderAuthModal,
       disconnectProvider,
       closeProviderAuthModal,
@@ -7101,6 +7107,7 @@ export default function App() {
     providerAuthBusy: providerAuthBusy(),
     providerAuthError: providerAuthError(),
     providerAuthMethods: providerAuthMethods(),
+    providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
     providers: providers(),
     providerConnectedIds: providerConnectedIds(),
     listAgents: listAgents,

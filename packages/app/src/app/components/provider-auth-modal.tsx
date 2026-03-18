@@ -44,6 +44,7 @@ export type ProviderAuthModalProps = {
   loading: boolean;
   submitting: boolean;
   error: string | null;
+  preferredProviderId?: string | null;
   providers: ProviderListItem[];
   connectedProviderIds: string[];
   authMethods: Record<string, ProviderAuthMethod[]>;
@@ -125,6 +126,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [localError, setLocalError] = createSignal<string | null>(null);
   const [pollingBusy, setPollingBusy] = createSignal(false);
   const [oauthAutoBusy, setOauthAutoBusy] = createSignal(false);
+  const [autoOpenedPreferredProviderId, setAutoOpenedPreferredProviderId] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
   let providerPoll: number | null = null;
   let oauthAutoPoll: number | null = null;
@@ -171,6 +173,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   createEffect(() => {
     if (!props.open) {
+      setAutoOpenedPreferredProviderId(null);
       resetState();
     }
   });
@@ -189,6 +192,21 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (!props.open || resolvedView() !== "list") return;
     queueMicrotask(() => {
       searchInputEl?.focus();
+    });
+  });
+
+  createEffect(() => {
+    if (!props.open || props.loading || resolvedView() !== "list") return;
+
+    const preferredId = props.preferredProviderId?.trim().toLowerCase() ?? "";
+    if (!preferredId || autoOpenedPreferredProviderId() === preferredId) return;
+
+    const entry = entries().find((item) => item.id.trim().toLowerCase() === preferredId);
+    if (!entry) return;
+
+    setAutoOpenedPreferredProviderId(preferredId);
+    queueMicrotask(() => {
+      handleEntrySelect(entry);
     });
   });
 
