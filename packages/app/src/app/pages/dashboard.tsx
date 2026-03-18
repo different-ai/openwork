@@ -53,7 +53,10 @@ import SettingsView from "./settings";
 import SkillsView from "./skills";
 import IdentitiesView from "./identities";
 import StatusBar from "../components/status-bar";
-import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
+import ProviderAuthModal, {
+  type ProviderAuthMethod,
+  type ProviderOAuthStartResult,
+} from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import {
@@ -82,13 +85,13 @@ export type DashboardViewProps = {
   providerAuthBusy: boolean;
   providerAuthModalOpen: boolean;
   providerAuthError: string | null;
-  providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
+  providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
-  startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
+  startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
     providerId: string,
     methodIndex: number,
@@ -433,13 +436,16 @@ export default function DashboardView(props: DashboardViewProps) {
     platform.openLink(resolved);
   };
 
-  const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
+  const handleProviderAuthSelect = async (
+    providerId: string,
+    methodIndex?: number,
+  ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
       throw new Error("Provider auth is already in progress.");
     }
     setProviderAuthActionBusy(true);
     try {
-      return await props.startProviderAuth(providerId);
+      return await props.startProviderAuth(providerId, methodIndex);
     } finally {
       setProviderAuthActionBusy(false);
     }

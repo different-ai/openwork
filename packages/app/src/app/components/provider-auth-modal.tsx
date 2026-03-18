@@ -2,13 +2,18 @@ import type { ProviderAuthAuthorization } from "@opencode-ai/sdk/v2/client";
 import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { isTauriRuntime } from "../utils";
 import { compareProviders } from "../utils/providers";
 
 import Button from "./button";
 import TextInput from "./text-input";
 
-type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
+export type ProviderAuthMethod = {
+  type: "oauth" | "api";
+  label: string;
+  methodIndex?: number;
+};
 type ProviderAuthEntry = {
   id: string;
   name: string;
@@ -42,7 +47,7 @@ export type ProviderAuthModalProps = {
   providers: ProviderListItem[];
   connectedProviderIds: string[];
   authMethods: Record<string, ProviderAuthMethod[]>;
-  onSelect: (providerId: string) => Promise<ProviderOAuthStartResult>;
+  onSelect: (providerId: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   onSubmitOAuth: (
     providerId: string,
@@ -54,6 +59,8 @@ export type ProviderAuthModalProps = {
 };
 
 export default function ProviderAuthModal(props: ProviderAuthModalProps) {
+  const openworkDeployment = getOpenWorkDeployment();
+
   const formatProviderName = (id: string, fallback?: string) => {
     const named = fallback?.trim();
     if (named) return named;
@@ -86,14 +93,20 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     return Object.keys(methods)
       .map((id): ProviderAuthEntry => {
         const provider = providers.find((item) => item.id === id);
+        const entryMethods = (methods[id] ?? []).filter((method) => {
+          if (id !== "openai") return true;
+          if (openworkDeployment !== "web") return true;
+          return method.type !== "oauth";
+        });
         return {
           id,
           name: formatProviderName(id, provider?.name),
-          methods: methods[id] ?? [],
+          methods: entryMethods,
           connected: connected.has(id),
           env: Array.isArray(provider?.env) ? provider.env : [],
         };
       })
+      .filter((entry) => entry.methods.length > 0)
       .sort(compareProviders);
   });
 
@@ -178,9 +191,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       searchInputEl?.focus();
     });
   });
-
-  const hasMethod = (entry: ProviderAuthEntry | null, type: ProviderAuthMethod["type"]) =>
-    !!entry?.methods?.some((method) => method.type === type);
 
   const handleClose = () => {
     void props.onRefreshProviders?.();
@@ -319,13 +329,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }, 2000);
   };
 
-  const startOauth = async (entry: ProviderAuthEntry) => {
+  const startOauth = async (entry: ProviderAuthEntry, methodIndex?: number) => {
     if (actionDisabled()) return;
+    if (!Number.isInteger(methodIndex) || methodIndex === undefined) {
+      setLocalError(`No OAuth flow available for ${entry.name}.`);
+      return;
+    }
     setLocalError(null);
     setOauthCodeInput("");
     setOauthSession(null);
     try {
-      const started = await props.onSelect(entry.id);
+      const started = await props.onSelect(entry.id, methodIndex);
       const nextSession: ProviderOAuthSession = {
         providerId: entry.id,
         methodIndex: started.methodIndex,
@@ -351,20 +365,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setSelectedProviderId(entry.id);
 
-    const hasOauth = hasMethod(entry, "oauth");
-    const hasApi = hasMethod(entry, "api");
-
-    if (hasOauth && !hasApi) {
-      void startOauth(entry);
+    if (entry.methods.length === 1) {
+      void handleMethodSelect(entry.methods[0]);
       return;
     }
 
-    if (hasApi && !hasOauth) {
-      setView("api");
-      return;
-    }
-
-    if (hasApi && hasOauth) {
+    if (entry.methods.length > 1) {
       setView("method");
       return;
     }
@@ -372,13 +378,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(`No authentication methods available for ${entry.name}.`);
   };
 
-  const handleMethodSelect = (method: ProviderAuthMethod["type"]) => {
+  const handleMethodSelect = async (method: ProviderAuthMethod) => {
     const entry = selectedEntry();
     if (!entry || actionDisabled()) return;
     setLocalError(null);
 
-    if (method === "oauth") {
-      void startOauth(entry);
+    if (method.type === "oauth") {
+      await startOauth(entry, method.methodIndex);
       return;
     }
 
@@ -420,7 +426,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const handleBack = () => {
     if (resolvedView() === "oauth-code" || resolvedView() === "oauth-auto") {
-      if (hasMethod(selectedEntry(), "api")) {
+      if ((selectedEntry()?.methods.length ?? 0) > 1) {
         setView("method");
       } else {
         setView("list");
@@ -431,7 +437,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return;
     }
 
-    if (resolvedView() === "api" && hasMethod(selectedEntry(), "oauth")) {
+    if (resolvedView() === "api" && (selectedEntry()?.methods.length ?? 0) > 1) {
       setView("method");
       setApiKeyInput("");
       setLocalError(null);
@@ -484,6 +490,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       event.preventDefault();
       handleClose();
     }
+  };
+
+  const methodDescription = (entry: ProviderAuthEntry, method: ProviderAuthMethod) => {
+    const label = methodLabel(method).toLowerCase();
+    if (entry.id === "openai" && label.includes("headless")) {
+      return "Use OpenAI's device flow when the local browser callback is unreliable.";
+    }
+    if (method.type === "oauth") {
+      return "Continue in the browser and let OpenWork finish the connection automatically.";
+    }
+    return "Paste a secret key that OpenWork stores locally on this device.";
   };
 
   return (
@@ -620,24 +637,23 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </Button>
                     </div>
                     <div class="grid gap-2">
-                      <Show when={hasMethod(selectedEntry(), "oauth")}>
-                        <Button
-                          variant="secondary"
-                          onClick={() => void handleMethodSelect("oauth")}
-                          disabled={actionDisabled()}
-                        >
-                          Continue with OAuth
-                        </Button>
-                      </Show>
-                      <Show when={hasMethod(selectedEntry(), "api")}>
-                        <Button
-                          variant="outline"
-                          onClick={() => handleMethodSelect("api")}
-                          disabled={actionDisabled()}
-                        >
-                          Use API key
-                        </Button>
-                      </Show>
+                      <For each={selectedEntry()!.methods}>
+                        {(method) => (
+                          <button
+                            type="button"
+                            class={`w-full rounded-xl border px-4 py-3 text-left transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                              method.type === "oauth"
+                                ? "border-indigo-7/30 bg-indigo-7/10 hover:bg-indigo-7/15"
+                                : "border-gray-6 bg-gray-1/20 hover:bg-gray-1/50"
+                            }`}
+                            onClick={() => void handleMethodSelect(method)}
+                            disabled={actionDisabled()}
+                          >
+                            <div class="text-sm font-medium text-gray-12">{methodLabel(method)}</div>
+                            <div class="mt-1 text-xs text-gray-10">{methodDescription(selectedEntry()!, method)}</div>
+                          </button>
+                        )}
+                      </For>
                     </div>
                   </div>
                 </Show>

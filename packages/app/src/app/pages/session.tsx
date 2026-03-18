@@ -71,6 +71,7 @@ import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal, {
+  type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
@@ -243,7 +244,7 @@ export type SessionViewProps = {
   error: string | null;
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
-  startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
+  startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
     providerId: string,
     methodIndex: number,
@@ -261,10 +262,7 @@ export type SessionViewProps = {
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
   providerAuthError: string | null;
-  providerAuthMethods: Record<
-    string,
-    { type: "oauth" | "api"; label: string }[]
-  >;
+  providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
@@ -2968,13 +2966,14 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleProviderAuthSelect = async (
     providerId: string,
+    methodIndex?: number,
   ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
       throw new Error("Provider auth is already in progress.");
     }
     setProviderAuthActionBusy(true);
     try {
-      return await props.startProviderAuth(providerId);
+      return await props.startProviderAuth(providerId, methodIndex);
     } finally {
       setProviderAuthActionBusy(false);
     }

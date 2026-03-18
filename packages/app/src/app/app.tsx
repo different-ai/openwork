@@ -809,7 +809,11 @@ export default function App() {
       // ignore
     }
   };
-  type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
+  type ProviderAuthMethod = {
+    type: "oauth" | "api";
+    label: string;
+    methodIndex?: number;
+  };
   type ProviderOAuthStartResult = {
     methodIndex: number;
     authorization: ProviderAuthAuthorization;
@@ -2239,7 +2243,15 @@ export default function App() {
     methods: Record<string, ProviderAuthMethod[]>,
     availableProviders: ProviderListItem[],
   ) => {
-    const merged = { ...methods } as Record<string, ProviderAuthMethod[]>;
+    const merged = Object.fromEntries(
+      Object.entries(methods ?? {}).map(([id, providerMethods]) => [
+        id,
+        (providerMethods ?? []).map((method, methodIndex) => ({
+          ...method,
+          methodIndex,
+        })),
+      ]),
+    ) as Record<string, ProviderAuthMethod[]>;
     for (const provider of availableProviders ?? []) {
       const id = provider.id?.trim();
       if (!id || id === "opencode") continue;
@@ -2260,7 +2272,10 @@ export default function App() {
     return buildProviderAuthMethods(methods as Record<string, ProviderAuthMethod[]>, providers());
   };
 
-  async function startProviderAuth(providerId?: string): Promise<ProviderOAuthStartResult> {
+  async function startProviderAuth(
+    providerId?: string,
+    methodIndex?: number,
+  ): Promise<ProviderOAuthStartResult> {
     setProviderAuthError(null);
     const c = client();
     if (!c) {
@@ -2286,9 +2301,17 @@ export default function App() {
         throw new Error(`Unknown provider: ${resolved}`);
       }
 
-      const oauthIndex = methods.findIndex((method) => method.type === "oauth");
+      const oauthIndex =
+        methodIndex !== undefined
+          ? methodIndex
+          : methods.find((method) => method.type === "oauth")?.methodIndex ?? -1;
       if (oauthIndex === -1) {
         throw new Error(`No OAuth flow available for ${resolved}. Use an API key instead.`);
+      }
+
+      const selectedMethod = methods.find((method) => method.methodIndex === oauthIndex);
+      if (!selectedMethod || selectedMethod.type !== "oauth") {
+        throw new Error(`Selected auth method is not an OAuth flow for ${resolved}.`);
       }
 
       const auth = unwrap(await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }));
