@@ -1,4 +1,3 @@
-import Image from "next/image";
 import type { ReactNode } from "react";
 
 export function DenShell({ children }: { children: ReactNode }) {
@@ -11,26 +10,7 @@ export function DenShell({ children }: { children: ReactNode }) {
         <span className="absolute inset-x-0 top-0 h-[32rem] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.75),transparent_70%)]" />
       </div>
 
-      <header className="relative z-10 flex w-full items-center justify-between gap-4 px-4 pt-4 md:px-6 md:pt-5">
-        <div className="inline-flex items-center gap-3">
-          <Image
-            src="/openwork-mark.svg"
-            alt=""
-            aria-hidden="true"
-            width={834}
-            height={649}
-            className="h-[26px] w-auto"
-            priority
-            unoptimized
-          />
-          <div>
-            <div className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--dls-text-primary)]">OpenWork</div>
-            <div className="text-[12px] text-[var(--dls-text-secondary)]">Den cloud workers</div>
-          </div>
-        </div>
-      </header>
-
-      <div className="relative z-10 flex min-h-[calc(100vh-72px)] min-h-[calc(100dvh-72px)] w-full px-3 pb-3 pt-4 md:px-6 md:pb-6 md:pt-5">
+      <div className="relative z-10 flex min-h-screen min-h-dvh w-full px-3 py-3 md:px-6 md:py-6">
         {children}
       </div>
     </main>

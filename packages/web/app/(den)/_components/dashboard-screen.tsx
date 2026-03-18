@@ -197,18 +197,10 @@ export function DashboardScreen() {
     filteredWorkers,
     workersBusy,
     workersError,
-    workerQuery,
-    setWorkerQuery,
-    workerStatusFilter,
-    setWorkerStatusFilter,
     selectedWorker,
     activeWorker,
     selectWorker,
-    workerName,
-    setWorkerName,
     launchBusy,
-    launchStatus,
-    launchError,
     actionBusy,
     deleteBusyWorkerId,
     redeployBusyWorkerId,
@@ -221,14 +213,11 @@ export function DashboardScreen() {
     openworkDeepLink,
     openworkAppConnectUrl,
     hasWorkspaceScopedUrl,
-    additionalWorkerNeedsPlan,
     selectedStatusMeta,
     isSelectedWorkerFailed,
     ownedWorkerCount,
-    effectiveCheckoutUrl,
     billingSummary,
     refreshWorkers,
-    launchWorker,
     checkWorkerStatus,
     generateWorkerToken,
     deleteWorker,
@@ -335,87 +324,6 @@ export function DashboardScreen() {
                   Billing
                 </Link>
               </nav>
-            </div>
-
-            <div className="flex flex-col gap-3 rounded-[24px] border border-gray-200 bg-white p-4 shadow-sm">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-400">Launch another worker</div>
-                <p className="mt-2 text-sm leading-6 text-gray-500">Use the live worker controls here without leaving the dashboard.</p>
-              </div>
-
-              <label className="block">
-                <span className="mb-1 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Worker name</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                  value={workerName}
-                  onChange={(event) => setWorkerName(event.target.value)}
-                  maxLength={80}
-                />
-              </label>
-
-              <button
-                type="button"
-                className="w-full rounded-2xl bg-[#011627] px-3 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={async () => {
-                  const outcome = await launchWorker({ source: "manual" });
-                  if (outcome === "checkout") {
-                    router.push("/checkout");
-                  }
-                }}
-                disabled={!user || launchBusy || activeWorker?.status === "provisioning"}
-              >
-                {launchBusy
-                  ? "Starting worker..."
-                  : activeWorker?.status === "provisioning"
-                    ? "Worker is starting..."
-                    : `Launch \"${workerName || "My Worker"}\"`}
-              </button>
-
-              {(launchStatus || launchError) ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                  <p className="text-xs text-slate-600">{launchStatus}</p>
-                  {launchError ? <p className="mt-1 text-xs font-medium text-rose-600">{launchError}</p> : null}
-                </div>
-              ) : null}
-
-              {additionalWorkerNeedsPlan ? (
-                <div className="rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                  Your first worker is live. Additional workers require an active Den Cloud plan.
-                </div>
-              ) : null}
-
-              {effectiveCheckoutUrl ? (
-                <div className="rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                  <p className="font-semibold">Payment needed before launch</p>
-                  <a
-                    href={effectiveCheckoutUrl}
-                    rel="noreferrer"
-                    className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
-                  >
-                    Continue to checkout
-                  </a>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              <input
-                className="min-w-[160px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400"
-                value={workerQuery}
-                onChange={(event) => setWorkerQuery(event.target.value)}
-                placeholder="Search workers"
-                aria-label="Search workers"
-              />
-              <select
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none"
-                value={workerStatusFilter}
-                onChange={(event) => setWorkerStatusFilter(event.target.value as "all" | "ready" | "starting" | "attention")}
-              >
-                <option value="all">All</option>
-                <option value="ready">Ready</option>
-                <option value="starting">Starting</option>
-                <option value="attention">Attention</option>
-              </select>
             </div>
 
             {workersBusy ? <p className="text-xs text-slate-500">Loading workers...</p> : null}
