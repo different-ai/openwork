@@ -1921,7 +1921,7 @@ export default function Composer(props: ComposerProps) {
                           onClick={props.onModelClick}
                           disabled={props.busy}
                         >
-                          <span class="max-w-[96px] truncate sm:max-w-none">{props.selectedModelLabel}</span>
+                          <span>{props.selectedModelLabel}</span>
                           <ChevronDown size={14} class="shrink-0" />
                         </button>
                         <div class="relative hidden md:block" ref={(el) => (variantPickerRef = el)}>
