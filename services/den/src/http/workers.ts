@@ -1,9 +1,7 @@
 import { randomBytes } from "crypto"
 import express from "express"
-import { fromNodeHeaders } from "better-auth/node"
 import { and, asc, desc, eq, isNull } from "../db/drizzle.js"
 import { z } from "zod"
-import { auth } from "../auth.js"
 // Polar billing is temporarily disabled for the one-worker experiment in hosted mode.
 // Keep the old billing integration nearby so it can be restored quickly.
 // import { getCloudWorkerBillingStatus, setCloudWorkerSubscriptionCancellation } from "../billing/polar.js"
@@ -11,6 +9,7 @@ import { db } from "../db/index.js"
 import { AuditEventTable, AuthUserTable, DaytonaSandboxTable, OrgMembershipTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
+import { getRequestSession } from "./session.js"
 import { ensureDefaultOrg } from "../orgs.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
 import { customDomainForWorker } from "../workers/vanity-domain.js"
@@ -233,9 +232,7 @@ async function fetchWorkerRuntimeJson(input: {
 }
 
 async function requireSession(req: express.Request, res: express.Response) {
-  const session = await auth.api.getSession({
-    headers: fromNodeHeaders(req.headers),
-  })
+  const session = await getRequestSession(req)
   if (!session?.user?.id) {
     res.status(401).json({ error: "unauthorized" })
     return null
