@@ -236,6 +236,15 @@ pub fn run() {
             api.prevent_close();
             hide_main_window(&app_handle);
         }
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } => {
+            if !has_visible_windows {
+                show_main_window(&app_handle);
+            }
+        }
         _ => {}
     });
 }
