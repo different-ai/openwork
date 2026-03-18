@@ -21,6 +21,7 @@ export type TuiConnectInfo = {
   workspace: string;
   openworkUrl: string;
   openworkToken: string;
+  ownerToken?: string;
   hostToken: string;
   opencodeUrl: string;
   opencodePassword?: string;
@@ -639,14 +640,18 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
                 </text>
                 <text fg={theme.textMuted}>OpenWork URL (LAN)</text>
                 <text fg={theme.text}>{state.connect.openworkUrl}</text>
-                <text fg={theme.textMuted}>OpenWork Token</text>
+                <text fg={theme.textMuted}>OpenWork Collaborator Token</text>
                 <text fg={theme.text}>{state.connect.openworkToken}</text>
-                <text fg={theme.textMuted}>Host Token</text>
+                <Show when={state.connect.ownerToken}>
+                  <text fg={theme.textMuted}>OpenWork Owner Token</text>
+                  <text fg={theme.text}>{state.connect.ownerToken}</text>
+                </Show>
+                <text fg={theme.textMuted}>OpenWork Host Admin Token</text>
                 <text fg={theme.text}>{state.connect.hostToken}</text>
                 <text fg={theme.textMuted}>OpenCode URL</text>
                 <text fg={theme.text}>{state.connect.opencodeUrl}</text>
                 <Show when={state.connect.opencodePassword}>
-                  <text fg={theme.textMuted}>OpenCode Password</text>
+                  <text fg={theme.textMuted}>OpenCode Server Password</text>
                   <text fg={theme.text}>{state.connect.opencodePassword}</text>
                 </Show>
                 <text fg={theme.textMuted}>Attach command</text>

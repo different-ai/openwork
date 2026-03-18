@@ -5682,7 +5682,8 @@ async function runStart(args: ParsedArgs) {
           ]
         : []),
       `OpenWork URL: ${openworkConnectUrl}`,
-      `OpenWork Token: ${openworkToken}`,
+      `OpenWork Collaborator Token: ${openworkToken}`,
+      ...(openworkOwnerToken ? [`OpenWork Owner Token: ${openworkOwnerToken}`] : []),
       `OpenCode URL: ${opencodeConnectUrl}`,
       `Attach: ${attachCommand}`,
     ].join("\n");
@@ -5723,6 +5724,7 @@ async function runStart(args: ParsedArgs) {
           workspace: resolvedWorkspace,
           openworkUrl: openworkConnectUrl,
           openworkToken,
+          ownerToken: openworkOwnerToken,
           hostToken: openworkHostToken,
           opencodeUrl: opencodeConnectUrl,
           opencodePassword: sandboxMode !== "none" ? undefined : (opencodePassword ?? undefined),
@@ -6056,6 +6058,7 @@ async function runStart(args: ParsedArgs) {
         logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "openwork-server");
       }
       openworkOwnerToken = await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork sandbox owner token");
+      tui?.setConnectInfo({ ownerToken: openworkOwnerToken });
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
     } else {
       const startedOpencodeChild = await startOpencode({
@@ -6220,6 +6223,7 @@ async function runStart(args: ParsedArgs) {
         expectedOpencodePassword: opencodePassword,
       });
       openworkOwnerToken = await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork owner token");
+      tui?.setConnectInfo({ ownerToken: openworkOwnerToken });
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
 
       if (opencodeRouterReady && !opencodeRouterHealthInterval) {
@@ -6375,13 +6379,13 @@ async function runStart(args: ParsedArgs) {
       }
       console.log(`OpenWork server: ${payload.openwork.baseUrl}`);
       console.log(`OpenWork connect URL: ${payload.openwork.connectUrl}`);
-      console.log(`Collaborator token: ${payload.openwork.collaboratorToken}`);
+      console.log(`OpenWork Collaborator Token: ${payload.openwork.collaboratorToken}`);
       console.log("  Routine remote access for shared workers.");
       if (payload.openwork.ownerToken) {
-        console.log(`Owner token: ${payload.openwork.ownerToken}`);
+        console.log(`OpenWork Owner Token: ${payload.openwork.ownerToken}`);
         console.log("  Use this when the remote client must answer permission prompts.");
       }
-      console.log(`Host admin token: ${payload.openwork.hostToken}`);
+      console.log(`OpenWork Host Admin Token: ${payload.openwork.hostToken}`);
       console.log("  Internal host/admin token for approvals CLI and host-only APIs.");
     }
 
