@@ -4,6 +4,7 @@ import {
   buildBundlePreviewSelections,
   buildBundleUrls,
   buildOgImageUrl,
+  buildOgImageUrls,
   buildOpenInAppUrls,
   collectBundleItems,
   getBundleCounts,
@@ -35,7 +36,9 @@ export function buildMissingBundlePageProps(requestLike: RequestLike, id = "miss
   return {
     missing: true,
     canonicalUrl: buildBundleUrls(requestLike, id).shareUrl,
-    ogImageUrl: buildOgImageUrl(requestLike, id)
+    ogImageUrl: buildOgImageUrl(requestLike, id),
+    twitterImageUrl: buildOgImageUrl(requestLike, id, "twitter"),
+    ogImageUrls: buildOgImageUrls(requestLike, id),
   };
 }
 
@@ -49,7 +52,8 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
     const { rawJson } = await fetchBundleJsonById(normalizedId);
     const bundle = parseBundle(rawJson);
     const urls = buildBundleUrls(requestLike, normalizedId);
-    const ogImageUrl = buildOgImageUrl(requestLike, normalizedId);
+    const ogImageUrls = buildOgImageUrls(requestLike, normalizedId);
+    const ogImageUrl = ogImageUrls.default;
     const { openInAppDeepLink, openInWebAppUrl } = buildOpenInAppUrls(urls.shareUrl, {
       label: bundle.name || "Shared worker package"
     });
@@ -76,6 +80,8 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
       jsonUrl: urls.jsonUrl,
       downloadUrl: urls.downloadUrl,
       ogImageUrl,
+      twitterImageUrl: ogImageUrls.twitter,
+      ogImageUrls,
       openInAppDeepLink,
       openInWebAppUrl,
       installHint,

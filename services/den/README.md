@@ -36,8 +36,10 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
 - `GOOGLE_CLIENT_SECRET` optional OAuth app client secret for Google sign-in
 - `PORT` server port
-- `CORS_ORIGINS` comma-separated list of trusted browser origins for Express CORS
-- `PROVISIONER_MODE` `stub` or `render`
+<<<<<<< HEAD
+- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
+- `PROVISIONER_MODE` `stub`, `render`, or `daytona`
+- `OPENWORK_DAYTONA_ENV_PATH` optional path to a shared `.env.daytona` file; when unset, Den searches upwards from the repo for `.env.daytona`
 - `WORKER_URL_TEMPLATE` template string with `{workerId}`
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)
 - `RENDER_API_KEY` Render API key (required for `PROVISIONER_MODE=render`)
@@ -66,6 +68,79 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `POLAR_BENEFIT_ID` Polar benefit ID required to unlock cloud workers (required when paywall enabled)
 - `POLAR_SUCCESS_URL` redirect URL after successful checkout (required when paywall enabled)
 - `POLAR_RETURN_URL` return URL shown in checkout (required when paywall enabled)
+- Daytona:
+  - `DAYTONA_API_KEY` API key used to create sandboxes and volumes
+  - `DAYTONA_API_URL` Daytona API base URL (default `https://app.daytona.io/api`)
+  - `DAYTONA_TARGET` optional Daytona region/target
+  - `DAYTONA_SNAPSHOT` optional snapshot name; if omitted Den creates workers from `DAYTONA_SANDBOX_IMAGE`
+  - `DAYTONA_SANDBOX_IMAGE` sandbox base image when no snapshot is provided (default `node:20-bookworm`)
+  - `DAYTONA_SANDBOX_CPU`, `DAYTONA_SANDBOX_MEMORY`, `DAYTONA_SANDBOX_DISK` resource sizing when image-backed sandboxes are used
+  - `DAYTONA_SANDBOX_AUTO_STOP_INTERVAL`, `DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL`, `DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL` lifecycle controls
+  - `DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS` TTL for the signed OpenWork preview URL returned to Den clients (Daytona currently caps this at 24 hours)
+  - `DAYTONA_SANDBOX_NAME_PREFIX`, `DAYTONA_VOLUME_NAME_PREFIX` resource naming prefixes
+  - `DAYTONA_WORKSPACE_MOUNT_PATH`, `DAYTONA_DATA_MOUNT_PATH` volume mount paths inside the sandbox
+  - `DAYTONA_RUNTIME_WORKSPACE_PATH`, `DAYTONA_RUNTIME_DATA_PATH`, `DAYTONA_SIDECAR_DIR` local sandbox paths used for the live OpenWork runtime; the mounted Daytona volumes are linked into the runtime workspace under `volumes/`
+  - `DAYTONA_OPENWORK_PORT`, `DAYTONA_OPENCODE_PORT` ports used when launching `openwork serve`
+  - `DAYTONA_OPENWORK_VERSION` optional npm version to install instead of latest `openwork-orchestrator`
+  - `DAYTONA_CREATE_TIMEOUT_SECONDS`, `DAYTONA_DELETE_TIMEOUT_SECONDS`, `DAYTONA_HEALTHCHECK_TIMEOUT_MS`, `DAYTONA_POLL_INTERVAL_MS` provisioning timeouts
+
+For local Daytona development, place your Daytona API credentials in `/_repos/openwork/.env.daytona` and Den will pick them up automatically, including from task worktrees.
+
+## Building a Daytona snapshot
+
+If you want Daytona workers to start from a prebuilt runtime instead of a generic base image, create a snapshot and point Den at it.
+
+The snapshot builder for this repo lives at:
+
+- `scripts/create-daytona-openwork-snapshot.sh`
+- `services/den-worker-runtime/Dockerfile.daytona-snapshot`
+
+It builds a Linux image with:
+
+- `openwork-orchestrator`
+- `opencode`
+
+Prerequisites:
+
+- Docker running locally
+- Daytona CLI installed and logged in
+- a valid `.env.daytona` with at least `DAYTONA_API_KEY`
+
+From the OpenWork repo root:
+
+```bash
+./scripts/create-daytona-openwork-snapshot.sh
+```
+
+To publish a custom-named snapshot:
+
+```bash
+./scripts/create-daytona-openwork-snapshot.sh openwork-runtime
+```
+
+Useful optional overrides:
+
+- `DAYTONA_SNAPSHOT_NAME`
+- `DAYTONA_SNAPSHOT_REGION`
+- `DAYTONA_SNAPSHOT_CPU`
+- `DAYTONA_SNAPSHOT_MEMORY`
+- `DAYTONA_SNAPSHOT_DISK`
+- `OPENWORK_ORCHESTRATOR_VERSION`
+- `OPENCODE_VERSION`
+
+After the snapshot is pushed, set it in `.env.daytona`:
+
+```env
+DAYTONA_SNAPSHOT=openwork-runtime
+```
+
+Then start Den in Daytona mode:
+
+```bash
+DEN_PROVISIONER_MODE=daytona packaging/docker/den-dev-up.sh
+```
+
+If you do not set `DAYTONA_SNAPSHOT`, Den falls back to `DAYTONA_SANDBOX_IMAGE` and installs runtime dependencies at sandbox startup.
 
 ## Auth setup (Better Auth)
 
@@ -80,6 +155,9 @@ Apply migrations:
 ```bash
 pnpm db:generate
 pnpm db:migrate
+
+# or use the SQL migration runner used by Docker
+pnpm db:migrate:sql
 ```
 
 ## API
@@ -96,7 +174,7 @@ pnpm db:migrate
   - Includes latest instance metadata when available.
 - `POST /v1/workers/:id/tokens`
 - `DELETE /v1/workers/:id`
-  - Deletes worker records and attempts to suspend the backing cloud service when destination is `cloud`.
+  - Deletes worker records and attempts to tear down the backing cloud runtime when destination is `cloud`.
 
 ## CI deployment (dev == prod)
 

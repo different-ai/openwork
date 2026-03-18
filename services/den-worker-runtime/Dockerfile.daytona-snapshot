@@ -1,0 +1,34 @@
+FROM node:22-bookworm-slim
+
+ARG OPENWORK_ORCHESTRATOR_VERSION=0.11.151
+ARG OPENCODE_VERSION=1.2.6
+ARG OPENCODE_DOWNLOAD_URL=
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl tar unzip \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g "openwork-orchestrator@${OPENWORK_ORCHESTRATOR_VERSION}"
+
+RUN set -eux; \
+  arch="$(dpkg --print-architecture)"; \
+  case "$arch" in \
+    amd64) asset="opencode-linux-x64-baseline.tar.gz" ;; \
+    arm64) asset="opencode-linux-arm64.tar.gz" ;; \
+    *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+  esac; \
+  url="$OPENCODE_DOWNLOAD_URL"; \
+  if [ -z "$url" ]; then \
+    url="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${asset}"; \
+  fi; \
+  tmpdir="$(mktemp -d)"; \
+  curl -fsSL "$url" -o "$tmpdir/$asset"; \
+  tar -xzf "$tmpdir/$asset" -C "$tmpdir"; \
+  binary="$(find "$tmpdir" -type f -name opencode | head -n 1)"; \
+  test -n "$binary"; \
+  install -m 0755 "$binary" /usr/local/bin/opencode; \
+  rm -rf "$tmpdir"
+
+RUN openwork --version && opencode --version
+
+CMD ["sleep", "infinity"]

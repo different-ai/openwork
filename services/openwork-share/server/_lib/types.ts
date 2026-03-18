@@ -1,4 +1,5 @@
 import type { ItemTone, PreviewItem } from "../../components/share-home-types.ts";
+import type { OgImageVariant } from "./og-image-variants.ts";
 
 export interface RequestLike {
   headers: Record<string, string>;
@@ -9,6 +10,12 @@ export interface BundleUrls {
   shareUrl: string;
   jsonUrl: string;
   downloadUrl: string;
+}
+
+export interface OgImageUrlSet {
+  default: string;
+  twitter: string;
+  byVariant: Record<OgImageVariant, string>;
 }
 
 export interface OpenInAppUrls {
@@ -121,6 +128,8 @@ export interface BundlePageProps {
   jsonUrl?: string;
   downloadUrl?: string;
   ogImageUrl: string;
+  twitterImageUrl?: string;
+  ogImageUrls?: OgImageUrlSet;
   openInAppDeepLink?: string;
   openInWebAppUrl?: string;
   installHint?: string;

@@ -8,7 +8,6 @@ vendor
 **/dist
 **/.*.bun-build
 packages/agent-lab
-packages/app
 packages/desktop
 packages/headless
 packages/opencode-router

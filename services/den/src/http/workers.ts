@@ -1,16 +1,19 @@
-import { randomBytes, randomUUID } from "crypto"
+import { randomBytes } from "crypto"
 import express from "express"
-import { and, asc, desc, eq, isNull } from "drizzle-orm"
+import { and, asc, desc, eq, isNull } from "../db/drizzle.js"
 import { z } from "zod"
-import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSubscriptionCancellation } from "../billing/polar.js"
+// Polar billing is temporarily disabled for the one-worker experiment in hosted mode.
+// Keep the old billing integration nearby so it can be restored quickly.
+// import { getCloudWorkerBillingStatus, setCloudWorkerSubscriptionCancellation } from "../billing/polar.js"
 import { db } from "../db/index.js"
-import { AuditEventTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
+import { AuditEventTable, AuthUserTable, DaytonaSandboxTable, OrgMembershipTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
 import { getRequestSession } from "./session.js"
-import { ensureDefaultOrg, listUserOrgs, resolveUserOrg } from "../orgs.js"
+import { ensureDefaultOrg } from "../orgs.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
 import { customDomainForWorker } from "../workers/vanity-domain.js"
+import { createDenTypeId, normalizeDenTypeId } from "../db/typeid.js"
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -19,6 +22,10 @@ const createSchema = z.object({
   workspacePath: z.string().optional(),
   sandboxBackend: z.string().optional(),
   imageVersion: z.string().optional(),
+})
+
+const updateSchema = z.object({
+  name: z.string().trim().min(1).max(255),
 })
 
 const listSchema = z.object({
@@ -33,6 +40,17 @@ const token = () => randomBytes(32).toString("hex")
 
 type WorkerRow = typeof WorkerTable.$inferSelect
 type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
+type WorkerId = WorkerRow["id"]
+type OrgId = typeof OrgMembershipTable.$inferSelect.org_id
+type UserId = typeof AuthUserTable.$inferSelect.id
+
+function parseWorkerIdParam(value: string): WorkerId {
+  return normalizeDenTypeId("worker", value)
+}
+
+function parseUserId(value: string): UserId {
+  return normalizeDenTypeId("user", value)
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -70,14 +88,6 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
   }
 }
 
-function parseIssuedToken(payload: unknown): string | null {
-  if (!isRecord(payload)) {
-    return null
-  }
-  const token = typeof payload.token === "string" ? payload.token.trim() : ""
-  return token || null
-}
-
 async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string) {
   const baseUrl = normalizeUrl(instanceUrl)
   if (!baseUrl || !clientToken.trim()) {
@@ -108,7 +118,7 @@ async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: str
   }
 }
 
-function getConnectUrlCandidates(workerId: string, instanceUrl: string | null) {
+function getConnectUrlCandidates(workerId: WorkerId, instanceUrl: string | null) {
   const candidates: string[] = []
   const vanityHostname = customDomainForWorker(workerId, env.render.workerPublicDomainSuffix)
   if (vanityHostname) {
@@ -138,7 +148,7 @@ function queryIncludesFlag(value: unknown): boolean {
   return false
 }
 
-async function resolveConnectUrlFromCandidates(workerId: string, instanceUrl: string | null, clientToken: string) {
+async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: string | null, clientToken: string) {
   const candidates = getConnectUrlCandidates(workerId, instanceUrl)
   for (const candidate of candidates) {
     const resolved = await resolveConnectUrlFromWorker(candidate, clientToken)
@@ -149,7 +159,7 @@ async function resolveConnectUrlFromCandidates(workerId: string, instanceUrl: st
   return null
 }
 
-async function getWorkerRuntimeAccess(workerId: string) {
+async function getWorkerRuntimeAccess(workerId: WorkerId) {
   const instance = await getLatestWorkerInstance(workerId)
   const tokenRows = await db
     .select()
@@ -170,7 +180,7 @@ async function getWorkerRuntimeAccess(workerId: string) {
 }
 
 async function fetchWorkerRuntimeJson(input: {
-  workerId: string
+  workerId: WorkerId
   path: string
   method?: "GET" | "POST"
   body?: unknown
@@ -221,73 +231,34 @@ async function fetchWorkerRuntimeJson(input: {
   return { ok: false as const, status: lastStatus, payload: lastPayload }
 }
 
-async function issueWorkerOwnerToken(workerId: string): Promise<string> {
-  const result = await fetchWorkerRuntimeJson({
-    workerId,
-    path: "/tokens",
-    method: "POST",
-    body: { scope: "owner", label: "Den owner token" },
-  })
-
-  const token = parseIssuedToken(result.payload)
-  if (result.ok && token) {
-    return token
-  }
-
-  const message =
-    isRecord(result.payload) && typeof result.payload.message === "string"
-      ? result.payload.message
-      : `Owner token request failed with ${result.status}.`
-  throw new Error(message)
-}
-
 async function requireSession(req: express.Request, res: express.Response) {
   const session = await getRequestSession(req)
   if (!session?.user?.id) {
     res.status(401).json({ error: "unauthorized" })
     return null
   }
-  return session
+  return {
+    ...session,
+    user: {
+      ...session.user,
+      id: parseUserId(session.user.id),
+    },
+  }
 }
 
-function readRequestedOrgId(req: express.Request): string | null {
-  const queryValue = typeof req.query.orgId === "string" ? req.query.orgId : ""
-  if (queryValue.trim()) {
-    return queryValue.trim()
+async function getOrgId(userId: UserId): Promise<OrgId | null> {
+  const membership = await db
+    .select()
+    .from(OrgMembershipTable)
+    .where(eq(OrgMembershipTable.user_id, userId))
+    .limit(1)
+  if (membership.length === 0) {
+    return null
   }
-
-  if (isRecord(req.body) && typeof req.body.orgId === "string" && req.body.orgId.trim()) {
-    return req.body.orgId.trim()
-  }
-
-  return null
+  return membership[0].org_id
 }
 
-async function requireOrgContext(req: express.Request, res: express.Response, userId: string) {
-  const requestedOrgId = readRequestedOrgId(req)
-  const org = await resolveUserOrg(userId, requestedOrgId)
-
-  if (!org) {
-    const memberships = await listUserOrgs(userId)
-    if (memberships.length === 0) {
-      return null
-    }
-
-    if (requestedOrgId) {
-      res.status(403).json({
-        error: "org_forbidden",
-        message: "You do not have access to that org.",
-      })
-      return undefined
-    }
-
-    return memberships[0]
-  }
-
-  return org
-}
-
-async function countUserCloudWorkers(userId: string) {
+async function countUserCloudWorkers(userId: UserId) {
   const rows = await db
     .select({ id: WorkerTable.id })
     .from(WorkerTable)
@@ -297,7 +268,22 @@ async function countUserCloudWorkers(userId: string) {
   return rows.length
 }
 
-async function getLatestWorkerInstance(workerId: string) {
+function getExperimentBillingSummary() {
+  return {
+    featureGateEnabled: false,
+    hasActivePlan: false,
+    checkoutRequired: false,
+    checkoutUrl: null,
+    portalUrl: null,
+    price: null,
+    subscription: null,
+    invoices: [],
+    productId: env.polar.productId,
+    benefitId: env.polar.benefitId,
+  }
+}
+
+async function getLatestWorkerInstance(workerId: WorkerId) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const rows = await db
@@ -359,7 +345,7 @@ function toWorkerResponse(row: WorkerRow, userId: string) {
   }
 }
 
-async function continueCloudProvisioning(input: { workerId: string; name: string; hostToken: string; clientToken: string }) {
+async function continueCloudProvisioning(input: { workerId: WorkerId; name: string; hostToken: string; clientToken: string }) {
   try {
     const provisioned = await provisionWorker({
       workerId: input.workerId,
@@ -374,7 +360,7 @@ async function continueCloudProvisioning(input: { workerId: string; name: string
       .where(eq(WorkerTable.id, input.workerId))
 
     await db.insert(WorkerInstanceTable).values({
-      id: randomUUID(),
+      id: createDenTypeId("workerInstance"),
       worker_id: input.workerId,
       provider: provisioned.provider,
       region: provisioned.region,
@@ -398,11 +384,8 @@ workersRouter.get("/", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const org = await requireOrgContext(req, res, session.user.id)
-  if (org === undefined) {
-    return
-  }
-  if (!org) {
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
     res.json({ workers: [] })
     return
   }
@@ -416,7 +399,7 @@ workersRouter.get("/", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(eq(WorkerTable.org_id, org.id))
+    .where(eq(WorkerTable.org_id, orgId))
     .orderBy(desc(WorkerTable.created_at))
     .limit(parsed.data.limit)
 
@@ -448,44 +431,38 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     return
   }
 
-  if (parsed.data.destination === "cloud" && (await countUserCloudWorkers(session.user.id)) > 0) {
-    const access = await requireCloudWorkerAccess({
-      userId: session.user.id,
-      email: session.user.email ?? `${session.user.id}@placeholder.local`,
-      name: session.user.name ?? session.user.email ?? "OpenWork User"
+  if (parsed.data.destination === "cloud" && !env.devMode && (await countUserCloudWorkers(session.user.id)) > 0) {
+    // Polar is temporarily disabled for this experiment.
+    // Keep the previous paywall block nearby so it can be restored quickly.
+    //
+    // const access = await requireCloudWorkerAccess({
+    //   userId: session.user.id,
+    //   email: session.user.email ?? `${session.user.id}@placeholder.local`,
+    //   name: session.user.name ?? session.user.email ?? "OpenWork User",
+    // })
+    // if (!access.allowed) {
+    //   res.status(402).json({
+    //     error: "payment_required",
+    //     message: "Additional cloud workers require an active Den Cloud plan.",
+    //     polar: {
+    //       checkoutUrl: access.checkoutUrl,
+    //       productId: env.polar.productId,
+    //       benefitId: env.polar.benefitId,
+    //     },
+    //   })
+    //   return
+    // }
+
+    res.status(409).json({
+      error: "worker_limit_reached",
+      message: "You can only create one cloud worker during this experiment.",
     })
-    if (!access.allowed) {
-      res.status(402).json({
-        error: "payment_required",
-        message: "Additional cloud workers require an active Den Cloud plan.",
-        polar: {
-          checkoutUrl: access.checkoutUrl,
-          productId: env.polar.productId,
-          benefitId: env.polar.benefitId
-        }
-      })
-      return
-    }
+    return
   }
 
-  const requestedOrgId = readRequestedOrgId(req)
-  let orgId = requestedOrgId
-  if (requestedOrgId) {
-    const org = await requireOrgContext(req, res, session.user.id)
-    if (org === undefined) {
-      return
-    }
-    if (!org) {
-      res.status(404).json({ error: "org_not_found" })
-      return
-    }
-    orgId = org.id
-  }
-
-  if (!orgId) {
-    orgId = (await ensureDefaultOrg(session.user.id, session.user.name ?? session.user.email ?? "Personal"))
-  }
-  const workerId = randomUUID()
+  const orgId =
+    (await getOrgId(session.user.id)) ?? (await ensureDefaultOrg(session.user.id, session.user.name ?? session.user.email ?? "Personal"))
+  const workerId = createDenTypeId("worker")
   let workerStatus: WorkerRow["status"] = parsed.data.destination === "cloud" ? "provisioning" : "healthy"
 
   await db.insert(WorkerTable).values({
@@ -505,13 +482,13 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
   const clientToken = token()
   await db.insert(WorkerTokenTable).values([
     {
-      id: randomUUID(),
+      id: createDenTypeId("workerToken"),
       worker_id: workerId,
       scope: "host",
       token: hostToken,
     },
     {
-      id: randomUUID(),
+      id: createDenTypeId("workerToken"),
       worker_id: workerId,
       scope: "client",
       token: clientToken,
@@ -558,32 +535,37 @@ workersRouter.get("/billing", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const includeCheckoutUrl = queryIncludesFlag(req.query.includeCheckout)
-  const includePortalUrl = !queryIncludesFlag(req.query.excludePortal)
-  const includeInvoices = !queryIncludesFlag(req.query.excludeInvoices)
-
-  const billingInput = {
-    userId: session.user.id,
-    email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    name: session.user.name ?? session.user.email ?? "OpenWork User"
-  }
-
-  const billing = await getCloudWorkerBillingStatus(
-    billingInput,
-    {
-      includeCheckoutUrl,
-      includePortalUrl,
-      includeInvoices
-    }
-  )
-
   res.json({
-    billing: {
-      ...billing,
-      productId: env.polar.productId,
-      benefitId: env.polar.benefitId
-    }
+    billing: getExperimentBillingSummary(),
   })
+
+  // Polar billing is temporarily disabled for the one-worker experiment.
+  // const includeCheckoutUrl = queryIncludesFlag(req.query.includeCheckout)
+  // const includePortalUrl = !queryIncludesFlag(req.query.excludePortal)
+  // const includeInvoices = !queryIncludesFlag(req.query.excludeInvoices)
+  //
+  // const billingInput = {
+  //   userId: session.user.id,
+  //   email: session.user.email ?? `${session.user.id}@placeholder.local`,
+  //   name: session.user.name ?? session.user.email ?? "OpenWork User",
+  // }
+  //
+  // const billing = await getCloudWorkerBillingStatus(
+  //   billingInput,
+  //   {
+  //     includeCheckoutUrl,
+  //     includePortalUrl,
+  //     includeInvoices,
+  //   },
+  // )
+  //
+  // res.json({
+  //   billing: {
+  //     ...billing,
+  //     productId: env.polar.productId,
+  //     benefitId: env.polar.benefitId,
+  //   },
+  // })
 }))
 
 workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {
@@ -596,38 +578,49 @@ workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {
     return
   }
 
-  const billingInput = {
-    userId: session.user.id,
-    email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    name: session.user.name ?? session.user.email ?? "OpenWork User"
-  }
-
-  const subscription = await setCloudWorkerSubscriptionCancellation(billingInput, parsed.data.cancelAtPeriodEnd)
-  const billing = await getCloudWorkerBillingStatus(billingInput, {
-    includeCheckoutUrl: false,
-    includePortalUrl: true,
-    includeInvoices: true
-  })
-
   res.json({
-    subscription,
-    billing: {
-      ...billing,
-      productId: env.polar.productId,
-      benefitId: env.polar.benefitId
-    }
+    subscription: null,
+    billing: getExperimentBillingSummary(),
   })
+
+  // Polar billing is temporarily disabled for the one-worker experiment.
+  // const billingInput = {
+  //   userId: session.user.id,
+  //   email: session.user.email ?? `${session.user.id}@placeholder.local`,
+  //   name: session.user.name ?? session.user.email ?? "OpenWork User",
+  // }
+  //
+  // const subscription = await setCloudWorkerSubscriptionCancellation(billingInput, parsed.data.cancelAtPeriodEnd)
+  // const billing = await getCloudWorkerBillingStatus(billingInput, {
+  //   includeCheckoutUrl: false,
+  //   includePortalUrl: true,
+  //   includeInvoices: true,
+  // })
+  //
+  // res.json({
+  //   subscription,
+  //   billing: {
+  //     ...billing,
+  //     productId: env.polar.productId,
+  //     benefitId: env.polar.benefitId,
+  //   },
+  // })
 }))
 
 workersRouter.get("/:id", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const org = await requireOrgContext(req, res, session.user.id)
-  if (org === undefined) {
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
     return
   }
-  if (!org) {
+
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -635,7 +628,7 @@ workersRouter.get("/:id", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, orgId)))
     .limit(1)
 
   if (rows.length === 0) {
@@ -651,15 +644,26 @@ workersRouter.get("/:id", asyncRoute(async (req, res) => {
   })
 }))
 
-workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
+workersRouter.patch("/:id", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const org = await requireOrgContext(req, res, session.user.id)
-  if (org === undefined) {
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
     return
   }
-  if (!org) {
+
+  const parsed = updateSchema.safeParse(req.body ?? {})
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+    return
+  }
+
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -667,10 +671,56 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(eq(WorkerTable.id, req.params.id))
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, orgId)))
     .limit(1)
 
-  if (rows.length === 0 || rows[0].org_id !== org.id) {
+  if (rows.length === 0) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  await db
+    .update(WorkerTable)
+    .set({ name: parsed.data.name })
+    .where(eq(WorkerTable.id, workerId))
+
+  res.json({
+    worker: toWorkerResponse(
+      {
+        ...rows[0],
+        name: parsed.data.name,
+        updated_at: new Date(),
+      },
+      session.user.id,
+    ),
+  })
+}))
+
+workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(eq(WorkerTable.id, workerId))
+    .limit(1)
+
+  if (rows.length === 0 || rows[0].org_id !== orgId) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -694,24 +744,11 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
 
   const instance = await getLatestWorkerInstance(rows[0].id)
   const connect = await resolveConnectUrlFromCandidates(rows[0].id, instance?.url ?? null, clientToken)
-  let ownerToken: string
-
-  try {
-    ownerToken = await issueWorkerOwnerToken(rows[0].id)
-  } catch (error) {
-    res.status(502).json({
-      error: "worker_owner_token_unavailable",
-      message: error instanceof Error ? error.message : "Could not mint an owner token for this worker.",
-    })
-    return
-  }
 
   res.json({
     tokens: {
       host: hostToken,
       client: clientToken,
-      collaborator: clientToken,
-      owner: ownerToken,
     },
     connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
   })
@@ -721,11 +758,16 @@ workersRouter.get("/:id/runtime", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const org = await requireOrgContext(req, res, session.user.id)
-  if (org === undefined) {
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
     return
   }
-  if (!org) {
+
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -733,7 +775,7 @@ workersRouter.get("/:id/runtime", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, orgId)))
     .limit(1)
 
   if (rows.length === 0) {
@@ -753,11 +795,16 @@ workersRouter.post("/:id/runtime/upgrade", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const org = await requireOrgContext(req, res, session.user.id)
-  if (org === undefined) {
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
     return
   }
-  if (!org) {
+
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -765,7 +812,7 @@ workersRouter.post("/:id/runtime/upgrade", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, orgId)))
     .limit(1)
 
   if (rows.length === 0) {
@@ -787,11 +834,16 @@ workersRouter.delete("/:id", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const org = await requireOrgContext(req, res, session.user.id)
-  if (org === undefined) {
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
     return
   }
-  if (!org) {
+
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -799,7 +851,7 @@ workersRouter.delete("/:id", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, orgId)))
     .limit(1)
 
   if (rows.length === 0) {
@@ -824,6 +876,7 @@ workersRouter.delete("/:id", asyncRoute(async (req, res) => {
 
   await db.transaction(async (tx) => {
     await tx.delete(WorkerTokenTable).where(eq(WorkerTokenTable.worker_id, worker.id))
+    await tx.delete(DaytonaSandboxTable).where(eq(DaytonaSandboxTable.worker_id, worker.id))
     await tx.delete(WorkerInstanceTable).where(eq(WorkerInstanceTable.worker_id, worker.id))
     await tx.delete(WorkerBundleTable).where(eq(WorkerBundleTable.worker_id, worker.id))
     await tx.delete(AuditEventTable).where(eq(AuditEventTable.worker_id, worker.id))

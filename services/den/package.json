@@ -3,15 +3,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build:den-db && OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
+    "build": "npm run build:den-db && tsc -p tsconfig.json",
+    "build:den-db": "npm --prefix ../../packages/den-db run build",
     "start": "node dist/index.js",
+    "db:migrate:sql": "node scripts/run-sql-migrations.mjs",
+    "test:smoke:daytona": "pnpm build && node scripts/daytona-provisioner-smoke.mjs",
+    "test:e2e:daytona": "node scripts/e2e-daytona-worker.mjs",
     "test:e2e:worker-limit": "node scripts/e2e-worker-limit.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "auth:generate": "npx @better-auth/cli@latest generate --config src/auth.ts --output src/db/better-auth.schema.ts --yes"
   },
   "dependencies": {
+    "@daytonaio/sdk": "^0.150.0",
     "better-auth": "^1.4.18",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

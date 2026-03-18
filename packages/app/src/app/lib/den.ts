@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 
 const STORAGE_BASE_URL = "openwork.den.baseUrl";
+const STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
 const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
@@ -14,8 +15,14 @@ export const DEFAULT_DEN_BASE_URL =
 
 export type DenSettings = {
   baseUrl: string;
+  apiBaseUrl?: string;
   authToken?: string | null;
   activeOrgId?: string | null;
+};
+
+type DenBaseUrls = {
+  baseUrl: string;
+  apiBaseUrl: string;
 };
 
 export type DenUser = {
@@ -47,6 +54,50 @@ export type DenWorkerTokens = {
   hostToken: string | null;
   openworkUrl: string | null;
   workspaceId: string | null;
+};
+
+export type DenBillingPrice = {
+  amount: number | null;
+  currency: string | null;
+  recurringInterval: string | null;
+  recurringIntervalCount: number | null;
+};
+
+export type DenBillingSubscription = {
+  id: string;
+  status: string;
+  amount: number | null;
+  currency: string | null;
+  recurringInterval: string | null;
+  recurringIntervalCount: number | null;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  canceledAt: string | null;
+  endedAt: string | null;
+};
+
+export type DenBillingInvoice = {
+  id: string;
+  createdAt: string | null;
+  status: string;
+  totalAmount: number | null;
+  currency: string | null;
+  invoiceNumber: string | null;
+  invoiceUrl: string | null;
+};
+
+export type DenBillingSummary = {
+  featureGateEnabled: boolean;
+  hasActivePlan: boolean;
+  checkoutRequired: boolean;
+  checkoutUrl: string | null;
+  portalUrl: string | null;
+  price: DenBillingPrice | null;
+  subscription: DenBillingSubscription | null;
+  invoices: DenBillingInvoice[];
+  productId: string | null;
+  benefitId: string | null;
 };
 
 type DenAuthResult = {
@@ -97,13 +148,96 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
   }
 }
 
-export function readDenSettings(): DenSettings {
-  if (typeof window === "undefined") {
-    return { baseUrl: DEFAULT_DEN_BASE_URL };
+function isWebAppHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "app.openworklabs.com" || normalized === "app.openwork.software" || normalized.startsWith("app.");
+}
+
+function stripDenApiBasePath(input: string | null | undefined): string | null {
+  const normalized = normalizeDenBaseUrl(input);
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    const suffix = "/api/den";
+    if (!pathname.toLowerCase().endsWith(suffix)) {
+      return normalized;
+    }
+
+    const nextPathname = pathname.slice(0, -suffix.length) || "/";
+    url.pathname = nextPathname;
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return normalized;
+  }
+}
+
+function ensureDenApiBasePath(input: string | null | undefined): string | null {
+  const normalized = normalizeDenBaseUrl(input);
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    if (pathname.toLowerCase().endsWith("/api/den")) {
+      return normalized;
+    }
+    url.pathname = `${pathname}/api/den`.replace(/\/+/g, "/");
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return normalized;
+  }
+}
+
+function deriveDenApiBaseUrl(input: string | null | undefined): string {
+  const normalized = normalizeDenBaseUrl(input) ?? DEFAULT_DEN_BASE_URL;
+
+  try {
+    const url = new URL(normalized);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    if (pathname.toLowerCase().endsWith("/api/den")) {
+      return normalized;
+    }
+    if (isWebAppHost(url.hostname)) {
+      return ensureDenApiBasePath(normalized) ?? normalized;
+    }
+  } catch {
+    return normalized;
   }
 
+  return normalized;
+}
+
+export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?: string | null } | string | null | undefined): DenBaseUrls {
+  const rawBaseUrl = typeof input === "string" ? input : input?.baseUrl;
+  const rawApiBaseUrl = typeof input === "string" ? null : input?.apiBaseUrl;
+  const normalizedBaseUrl = normalizeDenBaseUrl(rawBaseUrl);
+  const normalizedApiBaseUrl = normalizeDenBaseUrl(rawApiBaseUrl);
+  const seedUrl = normalizedBaseUrl ?? normalizedApiBaseUrl ?? DEFAULT_DEN_BASE_URL;
+
   return {
-    baseUrl: normalizeDenBaseUrl(window.localStorage.getItem(STORAGE_BASE_URL) ?? "") ?? DEFAULT_DEN_BASE_URL,
+    baseUrl: stripDenApiBasePath(normalizedBaseUrl ?? seedUrl) ?? DEFAULT_DEN_BASE_URL,
+    apiBaseUrl: normalizedApiBaseUrl ?? deriveDenApiBaseUrl(seedUrl),
+  };
+}
+
+function resolveRequestBaseUrl(baseUrls: DenBaseUrls, path: string): string {
+  return path.startsWith("/api/") ? baseUrls.baseUrl : baseUrls.apiBaseUrl;
+}
+
+export function readDenSettings(): DenSettings {
+  if (typeof window === "undefined") {
+    return resolveDenBaseUrls(DEFAULT_DEN_BASE_URL);
+  }
+
+  const baseUrls = resolveDenBaseUrls({
+    baseUrl: window.localStorage.getItem(STORAGE_BASE_URL) ?? "",
+    apiBaseUrl: window.localStorage.getItem(STORAGE_API_BASE_URL) ?? "",
+  });
+
+  return {
+    ...baseUrls,
     authToken: (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() || null,
     activeOrgId: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_ID) ?? "").trim() || null,
   };
@@ -114,11 +248,12 @@ export function writeDenSettings(next: DenSettings) {
     return;
   }
 
-  const baseUrl = normalizeDenBaseUrl(next.baseUrl) ?? DEFAULT_DEN_BASE_URL;
+  const { baseUrl, apiBaseUrl } = resolveDenBaseUrls(next);
   const authToken = next.authToken?.trim() ?? "";
   const activeOrgId = next.activeOrgId?.trim() ?? "";
 
   window.localStorage.setItem(STORAGE_BASE_URL, baseUrl);
+  window.localStorage.setItem(STORAGE_API_BASE_URL, apiBaseUrl);
   if (authToken) {
     window.localStorage.setItem(STORAGE_AUTH_TOKEN, authToken);
   } else {
@@ -244,6 +379,85 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
   };
 }
 
+function getBillingPrice(value: unknown): DenBillingPrice | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    amount: typeof value.amount === "number" ? value.amount : null,
+    currency: typeof value.currency === "string" ? value.currency : null,
+    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
+    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
+  };
+}
+
+function getBillingSubscription(value: unknown): DenBillingSubscription | null {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    status: typeof value.status === "string" ? value.status : "unknown",
+    amount: typeof value.amount === "number" ? value.amount : null,
+    currency: typeof value.currency === "string" ? value.currency : null,
+    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
+    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
+    currentPeriodStart: typeof value.currentPeriodStart === "string" ? value.currentPeriodStart : null,
+    currentPeriodEnd: typeof value.currentPeriodEnd === "string" ? value.currentPeriodEnd : null,
+    cancelAtPeriodEnd: value.cancelAtPeriodEnd === true,
+    canceledAt: typeof value.canceledAt === "string" ? value.canceledAt : null,
+    endedAt: typeof value.endedAt === "string" ? value.endedAt : null,
+  };
+}
+
+function getBillingInvoice(value: unknown): DenBillingInvoice | null {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+    status: typeof value.status === "string" ? value.status : "unknown",
+    totalAmount: typeof value.totalAmount === "number" ? value.totalAmount : null,
+    currency: typeof value.currency === "string" ? value.currency : null,
+    invoiceNumber: typeof value.invoiceNumber === "string" ? value.invoiceNumber : null,
+    invoiceUrl: typeof value.invoiceUrl === "string" ? value.invoiceUrl : null,
+  };
+}
+
+function getBillingSummary(payload: unknown): DenBillingSummary | null {
+  if (!isRecord(payload) || !isRecord(payload.billing)) {
+    return null;
+  }
+
+  const billing = payload.billing;
+  if (
+    typeof billing.featureGateEnabled !== "boolean" ||
+    typeof billing.hasActivePlan !== "boolean" ||
+    typeof billing.checkoutRequired !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    featureGateEnabled: billing.featureGateEnabled,
+    hasActivePlan: billing.hasActivePlan,
+    checkoutRequired: billing.checkoutRequired,
+    checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
+    portalUrl: typeof billing.portalUrl === "string" ? billing.portalUrl : null,
+    price: getBillingPrice(billing.price),
+    subscription: getBillingSubscription(billing.subscription),
+    invoices: Array.isArray(billing.invoices)
+      ? billing.invoices.map((item) => getBillingInvoice(item)).filter((item): item is DenBillingInvoice => item !== null)
+      : [],
+    productId: typeof billing.productId === "string" ? billing.productId : null,
+    benefitId: typeof billing.benefitId === "string" ? billing.benefitId : null,
+  };
+}
+
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -277,12 +491,12 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
 }
 
 async function requestJsonRaw<T>(
-  baseUrl: string,
+  input: string | DenBaseUrls,
   path: string,
   options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
 ): Promise<RawJsonResponse<T>> {
-  const normalizedBaseUrl = normalizeDenBaseUrl(baseUrl) ?? DEFAULT_DEN_BASE_URL;
-  const url = `${normalizedBaseUrl}${path}`;
+  const baseUrls = typeof input === "string" ? resolveDenBaseUrls(input) : input;
+  const url = `${resolveRequestBaseUrl(baseUrls, path)}${path}`;
   const headers: Record<string, string> = { Accept: "application/json" };
   const token = options.token?.trim() ?? "";
   if (token) {
@@ -315,11 +529,11 @@ async function requestJsonRaw<T>(
 }
 
 async function requestJson<T>(
-  baseUrl: string,
+  input: string | DenBaseUrls,
   path: string,
   options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
 ): Promise<T> {
-  const raw = await requestJsonRaw<T>(baseUrl, path, options);
+  const raw = await requestJsonRaw<T>(input, path, options);
   if (!raw.ok) {
     const payload = raw.json;
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
@@ -330,12 +544,12 @@ async function requestJson<T>(
 }
 
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {
-  const baseUrl = normalizeDenBaseUrl(options.baseUrl) ?? DEFAULT_DEN_BASE_URL;
+  const baseUrls = resolveDenBaseUrls(options.baseUrl);
   const token = options.token?.trim() ?? null;
 
   return {
     async signInEmail(email: string, password: string): Promise<DenAuthResult> {
-      const payload = await requestJson<unknown>(baseUrl, "/api/auth/sign-in/email", {
+      const payload = await requestJson<unknown>(baseUrls, "/api/auth/sign-in/email", {
         method: "POST",
         body: {
           email: email.trim(),
@@ -346,7 +560,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async signUpEmail(email: string, password: string): Promise<DenAuthResult> {
-      const payload = await requestJson<unknown>(baseUrl, "/api/auth/sign-up/email", {
+      const payload = await requestJson<unknown>(baseUrls, "/api/auth/sign-up/email", {
         method: "POST",
         body: {
           name: DEFAULT_DEN_AUTH_NAME,
@@ -358,7 +572,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async signOut() {
-      await requestJsonRaw(baseUrl, "/api/auth/sign-out", {
+      await requestJsonRaw(baseUrls, "/api/auth/sign-out", {
         method: "POST",
         token,
         body: {},
@@ -366,7 +580,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async getSession(): Promise<DenUser> {
-      const payload = await requestJson<unknown>(baseUrl, "/v1/me", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me", {
         method: "GET",
         token,
       });
@@ -378,7 +592,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async exchangeDesktopHandoff(grant: string): Promise<DenDesktopHandoffExchange> {
-      const payload = await requestJson<unknown>(baseUrl, "/v1/auth/desktop-handoff/exchange", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/auth/desktop-handoff/exchange", {
         method: "POST",
         body: { grant },
       });
@@ -386,7 +600,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgs(): Promise<{ orgs: DenOrgSummary[]; defaultOrgId: string | null }> {
-      const payload = await requestJson<unknown>(baseUrl, "/v1/me/orgs", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me/orgs", {
         method: "GET",
         token,
       });
@@ -400,7 +614,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       const params = new URLSearchParams();
       params.set("limit", String(limit));
       params.set("orgId", orgId);
-      const payload = await requestJson<unknown>(baseUrl, `/v1/workers?${params.toString()}`, {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
         method: "GET",
         token,
       });
@@ -410,7 +624,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
       const params = new URLSearchParams();
       params.set("orgId", orgId);
-      const payload = await requestJson<unknown>(baseUrl, `/v1/workers/${encodeURIComponent(workerId)}/tokens?${params.toString()}`, {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens?${params.toString()}`, {
         method: "POST",
         token,
         body: {},
@@ -420,6 +634,47 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
+    },
+
+    async getBillingStatus(options: { includeCheckout?: boolean; includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
+      const params = new URLSearchParams();
+      if (options.includeCheckout) {
+        params.set("includeCheckout", "1");
+      }
+      if (options.includePortal === false) {
+        params.set("excludePortal", "1");
+      }
+      if (options.includeInvoices === false) {
+        params.set("excludeInvoices", "1");
+      }
+
+      const path = params.size > 0 ? `/v1/workers/billing?${params.toString()}` : "/v1/workers/billing";
+      const payload = await requestJson<unknown>(baseUrls, path, {
+        method: "GET",
+        token,
+      });
+      const summary = getBillingSummary(payload);
+      if (!summary) {
+        throw new DenApiError(500, "invalid_billing_payload", "Billing response was missing details.");
+      }
+      return summary;
+    },
+
+    async updateSubscriptionCancellation(cancelAtPeriodEnd: boolean): Promise<{ subscription: DenBillingSubscription | null; billing: DenBillingSummary }> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/workers/billing/subscription", {
+        method: "POST",
+        token,
+        body: { cancelAtPeriodEnd },
+      });
+      const billing = getBillingSummary(payload);
+      if (!billing) {
+        throw new DenApiError(500, "invalid_billing_payload", "Subscription update response was missing billing details.");
+      }
+
+      return {
+        subscription: isRecord(payload) ? getBillingSubscription(payload.subscription) : null,
+        billing,
+      };
     },
   };
 }

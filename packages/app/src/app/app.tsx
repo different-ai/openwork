@@ -209,6 +209,7 @@ type RemoteWorkspaceDefaults = {
   openworkToken?: string | null;
   directory?: string | null;
   displayName?: string | null;
+  autoConnect?: boolean;
 };
 
 type SharedSkillItem = {
@@ -638,12 +639,19 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
   const workerName = url.searchParams.get("workerName")?.trim() ?? "";
   const workerId = url.searchParams.get("workerId")?.trim() ?? "";
   const displayName = workerName || (workerId ? `Worker ${workerId.slice(0, 8)}` : "");
+  const autoConnectRaw =
+    url.searchParams.get("autoConnect") ??
+    url.searchParams.get("bypassModal") ??
+    url.searchParams.get("bypassAddWorkerModal") ??
+    "";
+  const autoConnect = ["1", "true", "yes", "on"].includes(autoConnectRaw.trim().toLowerCase());
 
   return {
     openworkHostUrl: normalizedHostUrl,
     openworkToken: token,
     directory: null,
     displayName: displayName || null,
+    autoConnect,
   };
 }
 
@@ -763,6 +771,9 @@ function stripRemoteConnectQuery(rawUrl: string): string | null {
     "accessToken",
     "workerId",
     "workerName",
+    "autoConnect",
+    "bypassModal",
+    "bypassAddWorkerModal",
     "source",
   ]) {
     if (url.searchParams.has(key)) {
@@ -801,7 +812,11 @@ export default function App() {
       // ignore
     }
   };
-  type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
+  type ProviderAuthMethod = {
+    type: "oauth" | "api";
+    label: string;
+    methodIndex?: number;
+  };
   type ProviderOAuthStartResult = {
     methodIndex: number;
     authorization: ProviderAuthAuthorization;
@@ -986,6 +1001,16 @@ export default function App() {
         label: bundleInvite.label,
       });
       setSharedBundleNoticeShown(false);
+    }
+
+    if (invite?.autoConnect) {
+      setPendingRemoteConnectDeepLink({
+        openworkHostUrl: invite.url,
+        openworkToken: invite.token ?? null,
+        directory: null,
+        displayName: null,
+        autoConnect: true,
+      });
     }
 
     const cleanedConnect = stripOpenworkConnectInviteFromUrl(window.location.href);
@@ -1346,11 +1371,16 @@ export default function App() {
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
+  type PromptFocusReturnTarget = "none" | "composer";
+
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
   const [providerAuthModalOpen, setProviderAuthModalOpen] = createSignal(false);
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
+  const [providerAuthPreferredProviderId, setProviderAuthPreferredProviderId] = createSignal<string | null>(null);
+  const [providerAuthReturnFocusTarget, setProviderAuthReturnFocusTarget] =
+    createSignal<PromptFocusReturnTarget>("none");
 
   createEffect(() => {
     const view = currentView();
@@ -2217,7 +2247,15 @@ export default function App() {
     methods: Record<string, ProviderAuthMethod[]>,
     availableProviders: ProviderListItem[],
   ) => {
-    const merged = { ...methods } as Record<string, ProviderAuthMethod[]>;
+    const merged = Object.fromEntries(
+      Object.entries(methods ?? {}).map(([id, providerMethods]) => [
+        id,
+        (providerMethods ?? []).map((method, methodIndex) => ({
+          ...method,
+          methodIndex,
+        })),
+      ]),
+    ) as Record<string, ProviderAuthMethod[]>;
     for (const provider of availableProviders ?? []) {
       const id = provider.id?.trim();
       if (!id || id === "opencode") continue;
@@ -2238,7 +2276,10 @@ export default function App() {
     return buildProviderAuthMethods(methods as Record<string, ProviderAuthMethod[]>, providers());
   };
 
-  async function startProviderAuth(providerId?: string): Promise<ProviderOAuthStartResult> {
+  async function startProviderAuth(
+    providerId?: string,
+    methodIndex?: number,
+  ): Promise<ProviderOAuthStartResult> {
     setProviderAuthError(null);
     const c = client();
     if (!c) {
@@ -2264,9 +2305,17 @@ export default function App() {
         throw new Error(tr("error.unknown_provider", { provider: resolved }));
       }
 
-      const oauthIndex = methods.findIndex((method) => method.type === "oauth");
+      const oauthIndex =
+        methodIndex !== undefined
+          ? methodIndex
+          : methods.find((method) => method.type === "oauth")?.methodIndex ?? -1;
       if (oauthIndex === -1) {
         throw new Error(tr("error.no_oauth_flow", { provider: resolved }));
+      }
+
+      const selectedMethod = methods.find((method) => method.methodIndex === oauthIndex);
+      if (!selectedMethod || selectedMethod.type !== "oauth") {
+        throw new Error(`Selected auth method is not an OAuth flow for ${resolved}.`);
       }
 
       const auth = unwrap(await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }));
@@ -2474,7 +2523,21 @@ export default function App() {
     }
   }
 
-  async function openProviderAuthModal() {
+  function focusSessionPromptSoon() {
+    if (typeof window === "undefined" || currentView() !== "session") return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
+      });
+    });
+  }
+
+  async function openProviderAuthModal(options?: {
+    returnFocusTarget?: PromptFocusReturnTarget;
+    preferredProviderId?: string;
+  }) {
+    setProviderAuthReturnFocusTarget(options?.returnFocusTarget ?? "none");
+    setProviderAuthPreferredProviderId(options?.preferredProviderId?.trim() || null);
     setProviderAuthBusy(true);
     setProviderAuthError(null);
     try {
@@ -2482,6 +2545,8 @@ export default function App() {
       setProviderAuthMethods(methods);
       setProviderAuthModalOpen(true);
     } catch (error) {
+      setProviderAuthPreferredProviderId(null);
+      setProviderAuthReturnFocusTarget("none");
       const message = describeProviderError(error, "Failed to load providers");
       setProviderAuthError(message);
       throw error;
@@ -2490,9 +2555,17 @@ export default function App() {
     }
   }
 
-  function closeProviderAuthModal() {
+  function closeProviderAuthModal(options?: { restorePromptFocus?: boolean }) {
+    const shouldFocusPrompt =
+      options?.restorePromptFocus ??
+      providerAuthReturnFocusTarget() === "composer";
     setProviderAuthModalOpen(false);
     setProviderAuthError(null);
+    setProviderAuthPreferredProviderId(null);
+    setProviderAuthReturnFocusTarget("none");
+    if (shouldFocusPrompt) {
+      focusSessionPromptSoon();
+    }
   }
 
   async function saveSessionExport(sessionID: string) {
@@ -2748,6 +2821,8 @@ export default function App() {
     "session" | "default"
   >("session");
   const [modelPickerQuery, setModelPickerQuery] = createSignal("");
+  const [modelPickerReturnFocusTarget, setModelPickerReturnFocusTarget] =
+    createSignal<PromptFocusReturnTarget>("none");
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
@@ -3835,6 +3910,7 @@ export default function App() {
   const [editRemoteWorkspaceError, setEditRemoteWorkspaceError] = createSignal<string | null>(null);
   const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
+  const [autoConnectRemoteWorkspaceOverlayOpen, setAutoConnectRemoteWorkspaceOverlayOpen] = createSignal(false);
   const [pendingDenAuthDeepLink, setPendingDenAuthDeepLink] = createSignal<DenAuthDeepLink | null>(null);
   const [processingDenAuthDeepLink, setProcessingDenAuthDeepLink] = createSignal(false);
   const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
@@ -3928,6 +4004,36 @@ export default function App() {
     }
     setPendingRemoteConnectDeepLink(parsed);
     return true;
+  };
+
+  const completeRemoteConnectDeepLink = async (pending: RemoteWorkspaceDefaults) => {
+    const input = {
+      openworkHostUrl: pending.openworkHostUrl,
+      openworkToken: pending.openworkToken,
+      directory: pending.directory,
+      displayName: pending.displayName,
+    };
+
+    if (!pending.autoConnect) {
+      setDeepLinkRemoteWorkspaceDefaults(input);
+      workspaceStore.setCreateRemoteWorkspaceOpen(true);
+      return;
+    }
+
+    setError(null);
+    setAutoConnectRemoteWorkspaceOverlayOpen(true);
+    try {
+      const ok = await workspaceStore.createRemoteWorkspaceFlow(input);
+      if (ok) {
+        setDeepLinkRemoteWorkspaceDefaults(null);
+        return;
+      }
+
+      setDeepLinkRemoteWorkspaceDefaults(input);
+      workspaceStore.setCreateRemoteWorkspaceOpen(true);
+    } finally {
+      setAutoConnectRemoteWorkspaceOverlayOpen(false);
+    }
   };
 
   const queueDenAuthDeepLink = (rawUrl: string): boolean => {
@@ -4142,7 +4248,7 @@ export default function App() {
     setProcessingDenAuthDeepLink(true);
     setPendingDenAuthDeepLink(null);
     setView("dashboard");
-    setSettingsTab("den");
+    setSettingsTab(developerMode() ? "den" : "general");
     goToDashboard("settings");
 
     void createDenClient({ baseUrl: pending.denBaseUrl })
@@ -4188,11 +4294,14 @@ export default function App() {
       return;
     }
 
-    setView("dashboard");
-    setTab("scheduled");
-    setDeepLinkRemoteWorkspaceDefaults(pending);
-    workspaceStore.setCreateRemoteWorkspaceOpen(true);
+    if (pending.autoConnect) {
+      setView("session");
+    } else {
+      setView("dashboard");
+      setTab("scheduled");
+    }
     setPendingRemoteConnectDeepLink(null);
+    void completeRemoteConnectDeepLink(pending);
   });
 
   createEffect(() => {
@@ -4938,23 +5047,39 @@ export default function App() {
     });
   });
 
-  function openSessionModelPicker() {
+  function closeModelPicker(options?: { restorePromptFocus?: boolean }) {
+    const shouldFocusPrompt =
+      options?.restorePromptFocus ??
+      modelPickerReturnFocusTarget() === "composer";
+    setModelPickerOpen(false);
+    setModelPickerReturnFocusTarget("none");
+    if (shouldFocusPrompt) {
+      focusSessionPromptSoon();
+    }
+  }
+
+  function openSessionModelPicker(options?: {
+    returnFocusTarget?: PromptFocusReturnTarget;
+  }) {
     setModelPickerTarget("session");
     setModelPickerQuery("");
+    setModelPickerReturnFocusTarget(options?.returnFocusTarget ?? "composer");
     setModelPickerOpen(true);
   }
 
   function openDefaultModelPicker() {
     setModelPickerTarget("default");
     setModelPickerQuery("");
+    setModelPickerReturnFocusTarget("none");
     setModelPickerOpen(true);
   }
 
   function applyModelSelection(next: ModelRef) {
+    const restorePromptFocus = modelPickerTarget() === "session";
     if (modelPickerTarget() === "default") {
       setDefaultModelExplicit(true);
       setDefaultModel(next);
-      setModelPickerOpen(false);
+      closeModelPicker({ restorePromptFocus: false });
       return;
     }
 
@@ -4963,20 +5088,14 @@ export default function App() {
       setPendingSessionModel(next);
       setDefaultModelExplicit(true);
       setDefaultModel(next);
-      setModelPickerOpen(false);
+      closeModelPicker({ restorePromptFocus });
       return;
     }
 
     setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
     setDefaultModelExplicit(true);
     setDefaultModel(next);
-    setModelPickerOpen(false);
-
-    if (typeof window !== "undefined" && currentView() === "session") {
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
-      });
-    }
+    closeModelPicker({ restorePromptFocus });
   }
 
   function openSettingsFromModelPicker() {
@@ -6641,6 +6760,7 @@ export default function App() {
       providerAuthModalOpen: providerAuthModalOpen(),
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
+      providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
       openProviderAuthModal,
       disconnectProvider,
       closeProviderAuthModal,
@@ -7001,6 +7121,7 @@ export default function App() {
     providerAuthBusy: providerAuthBusy(),
     providerAuthError: providerAuthError(),
     providerAuthMethods: providerAuthMethods(),
+    providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
     providers: providers(),
     providerConnectedIds: providerConnectedIds(),
     listAgents: listAgents,
@@ -7176,7 +7297,7 @@ export default function App() {
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
         onOpenSettings={openSettingsFromModelPicker}
-        onClose={() => setModelPickerOpen(false)}
+        onClose={closeModelPicker}
       />
 
       <ResetModal
@@ -7421,6 +7542,37 @@ export default function App() {
           (busyLabel() === "status.creating_workspace" || busyLabel() === "status.connecting")
         }
       />
+
+      <Show when={autoConnectRemoteWorkspaceOverlayOpen()}>
+        <div class="fixed inset-0 z-[60] flex items-center justify-center bg-gray-1/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            role="status"
+            aria-live="polite"
+            class="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-6 bg-gray-2 shadow-2xl"
+          >
+            <div class="border-b border-gray-6 bg-gray-1 px-6 py-5">
+              <div class="inline-flex items-center rounded-full border border-gray-6 bg-gray-2 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-gray-10">
+                OpenWork Cloud
+              </div>
+              <h3 class="mt-4 text-lg font-semibold text-gray-12">Adding your worker</h3>
+              <p class="mt-1 text-sm text-gray-10">
+                Connecting your OpenWork worker now. This usually takes a moment.
+              </p>
+            </div>
+            <div class="flex items-center gap-4 px-6 py-6">
+              <div class="flex h-12 w-12 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1/50">
+                <div class="h-5 w-5 rounded-full border-2 border-gray-7 border-t-gray-12 animate-spin" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium text-gray-12">Preparing your session</div>
+                <div class="mt-1 text-xs leading-relaxed text-gray-10">
+                  We are adding the remote worker in the background so you can land directly in the chat view.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
 
       <div class="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
         <div class="pointer-events-auto">

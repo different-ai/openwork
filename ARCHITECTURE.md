@@ -106,6 +106,175 @@ OpenWork therefore has three runtime connection modes:
 
 This model keeps the user experience consistent across self-hosted and hosted paths while preserving OpenCode parity.
 
+## OpenCode Router (Messaging Bridge)
+
+OpenWork can expose a workspace through Slack and Telegram via `opencode-router`.
+
+- `opencode-router` is a local bridge that receives messages from messaging adapters and forwards them into OpenCode sessions.
+- The core routing key is `(channel, identityId, peerId) -> directory`.
+- Bindings and sessions are persisted locally so a chat can continue against the same workspace directory.
+- The router keeps one OpenCode client per directory and one event subscription per active directory.
+
+### Runtime shape
+
+```text
+Telegram bot / Slack app
+          |
+          v
++---------------------------+
+| adapter per identity      |
+| (telegram/slack, id)      |
++---------------------------+
+          |
+          v
+ (channel, identityId, peerId)
+          |
+          v
++---------------------------+
+| router state              |
+| - bindings                |
+| - sessions                |
+| - identity defaults       |
++---------------------------+
+          |
+          v
++---------------------------+
+| directory resolution      |
+| binding -> session ->     |
+| identity dir -> default   |
++---------------------------+
+          |
+          v
++---------------------------+
+| OpenCode client per dir   |
++---------------------------+
+          |
+          v
+   OpenCode session.prompt
+          |
+          v
+ reply back to same chat
+```
+
+### Directory scoping
+
+OpenWork optimizes for a predictable routing boundary.
+
+- The router starts with a single workspace root (`serve <path>` or `OPENCODE_DIRECTORY`).
+- Routed directories may be absolute or relative, but they must stay inside that root.
+- Relative chat commands like `/dir foo/bar` resolve against the router root.
+- Directories outside the root are rejected instead of silently accepted.
+
+This keeps the mental model simple: one router instance owns one root, and chat routing stays inside that tree.
+
+### Local HTTP control plane
+
+The router exposes a small local HTTP API for host-side configuration and dispatch:
+
+- `/health`
+- `/identities/telegram`
+- `/identities/slack`
+- `/bindings`
+- `/send`
+
+OpenWork server proxies `/opencode-router/*` and `/w/:id/opencode-router/*` to that local router API.
+
+### Workspace-scoped behavior in OpenWork
+
+OpenWork server treats messaging identities as workspace-scoped.
+
+- Each workspace maps to a normalized router identity id.
+- When the app/server upserts a Telegram or Slack identity for a workspace, it also persists that workspace path as the identity default directory.
+- Binding and send APIs are filtered through that workspace identity, so the UI talks about "this workspace" even though the underlying router can track multiple directories.
+
+```text
+Client UI / phone / web
+          |
+          v
++---------------------------+
+| OpenWork server           |
+| /workspace/:id/...        |
+| /w/:id/opencode-router/*  |
++---------------------------+
+          |
+          | workspace-scoped identity id
+          | workspace.path as default dir
+          v
++---------------------------+
+| local opencode-router     |
+| HTTP control plane        |
++---------------------------+
+          |
+          v
++---------------------------+
+| OpenCode                  |
++---------------------------+
+```
+
+### CLI mental model
+
+```text
+opencode-router serve /root/workspaces
+
+message arrives
+  -> lookup (channel, identityId, peerId)
+  -> resolve directory
+  -> ensure directory is under /root/workspaces
+  -> reuse/create OpenCode session for that directory
+  -> stream reply back to Slack or Telegram
+```
+
+### Multiple workspaces: what works today
+
+There are two layers here, and they matter:
+
+1. The router core can multiplex multiple directories.
+2. The current desktop embedding still runs a single router child process with a single root.
+
+```text
+Current desktop shape
+
+workspace A ----\
+workspace B -----+--> OpenWork server knows all workspaces
+workspace C ----/
+
+                   but desktop starts one router child
+                   with one configured root
+
+                 +-------------------------------+
+                 | opencode-router               |
+                 | root: active workspace        |
+                 | clients: many dirs under root |
+                 +-------------------------------+
+```
+
+Practical consequences:
+
+- If multiple workspaces live under one shared parent root, one router can serve them all.
+- If workspaces live in unrelated roots, directories outside the active router root are rejected.
+- OpenWork server is already multi-workspace aware.
+- Desktop router management is still effectively single-root at a time.
+
+```text
+Shared-root case
+
+router root: /Users/me/projects
+
+  /Users/me/projects/a   OK
+  /Users/me/projects/b   OK
+  /Users/me/projects/c   OK
+
+Unrelated-root case
+
+router root: /Users/me/projects/a
+
+  /Users/me/projects/a   OK
+  /Users/me/other/b      rejected
+  /tmp/c                 rejected
+```
+
+This is intentional for now: predictable scoping beats clever cross-root auto-routing.
+
 ## Cloud Worker Connect Flow (Canonical)
 
 1. Authenticate in OpenWork Cloud control surface.

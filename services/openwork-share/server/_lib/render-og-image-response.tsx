@@ -1,193 +1,232 @@
 import { ImageResponse } from "next/og";
 import type { CSSProperties, ReactElement } from "react";
 
-import type { OgImageModel, OgTokenClass } from "./render-og-image.ts";
+import { computeOgImageLayout, type OgImageModel } from "./render-og-image.ts";
+import {
+  BASE_OG_IMAGE_HEIGHT,
+  BASE_OG_IMAGE_WIDTH,
+  getOgImageVariantConfig,
+  type OgImageVariant,
+} from "./og-image-variants.ts";
 
-const canvasStyle: CSSProperties = {
-  width: "1200px",
-  height: "630px",
+const baseCanvasStyle: CSSProperties = {
+  width: `${BASE_OG_IMAGE_WIDTH}px`,
+  height: `${BASE_OG_IMAGE_HEIGHT}px`,
   position: "relative",
   display: "flex",
-  background: "#f6f9fc",
   overflow: "hidden",
+  background: "linear-gradient(135deg, #f6f9fc 0%, #edf1f7 32%, #e2e8f0 66%, #f6f9fc 100%)",
 };
 
 const monoStyle: CSSProperties = {
   fontFamily: "monospace",
-  fontSize: "24px",
-  lineHeight: "34px",
-  color: "#475569",
+  color: "#64748b",
 };
 
-const sansStyle: CSSProperties = {
-  fontFamily: "sans-serif",
-  color: "#0f172a",
-};
-
-function circleStyle(options: {
-  left?: number;
-  right?: number;
-  top: number;
-  size: number;
-  background: string;
-  opacity?: number;
-}): CSSProperties {
-  const style: CSSProperties = {
-    position: "absolute",
-    top: `${options.top}px`,
-    width: `${options.size}px`,
-    height: `${options.size}px`,
-    borderRadius: "999px",
-    background: options.background,
-    opacity: options.opacity ?? 1,
-  };
-
-  if (options.left != null) style.left = `${options.left}px`;
-  if (options.right != null) style.right = `${options.right}px`;
-
-  return style;
-}
-
-function segmentStyle(className: OgTokenClass): CSSProperties {
-  switch (className) {
-    case "hl-frontmatter":
-      return { color: "#94a3b8" };
-    case "hl-key":
-      return { color: "#be123c" };
-    case "hl-url":
-      return { color: "#2563eb" };
-    case "hl-string":
-      return { color: "#0f766e" };
-    case "hl-bracket":
-      return { color: "#94a3b8" };
-    case "hl-punctuation":
-      return { color: "#94a3b8" };
-    case "hl-number":
-      return { color: "#f97316" };
-    case "hl-keyword":
-      return { color: "#7c3aed", fontWeight: 600 };
-    case "hl-comment":
-      return { color: "#94a3b8", fontStyle: "italic" };
-    case "hl-heading":
-      return { color: "#0f172a", fontWeight: 700 };
-    case "hl-field":
-      return { color: "#be123c" };
-    case "hl-inline-code":
-      return { color: "#0891b2", background: "rgba(8,145,178,0.08)", borderRadius: "4px", paddingLeft: "2px", paddingRight: "2px" };
-    case "hl-bold":
-      return { color: "#0f172a", fontWeight: 700 };
-    case "hl-type":
-      return { color: "#0ea5e9", fontStyle: "italic" };
-    case "hl-cta":
-      return { color: "#0f172a" };
-    case "hl-cta-skill":
-      return { color: "#0f172a", fontWeight: 700 };
-    case "hl-cta-url":
-      return { color: "#0f172a", fontWeight: 700, textDecoration: "underline" };
-    case "hl-codeblock":
-      return {
-        color: "#F99D16",
-        background: "#f8fafc",
-        border: "1px solid #cbd5e1",
-        borderRadius: "5px",
-        paddingRight: "6px",
-      };
-    default:
-      return { color: "#475569" };
-  }
-}
-
-function OgImage({ model }: { model: OgImageModel }): ReactElement {
+function OpenWorkLogo(): ReactElement {
   return (
-    <div style={canvasStyle}>
-      <div style={circleStyle({ left: -42, top: -90, size: 420, background: "#F99D16", opacity: 0.22 })} />
-      <div style={circleStyle({ right: -46, top: -92, size: 400, background: "#111827", opacity: 0.09 })} />
-      <div
-        style={{
-          position: "absolute",
-          left: "48px",
-          top: "44px",
-          width: "1104px",
-          height: "542px",
-          borderRadius: "42px",
-          background: "rgba(255,255,255,0.72)",
-          border: "1px solid rgba(255,255,255,0.9)",
-          boxShadow: "0 36px 56px rgba(15, 23, 42, 0.14)",
-        }}
+    <svg width="40" height="34" viewBox="0 0 1024 866" fill="none">
+      <path
+        fill="#257CE9"
+        transform="scale(1.22782 1.22782)"
+        d="M490.962 13.2109C516.808 12.568 530.193 21.0761 551.688 33.1032L589.195 54.1798L626.787 75.2506C636.066 80.4389 649.292 87.5857 657.478 94.0584C671.769 105.914 683.112 124.362 684.683 143.175C685.907 157.831 685.389 173.375 685.377 188.173L685.339 263.964L685.37 354.897C685.391 380.32 686.655 411.29 681.484 435.723C675.249 464.929 662.265 492.269 643.573 515.558C632.659 528.974 618.797 542.079 604.617 552.026C599.568 555.568 592.431 559.221 586.895 562.254L566.235 573.714L489.048 616.153L413.234 657.883C399.18 665.674 384.868 674.248 370.402 681.208C362.127 685.189 352.078 686.881 342.951 687.813C318.706 688.516 306.452 681.909 286.169 670.383L257.958 654.418C241.853 645.558 225.804 636.597 209.812 627.535C198.9 621.412 183.811 613.689 174.536 605.554C158.954 591.701 149.499 572.233 148.244 551.42C147.215 534.843 147.823 512.715 147.821 495.659L147.81 397.552L147.812 317.362C147.82 296.243 146.723 270.836 151.06 250.573C156.911 223.486 169.602 198.349 187.923 177.56C197.018 167.22 207.51 158.199 219.097 150.756C233.391 141.426 253.227 131.448 268.617 123.103L348.755 79.3365L419.409 40.3549C445.897 25.8026 460.025 15.0173 490.962 13.2109ZM350.689 661.215C366.184 656.024 377.335 648.632 391.543 640.597C405.935 632.447 420.396 624.418 434.923 616.51L532.617 563.032C583.215 535.392 616.074 521.904 643.094 467.522C651 451.528 656.046 434.273 658.004 416.539C659.64 401.456 659.102 383.999 659.058 368.652L658.984 301.55L659.114 202.097C659.123 186.04 660.925 148.727 656.309 135.299C653.001 125.621 645.936 117.683 636.707 113.278C630.245 110.188 620.134 107.745 613.008 108.899C604.318 109.655 596.399 112.041 588.722 116.165C577.357 122.269 566.083 128.625 554.759 134.809L476.344 177.842L408.03 215.338C394.874 222.493 377.925 230.923 365.739 238.915C354.985 245.946 345.302 254.493 336.99 264.291C322.261 281.681 312.136 302.494 307.544 324.817C303.925 343.149 305.08 374.437 305.113 394.107L305.183 493.471L305.2 580.911C305.2 596.329 304.599 612.603 305.674 627.933C307.254 650.453 322.586 664.188 344.986 661.954C346.892 661.748 348.793 661.502 350.689 661.215ZM275.046 634.925C276.703 635.884 278.443 636.934 280.128 637.819C278.716 626.741 279.321 604.711 279.333 592.851L279.349 514.659L279.319 397.689L279.307 363.99C279.296 348.799 279.081 336.276 281.868 321.173C286.627 296.026 297.312 272.376 313.038 252.185C322.448 240.062 333.642 229.435 346.238 220.668C358.126 212.437 374.555 203.96 387.566 196.921C405.827 187.071 424.038 177.128 442.198 167.095L540.847 112.798C556.874 103.996 575.722 93.0395 591.788 84.9667L544.597 58.1945C529.914 49.8677 510.295 37.0292 492.825 38.8716C483.01 39.5777 473.292 41.0835 464.415 45.4977C453.156 51.0956 442.077 57.5037 431.036 63.5307L359.332 102.878L282.282 145.173C266.343 153.844 246.398 163.945 231.532 173.678C222.383 179.646 214.109 186.86 206.949 195.111C188.139 216.808 175.15 246.46 173.93 275.291C173.304 290.098 173.676 305.111 173.702 319.948L173.733 400.555L173.754 498.411C173.757 515.471 173.162 532.646 174.011 549.669C174.707 563.612 181.36 577.006 191.74 586.251C200.634 593.773 215.172 601.204 225.649 607.054C242.161 616.261 258.627 625.552 275.046 634.925Z"
       />
+      <path
+        fill="#257CE9"
+        transform="scale(1.22782 1.22782)"
+        d="M552.454 209.477C572.012 207.959 581.847 219.441 582.39 238.522C582.687 248.987 582.481 259.462 582.458 269.93L582.381 329.269L582.483 374.869C582.513 386.815 582.826 398.849 581.432 410.717C580.03 422.226 576.641 433.405 571.416 443.754C564.818 456.975 555.554 468.686 544.209 478.151C533.954 486.627 522.347 492.2 510.69 498.541L475.758 517.796L441.984 536.419C433.817 540.91 422.997 547.228 414.361 550.139C395.476 554.553 385.023 538.561 385.317 521.594C385.494 511.326 385.526 500.852 385.528 490.583L385.489 419.929L385.431 378.325C385.353 365.955 384.961 352.061 386.603 339.869C388.349 327.707 392.543 316.027 398.933 305.533C412.05 283.666 427.715 275.485 449.348 263.601L480.283 246.56L514.335 227.666C526.451 220.869 538.901 212.844 552.454 209.477ZM411.433 419.84C412.154 444.816 411.109 470.99 411.596 496.052C411.681 500.45 411.062 520.138 411.862 523.514C436.021 509.816 460.32 496.368 484.756 483.172C499.771 474.909 517.93 466.631 530.803 455.318C544.786 443.029 554.756 422.232 555.367 403.682C556.041 383.225 555.895 362.475 555.571 342.046C555.568 341.804 555.455 341.8 555.196 341.71C513.173 364.086 471.908 388.028 429.782 410.228C423.629 413.47 417.693 416.752 411.433 419.84ZM411.24 391.445L414.53 389.48C449.106 371.177 482.45 351.994 516.706 333.189L543.205 318.622C547.228 316.407 553.138 312.877 557.106 311.086C556.18 289.545 557.012 267.818 556.741 246.25C556.699 242.902 557.552 235.271 552.517 234.957C545.074 238.359 537.476 242.917 530.329 246.979C521.218 252.161 512.063 257.266 502.866 262.294L460.839 285.501C451.005 290.952 438.682 297.024 430.234 304.172C423.327 309.962 418.07 317.472 414.993 325.943C409.122 341.857 411.331 373.369 411.24 391.445Z"
+      />
+    </svg>
+  );
+}
+
+function OgImage({
+  model,
+  variant,
+}: {
+  model: OgImageModel;
+  variant: OgImageVariant;
+}): ReactElement {
+  const layout = computeOgImageLayout(model);
+  const variantConfig = getOgImageVariantConfig(variant);
+  const scaleX = variantConfig.width / BASE_OG_IMAGE_WIDTH;
+  const scaleY = variantConfig.height / BASE_OG_IMAGE_HEIGHT;
+
+  return (
+    <div
+      style={{
+        width: `${variantConfig.width}px`,
+        height: `${variantConfig.height}px`,
+        position: "relative",
+        display: "flex",
+        overflow: "hidden",
+        background: "#f6f9fc",
+      }}
+    >
       <div
         style={{
-          position: "absolute",
-          left: "18px",
-          top: "12px",
-          width: "1164px",
-          height: "606px",
-          borderRadius: "38px",
-          background: "rgba(255,255,255,0.96)",
-          border: "1px solid rgba(148,163,184,0.16)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
+          ...baseCanvasStyle,
+          transform: `scale(${scaleX}, ${scaleY})`,
+          transformOrigin: "top left",
         }}
       >
         <div
           style={{
-            height: "78px",
-            borderBottom: "1px solid rgba(226,232,240,0.92)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 28px",
+            position: "absolute",
+            inset: "-18%",
+            transform: "rotate(-18deg)",
+            background:
+              "linear-gradient(90deg, rgba(255,255,255,0) 26%, rgba(148,163,184,0.08) 45%, rgba(203,213,225,0.14) 50%, rgba(148,163,184,0.08) 55%, rgba(255,255,255,0) 74%)",
+          }}
+        />
+
+        <div
+          style={{
+            position: "absolute",
+            inset: "0",
+            opacity: 0.6,
+            backgroundImage:
+              "radial-gradient(circle at 3px 3px, rgba(148,163,184,0.16) 1.2px, transparent 1.2px)",
+            backgroundSize: "32px 32px",
+          }}
+        />
+
+        <div
+          style={{
+            position: "absolute",
+            right: "58px",
+            bottom: "32px",
+            ...monoStyle,
+            fontSize: "14px",
           }}
         >
-          <div style={{ ...sansStyle, fontSize: "40px", fontWeight: 900, letterSpacing: "-1.2px" }}>SKILL.md</div>
-          <div style={{ display: "flex", alignItems: "center", gap: "13px" }}>
-            <div
-              style={{
-                width: "18px",
-                height: "18px",
-                borderRadius: "999px",
-                background: "linear-gradient(135deg, #f97316 0%, #facc15 100%)",
-              }}
-            />
-            <div style={{ ...monoStyle, fontSize: "30px", fontWeight: 700, color: "#94a3b8", lineHeight: "34px" }}>{model.filename}</div>
-          </div>
+          {model.domain}
         </div>
 
         <div
           style={{
+            position: "absolute",
+            left: "108px",
+            top: "82px",
+            width: "984px",
+            height: "466px",
+            borderRadius: "28px",
+            background: "rgba(255,255,255,0.72)",
+            border: "1px solid rgba(226,232,240,0.85)",
+            boxShadow: "0 18px 40px rgba(1,22,39,0.08), 0 4px 12px rgba(1,22,39,0.04)",
             display: "flex",
             flexDirection: "column",
-            padding: "48px 34px 0 34px",
-            gap: "0px",
-            ...monoStyle,
+            padding: "44px 72px 42px 72px",
           }}
         >
-          {model.lines.map((line, index) => (
-            <div key={index} style={{ display: "flex", minHeight: `${line.height}px`, alignItems: "baseline" }}>
-              <div style={{ display: "flex", whiteSpace: "pre", flexWrap: "nowrap", letterSpacing: "-0.3px" }}>
-                {line.segments.length ? (
-                  line.segments.map((segment, segmentIndex) => (
-                    <span key={segmentIndex} style={segmentStyle(segment.className)}>
-                      {segment.text}
-                    </span>
-                  ))
-                ) : (
-                  <span>{" "}</span>
-                )}
-              </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <OpenWorkLogo />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                height: "34px",
+                padding: "0 16px",
+                borderRadius: "999px",
+                background: "rgba(255,255,255,0.82)",
+                border: "1px solid rgba(226,232,240,0.72)",
+              }}
+            >
+              <div
+                style={{
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "999px",
+                  background: "#011627",
+                }}
+              />
+              <span style={{ ...monoStyle, fontSize: "15px", color: "#334155" }}>{model.fileType}</span>
             </div>
-          ))}
+          </div>
+
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              maxWidth: "720px",
+            }}
+          >
+            {layout.titleLines.map((line, index) => (
+              <div
+                key={`${line}-${index}`}
+                style={{
+                  fontFamily: "sans-serif",
+                  fontSize: `${layout.titleFontSize}px`,
+                  lineHeight: `${layout.titleLineHeight}px`,
+                  fontWeight: 700,
+                  letterSpacing: "-0.04em",
+                  color: "#011627",
+                }}
+              >
+                {line}
+              </div>
+            ))}
+
+            {layout.showDescription ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px",
+                  marginTop: "18px",
+                  maxWidth: "620px",
+                }}
+              >
+                {layout.descriptionLines.map((line, index) => (
+                  <div
+                    key={`${line}-${index}`}
+                    style={{
+                      fontFamily: "sans-serif",
+                      fontSize: "19px",
+                      lineHeight: "24px",
+                      fontWeight: 500,
+                      color: "#475569",
+                    }}
+                  >
+                    {line}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
+            <span
+              style={{
+                ...monoStyle,
+                fontSize: "15px",
+                letterSpacing: "0.16em",
+                color: "#64748b",
+              }}
+            >
+              {model.category.toUpperCase()}
+            </span>
+            <span style={{ ...monoStyle, fontSize: "15px", color: "#cbd5e1" }}>/</span>
+            <span style={{ ...monoStyle, fontSize: "15px" }}>{model.tag}</span>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-export function renderOgPngResponse(model: OgImageModel, headers: Record<string, string> = {}): ImageResponse {
-  const response = new ImageResponse(<OgImage model={model} />, {
-    width: 1200,
-    height: 630,
+export function renderOgPngResponse(
+  model: OgImageModel,
+  headers: Record<string, string> = {},
+  variant: OgImageVariant = "facebook",
+): ImageResponse {
+  const variantConfig = getOgImageVariantConfig(variant);
+  const response = new ImageResponse(<OgImage model={model} variant={variant} />, {
+    width: variantConfig.width,
+    height: variantConfig.height,
   });
 
   for (const [name, value] of Object.entries(headers)) {

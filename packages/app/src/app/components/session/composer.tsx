@@ -205,6 +205,10 @@ const readEditorText = (editor: HTMLElement | undefined) => normalizeText(editor
 const RECENT_EMIT_TTL_MS = 30_000;
 const MAX_RECENT_EMITS = 400;
 const DRAFT_FLUSH_DEBOUNCE_MS = 140;
+const MOBILE_VIEW_MEDIA_QUERY = "(max-width: 767px)";
+
+const isMobileViewport = () =>
+  typeof window !== "undefined" && window.matchMedia(MOBILE_VIEW_MEDIA_QUERY).matches;
 
 const MODEL_VARIANT_OPTIONS = [
   { value: "none", label: "None" },
@@ -1068,7 +1072,21 @@ export default function Composer(props: ComposerProps) {
     clearSentAttachments();
     setEditorText("");
     emitDraftChange();
-    queueMicrotask(() => focusEditorEnd());
+    queueMicrotask(() => {
+      if (isMobileViewport()) {
+        const activeElement = document.activeElement;
+        if (
+          activeElement instanceof HTMLElement &&
+          editorRef &&
+          (activeElement === editorRef || editorRef.contains(activeElement))
+        ) {
+          window.getSelection()?.removeAllRanges();
+          activeElement.blur();
+        }
+        return;
+      }
+      focusEditorEnd();
+    });
   };
 
   const recordHistory = (draft: ComposerDraft) => {
@@ -1768,9 +1786,8 @@ export default function Composer(props: ComposerProps) {
                       onClick={handleEditorClick}
                       class="bg-transparent border-none p-0 pb-8 pr-4 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] max-h-40 overflow-y-auto outline-none relative z-10"
                     />
-
-                    <div class="mt-4 flex flex-col gap-4 px-1 pb-1 sm:flex-row sm:items-center sm:justify-between">
-                      <div class="flex flex-wrap items-center gap-2.5 text-gray-10">
+                    <div class="mt-4 flex items-center px-1 pb-1">
+                      <div class="flex min-w-0 items-center gap-1.5 text-gray-10 sm:gap-2.5">
                         <input
                           ref={inboxFileInputRef}
                           type="file"
@@ -1816,7 +1833,7 @@ export default function Composer(props: ComposerProps) {
                           <Paperclip size={16} />
                         </button>
 
-                        <div class="relative" ref={(el) => props.setAgentPickerRef(el)}>
+                        <div class="relative hidden md:block" ref={(el) => props.setAgentPickerRef(el)}>
                           <button
                             type="button"
                             class="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
@@ -1899,14 +1916,15 @@ export default function Composer(props: ComposerProps) {
 
                         <button
                           type="button"
-                          class="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
+
+                          class="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
                           onClick={props.onModelClick}
                           disabled={props.busy}
                         >
-                          {props.selectedModelLabel}
-                          <ChevronDown size={14} />
+                          <span>{props.selectedModelLabel}</span>
+                          <ChevronDown size={14} class="shrink-0" />
                         </button>
-                        <div class="relative" ref={(el) => (variantPickerRef = el)}>
+                        <div class="relative hidden md:block" ref={(el) => (variantPickerRef = el)}>
                           <button
                             type="button"
                             class="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
@@ -1949,7 +1967,7 @@ export default function Composer(props: ComposerProps) {
                           </Show>
                         </div>
                       </div>
-                      <div class="flex items-center gap-3 text-gray-10 sm:justify-end">
+                      <div class="ml-auto flex shrink-0 items-center gap-3 text-gray-10">
                         <Show
                           when={props.isStreaming}
                           fallback={
@@ -1957,25 +1975,23 @@ export default function Composer(props: ComposerProps) {
                               type="button"
                               disabled={!hasDraftContent()}
                               onClick={sendDraft}
-                              class={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-[13px] font-medium transition-colors ${!hasDraftContent()
+                              class={`inline-flex items-center gap-2 rounded-full p-1.5 text-[13px] font-medium transition-colors ${!hasDraftContent()
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-dls-accent text-white hover:bg-[var(--dls-accent-hover)]"
                                 }`}
                               title="Run task"
                             >
                               <ArrowUp size={16} />
-                              <span>Run task</span>
                             </button>
                           }
                         >
                           <button
                             type="button"
                             onClick={() => props.onStop()}
-                            class="inline-flex items-center gap-2 rounded-full bg-gray-12 px-4 py-2.5 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
+                            class="inline-flex items-center gap-2 rounded-full bg-gray-12 p-1.5 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
                             title="Stop"
                           >
                             <Square size={13} fill="currentColor" />
-                            <span>Stop</span>
                           </button>
                         </Show>
                       </div>

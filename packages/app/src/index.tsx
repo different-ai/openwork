@@ -6,6 +6,7 @@ import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
+import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { isTauriRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
 
@@ -17,6 +18,8 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Root element not found");
 }
+
+root.dataset.openworkDeployment = getOpenWorkDeployment();
 
 const RouterComponent = isTauriRuntime() ? HashRouter : Router;
 

@@ -2,6 +2,7 @@ import { createContext, createEffect, createMemo, createSignal, onCleanup, useCo
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
+import { isWebDeployment } from "../lib/openwork-deployment";
 import { isTauriRuntime } from "../utils";
 
 export function normalizeServerUrl(input: string) {
@@ -59,11 +60,12 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
     const fallback = normalizeServerUrl(props.defaultUrl) ?? "";
 
-    // In production web builds served by OpenWork (Docker "remote" mode), OpenCode
+    // In hosted web deployments served by OpenWork, OpenCode
     // traffic should go through the server proxy (usually same-origin `/opencode`).
     // Do not reuse any persisted localhost targets.
     const forceProxy =
       !isTauriRuntime() &&
+      isWebDeployment() &&
       (import.meta.env.PROD ||
         (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&
           import.meta.env.VITE_OPENWORK_URL.trim().length > 0));

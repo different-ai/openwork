@@ -15,6 +15,7 @@ I want to automate this {TASK} because {REASON}. I don't trust AI to do this bec
 
 Best`;
   const hireHumanHref = `mailto:ben@openwork.software?subject=${encodeURIComponent(hireHumanSubject)}&body=${encodeURIComponent(hireHumanBody)}`;
+  const getStartedExternal = /^https?:\/\//.test(props.getStartedHref);
 
   return (
     <section className="landing-shell rounded-[2.1rem] bg-[radial-gradient(circle_at_top_right,rgba(15,23,42,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(244,246,248,0.98))] p-6 md:p-9">
@@ -103,6 +104,8 @@ Best`;
                 <a
                   href={props.getStartedHref}
                   className="doc-button w-full px-4 text-sm font-semibold"
+                  rel={getStartedExternal ? "noreferrer" : undefined}
+                  target={getStartedExternal ? "_blank" : undefined}
                 >
                   Deploy your first worker
                 </a>

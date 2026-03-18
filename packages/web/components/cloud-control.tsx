@@ -159,6 +159,7 @@ const PENDING_SOCIAL_SIGNUP_STORAGE_KEY = "openwork:web:pending-social-signup";
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
+const DEFAULT_WORKER_NAME = "My Worker";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
 const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
@@ -256,7 +257,7 @@ function getSocialProviderLabel(provider: SocialAuthProvider): string {
 
 function normalizeWorkerName(input: string): string {
   const normalized = input.trim().replace(/\s+/g, " ");
-  return normalized || "Founder Ops Pilot";
+  return normalized || DEFAULT_WORKER_NAME;
 }
 
 function isDesktopContext(): boolean {
@@ -463,7 +464,7 @@ function getWorker(payload: unknown): WorkerLaunch | null {
   return {
     workerId: worker.id,
     workerName: worker.name,
-    status: typeof worker.status === "string" ? worker.status : "unknown",
+    status: getEffectiveWorkerStatus(worker.status, instance),
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
@@ -489,7 +490,7 @@ function getWorkerSummary(payload: unknown): WorkerSummary | null {
   return {
     workerId: worker.id,
     workerName: worker.name,
-    status: typeof worker.status === "string" ? worker.status : "unknown",
+    status: getEffectiveWorkerStatus(worker.status, instance),
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     isMine: worker.isMine === true
@@ -667,7 +668,7 @@ function parseWorkerListItem(value: unknown): WorkerListItem | null {
   return {
     workerId,
     workerName,
-    status: typeof value.status === "string" ? value.status : "unknown",
+    status: getEffectiveWorkerStatus(value.status, instance),
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     isMine: value.isMine === true,
@@ -726,6 +727,22 @@ function getWorkerStatusCopy(status: string): string {
     default:
       return "Worker status unknown.";
   }
+}
+
+function getEffectiveWorkerStatus(workerStatus: unknown, instance: Record<string, unknown> | null): string {
+  const normalizedWorkerStatus = typeof workerStatus === "string" ? workerStatus : "unknown";
+  const normalized = normalizedWorkerStatus.trim().toLowerCase();
+  const instanceStatus = instance && typeof instance.status === "string" ? instance.status.trim().toLowerCase() : null;
+
+  if (!instanceStatus) {
+    return normalizedWorkerStatus;
+  }
+
+  if (normalized === "provisioning" || normalized === "starting") {
+    return instanceStatus;
+  }
+
+  return normalizedWorkerStatus;
 }
 
 function isWorkerLaunch(value: unknown): value is WorkerLaunch {
@@ -831,6 +848,7 @@ function buildOpenworkAppConnectUrl(
   accessToken: string | null,
   workerId: string | null,
   workerName: string | null,
+  options?: { autoConnect?: boolean },
 ): string | null {
   if (!appConnectBaseUrl || !openworkUrl || !accessToken) {
     return null;
@@ -855,6 +873,9 @@ function buildOpenworkAppConnectUrl(
 
   connectUrl.searchParams.set("openworkHostUrl", openworkUrl);
   connectUrl.searchParams.set("openworkToken", accessToken);
+  if (options?.autoConnect) {
+    connectUrl.searchParams.set("autoConnect", "1");
+  }
   connectUrl.searchParams.set("source", "openwork-web");
 
   if (workerId) {
@@ -1074,7 +1095,7 @@ export function CloudControlPanel() {
   });
   const [sessionHydrated, setSessionHydrated] = useState(false);
 
-  const [workerName, setWorkerName] = useState("Founder Ops Pilot");
+  const [workerName, setWorkerName] = useState(DEFAULT_WORKER_NAME);
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
   const [workerLookupId, setWorkerLookupId] = useState("");
   const [workers, setWorkers] = useState<WorkerListItem[]>([]);
@@ -1151,6 +1172,7 @@ export function CloudControlPanel() {
     preferredOpenworkToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
+    { autoConnect: true },
   );
 
   const filteredWorkers = workers.filter((item) => {
@@ -1244,6 +1266,11 @@ export function CloudControlPanel() {
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
   const runtimeUpgradeCount = runtimeSnapshot?.services.filter((item) => item.upgradeAvailable).length ?? 0;
+  const onboardingPaywallRequired = Boolean(
+    signupOnboardingActive &&
+    !worker &&
+    (checkoutUrl || (billingSummary?.featureGateEnabled && !billingSummary.hasActivePlan))
+  );
 
   function appendEvent(level: EventLevel, label: string, detail: string) {
     setEvents((current) => {
@@ -2274,7 +2301,7 @@ export function CloudControlPanel() {
     setSignupOnboardingActive(false);
     setAutoLaunchPending(false);
     setNameStepBusy(false);
-    setWorkerName("Founder Ops Pilot");
+    setWorkerName(DEFAULT_WORKER_NAME);
     setWorkerQuery("");
     setWorkerStatusFilter("all");
     setShowLaunchForm(false);
@@ -2304,7 +2331,7 @@ export function CloudControlPanel() {
       return;
     }
 
-    const resolvedLaunchName = options.workerNameOverride?.trim() || workerName.trim() || "Cloud Worker";
+    const resolvedLaunchName = options.workerNameOverride?.trim() || workerName.trim() || DEFAULT_WORKER_NAME;
 
     setLaunchBusy(true);
     setLaunchError(null);
@@ -2759,7 +2786,7 @@ export function CloudControlPanel() {
     }
 
     const target = workers.find((entry) => entry.workerId === workerId) ?? null;
-    const workerLabel = target?.workerName?.trim() || "Cloud Worker";
+    const workerLabel = target?.workerName?.trim() || DEFAULT_WORKER_NAME;
 
     if (typeof window !== "undefined") {
       const confirmed = window.confirm(
@@ -2997,7 +3024,7 @@ export function CloudControlPanel() {
                   type="text"
                   value={workerName}
                   onChange={(event) => setWorkerName(event.target.value)}
-                  placeholder="Founder Ops Pilot"
+                  placeholder={DEFAULT_WORKER_NAME}
                   maxLength={64}
                 />
               </label>
@@ -3015,7 +3042,7 @@ export function CloudControlPanel() {
               </div>
             </div>
 
-            <div className="grid content-start gap-4 rounded-[30px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:p-6">
+            <div className="hidden content-start gap-4 rounded-[30px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:grid md:p-6">
               <div className="rounded-[24px] border border-white bg-white p-5 shadow-sm">
                 <div className="flex items-center gap-3">
                   <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#011627] text-[11px] font-semibold text-white">OW</div>
@@ -3062,6 +3089,41 @@ export function CloudControlPanel() {
                 {launchError ? <p className="mt-4 text-[13px] font-medium text-rose-600">{launchError}</p> : null}
               </div>
 
+              {onboardingPaywallRequired ? (
+                <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[13px] text-amber-900">
+                  <p className="font-semibold">Step 2 requires a Den Cloud plan.</p>
+                  <p className="mt-1">Complete checkout to unlock worker provisioning.</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {effectiveCheckoutUrl ? (
+                      <a
+                        href={effectiveCheckoutUrl}
+                        rel="noreferrer"
+                        className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+                      >
+                        Continue to checkout
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+                        onClick={() => void refreshBilling({ includeCheckout: true })}
+                        disabled={billingBusy || billingCheckoutBusy}
+                      >
+                        Fetch checkout link
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+                      onClick={() => void refreshBilling({ quiet: true })}
+                      disabled={billingBusy || billingCheckoutBusy}
+                    >
+                      I already paid
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
@@ -3071,14 +3133,14 @@ export function CloudControlPanel() {
                 >
                   Open dashboard
                 </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => void handleLaunchWorker({ source: "onboarding_continue" })}
-                  disabled={launchBusy}
-                >
-                  {launchBusy ? "Working..." : "Retry provisioning"}
-                </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handleLaunchWorker({ source: "onboarding_continue" })}
+                    disabled={launchBusy || onboardingPaywallRequired}
+                  >
+                    {launchBusy ? "Working..." : onboardingPaywallRequired ? "Complete checkout to continue" : "Retry provisioning"}
+                  </button>
               </div>
             </div>
 
@@ -3306,7 +3368,7 @@ export function CloudControlPanel() {
                             ? "Starting worker..."
                             : worker?.status === "provisioning"
                               ? "Worker is starting..."
-                              : `Launch "${workerName || "Cloud Worker"}"`}
+                              : `Launch "${workerName || DEFAULT_WORKER_NAME}"`}
                         </button>
 
                         {(launchStatus || launchError) && showLaunchForm ? (
@@ -3427,7 +3489,7 @@ export function CloudControlPanel() {
                           ? "Starting worker..."
                           : worker?.status === "provisioning"
                             ? "Worker is starting..."
-                            : `Launch "${workerName || "Cloud Worker"}"`}
+                            : `Launch "${workerName || DEFAULT_WORKER_NAME}"`}
                       </button>
 
                       {(launchStatus || launchError) && showLaunchForm ? (

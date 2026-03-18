@@ -7,6 +7,7 @@ import {
   on,
   onCleanup,
   onMount,
+  type JSX,
 } from "solid-js";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
@@ -73,6 +74,7 @@ import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal, {
+  type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
@@ -113,9 +115,10 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
-import FlyoutItem from "../components/flyout-item";
-import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
+import FlyoutItem from "../components/flyout-item";
+import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
+import QuestionModal from "../components/question-modal";
 import InboxPanel from "../components/session/inbox-panel";
 
 export type SessionViewProps = {
@@ -222,7 +225,9 @@ export type SessionViewProps = {
   prompt: string;
   setPrompt: (value: string) => void;
   selectedSessionModelLabel: string;
-  openSessionModelPicker: () => void;
+  openSessionModelPicker: (options?: {
+    returnFocusTarget?: "none" | "composer";
+  }) => void;
   modelVariantLabel: string;
   modelVariant: string | null;
   setModelVariant: (value: string) => void;
@@ -245,7 +250,7 @@ export type SessionViewProps = {
   error: string | null;
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
-  startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
+  startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
     providerId: string,
     methodIndex: number,
@@ -256,15 +261,16 @@ export type SessionViewProps = {
     apiKey: string,
   ) => Promise<string | void>;
   refreshProviders: () => Promise<unknown>;
-  openProviderAuthModal: () => Promise<void>;
-  closeProviderAuthModal: () => void;
+  openProviderAuthModal: (options?: {
+    returnFocusTarget?: "none" | "composer";
+    preferredProviderId?: string;
+  }) => Promise<void>;
+  closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
   providerAuthError: string | null;
-  providerAuthMethods: Record<
-    string,
-    { type: "oauth" | "api"; label: string }[]
-  >;
+  providerAuthMethods: Record<string, ProviderAuthMethod[]>;
+  providerAuthPreferredProviderId: string | null;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
@@ -368,6 +374,8 @@ export default function SessionView(props: SessionViewProps) {
   const [renameSessionId, setRenameSessionId] = createSignal<string | null>(null);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [renameReturnFocusToComposer, setRenameReturnFocusToComposer] =
+    createSignal(false);
 
   const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
   const [deleteSessionId, setDeleteSessionId] = createSignal<string | null>(null);
@@ -403,6 +411,7 @@ export default function SessionView(props: SessionViewProps) {
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
   const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
+  const [mobileRightSidebarOpen, setMobileRightSidebarOpen] = createSignal(false);
 
   // In Session view the right sidebar is navigation-only; never pre-highlight a
   // dashboard tab here so first-run feels chat-first rather than Automations-first.
@@ -2607,6 +2616,11 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const closeCommandPaletteAndFocusComposer = () => {
+    closeCommandPalette();
+    focusComposer();
+  };
+
   const openCommandPalette = (mode: CommandPaletteMode = "root") => {
     setCommandPaletteMode(mode);
     setCommandPaletteQuery("");
@@ -2847,21 +2861,35 @@ export default function SessionView(props: SessionViewProps) {
     return next !== sessionTitleForId(renameSessionId()).trim();
   });
 
-  const openRenameModal = () => {
+  const finishRenameModal = (
+    restoreComposerFocus = renameReturnFocusToComposer(),
+  ) => {
+    setRenameModalOpen(false);
+    setRenameSessionId(null);
+    setRenameReturnFocusToComposer(false);
+    if (restoreComposerFocus) {
+      focusComposer();
+    }
+  };
+
+  const openRenameModal = (options?: { returnFocusToComposer?: boolean }) => {
     const sessionId = props.selectedSessionId;
     if (!sessionId) {
       setToastMessage("No session selected");
+      if (options?.returnFocusToComposer) {
+        focusComposer();
+      }
       return;
     }
     setRenameSessionId(sessionId);
     setRenameTitle(sessionTitleForId(sessionId));
+    setRenameReturnFocusToComposer(options?.returnFocusToComposer === true);
     setRenameModalOpen(true);
   };
 
   const closeRenameModal = () => {
     if (renameBusy()) return;
-    setRenameModalOpen(false);
-    setRenameSessionId(null);
+    finishRenameModal();
   };
 
   const submitRename = async () => {
@@ -2872,8 +2900,7 @@ export default function SessionView(props: SessionViewProps) {
     setRenameBusy(true);
     try {
       await props.renameSession(sessionId, next);
-      setRenameModalOpen(false);
-      setRenameSessionId(null);
+      finishRenameModal();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
@@ -2959,13 +2986,14 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleProviderAuthSelect = async (
     providerId: string,
+    methodIndex?: number,
   ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
       throw new Error(tr("error.provider_auth_in_progress"));
     }
     setProviderAuthActionBusy(true);
     try {
-      return await props.startProviderAuth(providerId);
+      return await props.startProviderAuth(providerId, methodIndex);
     } finally {
       setProviderAuthActionBusy(false);
     }
@@ -3634,7 +3662,7 @@ export default function SessionView(props: SessionViewProps) {
         meta: "Rename",
         action: () => {
           closeCommandPalette();
-          openRenameModal();
+          openRenameModal({ returnFocusToComposer: true });
         },
       },
       {
@@ -3656,7 +3684,7 @@ export default function SessionView(props: SessionViewProps) {
         meta: tr("session.label_open"),
         action: () => {
           closeCommandPalette();
-          props.openSessionModelPicker();
+          props.openSessionModelPicker({ returnFocusTarget: "composer" });
         },
       },
       {
@@ -3666,13 +3694,16 @@ export default function SessionView(props: SessionViewProps) {
         meta: tr("session.label_open"),
         action: () => {
           closeCommandPalette();
-          void props.openProviderAuthModal().catch((error) => {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Failed to load providers";
-            setToastMessage(message);
-          });
+          void props
+            .openProviderAuthModal({ returnFocusTarget: "composer" })
+            .catch((error) => {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Failed to load providers";
+              setToastMessage(message);
+              focusComposer();
+            });
         },
       },
       {
@@ -3739,7 +3770,7 @@ export default function SessionView(props: SessionViewProps) {
       meta: activeVariant === option.value ? "Current" : undefined,
       action: () => {
         props.setModelVariant(option.value);
-        closeCommandPalette();
+        closeCommandPaletteAndFocusComposer();
         setToastMessage(`Thinking set to ${option.label}.`);
       },
     }));
@@ -3892,41 +3923,159 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
-  const openProviderAuth = () => {
-    void props.openProviderAuthModal().catch((error) => {
+  const openProviderAuth = (preferredProviderId?: string) => {
+    void props.openProviderAuthModal({ preferredProviderId }).catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
       setToastMessage(message);
     });
   };
 
-  const hasOpenAIProviderConnected = createMemo(() =>
-    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
-  );
+  const openNewSessionProviderCta = () => {
+    openProviderAuth("anthropic");
+  };
 
+  const hasAnthropicProviderConnected = createMemo(() =>
+    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "anthropic")
+  );
+  const showNewSessionProviderCta = createMemo(() => !hasAnthropicProviderConnected());
   const rightSidebarNavButton = (
     label: string,
     icon: any,
     active: boolean,
     onClick: () => void,
-  ) => (
-    <button
-      type="button"
-      class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
-        active
-          ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-          : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
-      } ${
-        rightSidebarExpanded()
-          ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
-          : "flex h-12 items-center justify-center rounded-[16px] px-0"
-      }`}
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-    >
-      {icon}
-      <Show when={rightSidebarExpanded()}>{label}</Show>
-    </button>
+    options?: {
+      disabled?: boolean;
+      badge?: JSX.Element;
+      disabledTitle?: string;
+      expanded?: boolean;
+      onSelect?: () => void;
+    },
+  ) => {
+    const expanded = options?.expanded ?? rightSidebarExpanded();
+    return (
+      <button
+        type="button"
+        disabled={options?.disabled}
+        class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
+          options?.disabled
+            ? "cursor-not-allowed border-transparent text-gray-8 opacity-70"
+            : active
+              ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
+              : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
+        } ${
+          expanded
+            ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
+            : "flex h-12 items-center justify-center rounded-[16px] px-0"
+        }`}
+        onClick={() => {
+          onClick();
+          options?.onSelect?.();
+        }}
+        title={options?.disabled ? options.disabledTitle ?? label : label}
+        aria-label={options?.disabled ? `${label}. ${options.disabledTitle ?? "Desktop only."}` : label}
+      >
+        {icon}
+        <Show when={expanded}>
+          <span class="flex min-w-0 flex-1 items-center gap-2">
+            <span class="truncate">{label}</span>
+            {options?.badge}
+          </span>
+        </Show>
+      </button>
+    );
+  };
+
+  const renderRightSidebar = (expanded: boolean, mobile = false) => (
+    <div class={`flex h-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
+      <div class={`flex items-center pb-3 ${expanded ? "justify-end" : "justify-center"}`}>
+        <button
+          type="button"
+          class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
+          onClick={mobile ? () => setMobileRightSidebarOpen(false) : toggleRightSidebar}
+          title={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+          aria-label={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+        >
+          <Show when={mobile} fallback={<Show when={expanded} fallback={<ChevronLeft size={18} />}><ChevronRight size={18} /></Show>}>
+            <X size={18} />
+          </Show>
+        </button>
+      </div>
+      <div class={`flex-1 overflow-y-auto ${expanded ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
+        <div class="space-y-1 mb-2">
+          {rightSidebarNavButton(
+            "Automations",
+            <History size={18} />,
+            showRightSidebarSelection() && props.tab === "scheduled",
+            () => {
+              props.setTab("scheduled");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          {rightSidebarNavButton(
+            "Skills",
+            <Zap size={18} />,
+            showRightSidebarSelection() && props.tab === "skills",
+            () => {
+              props.setTab("skills");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          {rightSidebarNavButton(
+            "Extensions",
+            <Box size={18} />,
+            showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins"),
+            () => {
+              props.setTab("mcp");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          {rightSidebarNavButton(
+            "Messaging",
+            <MessageCircle size={18} />,
+            showRightSidebarSelection() && props.tab === "identities",
+            () => {
+              props.setTab("identities");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          <Show when={props.developerMode}>
+            {rightSidebarNavButton(
+              "Advanced",
+              <SlidersHorizontal size={18} />,
+              showRightSidebarSelection() && props.tab === "config",
+              openConfig,
+              mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+            )}
+          </Show>
+        </div>
+
+        <Show when={expanded}>
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+            <InboxPanel
+              id={mobile ? "mobile-sidebar-inbox" : "sidebar-inbox"}
+              client={props.openworkServerClient}
+              workspaceId={props.openworkServerWorkspaceId}
+              onToast={(message) => setToastMessage(message)}
+            />
+          </div>
+
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+            <ArtifactsPanel
+              id={mobile ? "mobile-sidebar-artifacts" : "sidebar-artifacts"}
+              files={touchedFiles()}
+              workspaceRoot={props.activeWorkspaceRoot}
+              onRevealArtifact={revealArtifact}
+              onOpenInObsidian={openArtifactInObsidian}
+              obsidianAvailable={obsidianAvailable()}
+            />
+          </div>
+        </Show>
+      </div>
+    </div>
   );
 
   return (
@@ -4154,7 +4303,16 @@ export default function SessionView(props: SessionViewProps) {
               <div class="hidden h-4 w-px bg-dls-border sm:block" />
               <button
                 type="button"
-                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
+                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
+                onClick={() => setMobileRightSidebarOpen(true)}
+                title="Open sidebar"
+                aria-label="Open sidebar"
+              >
+                <Menu size={16} />
+              </button>
+              <button
+                type="button"
+                class="hidden h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60 md:flex"
                 onClick={compactSessionHistory}
                 disabled={!canCompactSession() || historyActionBusy() !== null}
                 title="Compact session context"
@@ -4231,93 +4389,89 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
 
           <Show when={props.showSkillReloadBanner}>
-            <div class="border-b border-dls-border/70 bg-dls-surface px-4 py-3 sm:px-6 lg:px-10">
-              <div class="mx-auto w-full max-w-[980px]">
-                <div class="w-full overflow-hidden rounded-[1.2rem] border border-white/70 bg-white/92 shadow-[0_20px_56px_-32px_rgba(15,23,42,0.36)] backdrop-blur-xl animate-in fade-in slide-in-from-top-3 duration-300">
-                  <div class="flex items-start gap-3 px-4 py-4">
-                    <div
-                      class={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${
-                        props.reloadBannerBlocked
-                          ? "border-amber-6/40 bg-amber-4/80 text-amber-11"
-                          : "border-sky-6/40 bg-sky-4/80 text-sky-11"
-                      }`.trim()}
-                    >
-                      <RefreshCcw size={18} class={props.reloadBusy ? "animate-spin" : ""} />
-                    </div>
+            <div class="border-b border-dls-border/70 bg-dls-surface animate-in fade-in slide-in-from-top-3 duration-300">
+              <div class="flex min-h-[104px] items-start gap-3 px-4 py-5 sm:px-6 lg:px-10">
+                <div
+                  class={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${
+                    props.reloadBannerBlocked
+                      ? "border-amber-6/40 bg-amber-4/80 text-amber-11"
+                      : "border-sky-6/40 bg-sky-4/80 text-sky-11"
+                  }`.trim()}
+                >
+                  <RefreshCcw size={18} class={props.reloadBusy ? "animate-spin" : ""} />
+                </div>
 
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
-                          <div class="flex items-center gap-2">
-                            <span class="truncate text-sm font-semibold text-gray-12">{props.reloadBannerTitle}</span>
-                            <Show when={props.reloadBannerBlocked}>
-                              <span class="inline-flex items-center gap-1 rounded-full bg-amber-4 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-11">
-                                Active tasks
-                              </span>
-                            </Show>
-                          </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="truncate text-sm font-semibold text-gray-12">{props.reloadBannerTitle}</span>
+                        <Show when={props.reloadBannerBlocked}>
+                          <span class="inline-flex items-center gap-1 rounded-full bg-amber-4 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-11">
+                            Active tasks
+                          </span>
+                        </Show>
+                      </div>
 
-                          <div class="mt-1 space-y-1 text-sm leading-relaxed text-gray-10">
-                            <div>
-                              <Show
-                                when={props.reloadBannerBlocked}
-                                fallback={
-                                  <Show when={props.reloadError} fallback={props.reloadBannerBody}>
-                                    <span class="font-medium text-red-11">{props.reloadError}</span>
-                                  </Show>
-                                }
-                              >
-                                <span class="font-medium text-amber-11">Reloading will stop active tasks.</span>
+                      <div class="mt-1 space-y-1 text-sm leading-relaxed text-gray-10">
+                        <div>
+                          <Show
+                            when={props.reloadBannerBlocked}
+                            fallback={
+                              <Show when={props.reloadError} fallback={props.reloadBannerBody}>
+                                <span class="font-medium text-red-11">{props.reloadError}</span>
                               </Show>
-                            </div>
-
-                            <Show when={props.reloadBannerBlocked}>
-                              <div class="flex items-start gap-2 rounded-2xl border border-amber-6/40 bg-amber-3/70 px-3 py-2 text-xs text-amber-11">
-                                <AlertTriangle size={14} class="mt-0.5 shrink-0" />
-                                <span>
-                                  {`Reloading stops ${props.reloadBannerActiveCount} active conversation${props.reloadBannerActiveCount === 1 ? "" : "s"}.`}
-                                </span>
-                              </div>
-                            </Show>
-                          </div>
+                            }
+                          >
+                            <span class="font-medium text-amber-11">Reloading will stop active tasks.</span>
+                          </Show>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={props.dismissReloadBanner}
-                          class="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
-                          aria-label="Dismiss reload prompt"
-                        >
-                          <X size={16} />
-                        </button>
-                      </div>
-
-                      <div class="mt-3 flex flex-wrap items-center gap-2">
-                        <Button
-                          variant={props.reloadBannerBlocked ? "danger" : "primary"}
-                          class="rounded-full px-3 py-1.5 text-xs"
-                          disabled={!props.canReloadWorkspace || props.reloadBusy}
-                          onClick={() =>
-                            void (props.reloadBannerBlocked
-                              ? props.forceStopActiveConversations()
-                              : props.reloadWorkspaceEngine())
-                          }
-                        >
-                          {props.reloadBusy
-                            ? "Reloading..."
-                            : props.reloadBannerBlocked
-                              ? "Reload & Stop Tasks"
-                              : "Reload now"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          class="rounded-full px-3 py-1.5 text-xs"
-                          onClick={props.dismissReloadBanner}
-                        >
-                          Later
-                        </Button>
+                        <Show when={props.reloadBannerBlocked}>
+                          <div class="flex items-start gap-2 rounded-2xl border border-amber-6/40 bg-amber-3/70 px-3 py-2 text-xs text-amber-11">
+                            <AlertTriangle size={14} class="mt-0.5 shrink-0" />
+                            <span>
+                              {`Reloading stops ${props.reloadBannerActiveCount} active conversation${props.reloadBannerActiveCount === 1 ? "" : "s"}.`}
+                            </span>
+                          </div>
+                        </Show>
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={props.dismissReloadBanner}
+                      class="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
+                      aria-label="Dismiss reload prompt"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div class="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      variant={props.reloadBannerBlocked ? "danger" : "primary"}
+                      class="rounded-full px-3 py-1.5 text-xs"
+                      disabled={!props.canReloadWorkspace || props.reloadBusy}
+                      onClick={() =>
+                        void (props.reloadBannerBlocked
+                          ? props.forceStopActiveConversations()
+                          : props.reloadWorkspaceEngine())
+                      }
+                    >
+                      {props.reloadBusy
+                        ? "Reloading..."
+                        : props.reloadBannerBlocked
+                          ? "Reload & Stop Tasks"
+                          : "Reload now"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      class="rounded-full px-3 py-1.5 text-xs"
+                      onClick={props.dismissReloadBanner}
+                    >
+                      Later
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -4399,17 +4553,17 @@ export default function SessionView(props: SessionViewProps) {
                         </p>
                       </div>
                       <div class="grid gap-3 max-w-lg mx-auto text-left">
-                        <Show when={!hasOpenAIProviderConnected()}>
+                        <Show when={showNewSessionProviderCta()}>
                           <button
                             type="button"
                             class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                            onClick={openProviderAuth}
+                            onClick={openNewSessionProviderCta}
                           >
                             <div class="text-sm font-semibold text-dls-text">
-                              Connect ChatGPT
+                              Connect Claude
                             </div>
                             <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                              Add your OpenAI provider so ChatGPT-style models are ready in new sessions.
+                              Add your Anthropic provider so Claude models are ready in new sessions.
                             </div>
                           </button>
                         </Show>
@@ -4482,18 +4636,18 @@ export default function SessionView(props: SessionViewProps) {
                         <div class="flex justify-start pl-2">
                           <div class="w-full max-w-[68ch]">
                             <div
-                              class={`flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
+                              class={`ml-3 mt-3 flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
                               role="status"
                               aria-live="polite"
                             >
                               <span
-                                class={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                                  runPhase() === "error"
-                                    ? "bg-red-9"
-                                    : "bg-gray-8 animate-pulse"
+                                class={`truncate ${
+                                  runPhase() === "thinking" ||
+                                  runPhase() === "responding"
+                                    ? "animate-pulse"
+                                    : ""
                                 }`}
-                              />
-                              <span class="truncate">
+                              >
                                 {thinkingStatus() || runLabel()}
                               </span>
                               <Show when={props.developerMode}>
@@ -4629,7 +4783,7 @@ export default function SessionView(props: SessionViewProps) {
               onStop={cancelRun}
               onDraftChange={handleDraftChange}
               selectedModelLabel={props.selectedSessionModelLabel || "Model"}
-              onModelClick={props.openSessionModelPicker}
+              onModelClick={() => props.openSessionModelPicker()}
               modelVariantLabel={props.modelVariantLabel}
               modelVariant={props.modelVariant}
               onModelVariantChange={props.setModelVariant}
@@ -4708,108 +4862,21 @@ export default function SessionView(props: SessionViewProps) {
         </main>
 
         <aside
-          class="flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 transition-[width] duration-200"
+          class="hidden shrink-0 md:flex"
           style={{
             width: `${rightSidebarWidth()}px`,
             "min-width": `${rightSidebarWidth()}px`,
           }}
         >
-          <div
-            class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}
-          >
-            <button
-              type="button"
-              class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
-              onClick={toggleRightSidebar}
-              title={
-                rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"
-              }
-              aria-label={
-                rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"
-              }
-            >
-              <Show
-                when={rightSidebarExpanded()}
-                fallback={<ChevronLeft size={18} />}
-              >
-                <ChevronRight size={18} />
-              </Show>
-            </button>
-          </div>
-          <div
-            class={`flex-1 overflow-y-auto ${rightSidebarExpanded() ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}
-          >
-            <div class="space-y-1 mb-2">
-              {rightSidebarNavButton(
-                "Automations",
-                <History size={18} />,
-                showRightSidebarSelection() && props.tab === "scheduled",
-                () => {
-                  props.setTab("scheduled");
-                  props.setView("dashboard");
-                },
-              )}
-              {rightSidebarNavButton(
-                "Skills",
-                <Zap size={18} />,
-                showRightSidebarSelection() && props.tab === "skills",
-                () => {
-                  props.setTab("skills");
-                  props.setView("dashboard");
-                },
-              )}
-              {rightSidebarNavButton(
-                "Extensions",
-                <Box size={18} />,
-                showRightSidebarSelection() &&
-                  (props.tab === "mcp" || props.tab === "plugins"),
-                () => {
-                  props.setTab("mcp");
-                  props.setView("dashboard");
-                },
-              )}
-              {rightSidebarNavButton(
-                "Messaging",
-                <MessageCircle size={18} />,
-                showRightSidebarSelection() && props.tab === "identities",
-                () => {
-                  props.setTab("identities");
-                  props.setView("dashboard");
-                },
-              )}
-              <Show when={props.developerMode}>
-                {rightSidebarNavButton(
-                  "Advanced",
-                  <SlidersHorizontal size={18} />,
-                  showRightSidebarSelection() && props.tab === "config",
-                  openConfig,
-                )}
-              </Show>
-            </div>
-
-            <Show when={rightSidebarExpanded()}>
-              <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-                <InboxPanel
-                  id="sidebar-inbox"
-                  client={props.openworkServerClient}
-                  workspaceId={props.openworkServerWorkspaceId}
-                  onToast={(message) => setToastMessage(message)}
-                />
-              </div>
-
-              <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-                <ArtifactsPanel
-                  id="sidebar-artifacts"
-                  files={touchedFiles()}
-                  workspaceRoot={props.activeWorkspaceRoot}
-                  onRevealArtifact={revealArtifact}
-                  onOpenInObsidian={openArtifactInObsidian}
-                  obsidianAvailable={obsidianAvailable()}
-                />
-              </div>
-            </Show>
-          </div>
+          {renderRightSidebar(rightSidebarExpanded())}
         </aside>
+
+        <MobileSidebarDrawer
+          open={mobileRightSidebarOpen()}
+          onClose={() => setMobileRightSidebarOpen(false)}
+        >
+          {renderRightSidebar(true, true)}
+        </MobileSidebarDrawer>
       </div>
 
       <Show when={commandPaletteOpen()}>
@@ -4921,6 +4988,7 @@ export default function SessionView(props: SessionViewProps) {
         loading={props.providerAuthBusy}
         submitting={providerAuthActionBusy()}
         error={props.providerAuthError}
+        preferredProviderId={props.providerAuthPreferredProviderId}
         providers={props.providers}
         connectedProviderIds={props.providerConnectedIds}
         authMethods={props.providerAuthMethods}
@@ -4928,7 +4996,7 @@ export default function SessionView(props: SessionViewProps) {
         onSubmitApiKey={handleProviderAuthApiKey}
         onSubmitOAuth={handleProviderAuthOAuth}
         onRefreshProviders={props.refreshProviders}
-        onClose={props.closeProviderAuthModal}
+        onClose={() => props.closeProviderAuthModal()}
       />
 
       <RenameSessionModal

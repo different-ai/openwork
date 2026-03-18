@@ -3,7 +3,7 @@
 # Usage (from repo root):
 #   docker compose -f packaging/docker/docker-compose.dev.yml up
 #
-# Then open http://localhost:5173 — already wired to headless, no config needed.
+# Then open the printed Web UI URL — already wired to headless, no config needed.
 #
 # Env overrides (optional, via .env or export):
 #   OPENWORK_TOKEN        — shared client token (auto-generated if unset)
@@ -14,6 +14,7 @@
 #   SHARE_PORT            — host port to map to the share service :3000 (default: 3006)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
 #   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state (set by dev-up.sh)
+#   OPENWORK_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs (set by dev-up.sh)
 #   OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
 #   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
 #   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
@@ -62,35 +63,11 @@ services:
         echo "[orchestrator] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
-        # --- Build Linux binaries into container-local path ---
-        # Avoids overwriting macOS-native binaries on the host mount.
-        export OPENWORK_SERVER_BIN="/tmp/openwork-bins/openwork-server"
-        export OPENCODE_ROUTER_BIN="/tmp/openwork-bins/opencode-router"
-        mkdir -p /tmp/openwork-bins
-
-        # --- Compile sidecars for the container architecture ---
-        case "$(uname -m)" in
-          x86_64|amd64)
-            BUN_TARGET="bun-linux-x64"
-            ;;
-          aarch64|arm64)
-            BUN_TARGET="bun-linux-arm64"
-            ;;
-          *)
-            echo "Unsupported container architecture: $(uname -m)" >&2
-            exit 1
-            ;;
-        esac
-
-        echo "[orchestrator] Building openwork-server binary (linux)..."
-        cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
-
-        echo "[orchestrator] Building opencode-router binary (linux)..."
-        OPENCODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
-        cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
-          --define "__OPENCODE_ROUTER_VERSION__=\"$${OPENCODE_ROUTER_VERSION}\"" --outfile "$$OPENCODE_ROUTER_BIN"
-
-        cd /app
+        # --- Use source entrypoints for the dev stack ---
+        # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
+        # issues from bun --compile inside Docker on macOS.
+        export OPENWORK_SERVER_BIN="/app/packages/server/src/cli.ts"
+        export OPENCODE_ROUTER_BIN="/app/packages/opencode-router/src/cli.ts"
 
         # --- Resolve tokens ---
         if [ -z "$$OPENWORK_TOKEN" ]; then
@@ -185,9 +162,9 @@ services:
         echo "============================================"
         echo ""
 
-        export VITE_OPENWORK_URL="http://localhost:${OPENWORK_PORT:-8787}"
+        export VITE_OPENWORK_URL="http://${OPENWORK_PUBLIC_HOST:-localhost}:${OPENWORK_PORT:-8787}"
         export VITE_OPENWORK_PORT="${OPENWORK_PORT:-8787}"
-        export VITE_OPENWORK_PUBLISHER_BASE_URL="http://localhost:${SHARE_PORT:-3006}"
+        export VITE_OPENWORK_PUBLISHER_BASE_URL="http://${OPENWORK_PUBLIC_HOST:-localhost}:${SHARE_PORT:-3006}"
         export VITE_ALLOWED_HOSTS="all"
         export HOST="0.0.0.0"
         export PORT="5173"
@@ -241,8 +218,8 @@ services:
       CI: "true"
       OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
       LOCAL_BLOB_DIR: /app/tmp/share-service-blobs
-      PUBLIC_BASE_URL: http://localhost:${SHARE_PORT:-3006}
-      PUBLIC_OPENWORK_APP_URL: http://localhost:${WEB_PORT:-5173}
+      PUBLIC_BASE_URL: http://${OPENWORK_PUBLIC_HOST:-localhost}:${SHARE_PORT:-3006}
+      PUBLIC_OPENWORK_APP_URL: http://${OPENWORK_PUBLIC_HOST:-localhost}:${WEB_PORT:-5173}
 
 volumes:
   pnpm-store:
