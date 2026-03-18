@@ -27,6 +27,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-http = "2.5.6"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-shell = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 uuid = { version = "1", features = ["v4"] }
 ureq = { version = "2.10", features = ["json"] }
 gethostname = "0.4"

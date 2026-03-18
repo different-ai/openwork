@@ -92,6 +92,15 @@ fn stop_managed_services(app_handle: &tauri::AppHandle) {
 
 pub fn run() {
     let builder = tauri::Builder::default()
+        // Keep a single desktop instance alive so protocol links can be forwarded
+        // into the running app instead of being dropped by a short-lived second one.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
