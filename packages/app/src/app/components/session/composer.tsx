@@ -205,6 +205,10 @@ const readEditorText = (editor: HTMLElement | undefined) => normalizeText(editor
 const RECENT_EMIT_TTL_MS = 30_000;
 const MAX_RECENT_EMITS = 400;
 const DRAFT_FLUSH_DEBOUNCE_MS = 140;
+const MOBILE_VIEW_MEDIA_QUERY = "(max-width: 767px)";
+
+const isMobileViewport = () =>
+  typeof window !== "undefined" && window.matchMedia(MOBILE_VIEW_MEDIA_QUERY).matches;
 
 const MODEL_VARIANT_OPTIONS = [
   { value: "none", label: "None" },
@@ -1068,7 +1072,21 @@ export default function Composer(props: ComposerProps) {
     clearSentAttachments();
     setEditorText("");
     emitDraftChange();
-    queueMicrotask(() => focusEditorEnd());
+    queueMicrotask(() => {
+      if (isMobileViewport()) {
+        const activeElement = document.activeElement;
+        if (
+          activeElement instanceof HTMLElement &&
+          editorRef &&
+          (activeElement === editorRef || editorRef.contains(activeElement))
+        ) {
+          window.getSelection()?.removeAllRanges();
+          activeElement.blur();
+        }
+        return;
+      }
+      focusEditorEnd();
+    });
   };
 
   const recordHistory = (draft: ComposerDraft) => {

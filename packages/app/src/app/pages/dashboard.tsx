@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
 import type {
   DashboardTab,
   McpServerEntry,
@@ -26,6 +26,7 @@ import {
 } from "../utils";
 import { usePlatform } from "../context/platform";
 import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
+import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 import {
   buildOpenworkConnectInviteUrl,
@@ -56,6 +57,9 @@ import StatusBar from "../components/status-bar";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
+import InboxPanel from "../components/session/inbox-panel";
+import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
+import WebUnavailableSurface from "../components/web-unavailable-surface";
 import {
   Box,
   ChevronLeft,
@@ -68,6 +72,7 @@ import {
   MoreHorizontal,
   Plus,
   SlidersHorizontal,
+  X,
   Zap,
 } from "lucide-solid";
 import type { Language } from "../../i18n";
@@ -352,6 +357,8 @@ type SkillsSetBundleV1 = {
 
 export default function DashboardView(props: DashboardViewProps) {
   const platform = usePlatform();
+  const webDeployment = createMemo(() => getOpenWorkDeployment() === "web");
+  const [mobileRightSidebarOpen, setMobileRightSidebarOpen] = createSignal(false);
   const title = createMemo(() => {
     switch (props.tab) {
       case "scheduled":
@@ -522,26 +529,49 @@ export default function DashboardView(props: DashboardViewProps) {
     });
   });
 
-  const navItem = (t: DashboardTab, label: string, icon: any) => {
+  const navItem = (
+    t: DashboardTab,
+    label: string,
+    icon: any,
+    options?: {
+      disabled?: boolean;
+      badge?: JSX.Element;
+      disabledTitle?: string;
+      expanded?: boolean;
+      onSelect?: () => void;
+    },
+  ) => {
+    const expanded = options?.expanded ?? rightSidebarExpanded();
     const active = () => props.tab === t || (t === "mcp" && props.tab === "plugins");
     return (
       <button
         type="button"
+        disabled={options?.disabled}
         class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
-          active()
-            ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-            : "border-transparent text-dls-secondary hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
+          options?.disabled
+            ? "cursor-not-allowed border-transparent text-gray-8 opacity-70"
+            : active()
+              ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
+              : "border-transparent text-dls-secondary hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
         } ${
-          rightSidebarExpanded()
+          expanded
             ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
             : "flex h-12 items-center justify-center rounded-[16px] px-0"
         }`}
-        onClick={() => props.setTab(t)}
-        title={label}
-        aria-label={label}
+        onClick={() => {
+          props.setTab(t);
+          options?.onSelect?.();
+        }}
+        title={options?.disabled ? options.disabledTitle ?? label : label}
+        aria-label={options?.disabled ? `${label}. ${options.disabledTitle ?? "Desktop only."}` : label}
       >
         {icon}
-        <Show when={rightSidebarExpanded()}>{label}</Show>
+        <Show when={expanded}>
+          <span class="flex min-w-0 flex-1 items-center gap-2">
+            <span class="truncate">{label}</span>
+            {options?.badge}
+          </span>
+        </Show>
       </button>
     );
   };
@@ -554,6 +584,45 @@ export default function DashboardView(props: DashboardViewProps) {
   const openConfig = () => {
     props.setTab(props.developerMode ? "config" : "identities");
   };
+
+  const renderRightSidebar = (expanded: boolean, mobile = false) => (
+    <div class={`flex h-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
+      <div class={`flex items-center pb-3 ${expanded ? "justify-end" : "justify-center"}`}>
+        <button
+          type="button"
+          class="flex h-10 w-10 items-center justify-center rounded-[16px] text-dls-secondary transition-colors hover:bg-dls-surface hover:text-dls-text"
+          onClick={mobile ? () => setMobileRightSidebarOpen(false) : toggleRightSidebar}
+          title={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+          aria-label={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+        >
+          <Show when={mobile} fallback={<Show when={expanded} fallback={<ChevronLeft size={18} />}><ChevronRight size={18} /></Show>}>
+            <X size={18} />
+          </Show>
+        </button>
+      </div>
+      <div class={`pt-1 ${expanded ? "space-y-5" : "space-y-3"}`}>
+        <div class="space-y-1">
+          {navItem("scheduled", "Automations", <History size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
+          {navItem("skills", "Skills", <Zap size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
+          {navItem("mcp", "Extensions", <Box size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
+          {navItem("identities", "Messaging", <MessageCircle size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
+          <Show when={props.developerMode}>
+            {navItem("config", "Advanced", <SlidersHorizontal size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
+          </Show>
+        </div>
+
+        <Show when={expanded}>
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+            <InboxPanel
+              id={mobile ? "dashboard-mobile-sidebar-inbox" : "dashboard-sidebar-inbox"}
+              client={props.openworkServerClient}
+              workspaceId={props.openworkServerWorkspaceId}
+            />
+          </div>
+        </Show>
+      </div>
+    </div>
+  );
 
   const revealWorkspaceInFinder = async (workspaceId: string) => {
     const workspace = props.workspaces.find((entry) => entry.id === workspaceId) ?? null;
@@ -1193,7 +1262,16 @@ export default function DashboardView(props: DashboardViewProps) {
           <div class="flex items-center gap-1.5 text-gray-10">
             <button
               type="button"
-              class="hidden items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text sm:flex"
+              class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
+              onClick={() => setMobileRightSidebarOpen(true)}
+              title="Open sidebar"
+              aria-label="Open sidebar"
+            >
+              <Menu size={16} />
+            </button>
+            <button
+              type="button"
+              class="hidden items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:flex"
               onClick={toggleRightSidebar}
               title="Menu"
               aria-label="Menu"
@@ -1202,7 +1280,7 @@ export default function DashboardView(props: DashboardViewProps) {
               <span>Menu</span>
               <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">⌘K</span>
             </button>
-            <div class="hidden h-4 w-px bg-dls-border sm:block" />
+            <div class="hidden h-4 w-px bg-dls-border md:block" />
             <button
               type="button"
               class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
@@ -1218,113 +1296,121 @@ export default function DashboardView(props: DashboardViewProps) {
         <div class="mx-auto w-full max-w-[1100px] space-y-10 p-6 md:p-10">
           <Switch>
             <Match when={props.tab === "scheduled"}>
-              <ScheduledTasksView
-                jobs={props.scheduledJobs}
-                source={props.scheduledJobsSource}
-                sourceReady={props.scheduledJobsSourceReady}
-                status={props.scheduledJobsStatus}
-                busy={props.scheduledJobsBusy}
-                lastUpdatedAt={props.scheduledJobsUpdatedAt}
-                refreshJobs={props.refreshScheduledJobs}
-                deleteJob={props.deleteScheduledJob}
-                isWindows={props.isWindows}
-                activeWorkspaceRoot={props.activeWorkspaceRoot}
-                createSessionAndOpen={props.createSessionAndOpen}
-                setPrompt={props.setPrompt}
-                newTaskDisabled={props.newTaskDisabled}
-                schedulerInstalled={props.schedulerPluginInstalled}
-                canEditPlugins={props.canEditPlugins}
-                addPlugin={props.addPlugin}
-                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
-                reloadBusy={props.reloadBusy}
-                canReloadWorkspace={props.canReloadWorkspace}
-              />
+              <WebUnavailableSurface unavailable={webDeployment()}>
+                <ScheduledTasksView
+                  jobs={props.scheduledJobs}
+                  source={props.scheduledJobsSource}
+                  sourceReady={props.scheduledJobsSourceReady}
+                  status={props.scheduledJobsStatus}
+                  busy={props.scheduledJobsBusy}
+                  lastUpdatedAt={props.scheduledJobsUpdatedAt}
+                  refreshJobs={props.refreshScheduledJobs}
+                  deleteJob={props.deleteScheduledJob}
+                  isWindows={props.isWindows}
+                  activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  createSessionAndOpen={props.createSessionAndOpen}
+                  setPrompt={props.setPrompt}
+                  newTaskDisabled={props.newTaskDisabled}
+                  schedulerInstalled={props.schedulerPluginInstalled}
+                  canEditPlugins={props.canEditPlugins}
+                  addPlugin={props.addPlugin}
+                  reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                  reloadBusy={props.reloadBusy}
+                  canReloadWorkspace={props.canReloadWorkspace}
+                />
+              </WebUnavailableSurface>
             </Match>
             <Match when={props.tab === "skills"}>
-              <SkillsView
-                workspaceName={props.activeWorkspaceDisplay.name}
-                busy={props.busy}
-                canInstallSkillCreator={props.canInstallSkillCreator}
-                canUseDesktopTools={props.canUseDesktopTools}
-                accessHint={props.skillsAccessHint}
-                refreshSkills={props.refreshSkills}
-                refreshHubSkills={props.refreshHubSkills}
-                skills={props.skills}
-                skillsStatus={props.skillsStatus}
-                hubSkills={props.hubSkills}
-                hubSkillsStatus={props.hubSkillsStatus}
-                hubRepo={props.hubRepo}
-                hubRepos={props.hubRepos}
-                importLocalSkill={props.importLocalSkill}
-                installSkillCreator={props.installSkillCreator}
-                installHubSkill={props.installHubSkill}
-                setHubRepo={props.setHubRepo}
-                addHubRepo={props.addHubRepo}
-                removeHubRepo={props.removeHubRepo}
-                revealSkillsFolder={props.revealSkillsFolder}
-                uninstallSkill={props.uninstallSkill}
-                readSkill={props.readSkill}
-                saveSkill={props.saveSkill}
-                createSessionAndOpen={props.createSessionAndOpen}
-                setPrompt={props.setPrompt}
-              />
+              <WebUnavailableSurface unavailable={webDeployment()}>
+                <SkillsView
+                  workspaceName={props.activeWorkspaceDisplay.name}
+                  busy={props.busy}
+                  canInstallSkillCreator={props.canInstallSkillCreator}
+                  canUseDesktopTools={props.canUseDesktopTools}
+                  accessHint={props.skillsAccessHint}
+                  refreshSkills={props.refreshSkills}
+                  refreshHubSkills={props.refreshHubSkills}
+                  skills={props.skills}
+                  skillsStatus={props.skillsStatus}
+                  hubSkills={props.hubSkills}
+                  hubSkillsStatus={props.hubSkillsStatus}
+                  hubRepo={props.hubRepo}
+                  hubRepos={props.hubRepos}
+                  importLocalSkill={props.importLocalSkill}
+                  installSkillCreator={props.installSkillCreator}
+                  installHubSkill={props.installHubSkill}
+                  setHubRepo={props.setHubRepo}
+                  addHubRepo={props.addHubRepo}
+                  removeHubRepo={props.removeHubRepo}
+                  revealSkillsFolder={props.revealSkillsFolder}
+                  uninstallSkill={props.uninstallSkill}
+                  readSkill={props.readSkill}
+                  saveSkill={props.saveSkill}
+                  createSessionAndOpen={props.createSessionAndOpen}
+                  setPrompt={props.setPrompt}
+                />
+              </WebUnavailableSurface>
             </Match>
 
             <Match when={props.tab === "plugins" || props.tab === "mcp"}>
-              <ExtensionsView
-                initialSection={props.tab === "plugins" ? "plugins" : "mcp"}
-                setDashboardTab={props.setTab}
-                busy={props.busy}
-                activeWorkspaceRoot={props.activeWorkspaceRoot}
-                isRemoteWorkspace={props.isRemoteWorkspace}
-                refreshMcpServers={props.refreshMcpServers}
-                mcpServers={props.mcpServers}
-                mcpStatus={props.mcpStatus}
-                mcpLastUpdatedAt={props.mcpLastUpdatedAt}
-                mcpStatuses={props.mcpStatuses}
-                mcpConnectingName={props.mcpConnectingName}
-                selectedMcp={props.selectedMcp}
-                setSelectedMcp={props.setSelectedMcp}
-                quickConnect={props.quickConnect}
-                connectMcp={props.connectMcp}
-                authorizeMcp={props.authorizeMcp}
-                logoutMcpAuth={props.logoutMcpAuth}
-                removeMcp={props.removeMcp}
-                showMcpReloadBanner={props.showMcpReloadBanner}
-                reloadBlocked={props.mcpReloadBlocked}
-                reloadMcpEngine={props.reloadMcpEngine}
-                canEditPlugins={props.canEditPlugins}
-                canUseGlobalScope={props.canUseGlobalPluginScope}
-                accessHint={props.pluginsAccessHint}
-                pluginScope={props.pluginScope}
-                setPluginScope={props.setPluginScope}
-                pluginConfigPath={props.pluginConfigPath}
-                pluginList={props.pluginList}
-                pluginInput={props.pluginInput}
-                setPluginInput={props.setPluginInput}
-                pluginStatus={props.pluginStatus}
-                activePluginGuide={props.activePluginGuide}
-                setActivePluginGuide={props.setActivePluginGuide}
-                isPluginInstalled={props.isPluginInstalled}
-                suggestedPlugins={props.suggestedPlugins}
-                refreshPlugins={props.refreshPlugins}
-                addPlugin={props.addPlugin}
-                removePlugin={props.removePlugin}
-              />
+              <WebUnavailableSurface unavailable={webDeployment()}>
+                <ExtensionsView
+                  initialSection={props.tab === "plugins" ? "plugins" : "mcp"}
+                  setDashboardTab={props.setTab}
+                  busy={props.busy}
+                  activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  isRemoteWorkspace={props.isRemoteWorkspace}
+                  refreshMcpServers={props.refreshMcpServers}
+                  mcpServers={props.mcpServers}
+                  mcpStatus={props.mcpStatus}
+                  mcpLastUpdatedAt={props.mcpLastUpdatedAt}
+                  mcpStatuses={props.mcpStatuses}
+                  mcpConnectingName={props.mcpConnectingName}
+                  selectedMcp={props.selectedMcp}
+                  setSelectedMcp={props.setSelectedMcp}
+                  quickConnect={props.quickConnect}
+                  connectMcp={props.connectMcp}
+                  authorizeMcp={props.authorizeMcp}
+                  logoutMcpAuth={props.logoutMcpAuth}
+                  removeMcp={props.removeMcp}
+                  showMcpReloadBanner={props.showMcpReloadBanner}
+                  reloadBlocked={props.mcpReloadBlocked}
+                  reloadMcpEngine={props.reloadMcpEngine}
+                  canEditPlugins={props.canEditPlugins}
+                  canUseGlobalScope={props.canUseGlobalPluginScope}
+                  accessHint={props.pluginsAccessHint}
+                  pluginScope={props.pluginScope}
+                  setPluginScope={props.setPluginScope}
+                  pluginConfigPath={props.pluginConfigPath}
+                  pluginList={props.pluginList}
+                  pluginInput={props.pluginInput}
+                  setPluginInput={props.setPluginInput}
+                  pluginStatus={props.pluginStatus}
+                  activePluginGuide={props.activePluginGuide}
+                  setActivePluginGuide={props.setActivePluginGuide}
+                  isPluginInstalled={props.isPluginInstalled}
+                  suggestedPlugins={props.suggestedPlugins}
+                  refreshPlugins={props.refreshPlugins}
+                  addPlugin={props.addPlugin}
+                  removePlugin={props.removePlugin}
+                />
+              </WebUnavailableSurface>
             </Match>
 
             <Match when={props.tab === "identities"}>
-              <IdentitiesView
-                busy={props.busy}
-                openworkServerStatus={props.openworkServerStatus}
-                openworkServerUrl={props.openworkServerUrl}
-                openworkServerClient={props.openworkServerClient}
-                openworkReconnectBusy={props.openworkReconnectBusy}
-                reconnectOpenworkServer={props.reconnectOpenworkServer}
-                openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-                activeWorkspaceRoot={props.activeWorkspaceRoot}
-                developerMode={props.developerMode}
-              />
+              <WebUnavailableSurface unavailable={webDeployment()}>
+                <IdentitiesView
+                  busy={props.busy}
+                  openworkServerStatus={props.openworkServerStatus}
+                  openworkServerUrl={props.openworkServerUrl}
+                  openworkServerClient={props.openworkServerClient}
+                  openworkReconnectBusy={props.openworkReconnectBusy}
+                  reconnectOpenworkServer={props.reconnectOpenworkServer}
+                  openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                  activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  developerMode={props.developerMode}
+                />
+              </WebUnavailableSurface>
             </Match>
 
             <Match when={props.tab === "config" && props.developerMode}>
@@ -1607,33 +1693,21 @@ export default function DashboardView(props: DashboardViewProps) {
       </main>
 
       <aside
-        class="flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 transition-[width] duration-200"
+        class="hidden shrink-0 md:flex"
         style={{
           width: `${rightSidebarWidth()}px`,
           "min-width": `${rightSidebarWidth()}px`,
         }}
       >
-        <div class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}>
-          <button
-            type="button"
-            class="flex h-10 w-10 items-center justify-center rounded-[16px] text-dls-secondary transition-colors hover:bg-dls-surface hover:text-dls-text"
-            onClick={toggleRightSidebar}
-            title={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-            aria-label={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            <Show when={rightSidebarExpanded()} fallback={<ChevronLeft size={18} />}>
-              <ChevronRight size={18} />
-            </Show>
-          </button>
-        </div>
-        <div class="space-y-1 pt-1">
-          {navItem("scheduled", "Automations", <History size={18} />)}
-          {navItem("skills", "Skills", <Zap size={18} />)}
-          {navItem("mcp", "Extensions", <Box size={18} />)}
-          {navItem("identities", "Messaging", <MessageCircle size={18} />)}
-          <Show when={props.developerMode}>{navItem("config", "Advanced", <SlidersHorizontal size={18} />)}</Show>
-        </div>
+        {renderRightSidebar(rightSidebarExpanded())}
       </aside>
+
+      <MobileSidebarDrawer
+        open={mobileRightSidebarOpen()}
+        onClose={() => setMobileRightSidebarOpen(false)}
+      >
+        {renderRightSidebar(true, true)}
+      </MobileSidebarDrawer>
       </div>
 
     </div>

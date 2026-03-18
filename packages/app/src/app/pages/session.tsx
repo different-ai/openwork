@@ -7,6 +7,7 @@ import {
   on,
   onCleanup,
   onMount,
+  type JSX,
 } from "solid-js";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
@@ -111,6 +112,7 @@ import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
+import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
 import QuestionModal from "../components/question-modal";
 import InboxPanel from "../components/session/inbox-panel";
 
@@ -402,6 +404,7 @@ export default function SessionView(props: SessionViewProps) {
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
   const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
+  const [mobileRightSidebarOpen, setMobileRightSidebarOpen] = createSignal(false);
 
   // In Session view the right sidebar is navigation-only; never pre-highlight a
   // dashboard tab here so first-run feels chat-first rather than Automations-first.
@@ -3914,31 +3917,144 @@ export default function SessionView(props: SessionViewProps) {
   const hasOpenAIProviderConnected = createMemo(() =>
     (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
   );
-
   const rightSidebarNavButton = (
     label: string,
     icon: any,
     active: boolean,
     onClick: () => void,
-  ) => (
-    <button
-      type="button"
-      class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
-        active
-          ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-          : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
-      } ${
-        rightSidebarExpanded()
-          ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
-          : "flex h-12 items-center justify-center rounded-[16px] px-0"
-      }`}
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-    >
-      {icon}
-      <Show when={rightSidebarExpanded()}>{label}</Show>
-    </button>
+    options?: {
+      disabled?: boolean;
+      badge?: JSX.Element;
+      disabledTitle?: string;
+      expanded?: boolean;
+      onSelect?: () => void;
+    },
+  ) => {
+    const expanded = options?.expanded ?? rightSidebarExpanded();
+    return (
+      <button
+        type="button"
+        disabled={options?.disabled}
+        class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
+          options?.disabled
+            ? "cursor-not-allowed border-transparent text-gray-8 opacity-70"
+            : active
+              ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
+              : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
+        } ${
+          expanded
+            ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
+            : "flex h-12 items-center justify-center rounded-[16px] px-0"
+        }`}
+        onClick={() => {
+          onClick();
+          options?.onSelect?.();
+        }}
+        title={options?.disabled ? options.disabledTitle ?? label : label}
+        aria-label={options?.disabled ? `${label}. ${options.disabledTitle ?? "Desktop only."}` : label}
+      >
+        {icon}
+        <Show when={expanded}>
+          <span class="flex min-w-0 flex-1 items-center gap-2">
+            <span class="truncate">{label}</span>
+            {options?.badge}
+          </span>
+        </Show>
+      </button>
+    );
+  };
+
+  const renderRightSidebar = (expanded: boolean, mobile = false) => (
+    <div class={`flex h-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
+      <div class={`flex items-center pb-3 ${expanded ? "justify-end" : "justify-center"}`}>
+        <button
+          type="button"
+          class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
+          onClick={mobile ? () => setMobileRightSidebarOpen(false) : toggleRightSidebar}
+          title={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+          aria-label={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+        >
+          <Show when={mobile} fallback={<Show when={expanded} fallback={<ChevronLeft size={18} />}><ChevronRight size={18} /></Show>}>
+            <X size={18} />
+          </Show>
+        </button>
+      </div>
+      <div class={`flex-1 overflow-y-auto ${expanded ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
+        <div class="space-y-1 mb-2">
+          {rightSidebarNavButton(
+            "Automations",
+            <History size={18} />,
+            showRightSidebarSelection() && props.tab === "scheduled",
+            () => {
+              props.setTab("scheduled");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          {rightSidebarNavButton(
+            "Skills",
+            <Zap size={18} />,
+            showRightSidebarSelection() && props.tab === "skills",
+            () => {
+              props.setTab("skills");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          {rightSidebarNavButton(
+            "Extensions",
+            <Box size={18} />,
+            showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins"),
+            () => {
+              props.setTab("mcp");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          {rightSidebarNavButton(
+            "Messaging",
+            <MessageCircle size={18} />,
+            showRightSidebarSelection() && props.tab === "identities",
+            () => {
+              props.setTab("identities");
+              props.setView("dashboard");
+            },
+            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+          )}
+          <Show when={props.developerMode}>
+            {rightSidebarNavButton(
+              "Advanced",
+              <SlidersHorizontal size={18} />,
+              showRightSidebarSelection() && props.tab === "config",
+              openConfig,
+              mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
+            )}
+          </Show>
+        </div>
+
+        <Show when={expanded}>
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+            <InboxPanel
+              id={mobile ? "mobile-sidebar-inbox" : "sidebar-inbox"}
+              client={props.openworkServerClient}
+              workspaceId={props.openworkServerWorkspaceId}
+              onToast={(message) => setToastMessage(message)}
+            />
+          </div>
+
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+            <ArtifactsPanel
+              id={mobile ? "mobile-sidebar-artifacts" : "sidebar-artifacts"}
+              files={touchedFiles()}
+              workspaceRoot={props.activeWorkspaceRoot}
+              onRevealArtifact={revealArtifact}
+              onOpenInObsidian={openArtifactInObsidian}
+              obsidianAvailable={obsidianAvailable()}
+            />
+          </div>
+        </Show>
+      </div>
+    </div>
   );
 
   return (
@@ -4166,7 +4282,16 @@ export default function SessionView(props: SessionViewProps) {
               <div class="hidden h-4 w-px bg-dls-border sm:block" />
               <button
                 type="button"
-                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
+                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
+                onClick={() => setMobileRightSidebarOpen(true)}
+                title="Open sidebar"
+                aria-label="Open sidebar"
+              >
+                <Menu size={16} />
+              </button>
+              <button
+                type="button"
+                class="hidden h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60 md:flex"
                 onClick={compactSessionHistory}
                 disabled={!canCompactSession() || historyActionBusy() !== null}
                 title="Compact session context"
@@ -4716,97 +4841,21 @@ export default function SessionView(props: SessionViewProps) {
         </main>
 
         <aside
-          class="flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 transition-[width] duration-200"
+          class="hidden shrink-0 md:flex"
           style={{
             width: `${rightSidebarWidth()}px`,
             "min-width": `${rightSidebarWidth()}px`,
           }}
         >
-          <div
-            class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}
-          >
-            <button
-              type="button"
-              class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
-              onClick={toggleRightSidebar}
-              title={
-                rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"
-              }
-              aria-label={
-                rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"
-              }
-            >
-              <Show
-                when={rightSidebarExpanded()}
-                fallback={<ChevronLeft size={18} />}
-              >
-                <ChevronRight size={18} />
-              </Show>
-            </button>
-          </div>
-          <div
-            class={`flex-1 overflow-y-auto ${rightSidebarExpanded() ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}
-          >
-            <div class="space-y-1 mb-2">
-              {rightSidebarNavButton(
-                "Automations",
-                <History size={18} />,
-                showRightSidebarSelection() && props.tab === "scheduled",
-                () => {
-                  props.setTab("scheduled");
-                  props.setView("dashboard");
-                },
-              )}
-              {rightSidebarNavButton(
-                "Skills",
-                <Zap size={18} />,
-                showRightSidebarSelection() && props.tab === "skills",
-                () => {
-                  props.setTab("skills");
-                  props.setView("dashboard");
-                },
-              )}
-              {rightSidebarNavButton(
-                "Extensions",
-                <Box size={18} />,
-                showRightSidebarSelection() &&
-                  (props.tab === "mcp" || props.tab === "plugins"),
-                () => {
-                  props.setTab("mcp");
-                  props.setView("dashboard");
-                },
-              )}
-              {rightSidebarNavButton(
-                "Messaging",
-                <MessageCircle size={18} />,
-                showRightSidebarSelection() && props.tab === "identities",
-                () => {
-                  props.setTab("identities");
-                  props.setView("dashboard");
-                },
-              )}
-              <Show when={props.developerMode}>
-                {rightSidebarNavButton(
-                  "Advanced",
-                  <SlidersHorizontal size={18} />,
-                  showRightSidebarSelection() && props.tab === "config",
-                  openConfig,
-                )}
-              </Show>
-            </div>
-
-            <Show when={rightSidebarExpanded()}>
-              <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-                <InboxPanel
-                  id="sidebar-inbox"
-                  client={props.openworkServerClient}
-                  workspaceId={props.openworkServerWorkspaceId}
-                  onToast={(message) => setToastMessage(message)}
-                />
-              </div>
-            </Show>
-          </div>
+          {renderRightSidebar(rightSidebarExpanded())}
         </aside>
+
+        <MobileSidebarDrawer
+          open={mobileRightSidebarOpen()}
+          onClose={() => setMobileRightSidebarOpen(false)}
+        >
+          {renderRightSidebar(true, true)}
+        </MobileSidebarDrawer>
       </div>
 
       <Show when={commandPaletteOpen()}>
