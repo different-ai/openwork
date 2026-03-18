@@ -4285,8 +4285,12 @@ export default function App() {
       return;
     }
 
-    setView("dashboard");
-    setTab("scheduled");
+    if (pending.autoConnect) {
+      setView("session");
+    } else {
+      setView("dashboard");
+      setTab("scheduled");
+    }
     setPendingRemoteConnectDeepLink(null);
     void completeRemoteConnectDeepLink(pending);
   });
