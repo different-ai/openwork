@@ -111,6 +111,7 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
+import ArtifactsPanel from "../components/session/artifacts-panel";
 import FlyoutItem from "../components/flyout-item";
 import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
 import QuestionModal from "../components/question-modal";
