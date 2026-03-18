@@ -7,15 +7,15 @@ body:
   - type: textarea
     id: summary
     attributes:
-      label: Describe the bug
-      description: A clear and concise description of what the bug is.
+      label: Summary
+      description: What's not working / wrong?
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: To Reproduce
-      description: "Minimal Steps to reproduce the behavior:"
+      description: "Minimal Steps to reproduce the issue:"
       placeholder: |
         1. Go to '...'
         2. Click on '....'
@@ -27,7 +27,14 @@ body:
     id: expected
     attributes:
       label: Expected behavior
-      description: A clear and concise description of what you expected to happen.
+      description: A short description of what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Actual behavior
+      description: A short description of what actually happened.
     validations:
       required: true
   - type: textarea
