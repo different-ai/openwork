@@ -38,6 +38,81 @@ random_hex() {
   node -e "console.log(require('crypto').randomBytes(${bytes}).toString('hex'))"
 }
 
+detect_lan_ipv4() {
+  node -e '
+    const os = require("os");
+    const nets = os.networkInterfaces();
+    for (const entries of Object.values(nets)) {
+      for (const entry of entries || []) {
+        if (!entry || entry.internal || entry.family !== "IPv4") continue;
+        if (entry.address.startsWith("127.")) continue;
+        process.stdout.write(entry.address);
+        process.exit(0);
+      }
+    }
+  '
+}
+
+detect_tailscale_dns_name() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    return 1
+  fi
+
+  tailscale status --json 2>/dev/null | node -e '
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { data += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const parsed = JSON.parse(data);
+        const value = (parsed?.Self?.DNSName || "").replace(/\.$/, "").trim();
+        if (!value) process.exit(1);
+        process.stdout.write(value);
+      } catch {
+        process.exit(1);
+      }
+    });
+  '
+}
+
+detect_public_host() {
+  if [ -n "${DEN_PUBLIC_HOST:-}" ]; then
+    printf '%s\n' "$DEN_PUBLIC_HOST"
+    return
+  fi
+
+  local lan_ipv4
+  lan_ipv4="$(detect_lan_ipv4 || true)"
+  if [ -n "$lan_ipv4" ]; then
+    printf '%s\n' "$lan_ipv4"
+    return
+  fi
+
+  local host
+  host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  host="${host//$'\n'/}"
+  host="${host// /}"
+  if [ -n "$host" ]; then
+    printf '%s\n' "$host"
+    return
+  fi
+
+  printf '%s\n' "localhost"
+}
+
+append_origin() {
+  local value="$1"
+  [ -n "$value" ] || return 0
+  if [ -z "${DEN_CORS_ORIGINS:-}" ]; then
+    DEN_CORS_ORIGINS="$value"
+    return 0
+  fi
+  case ",${DEN_CORS_ORIGINS}," in
+    *",${value},"*) ;;
+    *) DEN_CORS_ORIGINS="${DEN_CORS_ORIGINS},${value}" ;;
+  esac
+}
+
 DEV_ID="$(node -e "console.log(require('crypto').randomUUID().slice(0, 8))")"
 PROJECT="openwork-den-dev-$DEV_ID"
 
@@ -55,12 +130,25 @@ if [ "$DEN_MYSQL_PORT" = "$DEN_API_PORT" ] || [ "$DEN_MYSQL_PORT" = "$DEN_WEB_PO
   DEN_MYSQL_PORT="$(pick_port)"
 fi
 
+PUBLIC_HOST="$(detect_public_host)"
+LAN_IPV4="$(detect_lan_ipv4 || true)"
+TAILSCALE_DNS_NAME="$(detect_tailscale_dns_name || true)"
+
 DEN_BETTER_AUTH_SECRET="${DEN_BETTER_AUTH_SECRET:-$(random_hex 32)}"
-DEN_BETTER_AUTH_URL="${DEN_BETTER_AUTH_URL:-http://localhost:$DEN_WEB_PORT}"
+DEN_BETTER_AUTH_URL="${DEN_BETTER_AUTH_URL:-http://$PUBLIC_HOST:$DEN_WEB_PORT}"
 DEN_PROVISIONER_MODE="${DEN_PROVISIONER_MODE:-stub}"
 DEN_WORKER_URL_TEMPLATE="${DEN_WORKER_URL_TEMPLATE:-https://workers.local/{workerId}}"
-DEN_DAYTONA_WORKER_PROXY_BASE_URL="${DEN_DAYTONA_WORKER_PROXY_BASE_URL:-http://localhost:$DEN_WORKER_PROXY_PORT}"
+DEN_DAYTONA_WORKER_PROXY_BASE_URL="${DEN_DAYTONA_WORKER_PROXY_BASE_URL:-http://$PUBLIC_HOST:$DEN_WORKER_PROXY_PORT}"
 DEN_CORS_ORIGINS="${DEN_CORS_ORIGINS:-http://localhost:$DEN_WEB_PORT,http://127.0.0.1:$DEN_WEB_PORT,http://localhost:$DEN_API_PORT,http://127.0.0.1:$DEN_API_PORT}"
+append_origin "http://$PUBLIC_HOST:$DEN_WEB_PORT"
+append_origin "http://$PUBLIC_HOST:$DEN_API_PORT"
+append_origin "http://$PUBLIC_HOST:$DEN_WORKER_PROXY_PORT"
+if [ -n "$LAN_IPV4" ]; then
+  append_origin "http://$LAN_IPV4:$DEN_WEB_PORT"
+  append_origin "http://$LAN_IPV4:$DEN_API_PORT"
+  append_origin "http://$LAN_IPV4:$DEN_WORKER_PROXY_PORT"
+fi
+DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$DEN_CORS_ORIGINS}"
 
 if [ "$DEN_PROVISIONER_MODE" = "daytona" ] && [ -f "$DAYTONA_ENV_FILE" ]; then
   set -a
@@ -87,6 +175,9 @@ DEN_MYSQL_PORT=$DEN_MYSQL_PORT
 DEN_API_URL=http://localhost:$DEN_API_PORT
 DEN_WEB_URL=http://localhost:$DEN_WEB_PORT
 DEN_WORKER_PROXY_URL=http://localhost:$DEN_WORKER_PROXY_PORT
+DEN_API_PUBLIC_URL=http://$PUBLIC_HOST:$DEN_API_PORT
+DEN_WEB_PUBLIC_URL=http://$PUBLIC_HOST:$DEN_WEB_PORT
+DEN_WORKER_PROXY_PUBLIC_URL=http://$PUBLIC_HOST:$DEN_WORKER_PROXY_PORT
 DEN_MYSQL_URL=mysql://root:password@127.0.0.1:$DEN_MYSQL_PORT/openwork_den
 DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL
 COMPOSE_FILE=$COMPOSE_FILE
@@ -113,6 +204,7 @@ if ! DEN_API_PORT="$DEN_API_PORT" \
   DEN_BETTER_AUTH_SECRET="$DEN_BETTER_AUTH_SECRET" \
   DEN_BETTER_AUTH_URL="$DEN_BETTER_AUTH_URL" \
   DEN_CORS_ORIGINS="$DEN_CORS_ORIGINS" \
+  DEN_BETTER_AUTH_TRUSTED_ORIGINS="$DEN_BETTER_AUTH_TRUSTED_ORIGINS" \
   DEN_PROVISIONER_MODE="$DEN_PROVISIONER_MODE" \
   DEN_WORKER_URL_TEMPLATE="$DEN_WORKER_URL_TEMPLATE" \
   DEN_DAYTONA_WORKER_PROXY_BASE_URL="$DEN_DAYTONA_WORKER_PROXY_BASE_URL" \
@@ -129,8 +221,29 @@ fi
 
 echo "" >&2
 echo "OpenWork Cloud web UI:  http://localhost:$DEN_WEB_PORT" >&2
+echo "OpenWork Cloud web UI (LAN/public): http://$PUBLIC_HOST:$DEN_WEB_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "OpenWork Cloud web UI (LAN IP):     http://$LAN_IPV4:$DEN_WEB_PORT" >&2
+fi
+if [ -n "$TAILSCALE_DNS_NAME" ]; then
+  echo "OpenWork Cloud web UI (Tailscale):  http://$TAILSCALE_DNS_NAME:$DEN_WEB_PORT" >&2
+fi
 echo "Den demo/API:          http://localhost:$DEN_API_PORT" >&2
+echo "Den demo/API (LAN/public):         http://$PUBLIC_HOST:$DEN_API_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "Den demo/API (LAN IP):             http://$LAN_IPV4:$DEN_API_PORT" >&2
+fi
+if [ -n "$TAILSCALE_DNS_NAME" ]; then
+  echo "Den demo/API (Tailscale):          http://$TAILSCALE_DNS_NAME:$DEN_API_PORT" >&2
+fi
 echo "Worker proxy:          http://localhost:$DEN_WORKER_PROXY_PORT" >&2
+echo "Worker proxy (LAN/public):         http://$PUBLIC_HOST:$DEN_WORKER_PROXY_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "Worker proxy (LAN IP):             http://$LAN_IPV4:$DEN_WORKER_PROXY_PORT" >&2
+fi
+if [ -n "$TAILSCALE_DNS_NAME" ]; then
+  echo "Worker proxy (Tailscale):          http://$TAILSCALE_DNS_NAME:$DEN_WORKER_PROXY_PORT" >&2
+fi
 echo "MySQL:                 mysql://root:password@127.0.0.1:$DEN_MYSQL_PORT/openwork_den" >&2
 echo "Health check:          http://localhost:$DEN_API_PORT/health" >&2
 echo "Runtime env file:      $RUNTIME_FILE" >&2

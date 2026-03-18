@@ -117,6 +117,13 @@ detect_public_host() {
     return
   fi
 
+  local lan_ipv4
+  lan_ipv4="$(detect_lan_ipv4 || true)"
+  if [ -n "$lan_ipv4" ]; then
+    printf '%s\n' "$lan_ipv4"
+    return
+  fi
+
   local host
   host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
   host="${host//$'\n'/}"
@@ -141,6 +148,28 @@ detect_lan_ipv4() {
         process.exit(0);
       }
     }
+  '
+}
+
+detect_tailscale_dns_name() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    return 1
+  fi
+
+  tailscale status --json 2>/dev/null | node -e '
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { data += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const parsed = JSON.parse(data);
+        const value = (parsed?.Self?.DNSName || "").replace(/\.$/, "").trim();
+        if (!value) process.exit(1);
+        process.stdout.write(value);
+      } catch {
+        process.exit(1);
+      }
+    });
   '
 }
 
@@ -181,6 +210,7 @@ fi
 
 PUBLIC_HOST="$(detect_public_host)"
 LAN_IPV4="$(detect_lan_ipv4 || true)"
+TAILSCALE_DNS_NAME="$(detect_tailscale_dns_name || true)"
 
 echo "Starting Docker Compose project: $PROJECT" >&2
 echo "- OPENWORK_PORT=$OPENWORK_PORT" >&2
@@ -198,6 +228,7 @@ start_stack() {
   local data_dir="$2"
   OPENWORK_DEV_ID="$DEV_ID" OPENWORK_PORT="$OPENWORK_PORT" WEB_PORT="$WEB_PORT" SHARE_PORT="$SHARE_PORT" \
     OPENWORK_DEV_MODE="1" \
+    OPENWORK_PUBLIC_HOST="$PUBLIC_HOST" \
     OPENWORK_HOST_OPENCODE_CONFIG_DIR="$config_dir" \
     OPENWORK_HOST_OPENCODE_DATA_DIR="$data_dir" \
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d
@@ -229,15 +260,24 @@ echo "OpenWork web UI (LAN/public): http://$PUBLIC_HOST:$WEB_PORT" >&2
 if [ -n "$LAN_IPV4" ]; then
   echo "OpenWork web UI (LAN IP):     http://$LAN_IPV4:$WEB_PORT" >&2
 fi
+if [ -n "$TAILSCALE_DNS_NAME" ]; then
+  echo "OpenWork web UI (Tailscale):  http://$TAILSCALE_DNS_NAME:$WEB_PORT" >&2
+fi
 echo "OpenWork server:     http://localhost:$OPENWORK_PORT" >&2
 echo "OpenWork server (LAN/public): http://$PUBLIC_HOST:$OPENWORK_PORT" >&2
 if [ -n "$LAN_IPV4" ]; then
   echo "OpenWork server (LAN IP):     http://$LAN_IPV4:$OPENWORK_PORT" >&2
 fi
+if [ -n "$TAILSCALE_DNS_NAME" ]; then
+  echo "OpenWork server (Tailscale):  http://$TAILSCALE_DNS_NAME:$OPENWORK_PORT" >&2
+fi
 echo "Share service:       http://localhost:$SHARE_PORT" >&2
 echo "Share service (LAN/public):   http://$PUBLIC_HOST:$SHARE_PORT" >&2
 if [ -n "$LAN_IPV4" ]; then
   echo "Share service (LAN IP):       http://$LAN_IPV4:$SHARE_PORT" >&2
+fi
+if [ -n "$TAILSCALE_DNS_NAME" ]; then
+  echo "Share service (Tailscale):    http://$TAILSCALE_DNS_NAME:$SHARE_PORT" >&2
 fi
 echo "Token file:          $ROOT_DIR/tmp/.dev-env-$DEV_ID" >&2
 echo "" >&2

@@ -3,7 +3,7 @@
 # Usage (from repo root):
 #   docker compose -f packaging/docker/docker-compose.dev.yml up
 #
-# Then open http://localhost:5173 — already wired to headless, no config needed.
+# Then open the printed Web UI URL — already wired to headless, no config needed.
 #
 # Env overrides (optional, via .env or export):
 #   OPENWORK_TOKEN        — shared client token (auto-generated if unset)
@@ -14,6 +14,7 @@
 #   SHARE_PORT            — host port to map to the share service :3000 (default: 3006)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
 #   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state (set by dev-up.sh)
+#   OPENWORK_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs (set by dev-up.sh)
 #   OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
 #   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
 #   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
@@ -161,9 +162,9 @@ services:
         echo "============================================"
         echo ""
 
-        export VITE_OPENWORK_URL="http://localhost:${OPENWORK_PORT:-8787}"
+        export VITE_OPENWORK_URL="http://${OPENWORK_PUBLIC_HOST:-localhost}:${OPENWORK_PORT:-8787}"
         export VITE_OPENWORK_PORT="${OPENWORK_PORT:-8787}"
-        export VITE_OPENWORK_PUBLISHER_BASE_URL="http://localhost:${SHARE_PORT:-3006}"
+        export VITE_OPENWORK_PUBLISHER_BASE_URL="http://${OPENWORK_PUBLIC_HOST:-localhost}:${SHARE_PORT:-3006}"
         export VITE_ALLOWED_HOSTS="all"
         export HOST="0.0.0.0"
         export PORT="5173"
@@ -217,8 +218,8 @@ services:
       CI: "true"
       OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
       LOCAL_BLOB_DIR: /app/tmp/share-service-blobs
-      PUBLIC_BASE_URL: http://localhost:${SHARE_PORT:-3006}
-      PUBLIC_OPENWORK_APP_URL: http://localhost:${WEB_PORT:-5173}
+      PUBLIC_BASE_URL: http://${OPENWORK_PUBLIC_HOST:-localhost}:${SHARE_PORT:-3006}
+      PUBLIC_OPENWORK_APP_URL: http://${OPENWORK_PUBLIC_HOST:-localhost}:${WEB_PORT:-5173}
 
 volumes:
   pnpm-store:
