@@ -3907,6 +3907,7 @@ export default function App() {
   const [editRemoteWorkspaceError, setEditRemoteWorkspaceError] = createSignal<string | null>(null);
   const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
+  const [autoConnectRemoteWorkspaceOverlayOpen, setAutoConnectRemoteWorkspaceOverlayOpen] = createSignal(false);
   const [pendingDenAuthDeepLink, setPendingDenAuthDeepLink] = createSignal<DenAuthDeepLink | null>(null);
   const [processingDenAuthDeepLink, setProcessingDenAuthDeepLink] = createSignal(false);
   const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
@@ -4017,14 +4018,19 @@ export default function App() {
     }
 
     setError(null);
-    const ok = await workspaceStore.createRemoteWorkspaceFlow(input);
-    if (ok) {
-      setDeepLinkRemoteWorkspaceDefaults(null);
-      return;
-    }
+    setAutoConnectRemoteWorkspaceOverlayOpen(true);
+    try {
+      const ok = await workspaceStore.createRemoteWorkspaceFlow(input);
+      if (ok) {
+        setDeepLinkRemoteWorkspaceDefaults(null);
+        return;
+      }
 
-    setDeepLinkRemoteWorkspaceDefaults(input);
-    workspaceStore.setCreateRemoteWorkspaceOpen(true);
+      setDeepLinkRemoteWorkspaceDefaults(input);
+      workspaceStore.setCreateRemoteWorkspaceOpen(true);
+    } finally {
+      setAutoConnectRemoteWorkspaceOverlayOpen(false);
+    }
   };
 
   const queueDenAuthDeepLink = (rawUrl: string): boolean => {
@@ -7532,6 +7538,37 @@ export default function App() {
           (busyLabel() === "status.creating_workspace" || busyLabel() === "status.connecting")
         }
       />
+
+      <Show when={autoConnectRemoteWorkspaceOverlayOpen()}>
+        <div class="fixed inset-0 z-[60] flex items-center justify-center bg-gray-1/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            role="status"
+            aria-live="polite"
+            class="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-6 bg-gray-2 shadow-2xl"
+          >
+            <div class="border-b border-gray-6 bg-gray-1 px-6 py-5">
+              <div class="inline-flex items-center rounded-full border border-gray-6 bg-gray-2 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-gray-10">
+                OpenWork Cloud
+              </div>
+              <h3 class="mt-4 text-lg font-semibold text-gray-12">Adding your worker</h3>
+              <p class="mt-1 text-sm text-gray-10">
+                Connecting your OpenWork worker now. This usually takes a moment.
+              </p>
+            </div>
+            <div class="flex items-center gap-4 px-6 py-6">
+              <div class="flex h-12 w-12 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1/50">
+                <div class="h-5 w-5 rounded-full border-2 border-gray-7 border-t-gray-12 animate-spin" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium text-gray-12">Preparing your session</div>
+                <div class="mt-1 text-xs leading-relaxed text-gray-10">
+                  We are adding the remote worker in the background so you can land directly in the chat view.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
 
       <div class="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
         <div class="pointer-events-auto">
