@@ -81,7 +81,9 @@ pub(crate) fn resolve_opencode_env_override() -> (Option<PathBuf>, Vec<String>) 
     (None, notes)
 }
 
-fn resolve_opencode_executable_impl(mut notes: Vec<String>) -> (Option<PathBuf>, bool, Vec<String>) {
+fn resolve_opencode_executable_impl(
+    mut notes: Vec<String>,
+) -> (Option<PathBuf>, bool, Vec<String>) {
     if let Some(path) = resolve_in_path(OPENCODE_EXECUTABLE) {
         notes.push(format!("Found in PATH: {}", path.display()));
         return (Some(path), true, notes);
@@ -118,6 +120,7 @@ pub fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
     resolve_opencode_executable_impl(notes)
 }
 
-pub(crate) fn resolve_opencode_executable_without_override() -> (Option<PathBuf>, bool, Vec<String>) {
+pub(crate) fn resolve_opencode_executable_without_override() -> (Option<PathBuf>, bool, Vec<String>)
+{
     resolve_opencode_executable_impl(Vec::new())
 }

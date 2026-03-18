@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::Duration;
 
 use zip::ZipArchive;
 
@@ -168,6 +170,9 @@ Incremental adoption loop
 - If steps repeat, factor them into a skill.
 - If the work becomes ongoing, create/refine an agent role.
 - If it should run regularly, schedule it and store outputs in private memory.
+
+Specific User Requests
+- If a user asks you to do something with a broswer, like 'open a new tab', check if you have access to the chrome-devtools-mcp - if not, then ask the user to add the 'Control Chrome' extension using the sidebar or via the worker settings.
 "#;
 
     fs::write(&agent_path, doc)
@@ -179,9 +184,56 @@ Incremental adoption loop
 const ENTERPRISE_ARCHIVE_URL: &str =
     "https://github.com/different-ai/openwork-enterprise/archive/refs/heads/main.zip";
 const ENTERPRISE_SEED_MARKER: &str = ".openwork-enterprise-creators";
+static ENTERPRISE_SEED_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn enterprise_seed_marker_path(root: &Path) -> PathBuf {
+    root.join(".opencode").join(ENTERPRISE_SEED_MARKER)
+}
+
+fn spawn_enterprise_creator_skills_seed(root: PathBuf, skill_root: PathBuf) {
+    let marker_path = enterprise_seed_marker_path(&root);
+    if marker_path.exists() {
+        return;
+    }
+
+    let key = root.to_string_lossy().to_string();
+    {
+        let mut in_flight = ENTERPRISE_SEED_IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !in_flight.insert(key.clone()) {
+            return;
+        }
+    }
+
+    std::thread::spawn(move || {
+        println!(
+            "[workspace] Seeding creator skills in background for {}",
+            root.display()
+        );
+
+        let result = seed_enterprise_creator_skills(&root, &skill_root);
+        match result {
+            Ok(()) => println!(
+                "[workspace] Finished seeding creator skills for {}",
+                root.display()
+            ),
+            Err(err) => println!(
+                "[workspace] Failed to seed creator skills in background for {}: {err}",
+                root.display()
+            ),
+        }
+
+        let mut in_flight = ENTERPRISE_SEED_IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        in_flight.remove(&key);
+    });
+}
 
 fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Result<(), String> {
-    let marker_path = root.join(".opencode").join(ENTERPRISE_SEED_MARKER);
+    let marker_path = enterprise_seed_marker_path(root);
     if marker_path.exists() {
         return Ok(());
     }
@@ -196,7 +248,11 @@ fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Resul
         }
     }
 
-    let agent = ureq::AgentBuilder::new().redirects(5).build();
+    let agent = ureq::AgentBuilder::new()
+        .redirects(5)
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(20))
+        .build();
     let response = agent
         .get(ENTERPRISE_ARCHIVE_URL)
         .call()
@@ -352,9 +408,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     seed_workspace_guide(&skill_root)?;
     if preset == "starter" {
         seed_get_started_skill(&skill_root)?;
-        if let Err(err) = seed_enterprise_creator_skills(&root, &skill_root) {
-            println!("[workspace] Failed to seed creator skills: {err}");
-        }
+        spawn_enterprise_creator_skills_seed(root.clone(), skill_root.clone());
     }
 
     let agents_dir = root.join(".opencode").join("agents");
@@ -460,12 +514,12 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
                 _ => serde_json::Map::new(),
             };
 
-            if !mcp_obj.contains_key("control-chrome") {
+            if !mcp_obj.contains_key("chrome-devtools") {
                 mcp_obj.insert(
-                    "control-chrome".to_string(),
+                    "chrome-devtools".to_string(),
                     serde_json::json!({
                       "type": "local",
-                      "command": ["chrome-devtools-mcp"]
+                      "command": ["npx", "-y", "chrome-devtools-mcp@latest"]
                     }),
                 );
                 config_changed = true;

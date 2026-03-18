@@ -75,6 +75,16 @@ fn collect_global_skill_roots() -> Vec<PathBuf> {
         if claude_root.is_dir() {
             roots.push(claude_root);
         }
+
+        let agents_root = home.join(".agents").join("skills");
+        if agents_root.is_dir() {
+            roots.push(agents_root);
+        }
+
+        let legacy_agents_root = home.join(".agent").join("skills");
+        if legacy_agents_root.is_dir() {
+            roots.push(legacy_agents_root);
+        }
     }
 
     roots
@@ -142,20 +152,92 @@ fn gather_skills(
         }
 
         let path = entry.path();
-        if !path.join("SKILL.md").is_file() {
-            continue;
-        }
-
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-
-        if seen.insert(name.to_string()) {
-            out.push(path);
+        if path.join("SKILL.md").is_file() {
+            // Direct skill: <root>/<name>/SKILL.md
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if seen.insert(name.to_string()) {
+                out.push(path);
+            }
+        } else {
+            // Domain/category folder: <root>/<domain>/<name>/SKILL.md – scan one level deeper.
+            // This supports the convention where global skills are organised as
+            //   skills/<domain>/<skill-name>/SKILL.md
+            // in addition to the flat   skills/<skill-name>/SKILL.md  layout.
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    let Ok(sub_ft) = sub_entry.file_type() else {
+                        continue;
+                    };
+                    if !sub_ft.is_dir() {
+                        continue;
+                    }
+                    let sub_path = sub_entry.path();
+                    if !sub_path.join("SKILL.md").is_file() {
+                        continue;
+                    }
+                    let Some(name) = sub_path.file_name().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    if seen.insert(name.to_string()) {
+                        out.push(sub_path);
+                    }
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+fn find_skill_file_in_root(root: &Path, name: &str) -> Option<PathBuf> {
+    let direct = root.join(name).join("SKILL.md");
+    if direct.is_file() {
+        return Some(direct);
+    }
+
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let candidate = entry.path().join(name).join("SKILL.md");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn collect_skill_dirs_by_name(root: &Path, name: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+
+    let direct = root.join(name);
+    if direct.join("SKILL.md").is_file() {
+        out.push(direct);
+    }
+
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let candidate = entry.path().join(name);
+            if candidate.join("SKILL.md").is_file() {
+                out.push(candidate);
+            }
+        }
+    }
+
+    out
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -284,13 +366,39 @@ fn extract_description(raw: &str) -> Option<String> {
         }
 
         let max = 180;
-        if cleaned.len() > max {
-            return Some(format!("{}...", &cleaned[..max]));
+        let truncated: String = cleaned.chars().take(max).collect();
+        if truncated.len() < cleaned.len() {
+            return Some(format!("{}...", truncated));
         }
         return Some(cleaned);
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_description;
+
+    #[test]
+    fn extract_description_truncates_multibyte_text_without_panicking() {
+        let raw = &"て".repeat(181);
+
+        let description = extract_description(raw).expect("description should be present");
+
+        assert!(description.ends_with("..."));
+        assert!(description.is_char_boundary(description.len()));
+        assert_eq!(description.chars().count(), 183);
+    }
+
+    #[test]
+    fn extract_description_keeps_short_text_unchanged() {
+        let raw = "Short description";
+
+        let description = extract_description(raw).expect("description should be present");
+
+        assert_eq!(description, "Short description");
+    }
 }
 
 #[tauri::command]
@@ -341,10 +449,9 @@ pub fn read_local_skill(project_dir: String, name: String) -> Result<LocalSkillC
     let roots = collect_skill_roots(project_dir)?;
 
     for root in roots {
-        let path = root.join(&name).join("SKILL.md");
-        if !path.is_file() {
+        let Some(path) = find_skill_file_in_root(&root, &name) else {
             continue;
-        }
+        };
         let raw = fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
         return Ok(LocalSkillContent {
@@ -372,8 +479,7 @@ pub fn write_local_skill(
     let mut target: Option<PathBuf> = None;
 
     for root in roots {
-        let path = root.join(&name).join("SKILL.md");
-        if path.is_file() {
+        if let Some(path) = find_skill_file_in_root(&root, &name) {
             target = Some(path);
             break;
         }
@@ -461,14 +567,11 @@ pub fn uninstall_skill(project_dir: String, name: String) -> Result<ExecResult, 
     let mut removed = false;
 
     for root in skill_roots {
-        let dest = root.join(&name);
-        if !dest.exists() {
-            continue;
+        for dest in collect_skill_dirs_by_name(&root, &name) {
+            fs::remove_dir_all(&dest)
+                .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
+            removed = true;
         }
-
-        fs::remove_dir_all(&dest)
-            .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
-        removed = true;
     }
 
     if !removed {

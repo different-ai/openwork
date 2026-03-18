@@ -18,7 +18,7 @@ const readCargoVersion = (path) => {
 
 const appPkg = readJson(resolve(root, "packages", "app", "package.json"));
 const desktopPkg = readJson(resolve(root, "packages", "desktop", "package.json"));
-const headlessPkg = readJson(resolve(root, "packages", "headless", "package.json"));
+const orchestratorPkg = readJson(resolve(root, "packages", "orchestrator", "package.json"));
 const serverPkg = readJson(resolve(root, "packages", "server", "package.json"));
 const opencodeRouterPkg = readJson(resolve(root, "packages", "opencode-router", "package.json"));
 const tauriConfig = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json"));
@@ -30,14 +30,14 @@ const versions = {
   tauri: tauriConfig.version ?? null,
   cargo: cargoVersion ?? null,
   server: serverPkg.version ?? null,
-  headless: headlessPkg.version ?? null,
+  orchestrator: orchestratorPkg.version ?? null,
   opencodeRouter: opencodeRouterPkg.version ?? null,
   opencode: {
     desktop: desktopPkg.opencodeVersion ?? null,
-    headless: headlessPkg.opencodeVersion ?? null,
+    orchestrator: orchestratorPkg.opencodeVersion ?? null,
   },
   opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
-  headlessOpenworkServerRange: headlessPkg.dependencies?.["openwork-server"] ?? null,
+  orchestratorOpenworkServerRange: orchestratorPkg.dependencies?.["openwork-server"] ?? null,
 };
 
 const checks = [];
@@ -57,9 +57,9 @@ addCheck(
   `${versions.app ?? "?"} vs ${versions.desktop ?? "?"}`,
 );
 addCheck(
-  "App/openwrk versions match",
-  versions.app && versions.headless && versions.app === versions.headless,
-  `${versions.app ?? "?"} vs ${versions.headless ?? "?"}`,
+  "App/openwork-orchestrator versions match",
+  versions.app && versions.orchestrator && versions.app === versions.orchestrator,
+  `${versions.app ?? "?"} vs ${versions.orchestrator ?? "?"}`,
 );
 addCheck(
   "App/openwork-server versions match",
@@ -86,24 +86,26 @@ addCheck(
   versions.opencodeRouter && versions.opencodeRouterVersionPinned && versions.opencodeRouter === versions.opencodeRouterVersionPinned,
   `${versions.opencodeRouterVersionPinned ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
-if (versions.opencode.desktop || versions.opencode.headless) {
+if (versions.opencode.desktop || versions.opencode.orchestrator) {
   addCheck(
-    "OpenCode version matches (desktop/headless)",
-    versions.opencode.desktop && versions.opencode.headless && versions.opencode.desktop === versions.opencode.headless,
-    `${versions.opencode.desktop ?? "?"} vs ${versions.opencode.headless ?? "?"}`,
+    "OpenCode version matches (desktop/orchestrator)",
+    versions.opencode.desktop &&
+      versions.opencode.orchestrator &&
+      versions.opencode.desktop === versions.opencode.orchestrator,
+    `${versions.opencode.desktop ?? "?"} vs ${versions.opencode.orchestrator ?? "?"}`,
   );
 } else {
   addWarning(
-    "OpenCode version is not pinned (packages/desktop + packages/headless). Sidecar bundling will default to the latest OpenCode release at build time.",
+    "OpenCode version is not pinned (packages/desktop + packages/orchestrator). Sidecar bundling will default to the latest OpenCode release at build time.",
   );
 }
 
-const openworkServerRange = versions.headlessOpenworkServerRange ?? "";
+const openworkServerRange = versions.orchestratorOpenworkServerRange ?? "";
 const openworkServerPinned = /^\d+\.\d+\.\d+/.test(openworkServerRange);
 if (!openworkServerRange) {
-  addWarning("openwrk is missing an openwork-server dependency.");
+  addWarning("openwork-orchestrator is missing an openwork-server dependency.");
 } else if (!openworkServerPinned) {
-  addWarning(`openwrk openwork-server dependency is not pinned (${openworkServerRange}).`);
+  addWarning(`openwork-orchestrator openwork-server dependency is not pinned (${openworkServerRange}).`);
 } else {
   addCheck(
     "Openwork-server dependency matches server version",
@@ -112,13 +114,20 @@ if (!openworkServerRange) {
   );
 }
 
-const sidecarManifestPath = resolve(root, "packages", "headless", "dist", "sidecars", "openwrk-sidecars.json");
+const sidecarManifestPath = resolve(
+  root,
+  "packages",
+  "orchestrator",
+  "dist",
+  "sidecars",
+  "openwork-orchestrator-sidecars.json",
+);
 if (existsSync(sidecarManifestPath)) {
   const manifest = readJson(sidecarManifestPath);
   addCheck(
-    "Sidecar manifest version matches openwrk",
-    versions.headless && manifest.version === versions.headless,
-    `${manifest.version ?? "?"} vs ${versions.headless ?? "?"}`,
+    "Sidecar manifest version matches openwork-orchestrator",
+    versions.orchestrator && manifest.version === versions.orchestrator,
+    `${manifest.version ?? "?"} vs ${versions.orchestrator ?? "?"}`,
   );
   const serverEntry = manifest.entries?.["openwork-server"]?.version;
   const routerEntry = manifest.entries?.["opencode-router"]?.version;
@@ -137,7 +146,9 @@ if (existsSync(sidecarManifestPath)) {
     );
   }
 } else {
-  addWarning("Sidecar manifest missing (run pnpm --filter openwrk build:sidecars).");
+  addWarning(
+    "Sidecar manifest missing (run pnpm --filter openwork-orchestrator build:sidecars).",
+  );
 }
 
 if (!process.env.SOURCE_DATE_EPOCH) {

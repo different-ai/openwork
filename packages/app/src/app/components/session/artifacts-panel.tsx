@@ -4,8 +4,9 @@ import { Paperclip } from "lucide-solid";
 export type ArtifactsPanelProps = {
   files: string[];
   workspaceRoot?: string;
-  onOpenMarkdown?: (path: string) => void;
-  onOpenImage?: (path: string) => void;
+  onRevealArtifact?: (path: string) => void;
+  onOpenInObsidian?: (path: string) => void;
+  obsidianAvailable?: boolean;
   maxPreview?: number;
   id?: string;
 };
@@ -88,30 +89,27 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
     return Math.max(0, total - shown);
   });
 
-  const canOpenMarkdown = createMemo(() => typeof props.onOpenMarkdown === "function");
-  const canOpenImage = createMemo(() => typeof props.onOpenImage === "function");
+  const canRevealArtifact = createMemo(() => typeof props.onRevealArtifact === "function");
+  const canOpenObsidian = createMemo(
+    () => Boolean(props.obsidianAvailable) && typeof props.onOpenInObsidian === "function",
+  );
   const prettyPath = (file: string) => toWorkspaceRelative(file, props.workspaceRoot);
 
   return (
-    <div id={props.id} class="rounded-xl border border-dls-border bg-dls-hover px-3 py-2.5">
-      <div class="flex items-center justify-between gap-3">
-        <div class="flex items-center gap-2 min-w-0">
-          <Paperclip size={14} class="text-dls-secondary" />
-          <div class="min-w-0">
-            <div class="text-[11px] font-bold tracking-tight text-dls-secondary uppercase">
-              Artifacts
-            </div>
-          </div>
-        </div>
+    <div id={props.id}>
+      <div class="flex items-center justify-between px-2 mb-3">
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Artifacts</span>
         <Show when={normalizedArtifacts().length > 0}>
-          <div class="text-[11px] text-dls-secondary font-mono">{normalizedArtifacts().length}</div>
+          <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
+            {normalizedArtifacts().length}
+          </span>
         </Show>
       </div>
 
-      <div class="mt-2 space-y-1">
+      <div class="space-y-1">
         <Show
           when={visibleArtifacts().length > 0}
-          fallback={<div class="text-xs text-dls-secondary px-1 py-1">No artifacts yet.</div>}
+          fallback={<div class="text-xs text-gray-10 px-2 py-1">No artifacts yet.</div>}
         >
           <For each={visibleArtifacts()}>
             {(artifact) => {
@@ -120,48 +118,55 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
               const dir = () => getDirname(display());
               const md = () => artifact.kind === "markdown";
               const img = () => artifact.kind === "image";
-              const openable = () => (md() ? canOpenMarkdown() : img() ? canOpenImage() : false);
-              const tooltip = () => {
-                if (md()) return display();
-                if (img() && !canOpenImage()) return `${display()} (image preview coming soon)`;
-                return display();
-              };
               return (
-                <button
-                  type="button"
-                  class={`w-full flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
-                    openable() ? "hover:bg-dls-active" : "cursor-default"
-                  }`}
-                  onClick={() => {
-                    if (md()) props.onOpenMarkdown?.(artifact.path);
-                    else if (img()) props.onOpenImage?.(artifact.path);
-                  }}
-                  disabled={!openable()}
-                  title={tooltip()}
-                  aria-label={openable() ? `Open ${display()}` : tooltip()}
+                <div
+                  class="group w-full flex items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors border border-transparent hover:bg-gray-2 hover:border-gray-6/80"
+                  title={display()}
                 >
                   <div class="mt-0.5 shrink-0">
-                    <span class="h-1.5 w-1.5 rounded-full bg-dls-border inline-block" />
+                    <Paperclip size={12} class="text-gray-9" />
                   </div>
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2">
-                      <div class="truncate text-xs font-medium text-dls-text">{base()}</div>
+                      <div class="truncate text-xs font-medium text-gray-11">{base()}</div>
                       <Show when={md()}>
-                        <span class="shrink-0 rounded-md border border-dls-border bg-dls-surface px-1.5 py-0.5 text-[10px] font-mono text-dls-secondary">
+                        <span class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-mono text-gray-10">
                           MD
                         </span>
                       </Show>
                       <Show when={img()}>
-                        <span class="shrink-0 rounded-md border border-dls-border bg-dls-surface px-1.5 py-0.5 text-[10px] font-mono text-dls-secondary">
+                        <span class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-mono text-gray-10">
                           IMG
                         </span>
                       </Show>
                     </div>
                     <Show when={dir()}>
-                      <div class="truncate text-[11px] text-dls-secondary">{dir()}</div>
+                      <div class="truncate text-[11px] text-gray-9">{dir()}</div>
                     </Show>
                   </div>
-                </button>
+                  <div class="shrink-0 flex items-center gap-1.5">
+                    <Show when={md() && canOpenObsidian()}>
+                      <button
+                        type="button"
+                        class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
+                        onClick={() => props.onOpenInObsidian?.(artifact.path)}
+                        title="Open in Obsidian"
+                      >
+                        Obsidian
+                      </button>
+                    </Show>
+                    <Show when={canRevealArtifact()}>
+                      <button
+                        type="button"
+                        class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
+                        onClick={() => props.onRevealArtifact?.(artifact.path)}
+                        title={img() ? "Reveal image in Finder" : "Reveal file in Finder"}
+                      >
+                        Reveal
+                      </button>
+                    </Show>
+                  </div>
+                </div>
               );
             }}
           </For>
@@ -170,7 +175,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
         <Show when={hiddenCount() > 0}>
           <button
             type="button"
-            class="w-full mt-1 rounded-lg px-2 py-1.5 text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-active transition-colors"
+            class="w-full mt-1 rounded-lg px-2 py-1.5 text-xs text-gray-10 hover:text-gray-11 hover:bg-gray-3 transition-colors"
             onClick={() => setShowAll((prev) => !prev)}
           >
             {showAll() ? "Show fewer" : `Show ${hiddenCount()} more`}

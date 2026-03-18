@@ -14,10 +14,12 @@ import type {
   PlaceholderAssistantMessage,
   ReloadReason,
   ReloadTrigger,
+  SessionErrorTurn,
   TodoItem,
 } from "../types";
 import {
   addOpencodeCacheHint,
+  normalizeDirectoryQueryPath,
   modelFromUserMessage,
   normalizeDirectoryPath,
   normalizeEvent,
@@ -25,6 +27,8 @@ import {
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 
 export type SessionModelState = {
   overrides: Record<string, ModelRef>;
@@ -35,7 +39,9 @@ export type SessionStore = ReturnType<typeof createSessionStore>;
 
 type StoreState = {
   sessions: Session[];
+  sessionInfoById: Record<string, Session>;
   sessionStatus: Record<string, string>;
+  sessionErrorTurns: Record<string, SessionErrorTurn[]>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
   todos: Record<string, TodoItem[]>;
@@ -58,6 +64,14 @@ const sortSessionsByActivity = (list: Session[]) =>
       if (delta !== 0) return delta;
       return a.id.localeCompare(b.id);
     });
+
+const SYNTHETIC_CONTINUE_CONTROL_PATTERN =
+  /^\s*continue if you have next steps,\s*or stop and ask for clarification if you are unsure how to proceed\.?\s*$/i;
+const COMPACTION_DIAGNOSTIC_WINDOW_MS = 60_000;
+const COMPACTION_LOOP_WARN_THRESHOLD = 3;
+const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
+const INITIAL_SESSION_MESSAGE_LIMIT = 140;
+const SESSION_MESSAGE_LOAD_CHUNK = 120;
 
 const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
   id: part.messageID,
@@ -105,6 +119,25 @@ const upsertPartInfo = (list: Part[], next: Part) => {
 
 const removePartInfo = (list: Part[], partID: string) => list.filter((part) => part.id !== partID);
 
+const appendPartDelta = (list: Part[], partID: string, field: string, delta: string) => {
+  if (!delta) return list;
+  const index = list.findIndex((part) => part.id === partID);
+  if (index === -1) return list;
+
+  const existing = list[index] as Part & Record<string, unknown>;
+  const current = existing[field];
+  if (current !== undefined && typeof current !== "string") {
+    return list;
+  }
+
+  const nextValue = `${typeof current === "string" ? current : ""}${delta}`;
+  if (nextValue === current) return list;
+
+  const copy = list.slice();
+  copy[index] = { ...existing, [field]: nextValue } as Part;
+  return copy;
+};
+
 export function createSessionStore(options: {
   client: () => Client | null;
   activeWorkspaceRoot: () => string;
@@ -134,11 +167,26 @@ export function createSessionStore(options: {
       // ignore
     }
   };
+
+  const sessionWarn = (label: string, payload?: unknown) => {
+    if (!sessionDebugEnabled()) return;
+    try {
+      if (payload === undefined) {
+        console.warn(`[WSWARN] ${label}`);
+      } else {
+        console.warn(`[WSWARN] ${label}`, payload);
+      }
+    } catch {
+      // ignore
+    }
+  };
   const MAX_RELOAD_DETECTION_KEYS = 5000;
 
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
+    sessionInfoById: {},
     sessionStatus: {},
+    sessionErrorTurns: {},
     messages: {},
     parts: {},
     todos: {},
@@ -147,8 +195,13 @@ export function createSessionStore(options: {
     events: [],
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+  const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
+  const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
+  const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
+  const syntheticContinueEventTimesBySession = new Map<string, number[]>();
+  const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -334,7 +387,7 @@ export function createSessionStore(options: {
     const name = typeof record.tool === "string" ? record.tool : "";
     const lower = name.toLowerCase();
     if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
-      return "OpenWork browser automation isn't set up yet. Go to Plugins and ensure the browser plugin/extension is installed and connected, then retry.";
+      return "Chrome MCP is not ready yet. Open the MCP tab, connect `Control Chrome`, then retry.";
     }
     return "Try again, or switch to an agent/prompt that only uses available tools in this worker.";
   };
@@ -360,10 +413,184 @@ export function createSessionStore(options: {
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
   };
 
+  const isSyntheticContinueControlPart = (part: Part) => {
+    if (part.type !== "text") return false;
+    const record = part as Part & { text?: unknown; synthetic?: unknown; ignored?: unknown };
+    if (record.synthetic !== true) return false;
+    if (record.ignored === true) return false;
+    const text = typeof record.text === "string" ? record.text.trim() : "";
+    if (!text) return false;
+    return SYNTHETIC_CONTINUE_CONTROL_PATTERN.test(text);
+  };
+
+  const recordSyntheticContinueDiagnostic = (part: Part) => {
+    if (!isSyntheticContinueControlPart(part)) return;
+    const sessionID = part.sessionID;
+    const now = Date.now();
+    const windowStart = now - COMPACTION_DIAGNOSTIC_WINDOW_MS;
+    const previous = syntheticContinueEventTimesBySession.get(sessionID) ?? [];
+    const next = previous.filter((timestamp) => timestamp >= windowStart);
+    next.push(now);
+    syntheticContinueEventTimesBySession.set(sessionID, next);
+
+    const countInWindow = next.length;
+    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue", {
+      sessionID,
+      messageID: part.messageID,
+      partID: part.id,
+      countPerMinute: countInWindow,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
+
+    if (countInWindow < COMPACTION_LOOP_WARN_THRESHOLD) return;
+
+    const lastWarnAt = syntheticContinueLoopLastWarnAtBySession.get(sessionID) ?? 0;
+    if (now - lastWarnAt < COMPACTION_LOOP_WARN_MIN_INTERVAL_MS) return;
+    syntheticContinueLoopLastWarnAtBySession.set(sessionID, now);
+    sessionWarn("compaction:synthetic-continue-loop", {
+      sessionID,
+      countPerMinute: countInWindow,
+    });
+    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue-loop-suspected", {
+      sessionID,
+      countPerMinute: countInWindow,
+      threshold: COMPACTION_LOOP_WARN_THRESHOLD,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
+  };
+
   const addError = (error: unknown, fallback = "Unknown error") => {
     const message = error instanceof Error ? error.message : fallback;
     if (!message) return;
     options.setError(addOpencodeCacheHint(message));
+  };
+
+  const appendSessionErrorTurn = (sessionID: string, message: string | null) => {
+    const text = message?.trim() ?? "";
+    if (!sessionID || !text) return;
+
+    const list = store.messages[sessionID] ?? [];
+    const lastMessage = list.length > 0 ? list[list.length - 1] : null;
+    const afterMessageID = lastMessage?.id ?? null;
+
+    setStore("sessionErrorTurns", sessionID, (current) => {
+      const existing = current ?? [];
+      const previous = existing[existing.length - 1];
+      if (previous && previous.text === text && previous.afterMessageID === afterMessageID) {
+        return existing;
+      }
+
+      return existing.concat({
+        id: `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${sessionID}:${Date.now()}:${existing.length}`,
+        text,
+        afterMessageID,
+        time: Date.now(),
+      });
+    });
+  };
+
+  const truncateErrorField = (value: unknown, max = 500) => {
+    if (typeof value !== "string") return null;
+    const text = value.trim();
+    if (!text) return null;
+    if (text.length <= max) return text;
+    return `${text.slice(0, Math.max(0, max - 3))}...`;
+  };
+
+  const inferHttpStatus = (value: string | null) => {
+    if (!value) return null;
+    const match = value.match(/\b(?:status|code|http)\s*(?:=|:)?\s*(401|403|413|429)\b/i) ||
+      value.match(/\b(401|403|413|429)\b/);
+    if (!match) return null;
+    const parsed = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  };
+
+  const getNestedRecords = (source: Record<string, unknown>) => {
+    const records: Record<string, unknown>[] = [source];
+    const data = source.data;
+    if (data && typeof data === "object") records.push(data as Record<string, unknown>);
+    const cause = source.cause;
+    if (cause && typeof cause === "object") {
+      const causeRecord = cause as Record<string, unknown>;
+      records.push(causeRecord);
+      const causeData = causeRecord.data;
+      if (causeData && typeof causeData === "object") records.push(causeData as Record<string, unknown>);
+    }
+    return records;
+  };
+
+  const firstStringField = (records: Record<string, unknown>[], keys: string[]) => {
+    for (const record of records) {
+      for (const key of keys) {
+        const value = truncateErrorField(record[key], 800);
+        if (value) return value;
+      }
+    }
+    return null;
+  };
+
+  const firstNumberField = (records: Record<string, unknown>[], keys: string[]) => {
+    for (const record of records) {
+      for (const key of keys) {
+        const value = record[key];
+        if (typeof value !== "number" || !Number.isFinite(value)) continue;
+        return value;
+      }
+    }
+    return null;
+  };
+
+  const firstBooleanField = (records: Record<string, unknown>[], keys: string[]) => {
+    for (const record of records) {
+      for (const key of keys) {
+        const value = record[key];
+        if (typeof value !== "boolean") continue;
+        return value;
+      }
+    }
+    return null;
+  };
+
+  const formatSessionError = (errorObj: Record<string, unknown>) => {
+    const records = getNestedRecords(errorObj);
+    const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
+    const rawMessage = firstStringField(records, ["message", "detail", "reason"]);
+    const responseBody = firstStringField(records, ["responseBody", "body", "response"]);
+    const providerID = firstStringField(records, ["providerID", "providerId", "provider"]);
+    const code = firstStringField(records, ["code", "errorCode"]);
+    const statusCode = firstNumberField(records, ["statusCode", "status"]);
+    const inferred = inferHttpStatus(rawMessage) ?? inferHttpStatus(responseBody);
+    const effectiveStatus = statusCode ?? inferred;
+    const isRetryable = firstBooleanField(records, ["isRetryable", "retryable"]);
+
+    const heading = (() => {
+      if (errorName === "ProviderAuthError") return `Provider auth error${providerID ? ` (${providerID})` : ""}`;
+      if (errorName === "APIError") {
+        if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+        if (effectiveStatus === 413) return "Context too large";
+        if (effectiveStatus === 429) return "Rate limit exceeded";
+        return `API error${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
+      }
+      if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+      if (effectiveStatus === 413) return "Context too large";
+      if (effectiveStatus === 429) return "Rate limit exceeded";
+      if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
+      return errorName.replace(/([a-z])([A-Z])/g, "$1 $2");
+    })();
+
+    const lines = [heading];
+    if (rawMessage && rawMessage !== heading) lines.push(rawMessage);
+    if (effectiveStatus === 413) {
+      lines.push("Tip: Try compacting the session, or start a new session if the issue persists.");
+    }
+    if (providerID && errorName !== "ProviderAuthError") lines.push(`Provider: ${providerID}`);
+    if (effectiveStatus && errorName !== "APIError") lines.push(`Status: ${effectiveStatus}`);
+    if (code) lines.push(`Code: ${code}`);
+    if (isRetryable !== null) lines.push(`Retryable: ${isRetryable ? "yes" : "no"}`);
+    if (responseBody) lines.push(`Response: ${responseBody}`);
+    return lines.join("\n");
   };
 
   const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string) => {
@@ -380,6 +607,35 @@ export function createSessionStore(options: {
     }
   };
 
+  let selectRunCounter = 0;
+  let selectVersion = 0;
+  const selectInFlightBySession = new Map<string, Promise<void>>();
+  const ensureInFlightBySession = new Map<string, Promise<void>>();
+
+  const rememberSession = (session: Session) => {
+    setStore("sessionInfoById", session.id, session);
+  };
+
+  const rememberSessions = (list: Session[]) => {
+    if (!list.length) return;
+    batch(() => {
+      list.forEach((session) => {
+        setStore("sessionInfoById", session.id, session);
+      });
+    });
+  };
+
+  const sessionById = (id: string | null) => {
+    if (!id) return null;
+    return store.sessionInfoById[id] ?? store.sessions.find((session) => session.id === id) ?? null;
+  };
+
+  const messagesBySessionId = (id: string | null): MessageWithParts[] => {
+    if (!id) return [];
+    const list = store.messages[id] ?? [];
+    return list.map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+  };
+
   const sessions = () => store.sessions;
   const sessionStatusById = () => store.sessionStatus;
   const pendingPermissions = () => store.pendingPermissions;
@@ -387,9 +643,7 @@ export function createSessionStore(options: {
   const events = () => store.events;
 
   const selectedSession = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (!id) return null;
-    return store.sessions.find((session) => session.id === id) ?? null;
+    return sessionById(options.selectedSessionId());
   });
 
   const selectedSessionStatus = createMemo(() => {
@@ -399,16 +653,25 @@ export function createSessionStore(options: {
   });
 
   const messages = createMemo<MessageWithParts[]>(() => {
-    const id = options.selectedSessionId();
-    if (!id) return [];
-    const list = store.messages[id] ?? [];
-    return list.map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+    return messagesBySessionId(options.selectedSessionId());
   });
 
   const todos = createMemo<TodoItem[]>(() => {
     const id = options.selectedSessionId();
     if (!id) return [];
     return store.todos[id] ?? [];
+  });
+
+  const selectedSessionHasEarlierMessages = createMemo(() => {
+    const id = options.selectedSessionId();
+    if (!id) return false;
+    return !messageCompleteBySession()[id];
+  });
+
+  const selectedSessionLoadingEarlierMessages = createMemo(() => {
+    const id = options.selectedSessionId();
+    if (!id) return false;
+    return Boolean(messageLoadBusyBySession()[id]);
   });
 
   async function loadSessions(scopeRoot?: string) {
@@ -421,13 +684,7 @@ export function createSessionStore(options: {
     // Note: We intentionally normalize slashes + trailing separators but do NOT
     // lowercase on Windows for the query value because the server does strict
     // string equality against the stored session.directory.
-    const queryDirectory = (() => {
-      const trimmed = (scopeRoot ?? "").trim();
-      if (!trimmed) return undefined;
-      const unified = trimmed.replace(/\\/g, "/");
-      const withoutTrailing = unified.replace(/\/+$/, "");
-      return withoutTrailing || "/";
-    })();
+    const queryDirectory = normalizeDirectoryQueryPath(scopeRoot) || undefined;
 
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
@@ -441,6 +698,7 @@ export function createSessionStore(options: {
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
     sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
+    rememberSessions(filtered);
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
   }
 
@@ -452,7 +710,12 @@ export function createSessionStore(options: {
       throw new Error("Session name is required");
     }
     const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
-    setStore("sessions", (current) => upsertSession(current, next));
+    rememberSession(next);
+    setStore("sessions", (current) => {
+      const tracked = current.some((session) => session.id === next.id);
+      if (next.parentID && !tracked) return current;
+      return upsertSession(current, next);
+    });
   }
 
   async function refreshPendingPermissions() {
@@ -490,89 +753,197 @@ export function createSessionStore(options: {
     });
   }
 
+  async function ensureSessionLoaded(sessionID: string) {
+    const id = sessionID.trim();
+    if (!id) return;
+    if (sessionById(id) && (store.messages[id]?.length ?? 0) > 0) return;
+
+    const existing = ensureInFlightBySession.get(id);
+    if (existing) return existing;
+
+    const c = options.client();
+    if (!c) return;
+
+    const run = (async () => {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [id]: true }));
+      try {
+        const [info, msgs] = await Promise.all([
+          withTimeout(c.session.get({ sessionID: id }), 8000, "session.get"),
+          withTimeout(c.session.messages({ sessionID: id, limit: INITIAL_SESSION_MESSAGE_LIMIT }), 12000, "session.messages"),
+        ]);
+        const nextSession = unwrap(info);
+        const nextMessages = unwrap(msgs);
+        rememberSession(nextSession);
+        setMessagesForSession(id, nextMessages);
+        setMessageLimitBySession((prev) => ({ ...prev, [id]: INITIAL_SESSION_MESSAGE_LIMIT }));
+        setMessageCompleteBySession((prev) => ({ ...prev, [id]: nextMessages.length < INITIAL_SESSION_MESSAGE_LIMIT }));
+      } catch (error) {
+        sessionWarn("session.ensure.failed", {
+          sessionID: id,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      } finally {
+        setMessageLoadBusyBySession((prev) => ({ ...prev, [id]: false }));
+      }
+    })();
+
+    ensureInFlightBySession.set(id, run);
+    try {
+      await run;
+    } finally {
+      if (ensureInFlightBySession.get(id) === run) {
+        ensureInFlightBySession.delete(id);
+      }
+    }
+  }
+
   async function selectSession(sessionID: string) {
     const c = options.client();
     if (!c) return;
 
-    const runId = (() => {
-      const key = "__openwork_select_session_run__";
-      const w = window as typeof window & { [key]?: number };
-      w[key] = (w[key] ?? 0) + 1;
-      return w[key];
-    })();
-    const mark = (() => {
-      const start = Date.now();
-      return (label: string) => console.log(`[selectSession run ${runId}] ${label} (+${Date.now() - start}ms)`);
-    })();
-
-    mark("start");
+    const perfEnabled = options.developerMode();
     options.setSelectedSessionId(sessionID);
     options.setError(null);
 
-    mark("checking health");
-    try {
-      await withTimeout(c.global.health(), 3000, "health");
-      mark("health ok");
-    } catch {
-      mark("health FAILED");
-      throw new Error("Server connection lost. Please reload.");
-    }
-
-    mark("calling session.messages");
-    const msgs = unwrap(await withTimeout(c.session.messages({ sessionID }), 12000, "session.messages"));
-    mark("session.messages done");
-    if (options.selectedSessionId() !== sessionID) {
-      mark("aborting: selection changed before messages applied");
-      return;
-    }
-    setMessagesForSession(sessionID, msgs);
-
-    const model = options.lastUserModelFromMessages(msgs);
-    if (model) {
-      if (options.selectedSessionId() !== sessionID) {
-        mark("aborting: selection changed before model applied");
-        return;
-      }
-      options.setSessionModelState((current) => ({
-        overrides: current.overrides,
-        resolved: { ...current.resolved, [sessionID]: model },
-      }));
-
-      options.setSessionModelState((current) => {
-        if (!current.overrides[sessionID]) return current;
-        const copy = { ...current.overrides };
-        delete copy[sessionID];
-        return { ...current, overrides: copy };
+    const existing = selectInFlightBySession.get(sessionID);
+    if (existing) {
+      recordPerfLog(perfEnabled, "session.select", "dedupe join", {
+        sessionID,
       });
+      return existing;
     }
 
-    try {
-      mark("calling session.todo");
-      const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
-      mark("session.todo done");
-      if (options.selectedSessionId() !== sessionID) {
-        mark("aborting: selection changed before todos applied");
-        return;
+    const runId = ++selectRunCounter;
+    const version = ++selectVersion;
+    const startedAt = perfNow();
+    const mark = (event: string, payload?: Record<string, unknown>) => {
+      const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
+      recordPerfLog(perfEnabled, "session.select", event, {
+        runId,
+        sessionID,
+        elapsedMs,
+        ...(payload ?? {}),
+      });
+    };
+    const isStale = () => version !== selectVersion || options.selectedSessionId() !== sessionID;
+    const abortIfStale = (reason: string) => {
+      if (!isStale()) return false;
+      mark(`aborting: ${reason}`);
+      return true;
+    };
+
+    const run = (async () => {
+      mark("start");
+
+      mark("checking health");
+      try {
+        await withTimeout(c.global.health(), 3000, "health");
+        mark("health ok");
+      } catch (error) {
+        mark("health FAILED", {
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+        throw new Error("Server connection lost. Please reload.");
       }
-      setStore("todos", sessionID, list);
-    } catch {
-      mark("session.todo failed/timeout");
-      setStore("todos", sessionID, []);
-    }
+      if (abortIfStale("selection changed after health")) return;
 
-    try {
-      mark("calling permission.list");
-      await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
-      mark("permission.list done");
-      if (options.selectedSessionId() !== sessionID) {
-        mark("aborting: selection changed before permissions applied");
-        return;
+      const existingLimit = messageLimitBySession()[sessionID] ?? 0;
+      const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+      mark("calling session.messages", { limit: requestLimit });
+      const msgs = unwrap(
+        await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),
+      );
+      mark("session.messages done", { limit: requestLimit, count: msgs.length });
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+      if (abortIfStale("selection changed before messages applied")) return;
+      setMessagesForSession(sessionID, msgs);
+      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: requestLimit }));
+      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < requestLimit }));
+
+      const model = options.lastUserModelFromMessages(msgs);
+      if (model) {
+        if (abortIfStale("selection changed before model applied")) return;
+        options.setSessionModelState((current) => ({
+          overrides: current.overrides,
+          resolved: { ...current.resolved, [sessionID]: model },
+        }));
+
+        options.setSessionModelState((current) => {
+          if (!current.overrides[sessionID]) return current;
+          const copy = { ...current.overrides };
+          delete copy[sessionID];
+          return { ...current, overrides: copy };
+        });
       }
-    } catch {
-      mark("permission.list failed/timeout");
-    }
 
-    mark("selectSession complete");
+      try {
+        mark("calling session.todo");
+        const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
+        mark("session.todo done");
+        if (abortIfStale("selection changed before todos applied")) return;
+        setStore("todos", sessionID, list);
+      } catch (error) {
+        mark("session.todo failed/timeout", {
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+        if (abortIfStale("selection changed before todo fallback")) return;
+        setStore("todos", sessionID, []);
+      }
+
+      try {
+        mark("calling permission.list");
+        await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
+        mark("permission.list done");
+        if (abortIfStale("selection changed before permissions applied")) return;
+      } catch (error) {
+        mark("permission.list failed/timeout", {
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+        if (abortIfStale("selection changed after permission failure")) return;
+      }
+
+      finishPerf(perfEnabled, "session.select", "complete", startedAt, {
+        runId,
+        sessionID,
+        messageCount: msgs.length,
+        todoCount: (store.todos[sessionID] ?? []).length,
+      });
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+    })();
+
+    selectInFlightBySession.set(sessionID, run);
+    try {
+      await run;
+    } finally {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+      if (selectInFlightBySession.get(sessionID) === run) {
+        selectInFlightBySession.delete(sessionID);
+      }
+    }
+  }
+
+  async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
+    const c = options.client();
+    if (!c) return;
+    if (!sessionID) return;
+    if (messageLoadBusyBySession()[sessionID]) return;
+    if (messageCompleteBySession()[sessionID]) return;
+
+    const currentLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
+    const nextLimit = currentLimit + Math.max(1, chunk);
+
+    setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+    try {
+      const msgs = unwrap(await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"));
+      setMessagesForSession(sessionID, msgs);
+      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));
+      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < nextLimit }));
+    } catch (error) {
+      addError(error);
+    } finally {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+    }
   }
 
   async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
@@ -627,6 +998,7 @@ export function createSessionStore(options: {
   }
 
   const setSessions = (next: Session[]) => {
+    rememberSessions(next);
     setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
   };
 
@@ -657,7 +1029,8 @@ export function createSessionStore(options: {
   const activePermission = createMemo(() => {
     const id = options.selectedSessionId();
     if (id) {
-      return store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
+      const scoped = store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
+      if (scoped) return scoped;
     }
     return store.pendingPermissions[0] ?? null;
   });
@@ -665,12 +1038,65 @@ export function createSessionStore(options: {
   const activeQuestion = createMemo(() => {
     const id = options.selectedSessionId();
     if (id) {
-      return store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
+      const scoped = store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
+      if (scoped) return scoped;
     }
     return store.pendingQuestions[0] ?? null;
   });
 
   const [questionReplyBusy, setQuestionReplyBusy] = createSignal(false);
+  let lastPartDebugEventAt = 0;
+  let suppressedPartDebugEvents = 0;
+
+  const appendDebugEvent = (event: { type: string; properties?: unknown }) => {
+    setStore("events", (current) => {
+      const next = [event, ...current];
+      return next.slice(0, 150);
+    });
+  };
+
+  const compactDebugEvent = (event: OpencodeEvent) => {
+    if (event.type === "message.part.updated") {
+      const record = event.properties as Record<string, unknown> | undefined;
+      const part = record?.part as Part | undefined;
+      const delta = typeof record?.delta === "string" ? record.delta : "";
+      const textLength =
+        part?.type === "text" && typeof (part as { text?: unknown }).text === "string"
+          ? String((part as { text?: string }).text).length
+          : null;
+      return {
+        type: event.type,
+        properties: {
+          sessionID: part?.sessionID ?? null,
+          messageID: part?.messageID ?? null,
+          partID: part?.id ?? null,
+          partType: part?.type ?? null,
+          deltaLength: delta.length,
+          textLength,
+        },
+      };
+    }
+
+    if (event.type === "message.part.delta") {
+      const record = event.properties as Record<string, unknown> | undefined;
+      const delta = typeof record?.delta === "string" ? record.delta : "";
+      return {
+        type: event.type,
+        properties: {
+          sessionID: typeof record?.sessionID === "string" ? record.sessionID : null,
+          messageID: typeof record?.messageID === "string" ? record.messageID : null,
+          partID: typeof record?.partID === "string" ? record.partID : null,
+          field: typeof record?.field === "string" ? record.field : null,
+          deltaLength: delta.length,
+        },
+      };
+    }
+
+    return {
+      type: event.type,
+      properties: event.properties,
+    };
+  };
 
   const applyEvent = async (event: OpencodeEvent) => {
     if (event.type === "server.connected") {
@@ -678,10 +1104,32 @@ export function createSessionStore(options: {
     }
 
     if (options.developerMode()) {
-      setStore("events", (current) => {
-        const next = [{ type: event.type, properties: event.properties }, ...current];
-        return next.slice(0, 150);
-      });
+      const compact = compactDebugEvent(event);
+      if (event.type === "message.part.updated" || event.type === "message.part.delta") {
+        const now = Date.now();
+        if (now - lastPartDebugEventAt < 250) {
+          suppressedPartDebugEvents += 1;
+        } else {
+          lastPartDebugEventAt = now;
+          if (suppressedPartDebugEvents > 0) {
+            compact.properties = {
+              ...(compact.properties ?? {}),
+              suppressed: suppressedPartDebugEvents,
+            };
+            suppressedPartDebugEvents = 0;
+          }
+          appendDebugEvent(compact);
+        }
+      } else {
+        if (suppressedPartDebugEvents > 0) {
+          appendDebugEvent({
+            type: "message.part.stream.sample",
+            properties: { suppressed: suppressedPartDebugEvents },
+          });
+          suppressedPartDebugEvents = 0;
+        }
+        appendDebugEvent(compact);
+      }
     }
 
     if (event.type === "session.updated" || event.type === "session.created") {
@@ -689,7 +1137,12 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = record.info as Session;
-          setStore("sessions", (current) => upsertSession(current, info));
+          rememberSession(info);
+          setStore("sessions", (current) => {
+            const tracked = current.some((session) => session.id === info.id);
+            if (info.parentID && !tracked) return current;
+            return upsertSession(current, info);
+          });
         }
       }
     }
@@ -699,7 +1152,19 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const info = record.info as Session | undefined;
         if (info?.id) {
+          syntheticContinueEventTimesBySession.delete(info.id);
+          syntheticContinueLoopLastWarnAtBySession.delete(info.id);
+          setStore(
+            produce((draft: StoreState) => {
+              delete draft.sessionInfoById[info.id];
+            }),
+          );
           setStore("sessions", (current) => removeSession(current, info.id));
+          setStore(
+            produce((draft: StoreState) => {
+              delete draft.sessionErrorTurns[info.id];
+            }),
+          );
         }
       }
     }
@@ -709,7 +1174,11 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
-          setStore("sessionStatus", sessionID, normalizeSessionStatus(record.status));
+          const normalized = normalizeSessionStatus(record.status);
+          setStore("sessionStatus", sessionID, normalized);
+          if (sessionID === options.selectedSessionId() && normalized !== "idle") {
+            options.setError(null);
+          }
         }
       }
     }
@@ -720,6 +1189,20 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
+          const c = options.client();
+          if (c) {
+            try {
+              const latest = unwrap(await c.session.get({ sessionID }));
+              rememberSession(latest);
+              setStore("sessions", (current) => {
+                const tracked = current.some((session) => session.id === latest.id);
+                if (latest.parentID && !tracked) return current;
+                return upsertSession(current, latest);
+              });
+            } catch {
+              // ignore
+            }
+          }
         }
       }
     }
@@ -731,42 +1214,34 @@ export function createSessionStore(options: {
     if (event.type === "session.error") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
+        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+        if (sessionID) {
+          setStore("sessionStatus", sessionID, "idle");
+        }
         const errorObj = record.error as Record<string, unknown> | undefined;
         if (errorObj) {
-          // Handle different error types from OpenCode
-          const errorName = typeof errorObj.name === "string" ? errorObj.name : "Unknown";
-          let message = "An error occurred";
-
-          if (errorName === "ProviderAuthError") {
-            // Provider auth error - likely 401/403 from the API
-            const providerID = typeof errorObj.providerID === "string" ? errorObj.providerID : "provider";
-            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
-            message = errorMessage || `Authentication failed for ${providerID}. Please reconnect or check your API key.`;
-          } else if (errorName === "APIError") {
-            // API error - includes status code
-            const statusCode = typeof errorObj.statusCode === "number" ? errorObj.statusCode : undefined;
-            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
-            if (statusCode === 401 || statusCode === 403) {
-              message = errorMessage || "Authentication failed. Please check your API key or reconnect the provider.";
-            } else if (statusCode === 429) {
-              message = errorMessage || "Rate limit exceeded. Please wait and try again.";
-            } else {
-              message = errorMessage || `API error${statusCode ? ` (${statusCode})` : ""}`;
-            }
-          } else if (errorName === "MessageAbortedError") {
+          const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
+          if (errorName === "MessageAbortedError") {
             // Cancellation is a user-driven control flow. Don't treat it as a
             // fatal error banner; the session UI already provides local UX.
-            options.setError(null);
+            if (!sessionID) {
+              options.setError(null);
+            }
             return;
-          } else if (errorName === "MessageOutputLengthError") {
-            message = "Output length limit exceeded";
-          } else {
-            // Unknown or other error
-            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
-            message = errorMessage || "An unexpected error occurred";
           }
+          if (sessionID) {
+            appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatSessionError(errorObj)));
+          } else {
+            options.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
+          }
+          return;
+        }
 
-          options.setError(addOpencodeCacheHint(message));
+        const fallback = truncateErrorField(record.error, 700) ?? "An unexpected error occurred";
+        if (sessionID) {
+          appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback));
+        } else {
+          options.setError(addOpencodeCacheHint(fallback));
         }
       }
     }
@@ -814,6 +1289,7 @@ export function createSessionStore(options: {
         if (record.part && typeof record.part === "object") {
           const part = record.part as Part;
           const delta = typeof record.delta === "string" ? record.delta : null;
+          const partUpdatedStartedAt = perfNow();
 
           setStore(
             produce((draft: StoreState) => {
@@ -838,8 +1314,53 @@ export function createSessionStore(options: {
               draft.parts[part.messageID] = upsertPartInfo(parts, part);
             }),
           );
+          const resolvedPart =
+            store.parts[part.messageID]?.find((item) => item.id === part.id) ??
+            part;
+          recordSyntheticContinueDiagnostic(resolvedPart);
+          const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
+          if (sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
+            const textLength =
+              part.type === "text" && typeof (part as { text?: unknown }).text === "string"
+                ? String((part as { text?: string }).text).length
+                : null;
+            recordPerfLog(true, "session.event", "message.part.updated", {
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              partID: part.id,
+              partType: part.type,
+              deltaLength: delta?.length ?? 0,
+              textLength,
+              ms: partUpdatedMs,
+            });
+          }
           maybeMarkReloadRequired(part);
           maybeHandleInvalidToolError(part);
+        }
+      }
+    }
+
+    if (event.type === "message.part.delta") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const messageID = typeof record.messageID === "string" ? record.messageID : null;
+        const partID = typeof record.partID === "string" ? record.partID : null;
+        const field = typeof record.field === "string" ? record.field : null;
+        const delta = typeof record.delta === "string" ? record.delta : null;
+        const partDeltaStartedAt = perfNow();
+
+        if (messageID && partID && field && delta) {
+          setStore("parts", messageID, (current = []) => appendPartDelta(current, partID, field, delta));
+          const partDeltaMs = Math.round((perfNow() - partDeltaStartedAt) * 100) / 100;
+          if (sessionDebugEnabled() && (partDeltaMs >= 8 || delta.length >= 120)) {
+            recordPerfLog(true, "session.event", "message.part.delta", {
+              messageID,
+              partID,
+              field,
+              deltaLength: delta.length,
+              ms: partDeltaMs,
+            });
+          }
         }
       }
     }
@@ -898,6 +1419,10 @@ export function createSessionStore(options: {
     const coalesced = new Map<string, number>();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let last = 0;
+    let queueStartedAt = 0;
+    let peakQueueDepth = 0;
+    let queueHasPartUpdates = false;
+    let coalescedReplaced = 0;
 
     const keyForEvent = (event: OpencodeEvent) => {
       if (event.type === "session.status" || event.type === "session.idle") {
@@ -929,28 +1454,65 @@ export function createSessionStore(options: {
       coalesced.clear();
       if (eventsToApply.length === 0) return;
 
+      const queueWaitMs = queueStartedAt > 0 ? Date.now() - queueStartedAt : 0;
+      queueStartedAt = 0;
+      const peakDepth = peakQueueDepth;
+      peakQueueDepth = 0;
+      queueHasPartUpdates = false;
+      const replaced = coalescedReplaced;
+      coalescedReplaced = 0;
+
       last = Date.now();
+      const startedAt = perfNow();
+      let applied = 0;
+      let partUpdates = 0;
+      let messageUpdates = 0;
       batch(() => {
         for (const event of eventsToApply) {
           if (!event) continue;
+          if (event.type === "message.part.updated" || event.type === "message.part.delta") partUpdates += 1;
+          if (event.type === "message.updated") messageUpdates += 1;
+          applied += 1;
           void applyEvent(event);
         }
       });
+
+      const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
+      const dropped = eventsToApply.length - applied;
+      if (
+        sessionDebugEnabled() &&
+        (elapsedMs >= 10 || queueWaitMs >= 40 || peakDepth >= 25 || applied >= 30 || dropped >= 12)
+      ) {
+        recordPerfLog(true, "session.sse", "flush", {
+          queued: eventsToApply.length,
+          applied,
+          dropped,
+          queueWaitMs,
+          peakQueueDepth: peakDepth,
+          coalescedReplaced: replaced,
+          messageUpdates,
+          partUpdates,
+          ms: elapsedMs,
+        });
+      }
     };
 
     const schedule = () => {
       if (timer) return;
       const elapsed = Date.now() - last;
-      timer = setTimeout(flush, Math.max(0, 16 - elapsed));
+      const interval = queueHasPartUpdates ? 48 : 16;
+      timer = setTimeout(flush, Math.max(0, interval - elapsed));
     };
 
     const connectSse = async (controller: AbortController) => {
       try {
         const sub = await c.event.subscribe(undefined, { signal: controller.signal });
         let yielded = Date.now();
+        let lastArrivalAt = Date.now();
 
         // Reset reconnect counter on successful connection
         reconnectAttempt = 0;
+        recordPerfLog(sessionDebugEnabled(), "session.sse", "connected");
 
         for await (const raw of sub.stream) {
           if (cancelled) break;
@@ -958,16 +1520,38 @@ export function createSessionStore(options: {
           const event = normalizeEvent(raw);
           if (!event) continue;
 
+          const arrivedAt = Date.now();
+          const arrivalGapMs = arrivedAt - lastArrivalAt;
+          lastArrivalAt = arrivedAt;
+          if (sessionDebugEnabled() && arrivalGapMs >= 220) {
+            recordPerfLog(true, "session.sse", "arrival-gap", {
+              ms: arrivalGapMs,
+              type: event.type,
+            });
+          }
+
           const key = keyForEvent(event);
           if (key) {
             const existing = coalesced.get(key);
             if (existing !== undefined) {
+              if (queue[existing] !== undefined) {
+                coalescedReplaced += 1;
+              }
               queue[existing] = undefined;
             }
             coalesced.set(key, queue.length);
           }
 
+          if (queue.length === 0) {
+            queueStartedAt = Date.now();
+          }
+          if (event.type === "message.part.updated" || event.type === "message.part.delta") {
+            queueHasPartUpdates = true;
+          }
           queue.push(event);
+          if (queue.length > peakQueueDepth) {
+            peakQueueDepth = queue.length;
+          }
           schedule();
 
           if (Date.now() - yielded < 8) continue;
@@ -978,6 +1562,7 @@ export function createSessionStore(options: {
         // Stream ended normally - attempt reconnect unless cancelled
         if (!cancelled) {
           options.setSseConnected(false);
+          recordPerfLog(sessionDebugEnabled(), "session.sse", "stream-ended");
           scheduleReconnect(controller);
         }
       } catch (e) {
@@ -988,6 +1573,9 @@ export function createSessionStore(options: {
 
         // Mark SSE as disconnected and schedule reconnect
         options.setSseConnected(false);
+        recordPerfLog(sessionDebugEnabled(), "session.sse", "stream-error", {
+          error: message,
+        });
         scheduleReconnect(controller);
       }
     };
@@ -999,6 +1587,10 @@ export function createSessionStore(options: {
       // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
       reconnectAttempt++;
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000);
+      recordPerfLog(sessionDebugEnabled(), "session.sse", "reconnect-scheduled", {
+        attempt: reconnectAttempt,
+        delayMs: delay,
+      });
 
       reconnectTimer = setTimeout(() => {
         if (cancelled) return;
@@ -1020,10 +1612,17 @@ export function createSessionStore(options: {
 
   return {
     sessions,
+    sessionById,
+    sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
+    selectedSessionErrorTurns: createMemo(() => {
+      const sessionID = options.selectedSessionId();
+      return sessionID ? store.sessionErrorTurns[sessionID] ?? [] : [];
+    }),
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,
     messages,
+    messagesBySessionId,
     todos,
     pendingPermissions,
     permissionReplyBusy,
@@ -1033,18 +1632,24 @@ export function createSessionStore(options: {
     events,
     activePermission,
     loadSessions,
+    ensureSessionLoaded,
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
+    loadEarlierMessages,
     renameSession,
     respondPermission,
     respondQuestion,
     rejectQuestion,
+    appendSessionErrorTurn,
     setSessions,
     setSessionStatusById,
     setMessages,
     setTodos,
     setPendingPermissions,
     setPendingQuestions,
+    selectedSessionHasEarlierMessages,
+    selectedSessionLoadingEarlierMessages,
+    sessionLoadingById: (sessionID: string | null) => (sessionID ? Boolean(messageLoadBusyBySession()[sessionID]) : false),
   };
 }

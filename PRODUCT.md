@@ -121,6 +121,15 @@ use the design from ./design.ts that is your core reference for building the ent
 - provider/model setup
 - first-run "hello world" task
 
+### Cloud Worker Onboarding (Current)
+
+- Sign in (or sign up) on OpenWork cloud control surface.
+- Launch worker with a human-readable name.
+- If needed, complete checkout and return.
+- Select launched worker from list/detail shell.
+- Connect from OpenWork app via `Add a worker` -> `Connect remote`.
+- Prefer one-click deep link when available; always provide manual URL + token fallback.
+
 ### Task Execution
 
 - create task
@@ -245,3 +254,12 @@ use the design from ./design.ts that is your core reference for building the ent
 - separate profiles
 - separate allowed folders
 - separate providers/keys
+
+### 14. Hosted Cloud Worker Connect Flow (Current)
+
+1. User opens OpenWork cloud control page and authenticates.
+2. User launches a worker (with optional checkout).
+3. UI polls until worker is healthy.
+4. UI resolves workspace-scoped connect URL (`/w/ws_*`) and access token.
+5. User clicks `Open in OpenWork` or copies manual credentials.
+6. In OpenWork app, user uses `Add a worker` -> `Connect remote` and starts working.

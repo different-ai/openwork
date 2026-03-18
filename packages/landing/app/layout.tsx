@@ -1,10 +1,10 @@
 import "./globals.css";
-import { JetBrains_Mono, Sora } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
 
-const sora = Sora({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-sora",
+  variable: "--font-sans",
   display: "swap"
 });
 
@@ -15,9 +15,20 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata = {
-  title: "OpenWork — Local-first, open-source Cowork alternative",
+  metadataBase: new URL("https://openwork.software"),
+  title: "OpenWork — The open source Claude Cowork alternative",
   description:
-    "OpenWork is the open-source Cowork alternative powered by OpenCode—run local-first workflows with any model, and extend with skills."
+    "Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across your org — with guardrails built in.",
+  openGraph: {
+    images: ["/og-image-clean.png"]
+  },
+  twitter: {
+    card: "summary_large_image",
+    images: ["/og-image-clean.png"]
+  },
+  icons: {
+    icon: "/openwork-mark.svg"
+  }
 };
 
 export default function RootLayout({
@@ -26,7 +37,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${sora.variable} ${jetbrains.variable}`}>
+    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
         <Script
           id="posthog"
@@ -41,7 +52,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased text-ink">
+      <body className="antialiased">
         {children}
       </body>
     </html>

@@ -17,8 +17,37 @@ import type {
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
-import { resetOpenworkState, resetOpencodeCache } from "./lib/tauri";
+import {
+  resetOpenworkState,
+  resetOpencodeCache,
+  sandboxCleanupOpenworkContainers,
+} from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
+
+function throttle<T extends (...args: any[]) => any>(
+  fn: T,
+  delayMs: number
+): (...args: Parameters<T>) => void {
+  let lastCall = 0;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let lastArgs: Parameters<T> | null = null;
+
+  return (...args: Parameters<T>) => {
+    const now = Date.now();
+    lastArgs = args;
+
+    if (now - lastCall >= delayMs) {
+      lastCall = now;
+      fn(...args);
+    } else if (!timeoutId){
+      timeoutId = setTimeout(() => {
+        lastCall = Date.now();
+        timeoutId = null;
+        if (lastArgs) fn(...lastArgs);
+      }, delayMs - (now - lastCall));
+    }
+  }
+}
 
 export type NotionState = {
   status: Accessor<"disconnected" | "connecting" | "connected" | "error">;
@@ -54,6 +83,8 @@ export function createSystemState(options: {
 
   const [cacheRepairBusy, setCacheRepairBusy] = createSignal(false);
   const [cacheRepairResult, setCacheRepairResult] = createSignal<string | null>(null);
+  const [dockerCleanupBusy, setDockerCleanupBusy] = createSignal(false);
+  const [dockerCleanupResult, setDockerCleanupResult] = createSignal<string | null>(null);
 
   const updater = createUpdaterState();
   const {
@@ -78,16 +109,21 @@ export function createSystemState(options: {
 
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
-    return options.sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+    return options.sessions().some((s) => statuses[s.id] === "running");
   });
 
-  function clearOpenworkLocalStorage() {
+  function clearOpenworkLocalStorage(mode: ResetOpenworkMode) {
     if (typeof window === "undefined") return;
 
     try {
+      if (mode === "all") {
+        window.localStorage.clear();
+        return;
+      }
+
       const keys = Object.keys(window.localStorage);
       for (const key of keys) {
-        if (key.startsWith("openwork.")) {
+        if (key.includes("openwork")) {
           window.localStorage.removeItem(key);
         }
       }
@@ -128,7 +164,7 @@ export function createSystemState(options: {
         await resetOpenworkState(resetModalMode());
       }
 
-      clearOpenworkLocalStorage();
+      clearOpenworkLocalStorage(resetModalMode());
 
       if (isTauriRuntime()) {
         await relaunch();
@@ -378,6 +414,42 @@ export function createSystemState(options: {
     }
   }
 
+  async function cleanupOpenworkDockerContainers() {
+    if (!isTauriRuntime()) {
+      setDockerCleanupResult("Docker cleanup requires the desktop app.");
+      return;
+    }
+
+    if (dockerCleanupBusy()) return;
+
+    setDockerCleanupBusy(true);
+    setDockerCleanupResult(null);
+    options.setError(null);
+
+    try {
+      const result = await sandboxCleanupOpenworkContainers();
+      if (!result.candidates.length) {
+        setDockerCleanupResult("No OpenWork Docker containers found.");
+        return;
+      }
+
+      const removedCount = result.removed.length;
+      if (result.errors.length) {
+        const first = result.errors[0];
+        setDockerCleanupResult(
+          `Removed ${removedCount}/${result.candidates.length} containers. ${first}`,
+        );
+        return;
+      }
+
+      setDockerCleanupResult(`Removed ${removedCount} OpenWork Docker container(s).`);
+    } catch (e) {
+      setDockerCleanupResult(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setDockerCleanupBusy(false);
+    }
+  }
+
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {
     if (!isTauriRuntime()) return;
 
@@ -449,28 +521,43 @@ export function createSystemState(options: {
       downloadedBytes: 0,
       notes: pending.notes,
     });
+    
+    let accumulatedBytes = 0;
+    let totalBytes: number | null = null;
+
+    const throttledUpdateProgress = throttle(() => {
+      setUpdateStatus((current) => {
+        if (current.state !== "downloading") return current;
+        return {
+          ...current,
+          totalBytes,
+          downloadedBytes: accumulatedBytes,
+        };
+      });
+    }, 100);
 
     try {
       await pending.update.download((event: any) => {
         if (!event || typeof event !== "object") return;
         const record = event as Record<string, any>;
 
-        setUpdateStatus((current) => {
-          if (current.state !== "downloading") return current;
+        if (record.event === "Started") {
+          const newTotal =
+            record.data && typeof record.data.contentLength === "number"
+              ? record.data.contentLength
+              : null;
+          totalBytes = newTotal;
+          throttledUpdateProgress();
+        }
 
-          if (record.event === "Started") {
-            const total =
-              record.data && typeof record.data.contentLength === "number" ? record.data.contentLength : null;
-            return { ...current, totalBytes: total };
-          }
-
-          if (record.event === "Progress") {
-            const chunk = record.data && typeof record.data.chunkLength === "number" ? record.data.chunkLength : 0;
-            return { ...current, downloadedBytes: current.downloadedBytes + chunk };
-          }
-
-          return current;
-        });
+        if (record.event === "Progress") {
+          const chunk =
+            record.data && typeof record.data.chunkLength === "number"
+              ? record.data.chunkLength
+              : 0;
+          accumulatedBytes += chunk;
+          throttledUpdateProgress();
+        }
       });
 
       setUpdateStatus({
@@ -523,6 +610,9 @@ export function createSystemState(options: {
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,
+    dockerCleanupBusy,
+    dockerCleanupResult,
+    cleanupOpenworkDockerContainers,
     updateAutoCheck,
     setUpdateAutoCheck,
     updateAutoDownload,

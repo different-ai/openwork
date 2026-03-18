@@ -34,14 +34,15 @@ import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
+  opencodeDbMigrate,
   engineInstall,
   engineStart,
   engineStop,
   sandboxDoctor,
   sandboxStop,
-  openwrkInstanceDispose,
-  openwrkStartDetached,
-  openwrkWorkspaceActivate,
+  orchestratorInstanceDispose,
+  orchestratorStartDetached,
+  orchestratorWorkspaceActivate,
   pickFile,
   pickDirectory,
   saveFile,
@@ -90,6 +91,13 @@ export type SandboxCreateProgressState = {
   steps: SandboxCreateProgressStep[];
   logs: string[];
   error: string | null;
+};
+
+export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
+
+export type MigrationRepairResult = {
+  ok: boolean;
+  message: string;
 };
 
 export function createWorkspaceStore(options: {
@@ -173,6 +181,62 @@ export function createWorkspaceStore(options: {
     }
   };
 
+  const connectInFlightByKey = new Map<string, Promise<boolean>>();
+  let createRemoteInFlight: Promise<boolean> | null = null;
+  const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
+  const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
+  const LONG_BOOT_CONNECT_REASONS = new Set(["host-start", "bootstrap-local"]);
+  const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
+    /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
+    /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
+    /no such command[:\s]+db/i,
+    /found argument ['"`]db['"`] which wasn't expected/i,
+  ] as const;
+
+  const connectRequestKey = (
+    nextBaseUrl: string,
+    directory?: string,
+    context?: {
+      workspaceId?: string;
+      workspaceType?: WorkspaceInfo["workspaceType"];
+      targetRoot?: string;
+      reason?: string;
+    },
+    auth?: OpencodeAuth,
+    connectOptions?: { quiet?: boolean; navigate?: boolean },
+  ) =>
+    [
+      nextBaseUrl.trim(),
+      (directory ?? "").trim(),
+      context?.workspaceId?.trim() ?? "",
+      context?.workspaceType ?? "",
+      context?.targetRoot?.trim() ?? "",
+      context?.reason ?? "",
+      auth?.mode ?? (auth ? "basic" : "none"),
+      String(connectOptions?.quiet ?? false),
+      String(connectOptions?.navigate ?? true),
+    ].join("::");
+
+  const resolveConnectHealthTimeoutMs = (reason?: string) => {
+    const normalizedReason = reason?.trim() ?? "";
+    if (LONG_BOOT_CONNECT_REASONS.has(normalizedReason)) {
+      return LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS;
+    }
+    return DEFAULT_CONNECT_HEALTH_TIMEOUT_MS;
+  };
+
+  const formatExecOutput = (result: { stdout: string; stderr: string }) => {
+    const stderr = result.stderr.trim();
+    const stdout = result.stdout.trim();
+    return [stderr, stdout].filter(Boolean).join("\n\n");
+  };
+
+  const isDbMigrateUnsupported = (output: string) => {
+    const normalized = output.trim();
+    if (!normalized) return false;
+    return DB_MIGRATE_UNSUPPORTED_PATTERNS.some((pattern) => pattern.test(normalized));
+  };
+
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
   const [engineAuth, setEngineAuth] = createSignal<OpencodeAuth | null>(null);
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
@@ -181,9 +245,19 @@ export function createWorkspaceStore(options: {
   const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
   const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
   const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
+  const [sandboxPreflightBusy, setSandboxPreflightBusy] = createSignal(false);
+  const [sandboxCreatePhase, setSandboxCreatePhase] = createSignal<SandboxCreatePhase>("idle");
 
   const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
-  const clearSandboxCreateProgress = () => setSandboxCreateProgress(null);
+  const [lastSandboxCreateProgress, setLastSandboxCreateProgress] =
+    createSignal<SandboxCreateProgressState | null>(null);
+  const clearSandboxCreateProgress = () => {
+    const snapshot = sandboxCreateProgress();
+    if (snapshot) {
+      setLastSandboxCreateProgress(snapshot);
+    }
+    setSandboxCreateProgress(null);
+  };
 
   const pushSandboxCreateLog = (line: string) => {
     const value = String(line ?? "").trim();
@@ -249,6 +323,8 @@ export function createWorkspaceStore(options: {
   >({});
   const [exportingWorkspaceConfig, setExportingWorkspaceConfig] = createSignal(false);
   const [importingWorkspaceConfig, setImportingWorkspaceConfig] = createSignal(false);
+  const [migrationRepairBusy, setMigrationRepairBusy] = createSignal(false);
+  const [migrationRepairResult, setMigrationRepairResult] = createSignal<MigrationRepairResult | null>(null);
 
   const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
@@ -440,7 +516,7 @@ export function createWorkspaceStore(options: {
     };
   };
 
-  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwrk";
+  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwork-orchestrator";
 
   const resolveWorkspacePaths = () => {
     const active = activeWorkspacePath().trim();
@@ -783,6 +859,26 @@ export function createWorkspaceStore(options: {
             } catch {
               // ignore
             }
+          } else {
+            // In web mode, we still need to persist the resolved OpenWork connection
+            // details onto the workspace entry so that the sidebar can list sessions
+            // for multiple remotes at once (without relying on global server settings).
+            const resolvedToken = token.trim();
+            setWorkspaces((prev) =>
+              prev.map((ws) => {
+                if (ws.id !== next.id) return ws;
+                return {
+                  ...ws,
+                  remoteType: "openwork",
+                  baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
+                  directory: resolvedDirectory || null,
+                  openworkHostUrl: hostUrl,
+                  openworkToken: resolvedToken || null,
+                  openworkWorkspaceId: workspaceInfo?.id ?? ws.openworkWorkspaceId ?? null,
+                  openworkWorkspaceName: workspaceInfo?.name ?? ws.openworkWorkspaceName ?? null,
+                };
+              }),
+            );
           }
 
           syncActiveWorkspaceId(id);
@@ -943,10 +1039,10 @@ export function createWorkspaceStore(options: {
         existingEngineProjectDir: existingEngine?.projectDir ?? null,
       });
 
-      if (canReuseHost && runtime === "openwrk") {
+      if (canReuseHost && runtime === "openwork-orchestrator") {
         try {
           const reuseStart = Date.now();
-          await openwrkWorkspaceActivate({
+          await orchestratorWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
@@ -1003,8 +1099,8 @@ export function createWorkspaceStore(options: {
 
       try {
         const runtime = resolveEngineRuntime();
-        if (runtime === "openwrk") {
-          await openwrkWorkspaceActivate({
+        if (runtime === "openwork-orchestrator") {
+          await orchestratorWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
@@ -1022,7 +1118,7 @@ export function createWorkspaceStore(options: {
               const ok = await connectToServer(
                 newInfo.baseUrl,
                 newInfo.projectDir ?? undefined,
-                { reason: "workspace-openwrk-switch" },
+                { reason: "workspace-orchestrator-switch" },
                 auth,
                 { navigate: false },
               );
@@ -1097,208 +1193,277 @@ export function createWorkspaceStore(options: {
     auth?: OpencodeAuth,
     connectOptions?: { quiet?: boolean; navigate?: boolean },
   ) {
-    console.log("[workspace] connect", {
-      baseUrl: nextBaseUrl,
-      directory: directory ?? null,
-      workspaceType: context?.workspaceType ?? null,
-    });
-    const connectStart = Date.now();
-    wsDebug("connect:start", {
-      baseUrl: nextBaseUrl,
-      directory: directory ?? null,
-      reason: context?.reason ?? null,
-      workspaceType: context?.workspaceType ?? null,
-      targetRoot: context?.targetRoot ?? null,
-      quiet: connectOptions?.quiet ?? false,
-      navigate: connectOptions?.navigate ?? true,
-      authMode: auth && "mode" in auth ? (auth as any).mode : auth ? "basic" : "none",
-    });
-    const quiet = connectOptions?.quiet ?? false;
-    const navigate = connectOptions?.navigate ?? true;
-    options.setError(null);
-    if (!quiet) {
-      options.setBusy(true);
-      options.setBusyLabel("status.connecting");
-      options.setBusyStartedAt(Date.now());
+    const requestKey = connectRequestKey(nextBaseUrl, directory, context, auth, connectOptions);
+    const existing = connectInFlightByKey.get(requestKey);
+    if (existing) {
+      wsDebug("connect:dedupe", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        reason: context?.reason ?? null,
+        workspaceType: context?.workspaceType ?? null,
+      });
+      return existing;
     }
-    options.setSseConnected(false);
 
-    const connectMeta: OpencodeConnectStatus = {
-      at: Date.now(),
-      baseUrl: nextBaseUrl,
-      directory: directory ?? null,
-      reason: context?.reason ?? null,
-      status: "connecting",
-      error: null,
-    };
-    options.setOpencodeConnectStatus?.(connectMeta);
-
-    const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
-
-    try {
-      let resolvedDirectory = directory?.trim() ?? "";
-      let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
-      const health = await waitForHealthy(nextClient, { timeoutMs: 12_000 });
-      connectMetrics.healthyMs = Date.now() - connectStart;
-      wsDebug("connect:healthy", { ms: Date.now() - connectStart, version: health.version });
-
-      if (context?.workspaceType === "remote" && !resolvedDirectory) {
-        try {
-          const pathInfo = unwrap(await nextClient.path.get());
-          const discovered = pathInfo.directory?.trim() ?? "";
-          if (discovered) {
-            resolvedDirectory = discovered;
-            console.log("[workspace] remote directory resolved", resolvedDirectory);
-            if (isTauriRuntime() && context.workspaceId) {
-              const updated = await workspaceUpdateRemote({
-                workspaceId: context.workspaceId,
-                directory: resolvedDirectory,
-              });
-              setWorkspaces(updated.workspaces);
-              syncActiveWorkspaceId(updated.activeId);
-            }
-            setProjectDir(resolvedDirectory);
-            nextClient = createClient(nextBaseUrl, resolvedDirectory, auth);
-          }
-        } catch (error) {
-          console.log("[workspace] remote directory lookup failed", error);
-        }
+    const run = (async () => {
+      console.log("[workspace] connect", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        workspaceType: context?.workspaceType ?? null,
+      });
+      const connectStart = Date.now();
+      wsDebug("connect:start", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        reason: context?.reason ?? null,
+        workspaceType: context?.workspaceType ?? null,
+        targetRoot: context?.targetRoot ?? null,
+        healthTimeoutMs: resolveConnectHealthTimeoutMs(context?.reason),
+        quiet: connectOptions?.quiet ?? false,
+        navigate: connectOptions?.navigate ?? true,
+        authMode: auth && "mode" in auth ? (auth as any).mode : auth ? "basic" : "none",
+      });
+      const quiet = connectOptions?.quiet ?? false;
+      const navigate = connectOptions?.navigate ?? true;
+      options.setError(null);
+      if (!quiet) {
+        options.setBusy(true);
+        options.setBusyLabel("status.connecting");
+        options.setBusyStartedAt(Date.now());
       }
+      options.setSseConnected(false);
 
-      options.setClient(nextClient);
-      options.setConnectedVersion(health.version);
-      options.setBaseUrl(nextBaseUrl);
-      options.setClientDirectory(resolvedDirectory);
+      const connectMeta: OpencodeConnectStatus = {
+        at: Date.now(),
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        reason: context?.reason ?? null,
+        status: "connecting",
+        error: null,
+      };
+      options.setOpencodeConnectStatus?.(connectMeta);
 
-      const providersPromise = (async () => {
-        const providersAt = Date.now();
-        wsDebug("connect:providers:start", { baseUrl: nextBaseUrl });
-        try {
-          const providerList = unwrap(await nextClient.provider.list());
-          wsDebug("connect:providers:done", {
-            ms: Date.now() - providersAt,
-            source: "provider.list",
-            available: providerList.all?.length ?? 0,
-            connected: providerList.connected?.length ?? 0,
-          });
-          return {
-            providers: providerList.all,
-            defaults: providerList.default,
-            connectedIds: providerList.connected,
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : safeStringify(error);
-          wsDebug("connect:providers:fallback", { ms: Date.now() - providersAt, message });
+      const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
+
+      try {
+        let resolvedDirectory = directory?.trim() ?? "";
+        let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
+        const healthTimeoutMs = resolveConnectHealthTimeoutMs(context?.reason);
+        const health = await waitForHealthy(nextClient, { timeoutMs: healthTimeoutMs });
+        connectMetrics.healthyMs = Date.now() - connectStart;
+        wsDebug("connect:healthy", {
+          ms: Date.now() - connectStart,
+          version: health.version,
+          timeoutMs: healthTimeoutMs,
+        });
+
+        if (context?.workspaceType === "remote" && !resolvedDirectory) {
           try {
-            const cfg = unwrap(await nextClient.config.providers());
-            const mapped = mapConfigProvidersToList(cfg.providers);
+            const pathInfo = unwrap(await nextClient.path.get());
+            const discovered = pathInfo.directory?.trim() ?? "";
+            if (discovered) {
+              resolvedDirectory = discovered;
+              console.log("[workspace] remote directory resolved", resolvedDirectory);
+              if (isTauriRuntime() && context.workspaceId) {
+                const updated = await workspaceUpdateRemote({
+                  workspaceId: context.workspaceId,
+                  directory: resolvedDirectory,
+                });
+                setWorkspaces(updated.workspaces);
+                syncActiveWorkspaceId(updated.activeId);
+              }
+              setProjectDir(resolvedDirectory);
+              nextClient = createClient(nextBaseUrl, resolvedDirectory, auth);
+            }
+          } catch (error) {
+            console.log("[workspace] remote directory lookup failed", error);
+          }
+        }
+
+        options.setClient(nextClient);
+        options.setConnectedVersion(health.version);
+        options.setBaseUrl(nextBaseUrl);
+        options.setClientDirectory(resolvedDirectory);
+
+        const providersPromise = (async () => {
+          const providersAt = Date.now();
+          wsDebug("connect:providers:start", { baseUrl: nextBaseUrl });
+          try {
+            const providerList = unwrap(await nextClient.provider.list());
             wsDebug("connect:providers:done", {
               ms: Date.now() - providersAt,
-              source: "config.providers",
-              available: mapped.length,
-              connected: 0,
+              source: "provider.list",
+              available: providerList.all?.length ?? 0,
+              connected: providerList.connected?.length ?? 0,
             });
             return {
-              providers: mapped,
-              defaults: cfg.default,
-              connectedIds: [],
+              providers: providerList.all,
+              defaults: providerList.default,
+              connectedIds: providerList.connected,
             };
-          } catch (fallbackError) {
-            const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : safeStringify(fallbackError);
-            wsDebug("connect:providers:error", { ms: Date.now() - providersAt, message: fallbackMessage });
-            return {
-              providers: [],
-              defaults: {},
-              connectedIds: [],
-            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            wsDebug("connect:providers:fallback", { ms: Date.now() - providersAt, message });
+            try {
+              const cfg = unwrap(await nextClient.config.providers());
+              const mapped = mapConfigProvidersToList(cfg.providers);
+              wsDebug("connect:providers:done", {
+                ms: Date.now() - providersAt,
+                source: "config.providers",
+                available: mapped.length,
+                connected: 0,
+              });
+              return {
+                providers: mapped,
+                defaults: cfg.default,
+                connectedIds: [],
+              };
+            } catch (fallbackError) {
+              const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : safeStringify(fallbackError);
+              wsDebug("connect:providers:error", { ms: Date.now() - providersAt, message: fallbackMessage });
+              return {
+                providers: [],
+                defaults: {},
+                connectedIds: [],
+              };
+            }
+          } finally {
+            connectMetrics.providersMs = Date.now() - providersAt;
           }
-        } finally {
-          connectMetrics.providersMs = Date.now() - providersAt;
+        })();
+
+        const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
+        wsDebug("connect:loadSessions", { targetRoot, resolvedDirectory });
+        const sessionsAt = Date.now();
+        await options.loadSessions(targetRoot);
+        connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
+        wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
+        const pendingPermissionsAt = Date.now();
+        await options.refreshPendingPermissions();
+        connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
+
+        const providerState = await providersPromise;
+        options.setProviders(providerState.providers);
+        options.setProviderDefaults(providerState.defaults);
+        options.setProviderConnectedIds(providerState.connectedIds);
+
+        options.setSelectedSessionId(null);
+        options.setMessages([]);
+        options.setTodos([]);
+        options.setPendingPermissions([]);
+        options.setSessionStatusById({});
+
+        options.refreshSkills({ force: true }).catch(() => undefined);
+        options.refreshPlugins().catch(() => undefined);
+        if (navigate && !options.selectedSessionId()) {
+          options.setTab("scheduled");
+          options.setView("session");
         }
-      })();
 
-      const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
-      wsDebug("connect:loadSessions", { targetRoot, resolvedDirectory });
-      const sessionsAt = Date.now();
-      await options.loadSessions(targetRoot);
-      connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
-      wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
-      const pendingPermissionsAt = Date.now();
-      await options.refreshPendingPermissions();
-      connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
-
-      const providerState = await providersPromise;
-      options.setProviders(providerState.providers);
-      options.setProviderDefaults(providerState.defaults);
-      options.setProviderConnectedIds(providerState.connectedIds);
-
-      options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
-      options.setPendingPermissions([]);
-      options.setSessionStatusById({});
-
-      options.refreshSkills({ force: true }).catch(() => undefined);
-      options.refreshPlugins().catch(() => undefined);
-      if (navigate && !options.selectedSessionId()) {
-        options.setTab("scheduled");
-        options.setView("session");
+        // If the user successfully connected, treat onboarding as complete so we
+        // don't force the onboarding flow on subsequent launches.
+        markOnboardingComplete();
+        options.onEngineStable?.();
+        connectMetrics.totalMs = Date.now() - connectStart;
+        options.setOpencodeConnectStatus?.({ ...connectMeta, status: "connected", metrics: connectMetrics });
+        wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
+        return true;
+      } catch (e) {
+        options.setClient(null);
+        options.setConnectedVersion(null);
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        wsDebug("connect:error", { ms: Date.now() - connectStart, message });
+        connectMetrics.totalMs = Date.now() - connectStart;
+        options.setOpencodeConnectStatus?.({
+          ...connectMeta,
+          status: "error",
+          error: addOpencodeCacheHint(message),
+          metrics: connectMetrics,
+        });
+        if (!quiet) {
+          options.setError(addOpencodeCacheHint(message));
+        }
+        return false;
+      } finally {
+        if (!quiet) {
+          options.setBusy(false);
+          options.setBusyLabel(null);
+          options.setBusyStartedAt(null);
+        }
       }
+    })();
 
-      // If the user successfully connected, treat onboarding as complete so we
-      // don't force the onboarding flow on subsequent launches.
-      markOnboardingComplete();
-      options.onEngineStable?.();
-      connectMetrics.totalMs = Date.now() - connectStart;
-      options.setOpencodeConnectStatus?.({ ...connectMeta, status: "connected", metrics: connectMetrics });
-      wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
-      return true;
-    } catch (e) {
-      options.setClient(null);
-      options.setConnectedVersion(null);
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      wsDebug("connect:error", { ms: Date.now() - connectStart, message });
-      connectMetrics.totalMs = Date.now() - connectStart;
-      options.setOpencodeConnectStatus?.({
-        ...connectMeta,
-        status: "error",
-        error: addOpencodeCacheHint(message),
-        metrics: connectMetrics,
-      });
-      if (!quiet) {
-        options.setError(addOpencodeCacheHint(message));
-      }
-      return false;
+    connectInFlightByKey.set(requestKey, run);
+    try {
+      return await run;
     } finally {
-      if (!quiet) {
-        options.setBusy(false);
-        options.setBusyLabel(null);
-        options.setBusyStartedAt(null);
+      if (connectInFlightByKey.get(requestKey) === run) {
+        connectInFlightByKey.delete(requestKey);
       }
     }
   }
 
-  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
+  const openEmptySession = async (scopeRoot?: string) => {
+    const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
+
+    if (options.client()) {
+      try {
+        await options.loadSessions(root || undefined);
+      } catch {
+        // If session loading fails, still fall back to the draft-ready session view.
+      }
+    }
+
+    options.setSelectedSessionId(null);
+    options.setMessages([]);
+    options.setTodos([]);
+    options.setPendingPermissions([]);
+    options.setSessionStatusById({});
+    options.setView("session");
+  };
+
+  const activateFreshLocalWorkspace = async (workspaceId: string | null, workspacePath: string) => {
+    if (!workspaceId) {
+      await openEmptySession(workspacePath);
+      return true;
+    }
+
+    const hasClient = Boolean(options.client());
+    const ok = hasClient
+      ? await activateWorkspace(workspaceId)
+      : await startHost({ workspacePath, navigate: false });
+
+    if (!ok) {
+      return false;
+    }
+
+    await openEmptySession(activeWorkspaceRoot().trim() || workspacePath);
+    return true;
+  };
+
+  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null): Promise<boolean> {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
+      return false;
     }
 
     if (!folder) {
       options.setError(t("app.error.choose_folder", currentLocale()));
-      return;
+      return false;
     }
 
     options.setBusy(true);
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
     options.setError(null);
+    clearSandboxCreateProgress();
+    setSandboxPreflightBusy(false);
 
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
         options.setError(t("app.error.choose_folder", currentLocale()));
-        return;
+        return false;
       }
 
       const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
@@ -1309,19 +1474,19 @@ export function createWorkspaceStore(options: {
         updateWorkspaceConnectionState(ws.activeId, { status: "connected", message: null });
       }
 
-      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-        if (active) {
-          setProjectDir(active.path);
-          setAuthorizedDirs([active.path]);
-        }
-
       setCreateWorkspaceOpen(false);
-      options.setTab("scheduled");
-      options.setView("dashboard");
       markOnboardingComplete();
+
+      const opened = await activateFreshLocalWorkspace(ws.activeId ?? null, resolvedFolder);
+      if (!opened) {
+        return false;
+      }
+
+      return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+      return false;
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);
@@ -1329,19 +1494,31 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function createSandboxFlow(preset: WorkspacePreset, folder: string | null) {
+  async function createSandboxFlow(
+    preset: WorkspacePreset,
+    folder: string | null,
+    input?: { onReady?: () => Promise<void> | void },
+  ): Promise<boolean> {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
+      return false;
     }
 
     if (!folder) {
       options.setError(t("app.error.choose_folder", currentLocale()));
-      return;
+      return false;
     }
 
     const runId = makeRunId();
     const startedAt = Date.now();
+    setSandboxCreatePhase("preflight");
+    setSandboxPreflightBusy(true);
+    options.setError(null);
+    clearSandboxCreateProgress();
+
+    const doctor = await refreshSandboxDoctor();
+    setSandboxPreflightBusy(false);
+    setSandboxCreatePhase("provisioning");
     setSandboxCreateProgress({
       runId,
       startedAt,
@@ -1357,7 +1534,26 @@ export function createWorkspaceStore(options: {
       ],
     });
 
-    const doctor = await refreshSandboxDoctor();
+    if (doctor?.debug) {
+      const selectedBin = doctor.debug.selectedBin?.trim();
+      if (selectedBin) {
+        pushSandboxCreateLog(`Docker binary: ${selectedBin}`);
+      }
+      const candidates = (doctor.debug.candidates ?? []).filter((item) => item?.trim());
+      if (candidates.length) {
+        pushSandboxCreateLog(`Docker candidates: ${candidates.join(", ")}`);
+      }
+      const versionDebug = doctor.debug.versionCommand;
+      if (versionDebug) {
+        pushSandboxCreateLog(`docker --version exit=${versionDebug.status}`);
+        if (versionDebug.stderr?.trim()) pushSandboxCreateLog(`docker --version stderr: ${versionDebug.stderr.trim()}`);
+      }
+      const infoDebug = doctor.debug.infoCommand;
+      if (infoDebug) {
+        pushSandboxCreateLog(`docker info exit=${infoDebug.status}`);
+        if (infoDebug.stderr?.trim()) pushSandboxCreateLog(`docker info stderr: ${infoDebug.stderr.trim()}`);
+      }
+    }
     if (!doctor?.ready) {
       const detail =
         doctor?.error?.trim() ||
@@ -1366,15 +1562,11 @@ export function createWorkspaceStore(options: {
       setSandboxStep("docker", { status: "error", detail });
       setSandboxError(detail);
       setSandboxStage("Docker not ready");
-      return;
+      setSandboxCreatePhase("idle");
+      return false;
     }
     setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
     setSandboxStage("Preparing worker...");
-
-    options.setBusy(true);
-    options.setBusyLabel("status.creating_workspace");
-    options.setBusyStartedAt(Date.now());
-    options.setError(null);
 
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
@@ -1382,7 +1574,7 @@ export function createWorkspaceStore(options: {
         options.setError(t("app.error.choose_folder", currentLocale()));
         setSandboxStep("workspace", { status: "error", detail: "No folder selected" });
         setSandboxError("No folder selected");
-        return;
+        return false;
       }
 
       const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
@@ -1429,10 +1621,39 @@ export function createWorkspaceStore(options: {
               }
             }
 
+            if (stage === "docker.config") {
+              const selected = String(payload.payload?.openworkDockerBin ?? "").trim();
+              if (selected) {
+                pushSandboxCreateLog(`OPENWORK_DOCKER_BIN=${selected}`);
+              }
+              const resolved = String(payload.payload?.resolvedDockerBin ?? "").trim();
+              if (resolved) {
+                pushSandboxCreateLog(`Resolved docker: ${resolved}`);
+              }
+              const candidates = Array.isArray(payload.payload?.candidates)
+                ? payload.payload.candidates.filter((item: unknown) => String(item ?? "").trim())
+                : [];
+              if (candidates.length) {
+                pushSandboxCreateLog(`Docker probe paths: ${candidates.join(", ")}`);
+              }
+            }
+
+            if (stage === "docker.inspect") {
+              const inspectError = String(payload.payload?.error ?? "").trim();
+              if (inspectError) {
+                setSandboxStep("sandbox", { status: "active", detail: "Docker inspect warning" });
+                pushSandboxCreateLog(`docker inspect warning: ${inspectError}`);
+              }
+            }
+
             if (stage === "openwork.waiting") {
               const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
               const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
               setSandboxStep("health", { status: "active", detail: seconds ? `${seconds}s` : null });
+              const probeError = String(payload.payload?.containerProbeError ?? "").trim();
+              if (probeError) {
+                pushSandboxCreateLog(`Container probe: ${probeError}`);
+              }
             }
 
             if (stage === "openwork.healthy") {
@@ -1449,7 +1670,7 @@ export function createWorkspaceStore(options: {
           },
         );
 
-        const host = await openwrkStartDetached({
+        const host = await orchestratorStartDetached({
           workspacePath: resolvedFolder,
           sandboxBackend: "docker",
           runId,
@@ -1460,30 +1681,40 @@ export function createWorkspaceStore(options: {
 
         setSandboxStep("connect", { status: "active", detail: null });
 
-        options.setTab("scheduled");
-        options.setView("dashboard");
         markOnboardingComplete();
 
         const ok = await createRemoteWorkspaceFlow({
           openworkHostUrl: host.openworkUrl,
-          openworkToken: host.token,
+          openworkToken: host.ownerToken?.trim() || host.token,
           directory: resolvedFolder,
           displayName: name,
           sandboxBackend: host.sandboxBackend ?? "docker",
           sandboxRunId: host.sandboxRunId ?? runId,
           sandboxContainerName: host.sandboxContainerName ?? null,
+          manageBusy: false,
+          closeModal: false,
         });
         if (!ok) {
           const fallback = "Failed to connect to sandbox";
+          pushSandboxCreateLog(fallback);
           setSandboxStep("connect", { status: "error", detail: fallback });
           setSandboxError(fallback);
-          return;
+          return false;
+        }
+
+        if (input?.onReady) {
+          setSandboxCreatePhase("finalizing");
+          setSandboxStage("Finalizing worker...");
+          setSandboxStep("connect", { status: "active", detail: "Applying setup" });
+          pushSandboxCreateLog("Applying final worker setup...");
+          await input.onReady();
         }
 
         setSandboxStep("connect", { status: "done", detail: null });
         setSandboxStage("Sandbox ready.");
         setCreateWorkspaceOpen(false);
         clearSandboxCreateProgress();
+        return true;
       } finally {
         stopListen?.();
       }
@@ -1492,10 +1723,10 @@ export function createWorkspaceStore(options: {
       options.setError(addOpencodeCacheHint(message));
       setSandboxError(message);
       setSandboxStage("Sandbox failed");
+      return false;
     } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
+      setSandboxPreflightBusy(false);
+      setSandboxCreatePhase("idle");
     }
   }
 
@@ -1504,12 +1735,23 @@ export function createWorkspaceStore(options: {
     openworkToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
+    manageBusy?: boolean;
+    closeModal?: boolean;
 
     // Sandbox lifecycle metadata (desktop-managed)
     sandboxBackend?: "docker" | null;
     sandboxRunId?: string | null;
     sandboxContainerName?: string | null;
   }) {
+    if (createRemoteInFlight) {
+      wsDebug("create-remote:dedupe", {
+        hostUrl: input.openworkHostUrl ?? null,
+        directory: input.directory ?? null,
+      });
+      return createRemoteInFlight;
+    }
+
+    const run = (async () => {
     const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
     const token = input.openworkToken?.trim() ?? "";
     const directory = input.directory?.trim() ?? "";
@@ -1521,7 +1763,7 @@ export function createWorkspaceStore(options: {
     }
 
     options.setError(null);
-    console.log("[workspace] create remote", {
+    console.log("[workspace] create remote request", {
       hostUrl: hostUrl || null,
       directory: directory || null,
       displayName,
@@ -1543,20 +1785,45 @@ export function createWorkspaceStore(options: {
     });
 
     try {
-      const resolved = await resolveOpenworkHost({
-        hostUrl,
-        token,
-        directoryHint: directory || null,
-      });
-      if (resolved.kind !== "openwork") {
+      let resolved: Awaited<ReturnType<typeof resolveOpenworkHost>> | null = null;
+      try {
+        resolved = await resolveOpenworkHost({
+          hostUrl,
+          token,
+          directoryHint: directory || null,
+        });
+      } catch (error) {
+        // Sandbox workers can report healthy before listWorkspaces is fully ready.
+        // Fall back to host-level OpenCode URL so the worker can still be registered.
+        if (input.sandboxBackend !== "docker") {
+          throw error;
+        }
+        wsDebug("sandbox:openwork-resolve-fallback:error", {
+          hostUrl,
+          message: error instanceof Error ? error.message : safeStringify(error),
+        });
+      }
+
+      if (resolved?.kind === "openwork") {
+        resolvedBaseUrl = resolved.opencodeBaseUrl;
+        resolvedDirectory = resolved.directory || directory;
+        openworkWorkspace = resolved.workspace;
+        resolvedHostUrl = resolved.hostUrl;
+        resolvedAuth = resolved.auth;
+      } else if (input.sandboxBackend === "docker") {
+        resolvedHostUrl = hostUrl;
+        resolvedBaseUrl = `${hostUrl.replace(/\/+$/, "")}/opencode`;
+        resolvedDirectory = directory || resolvedDirectory;
+        resolvedAuth = token ? { token, mode: "openwork" } : undefined;
+        wsDebug("sandbox:openwork-resolve-fallback:host", {
+          hostUrl: resolvedHostUrl,
+          baseUrl: resolvedBaseUrl,
+          directory: resolvedDirectory,
+        });
+      } else {
         options.setError("OpenWork server unavailable. Check the URL and token.");
         return false;
       }
-      resolvedBaseUrl = resolved.opencodeBaseUrl;
-      resolvedDirectory = resolved.directory || directory;
-      openworkWorkspace = resolved.workspace;
-      resolvedHostUrl = resolved.hostUrl;
-      resolvedAuth = resolved.auth;
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       options.setError(addOpencodeCacheHint(message));
@@ -1585,9 +1852,12 @@ export function createWorkspaceStore(options: {
 
     const finalDirectory = options.clientDirectory().trim() || resolvedDirectory || "";
 
-    options.setBusy(true);
-    options.setBusyLabel("status.creating_workspace");
-    options.setBusyStartedAt(Date.now());
+    const manageBusy = input.manageBusy ?? true;
+    if (manageBusy) {
+      options.setBusy(true);
+      options.setBusyLabel("status.creating_workspace");
+      options.setBusyStartedAt(Date.now());
+    }
 
     try {
       if (isTauriRuntime()) {
@@ -1606,6 +1876,7 @@ export function createWorkspaceStore(options: {
         });
         setWorkspaces(ws.workspaces);
         syncActiveWorkspaceId(ws.activeId);
+        console.log("[workspace] create remote complete:", ws.activeId ?? "none");
       } else {
         const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
         const nextWorkspace: WorkspaceInfo = {
@@ -1632,6 +1903,7 @@ export function createWorkspaceStore(options: {
           return [...withoutMatch, nextWorkspace];
         });
         syncActiveWorkspaceId(workspaceId);
+        console.log("[workspace] create remote complete:", workspaceId);
       }
 
       setProjectDir(finalDirectory);
@@ -1639,20 +1911,39 @@ export function createWorkspaceStore(options: {
       setWorkspaceConfigLoaded(true);
       setAuthorizedDirs([]);
 
-      setCreateRemoteWorkspaceOpen(false);
+      const closeModal = input.closeModal ?? true;
+      if (closeModal) {
+        setCreateWorkspaceOpen(false);
+        setCreateRemoteWorkspaceOpen(false);
+      }
       const activeId = activeWorkspaceId();
       if (activeId) {
         updateWorkspaceConnectionState(activeId, { status: "connected", message: null });
       }
+
+      await openEmptySession(activeWorkspaceRoot().trim() || finalDirectory);
       return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
+      console.log("[workspace] create remote failed:", message);
       options.setError(addOpencodeCacheHint(message));
       return false;
     } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
+      if (manageBusy) {
+        options.setBusy(false);
+        options.setBusyLabel(null);
+        options.setBusyStartedAt(null);
+      }
+    }
+    })();
+
+    createRemoteInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (createRemoteInFlight === run) {
+        createRemoteInFlight = null;
+      }
     }
   }
 
@@ -1841,6 +2132,119 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  async function recoverWorkspace(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return false;
+    if (connectingWorkspaceId() === id) return false;
+
+    const workspace = workspaces().find((item) => item.id === id) ?? null;
+    if (!workspace) return false;
+
+    const reconnect = async () => {
+      if (activeWorkspaceId() === id) {
+        return await activateWorkspace(id);
+      }
+      return await testWorkspaceConnection(id);
+    };
+
+    setConnectingWorkspaceId(id);
+    options.setError(null);
+
+    try {
+      updateWorkspaceConnectionState(id, { status: "connecting", message: null });
+
+      if (workspace.workspaceType !== "remote") {
+        return Boolean(await reconnect());
+      }
+
+      const isSandboxWorkspace =
+        workspace.sandboxBackend === "docker" || Boolean(workspace.sandboxContainerName?.trim());
+
+      if (!isSandboxWorkspace) {
+        return Boolean(await reconnect());
+      }
+
+      if (!isTauriRuntime()) {
+        options.setError(t("app.error.tauri_required", currentLocale()));
+        updateWorkspaceConnectionState(id, {
+          status: "error",
+          message: t("app.error.tauri_required", currentLocale()),
+        });
+        return false;
+      }
+
+      const workspacePath = workspace.directory?.trim() || workspace.path?.trim() || "";
+      if (!workspacePath) {
+        const message = "Worker folder is missing. Open Edit connection and try again.";
+        options.setError(message);
+        updateWorkspaceConnectionState(id, { status: "error", message });
+        return false;
+      }
+
+      const doctor = await refreshSandboxDoctor();
+      if (!doctor?.ready) {
+        const detail =
+          doctor?.error?.trim() ||
+          "Docker needs to be running before we can get this worker back online.";
+        throw new Error(detail);
+      }
+
+      const host = await orchestratorStartDetached({
+        workspacePath,
+        sandboxBackend: "docker",
+        runId: workspace.sandboxRunId?.trim() || null,
+        openworkToken:
+          workspace.openworkToken?.trim() || options.openworkServerSettings().token?.trim() || null,
+      });
+
+      const resolved = await resolveOpenworkHost({
+        hostUrl: host.openworkUrl,
+        token: host.ownerToken?.trim() || host.token,
+        directoryHint: workspacePath,
+      });
+
+      if (resolved.kind !== "openwork") {
+        throw new Error("Worker is still warming up. Try again in a few seconds.");
+      }
+
+      const updated = await workspaceUpdateRemote({
+        workspaceId: id,
+        remoteType: "openwork",
+        baseUrl: resolved.opencodeBaseUrl,
+        directory: resolved.directory || workspacePath,
+        openworkHostUrl: resolved.hostUrl,
+        openworkToken: host.ownerToken?.trim() || host.token,
+        openworkWorkspaceId: resolved.workspace.id,
+        openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
+        sandboxBackend: host.sandboxBackend ?? "docker",
+        sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
+        sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
+      });
+
+      setWorkspaces(updated.workspaces);
+      syncActiveWorkspaceId(updated.activeId);
+
+      const ok = await reconnect();
+      if (!ok) {
+        const message = "Worker restarted, but reconnect failed. Try again in a few seconds.";
+        updateWorkspaceConnectionState(id, { status: "error", message });
+        options.setError(message);
+        return false;
+      }
+
+      updateWorkspaceConnectionState(id, { status: "connected", message: null });
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      const hint = addOpencodeCacheHint(message);
+      options.setError(hint);
+      updateWorkspaceConnectionState(id, { status: "error", message: hint });
+      return false;
+    } finally {
+      setConnectingWorkspaceId((current) => (current === id ? null : current));
+    }
+  }
+
   async function stopSandbox(workspaceId: string) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -2008,12 +2412,11 @@ export function createWorkspaceStore(options: {
       syncActiveWorkspaceId(ws.activeId);
       setCreateWorkspaceOpen(false);
       setCreateRemoteWorkspaceOpen(false);
-      options.setTab("scheduled");
-      options.setView("dashboard");
       markOnboardingComplete();
 
-      if (ws.activeId) {
-        await activateWorkspace(ws.activeId);
+      const opened = await activateFreshLocalWorkspace(ws.activeId ?? null, resolvedFolder);
+      if (!opened) {
+        return;
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -2023,18 +2426,122 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  function canRepairOpencodeMigration() {
+    if (!isTauriRuntime()) return false;
+    const workspace = activeWorkspaceInfo();
+    if (!workspace || workspace.workspaceType !== "local") return false;
+    return Boolean(activeWorkspacePath().trim());
+  }
+
+  async function repairOpencodeMigration(optionsOverride?: { navigate?: boolean }) {
+    if (!isTauriRuntime()) {
+      const message = t("app.migration.desktop_required", currentLocale());
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    }
+
+    if (migrationRepairBusy()) return false;
+
+    const workspace = activeWorkspaceInfo();
+    if (!workspace || workspace.workspaceType !== "local") {
+      const message = t("app.migration.local_only", currentLocale());
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    }
+
+    const root = activeWorkspacePath().trim();
+    if (!root) {
+      const message = t("app.migration.workspace_required", currentLocale());
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    }
+
+    setMigrationRepairBusy(true);
+    setMigrationRepairResult(null);
+    options.setError(null);
+    options.setBusy(true);
+    options.setBusyLabel("status.repairing_migration");
+    options.setBusyStartedAt(Date.now());
+
+    try {
+      if (engine()?.running) {
+        const info = await engineStop();
+        setEngine(info);
+      }
+
+      const source = options.engineSource();
+      const result = await opencodeDbMigrate({
+        projectDir: root,
+        preferSidecar: source === "sidecar",
+        opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
+      });
+
+      if (!result.ok) {
+        const output = formatExecOutput(result);
+        if (isDbMigrateUnsupported(output)) {
+          const message = t("app.migration.unsupported", currentLocale());
+          setMigrationRepairResult({ ok: false, message });
+          options.setError(message);
+          return false;
+        }
+
+        const fallback = t("app.migration.failed", currentLocale());
+        const message = output ? `${fallback}\n\n${output}` : fallback;
+        setMigrationRepairResult({ ok: false, message });
+        options.setError(addOpencodeCacheHint(message));
+        return false;
+      }
+
+      const started = await startHost({
+        workspacePath: root,
+        navigate: optionsOverride?.navigate ?? false,
+      });
+      if (!started) {
+        const message = t("app.migration.restart_failed", currentLocale());
+        setMigrationRepairResult({ ok: false, message });
+        return false;
+      }
+
+      setMigrationRepairResult({ ok: true, message: t("app.migration.success", currentLocale()) });
+      return true;
+    } catch (error) {
+      const message = addOpencodeCacheHint(error instanceof Error ? error.message : safeStringify(error));
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    } finally {
+      setMigrationRepairBusy(false);
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
+    }
+  }
+
+  async function onRepairOpencodeMigration() {
+    options.setStartupPreference("local");
+    options.setOnboardingStep("connecting");
+    const ok = await repairOpencodeMigration({ navigate: true });
+    if (!ok) {
+      options.setOnboardingStep("local");
+    }
+  }
+
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
     }
 
-    if (activeWorkspaceInfo()?.workspaceType === "remote") {
+    const overrideWorkspacePath = optionsOverride?.workspacePath?.trim() ?? "";
+    if (activeWorkspaceInfo()?.workspaceType === "remote" && !overrideWorkspacePath) {
       options.setError(t("app.error.host_requires_local", currentLocale()));
       return false;
     }
 
-    const dir = (optionsOverride?.workspacePath ?? activeWorkspacePath() ?? projectDir()).trim();
+    const dir = (overrideWorkspacePath || activeWorkspacePath() || projectDir()).trim();
     if (!dir) {
       options.setError(t("app.error.pick_workspace_folder", currentLocale()));
       return false;
@@ -2073,6 +2580,7 @@ export function createWorkspaceStore(options: {
     }
 
     options.setError(null);
+    setMigrationRepairResult(null);
     options.setBusy(true);
     options.setBusyLabel("status.starting_engine");
     options.setBusyStartedAt(Date.now());
@@ -2220,9 +2728,9 @@ export function createWorkspaceStore(options: {
 
     try {
       const runtime = engine()?.runtime ?? resolveEngineRuntime();
-      if (runtime === "openwrk") {
-        await openwrkInstanceDispose(root);
-        await openwrkWorkspaceActivate({
+      if (runtime === "openwork-orchestrator") {
+        await orchestratorInstanceDispose(root);
+        await orchestratorWorkspaceActivate({
           workspacePath: root,
           name: activeWorkspaceInfo()?.displayName?.trim() || activeWorkspaceInfo()?.name?.trim() || null,
         });
@@ -2239,7 +2747,7 @@ export function createWorkspaceStore(options: {
           const ok = await connectToServer(
             nextInfo.baseUrl,
             nextInfo.projectDir ?? undefined,
-            { reason: "engine-reload-openwrk" },
+            { reason: "engine-reload-orchestrator" },
             auth,
           );
           if (!ok) {
@@ -2656,6 +3164,8 @@ export function createWorkspaceStore(options: {
     sandboxDoctorResult,
     sandboxDoctorCheckedAt,
     sandboxDoctorBusy,
+    sandboxPreflightBusy,
+    sandboxCreatePhase,
     projectDir,
     workspaces,
     activeWorkspaceId,
@@ -2669,6 +3179,8 @@ export function createWorkspaceStore(options: {
     workspaceConnectionStateById,
     exportingWorkspaceConfig,
     importingWorkspaceConfig,
+    migrationRepairBusy,
+    migrationRepairResult,
     activeWorkspaceDisplay,
     activeWorkspacePath,
     activeWorkspaceRoot,
@@ -2692,10 +3204,13 @@ export function createWorkspaceStore(options: {
     updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
     forgetWorkspace,
+    recoverWorkspace,
     stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig,
     importWorkspaceConfig,
+    canRepairOpencodeMigration,
+    repairOpencodeMigration,
     startHost,
     stopHost,
     reloadWorkspaceEngine,
@@ -2703,6 +3218,7 @@ export function createWorkspaceStore(options: {
     onSelectStartup,
     onBackToWelcome,
     onStartHost,
+    onRepairOpencodeMigration,
     onAttachHost,
     onConnectClient,
     onRememberStartupToggle,
@@ -2715,6 +3231,7 @@ export function createWorkspaceStore(options: {
     setEngineInstallLogs,
     refreshSandboxDoctor,
     sandboxCreateProgress,
+    lastSandboxCreateProgress,
     clearSandboxCreateProgress,
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,

@@ -119,6 +119,10 @@ pub fn spawn_openwork_server(
         }
     }
 
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command = command.env(key, value);
+    }
+
     command
         .spawn()
         .map_err(|e| format!("Failed to start OpenWork server: {e}"))

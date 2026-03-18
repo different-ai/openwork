@@ -1,0 +1,61 @@
+#!/usr/bin/env node
+
+const childProcess = require("child_process")
+const os = require("os")
+const path = require("path")
+
+function run(target) {
+  const result = childProcess.spawnSync(target, process.argv.slice(2), {
+    stdio: "inherit",
+  })
+  if (result.error) {
+    console.error(result.error.message)
+    process.exit(1)
+  }
+  const code = typeof result.status === "number" ? result.status : 0
+  process.exit(code)
+}
+
+const envPath = process.env.OPENWORK_ORCHESTRATOR_BIN_PATH
+if (envPath) {
+  run(envPath)
+}
+
+const platformMap = {
+  darwin: "darwin",
+  linux: "linux",
+  win32: "windows",
+}
+
+const archMap = {
+  x64: "x64",
+  arm64: "arm64",
+  arm: "arm",
+}
+
+let platform = platformMap[os.platform()]
+if (!platform) {
+  platform = os.platform()
+}
+
+let arch = archMap[os.arch()]
+if (!arch) {
+  arch = os.arch()
+}
+
+const pkg = `openwork-orchestrator-${platform}-${arch}`
+const binary = platform === "windows" ? "openwork.exe" : "openwork"
+
+let pkgJsonPath
+try {
+  pkgJsonPath = require.resolve(`${pkg}/package.json`)
+} catch {
+  console.error(
+    `openwork: no prebuilt binary package found for ${platform}/${arch}.\n` +
+      `Try installing the platform package manually: ${pkg}`,
+  )
+  process.exit(1)
+}
+
+const resolved = path.join(path.dirname(pkgJsonPath), "bin", binary)
+run(resolved)

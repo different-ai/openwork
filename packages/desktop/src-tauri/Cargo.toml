@@ -1,9 +1,17 @@
 [package]
 name = "openwork"
-version = "0.11.72"
+version = "0.11.169"
 description = "OpenWork"
 authors = ["Different AI"]
 edition = "2021"
+default-run = "OpenWork-Dev"
+
+[lib]
+name = "openwork"
+
+[[bin]]
+name = "OpenWork-Dev"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -14,6 +22,7 @@ notify = "6.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-http = "2.5.6"
 tauri-plugin-opener = "2.5.3"
@@ -35,3 +44,7 @@ strip = true
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = "2.9.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString"] }

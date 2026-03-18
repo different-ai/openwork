@@ -1,0 +1,31 @@
+---
+title: "What is OpenWork"
+description: "Core concepts and system vocabulary"
+mode: "wide"
+---
+
+OpenWork is the control surface for running agentic work with predictable sharing.
+
+## Core terms
+
+- **OpenWork app**: Desktop/mobile/web client experience layer.
+- **OpenWork server**: API/control layer consumed by the app.
+- **OpenWork worker**: A specific workspace runtime destination.
+- **OpenCode Router**: Messaging bridge for Slack/Telegram with directory routing.
+
+## Why teams use it
+
+- Keep agent workflows portable (`.opencode/` + `opencode.json`).
+- Isolate work by worker instead of mixing everything in one thread.
+- Add approvals, audit visibility, and clear ownership boundaries.
+- Run local-first, then move to hosted and messaging surfaces as needed.
+
+## Runtime modes
+
+- **Desktop host mode**: OpenWork app starts local OpenCode/OpenWork.
+- **CLI host mode**: `openwrk` runs OpenCode + OpenWork server in terminal.
+- **Remote client mode**: App connects to an existing OpenWork server URL + token.
+
+## Mental model
+
+Use one worker per outcome domain (ops, client A, client B). Then attach skills, commands, and automations to that worker.

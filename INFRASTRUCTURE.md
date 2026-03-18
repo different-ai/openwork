@@ -27,6 +27,7 @@ OpenWork is an experience layer. `opencode` is the engine. This document defines
 5.  Local-first, graceful degradation
 
 * Default to local execution.
+* Hosted cloud is a first-class option, not a separate product.
 * If a sidecar is missing or offline, the UI falls back to read-only or explicit user guidance.
 
 6.  Portable configuration
@@ -73,6 +74,16 @@ But what you can do is:
 * Runs standalone via `openwork-server` CLI.
 * Provides filesystem-backed config surfaces (skills, plugins, MCP, commands).
 * Sidecar lifecycle is described in `packages/app/pr/openwork-server.md`.
+* Can also be consumed as a hosted OpenWork Cloud control surface for remote worker lifecycle.
+
+### OpenWork Cloud Control Plane
+
+* Hosted deployment of OpenWork server capabilities for worker provisioning and remote connect.
+* Must preserve the same user-level contract as self-hosted paths:
+  - launch worker
+  - get connect credentials (URL + token)
+  - connect via `Add worker` -> `Connect remote`
+* Should not require a separate mental model for users moving between local and hosted modes.
 
 ### OpenCode Router
 
@@ -82,7 +93,7 @@ But what you can do is:
 ## Non-goals
 
 * Replacing OpenCode primitives with custom abstractions.
-* Building multi-tenant or cloud-managed infrastructure.
+* Forcing cloud-only lock-in (self-hosted desktop/CLI paths must remain valid).
 
 ## References
 

@@ -1,17 +1,19 @@
 use tauri::{AppHandle, Manager, State};
 
+use crate::commands::opencode_router::opencodeRouter_start;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
 };
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
-use crate::commands::opencode_router::opencodeRouter_start;
-use crate::openwrk::{self, OpenwrkSpawnOptions};
-use crate::openwrk::manager::OpenwrkManager;
-use crate::openwork_server::{manager::OpenworkServerManager, resolve_connect_url, start_openwork_server};
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
+use crate::openwork_server::{
+    manager::OpenworkServerManager, resolve_connect_url, start_openwork_server,
+};
+use crate::orchestrator::manager::OrchestratorManager;
+use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
 use serde_json::json;
@@ -47,6 +49,20 @@ impl Drop for EnvVarGuard {
     }
 }
 
+fn env_truthy(key: &str) -> Option<bool> {
+    let value = std::env::var(key).ok()?;
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn openwork_dev_mode_enabled() -> bool {
+    env_truthy("OPENWORK_DEV_MODE").unwrap_or(cfg!(debug_assertions))
+}
+
 #[derive(Default)]
 struct OutputState {
     stdout: String,
@@ -56,26 +72,29 @@ struct OutputState {
 }
 
 #[tauri::command]
-pub fn engine_info(manager: State<EngineManager>, openwrk_manager: State<OpenwrkManager>) -> EngineInfo {
+pub fn engine_info(
+    manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
-    if state.runtime == EngineRuntime::Openwrk {
-        let data_dir = openwrk_manager
+    if state.runtime == EngineRuntime::Orchestrator {
+        let data_dir = orchestrator_manager
             .inner
             .lock()
             .ok()
             .and_then(|state| state.data_dir.clone())
-            .unwrap_or_else(openwrk::resolve_openwrk_data_dir);
-        let last_stdout = openwrk_manager
+            .unwrap_or_else(orchestrator::resolve_orchestrator_data_dir);
+        let last_stdout = orchestrator_manager
             .inner
             .lock()
             .ok()
             .and_then(|state| state.last_stdout.clone());
-        let last_stderr = openwrk_manager
+        let last_stderr = orchestrator_manager
             .inner
             .lock()
             .ok()
             .and_then(|state| state.last_stderr.clone());
-        let status = openwrk::resolve_openwrk_status(&data_dir, last_stderr.clone());
+        let status = orchestrator::resolve_orchestrator_status(&data_dir, last_stderr.clone());
         let opencode = status.opencode.clone();
         let base_url = opencode
             .as_ref()
@@ -87,18 +106,20 @@ pub fn engine_info(manager: State<EngineManager>, openwrk_manager: State<Openwrk
             .map(|ws| ws.path.clone())
             .or_else(|| state.project_dir.clone());
 
-        // Openwrk can keep running across app relaunches. In that case, the in-memory
+        // The orchestrator can keep running across app relaunches. In that case, the in-memory
         // EngineManager state (including opencode basic auth) is lost. Persist a small
-        // auth snapshot next to openwrk-state.json so the UI can reconnect.
-        let auth_snapshot = openwrk::read_openwrk_auth(&data_dir);
-        let opencode_username = state
-            .opencode_username
-            .clone()
-            .or_else(|| auth_snapshot.as_ref().and_then(|auth| auth.opencode_username.clone()));
-        let opencode_password = state
-            .opencode_password
-            .clone()
-            .or_else(|| auth_snapshot.as_ref().and_then(|auth| auth.opencode_password.clone()));
+        // auth snapshot next to openwork-orchestrator-state.json so the UI can reconnect.
+        let auth_snapshot = orchestrator::read_orchestrator_auth(&data_dir);
+        let opencode_username = state.opencode_username.clone().or_else(|| {
+            auth_snapshot
+                .as_ref()
+                .and_then(|auth| auth.opencode_username.clone())
+        });
+        let opencode_password = state.opencode_password.clone().or_else(|| {
+            auth_snapshot
+                .as_ref()
+                .and_then(|auth| auth.opencode_password.clone())
+        });
         let project_dir = project_dir.or_else(|| auth_snapshot.and_then(|auth| auth.project_dir));
         return EngineInfo {
             running: status.running,
@@ -120,13 +141,13 @@ pub fn engine_info(manager: State<EngineManager>, openwrk_manager: State<Openwrk
 #[tauri::command]
 pub fn engine_stop(
     manager: State<EngineManager>,
-    openwrk_manager: State<OpenwrkManager>,
+    orchestrator_manager: State<OrchestratorManager>,
     openwork_manager: State<OpenworkServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
-    if let Ok(mut openwrk_state) = openwrk_manager.inner.lock() {
-        OpenwrkManager::stop_locked(&mut openwrk_state);
+    if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
+        OrchestratorManager::stop_locked(&mut orchestrator_state);
     }
     EngineManager::stop_locked(&mut state);
     if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
@@ -136,6 +157,40 @@ pub fn engine_stop(
         OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
     }
     EngineManager::snapshot_locked(&mut state)
+}
+
+#[tauri::command]
+pub fn engine_restart(
+    app: AppHandle,
+    manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+    openwork_manager: State<OpenworkServerManager>,
+    opencode_router_manager: State<OpenCodeRouterManager>,
+) -> Result<EngineInfo, String> {
+    let (project_dir, runtime) = {
+        let state = manager.inner.lock().expect("engine mutex poisoned");
+        (
+            state
+                .project_dir
+                .clone()
+                .ok_or_else(|| "OpenCode is not configured for a local workspace".to_string())?,
+            state.runtime.clone(),
+        )
+    };
+
+    let workspace_paths = vec![project_dir.clone()];
+    engine_start(
+        app,
+        manager,
+        orchestrator_manager,
+        openwork_manager,
+        opencode_router_manager,
+        project_dir,
+        None,
+        None,
+        Some(runtime),
+        Some(workspace_paths),
+    )
 }
 
 #[tauri::command]
@@ -227,7 +282,7 @@ pub fn engine_install() -> Result<ExecResult, String> {
 pub fn engine_start(
     app: AppHandle,
     manager: State<EngineManager>,
-    openwrk_manager: State<OpenwrkManager>,
+    orchestrator_manager: State<OrchestratorManager>,
     openwork_manager: State<OpenworkServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
     project_dir: String,
@@ -259,7 +314,8 @@ pub fn engine_start(
         }
     }
 
-    let runtime = runtime.unwrap_or(EngineRuntime::Openwrk);
+    // Preserve historical behavior: if runtime isn't provided by the UI, prefer orchestrator.
+    let runtime = runtime.unwrap_or(EngineRuntime::Orchestrator);
     let mut workspace_paths = workspace_paths.unwrap_or_default();
     workspace_paths.retain(|path| !path.trim().is_empty());
     workspace_paths.retain(|path| path.trim() != project_dir);
@@ -271,6 +327,7 @@ pub fn engine_start(
         .unwrap_or_else(|| "0.0.0.0".to_string());
     let client_host = "127.0.0.1".to_string();
     let port = find_free_port()?;
+    let dev_mode = openwork_dev_mode_enabled();
     let enable_auth = std::env::var("OPENWORK_OPENCODE_AUTH")
         .ok()
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
@@ -288,8 +345,8 @@ pub fn engine_start(
 
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
     EngineManager::stop_locked(&mut state);
-    if let Ok(mut openwrk_state) = openwrk_manager.inner.lock() {
-        OpenwrkManager::stop_locked(&mut openwrk_state);
+    if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
+        OrchestratorManager::stop_locked(&mut orchestrator_state);
     }
     state.runtime = runtime.clone();
 
@@ -299,8 +356,11 @@ pub fn engine_start(
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
     let prefer_sidecar = prefer_sidecar.unwrap_or(false);
     let _guard = EnvVarGuard::apply("OPENCODE_BIN_PATH", opencode_bin_path.as_deref());
-    let (program, _in_path, notes) =
-        resolve_engine_path(prefer_sidecar, resource_dir.as_deref(), current_bin_dir.as_deref());
+    let (program, _in_path, notes) = resolve_engine_path(
+        prefer_sidecar,
+        resource_dir.as_deref(),
+        current_bin_dir.as_deref(),
+    );
     let Some(program) = program else {
         let notes_text = notes.join("\n");
         return Err(format!(
@@ -308,21 +368,25 @@ pub fn engine_start(
     ));
     };
 
-    let (sidecar_candidate, _sidecar_notes) =
-        resolve_sidecar_candidate(prefer_sidecar, resource_dir.as_deref(), current_bin_dir.as_deref());
+    let (sidecar_candidate, _sidecar_notes) = resolve_sidecar_candidate(
+        prefer_sidecar,
+        resource_dir.as_deref(),
+        current_bin_dir.as_deref(),
+    );
     let use_sidecar = prefer_sidecar
         && sidecar_candidate
             .as_ref()
             .is_some_and(|candidate| candidate == &program);
 
-    if runtime == EngineRuntime::Openwrk {
+    if runtime == EngineRuntime::Orchestrator {
         drop(state);
-        let data_dir = openwrk::resolve_openwrk_data_dir();
+        let data_dir = orchestrator::resolve_orchestrator_data_dir();
         let daemon_port = find_free_port()?;
         let daemon_host = "127.0.0.1".to_string();
         let opencode_bin = program.to_string_lossy().to_string();
-        let spawn_options = OpenwrkSpawnOptions {
+        let spawn_options = OrchestratorSpawnOptions {
             data_dir: data_dir.clone(),
+            dev_mode,
             daemon_host: daemon_host.clone(),
             daemon_port,
             opencode_bin,
@@ -334,10 +398,10 @@ pub fn engine_start(
             cors: Some("*".to_string()),
         };
 
-        let (mut rx, child) = openwrk::spawn_openwrk_daemon(&app, &spawn_options)?;
+        let (mut rx, child) = orchestrator::spawn_orchestrator_daemon(&app, &spawn_options)?;
 
         // Persist basic auth (and project dir) so relaunches can attach.
-        let _ = openwrk::write_openwrk_auth(
+        let _ = orchestrator::write_orchestrator_auth(
             &data_dir,
             opencode_username.as_deref(),
             opencode_password.as_deref(),
@@ -345,58 +409,46 @@ pub fn engine_start(
         );
 
         {
-            let mut openwrk_state = openwrk_manager
+            let mut orchestrator_state = orchestrator_manager
                 .inner
                 .lock()
-                .map_err(|_| "openwrk mutex poisoned".to_string())?;
-            openwrk_state.child = Some(child);
-            openwrk_state.child_exited = false;
-            openwrk_state.data_dir = Some(data_dir.clone());
-            openwrk_state.last_stdout = None;
-            openwrk_state.last_stderr = None;
+                .map_err(|_| "orchestrator mutex poisoned".to_string())?;
+            orchestrator_state.child = Some(child);
+            orchestrator_state.child_exited = false;
+            orchestrator_state.data_dir = Some(data_dir.clone());
+            orchestrator_state.last_stdout = None;
+            orchestrator_state.last_stderr = None;
         }
 
-        let openwrk_state_handle = openwrk_manager.inner.clone();
+        let orchestrator_state_handle = orchestrator_manager.inner.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
                     CommandEvent::Stdout(line_bytes) => {
                         let line = String::from_utf8_lossy(&line_bytes).to_string();
-                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
-                            let next = state
-                                .last_stdout
-                                .as_deref()
-                                .unwrap_or_default()
-                                .to_string()
+                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                            let next = state.last_stdout.as_deref().unwrap_or_default().to_string()
                                 + &line;
                             state.last_stdout = Some(truncate_output(&next, 8000));
                         }
                     }
                     CommandEvent::Stderr(line_bytes) => {
                         let line = String::from_utf8_lossy(&line_bytes).to_string();
-                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
-                            let next = state
-                                .last_stderr
-                                .as_deref()
-                                .unwrap_or_default()
-                                .to_string()
+                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                            let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
                                 + &line;
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
                     }
                     CommandEvent::Terminated(_) => {
-                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
+                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                             state.child_exited = true;
                         }
                     }
                     CommandEvent::Error(message) => {
-                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
+                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                             state.child_exited = true;
-                            let next = state
-                                .last_stderr
-                                .as_deref()
-                                .unwrap_or_default()
-                                .to_string()
+                            let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
                                 + &message;
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
@@ -407,18 +459,33 @@ pub fn engine_start(
         });
 
         let daemon_base_url = format!("http://{}:{}", daemon_host, daemon_port);
-        let health = openwrk::wait_for_openwrk(&daemon_base_url, 10_000)
-            .map_err(|e| format!("Failed to start openwrk: {e}"))?;
+
+        // openwork-orchestrator doesn't start its daemon HTTP server until it has ensured that
+        // OpenCode is available. On fresh installs (or after schema changes), OpenCode can run a
+        // one-time SQLite migration that takes longer than a few seconds.
+        //
+        // If we give up too early, the desktop app reports the engine as offline even though the
+        // orchestrator is still booting in the background.
+        let health_timeout_ms = std::env::var("OPENWORK_ORCHESTRATOR_START_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value >= 1_000)
+            .unwrap_or(180_000);
+
+        let health = orchestrator::wait_for_orchestrator(&daemon_base_url, health_timeout_ms)
+            .map_err(|e| {
+                format!("Failed to start orchestrator (waited {health_timeout_ms}ms): {e}")
+            })?;
         let opencode = health
             .opencode
-            .ok_or_else(|| "Openwrk did not report OpenCode status".to_string())?;
+            .ok_or_else(|| "Orchestrator did not report OpenCode status".to_string())?;
         let opencode_port = opencode.port;
         let opencode_base_url = format!("http://127.0.0.1:{opencode_port}");
         let opencode_connect_url =
             resolve_connect_url(opencode_port).unwrap_or_else(|| opencode_base_url.clone());
 
         if let Ok(mut state) = manager.inner.lock() {
-            state.runtime = EngineRuntime::Openwrk;
+            state.runtime = EngineRuntime::Orchestrator;
             state.child = None;
             state.child_exited = false;
             state.project_dir = Some(project_dir.clone());
@@ -435,7 +502,10 @@ pub fn engine_start(
             Ok(port) => Some(port),
             Err(error) => {
                 if let Ok(mut state) = manager.inner.lock() {
-                    state.last_stderr = Some(truncate_output(&format!("OpenCodeRouter health port: {error}"), 8000));
+                    state.last_stderr = Some(truncate_output(
+                        &format!("OpenCodeRouter health port: {error}"),
+                        8000,
+                    ));
                 }
                 None
             }
@@ -451,7 +521,8 @@ pub fn engine_start(
             opencode_router_health_port,
         ) {
             if let Ok(mut state) = manager.inner.lock() {
-                state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
+                state.last_stderr =
+                    Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
             }
         }
 
@@ -465,13 +536,14 @@ pub fn engine_start(
             opencode_router_health_port,
         ) {
             if let Ok(mut state) = manager.inner.lock() {
-                state.last_stderr = Some(truncate_output(&format!("OpenCodeRouter: {error}"), 8000));
+                state.last_stderr =
+                    Some(truncate_output(&format!("OpenCodeRouter: {error}"), 8000));
             }
         }
 
         return Ok(EngineInfo {
             running: true,
-            runtime: EngineRuntime::Openwrk,
+            runtime: EngineRuntime::Orchestrator,
             base_url: Some(opencode_base_url),
             project_dir: Some(project_dir),
             hostname: Some("127.0.0.1".to_string()),
@@ -491,6 +563,7 @@ pub fn engine_start(
         port,
         &project_dir,
         use_sidecar,
+        dev_mode,
         opencode_username.as_deref(),
         opencode_password.as_deref(),
     )?;
@@ -512,12 +585,8 @@ pub fn engine_start(
                         output.stdout.push_str(&line);
                     }
                     if let Ok(mut state) = state_handle.try_lock() {
-                        let next = state
-                            .last_stdout
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                            + &line;
+                        let next =
+                            state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stdout = Some(truncate_output(&next, 8000));
                     }
                 }
@@ -527,12 +596,8 @@ pub fn engine_start(
                         output.stderr.push_str(&line);
                     }
                     if let Ok(mut state) = state_handle.try_lock() {
-                        let next = state
-                            .last_stderr
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                            + &line;
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stderr = Some(truncate_output(&next, 8000));
                     }
                 }
@@ -615,11 +680,15 @@ pub fn engine_start(
     state.opencode_username = opencode_username.clone();
     state.opencode_password = opencode_password.clone();
 
-    let opencode_connect_url = resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
+    let opencode_connect_url =
+        resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {
-            state.last_stderr = Some(truncate_output(&format!("OpenCodeRouter health port: {error}"), 8000));
+            state.last_stderr = Some(truncate_output(
+                &format!("OpenCodeRouter health port: {error}"),
+                8000,
+            ));
             None
         }
     };

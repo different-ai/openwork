@@ -39,3 +39,6 @@ vendor/opencode/
 
 # OpenWork workspace-local artifacts
 .opencode/openwork/
+.vercel
+.env*.local
+.claude/*

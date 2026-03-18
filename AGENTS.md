@@ -9,13 +9,34 @@ OpenWork is a practical control surface for agentic work:
 * Run local and remote agent workflows from one place.
 * Use OpenCode capabilities directly through OpenWork.
 * Compose desktop app, server, and messaging connectors without lock-in.
+* Treat the OpenWork app as a client of the OpenWork server API surface.
+* Connect to hosted workers through a simple user flow: `Add a worker` -> `Connect remote`.
 
 ## Core Philosophy
 
 * **Local-first, cloud-ready**: OpenWork runs on your machine in one click and can connect to cloud workflows when needed.
+* **Server-consumption first**: the app should consume OpenWork server surfaces (self-hosted or hosted), not invent parallel behavior.
 * **Composable**: use the desktop app, WhatsApp/Slack/Telegram connectors, or server mode based on the task.
 * **Ejectable**: OpenWork is powered by OpenCode, so anything OpenCode can do is available in OpenWork, even before a dedicated UI exists.
 * **Sharing is caring**: start solo, then share quickly; one CLI or desktop command can spin up an instantly shareable instance.
+
+## Core Runtime Model (Updated)
+
+OpenWork now has three production-grade ways to run the same product surface:
+
+1. **Desktop-hosted app/server**
+   - OpenWork app runs locally and can host server functionality on-device.
+2. **CLI-hosted server (openwork-orchestrator)**
+   - OpenWork server surfaces can be provided by the orchestrator/CLI on a trusted machine.
+3. **Hosted OpenWork Cloud server**
+   - OpenWork-hosted infrastructure provisions workers and exposes the same remote-connect semantics.
+
+User mental model:
+
+* The app is the UI and control layer.
+* The server is the execution/control API layer.
+* A worker is a remote runtime destination.
+* Connecting to a worker happens through `Add worker` -> `Connect remote` using URL + token (or deep link).
 
 Read INFRASTRUCTURE.md
 
@@ -36,6 +57,18 @@ Read INFRASTRUCTURE.md
 * **Open source**: keep the repo portable; no secrets committed.
 * **Slick and fluid**: 60fps animations, micro-interactions, premium feel.
 * **Mobile-native**: touch targets, gestures, and layouts optimized for small screens.
+
+## Task Intake (Required)
+
+Before making changes, explicitly confirm the target repository in your first task update.
+
+Required format:
+
+1. `Target repo: <path>` (for example: `_repos/openwork`)
+2. `Out of scope repos: <list>` (for example: `_repos/opencode`)
+3. `Planned output: <what will be changed/tested>`
+
+If the user request references multiple repos and the intended edit location is ambiguous, stop after discovery and ask for a single repo target before editing files.
 
 ## New Feature Workflow (Required)
 
@@ -93,10 +126,12 @@ Design principles for hot reload:
 ## Repository Guidance
 
 * Use `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, and `INFRASTRUCTURE.md` to understand the "why" and requirements so you can guide your decisions.
+* Use `DESIGN-LANGUAGE.md` as the default visual reference for OpenWork app and landing work.
+* For OpenWork session-surface details, also reference `packages/docs/orbita-layout-style.mdx`.
 
 ## Dev Debugging
 
-* If you change `packages/server/src`, rebuild the OpenWork server binary (`pnpm --filter openwork-server build:bin`) because `openwrk` runs the compiled server, not the TS sources.
+* If you change `packages/server/src`, rebuild the OpenWork server binary (`pnpm --filter openwork-server build:bin`) because `openwork` (openwork-orchestrator) runs the compiled server, not the TS sources.
 
 ## Local Structure
 
@@ -164,7 +199,7 @@ This captures OpenWork’s preferred reactivity + UI state patterns (avoid globa
 ## Skill: Trigger a Release
 
 OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
-`Release App` can also publish openwrk sidecars and npm packages when enabled via workflow inputs or repo vars (`RELEASE_PUBLISH_SIDECARS`, `RELEASE_PUBLISH_NPM`).
+`Release App` can also publish openwork-orchestrator sidecars and npm packages when enabled via workflow inputs or repo vars (`RELEASE_PUBLISH_SIDECARS`, `RELEASE_PUBLISH_NPM`).
 
 ### Standard release (recommended)
 
@@ -173,7 +208,7 @@ OpenWork releases are built by GitHub Actions (`Release App`). A release is trig
 
 * `packages/app/package.json` (`version`)
 * `packages/desktop/package.json` (`version`)
-* `packages/headless/package.json` (`version`, publishes as `openwrk`)
+* `packages/orchestrator/package.json` (`version`, publishes as `openwork-orchestrator`)
 * `packages/desktop/src-tauri/tauri.conf.json` (`version`)
 * `packages/desktop/src-tauri/Cargo.toml` (`version`)
 
@@ -204,17 +239,17 @@ If the workflow needs to be re-run for an existing tag (e.g. notarization retry)
 
 Confirm the DMG assets are attached and versioned correctly.
 
-## Skill: Publish openwrk (npm)
+## Skill: Publish openwork-orchestrator (npm)
 
-This is usually covered by `Release App` when `publish_sidecars` + `publish_npm` are enabled. Use `.opencode/skills/openwrk-npm-publish/SKILL.md` for manual recovery or one-off publishing.
+This is usually covered by `Release App` when `publish_sidecars` + `publish_npm` are enabled. Use `.opencode/skills/openwork-orchestrator-npm-publish/SKILL.md` for manual recovery or one-off publishing.
 
 1.  Ensure the default branch is up to date and clean.
-2.  Bump `packages/headless/package.json` (`version`).
+2.  Bump `packages/orchestrator/package.json` (`version`).
 3.  Commit the bump.
 4.  Build and upload sidecar assets for the same version tag:
-    * `pnpm --filter openwrk build:sidecars`
-    * `gh release create openwrk-vX.Y.Z packages/headless/dist/sidecars/* --repo different-ai/openwork`
+    * `pnpm --filter openwork-orchestrator build:sidecars`
+    * `gh release create openwork-orchestrator-vX.Y.Z packages/orchestrator/dist/sidecars/* --repo different-ai/openwork`
 5.  Publish:
-    * `pnpm --filter openwrk publish --access public`
+    * `pnpm --filter openwork-orchestrator publish --access public`
 6.  Verify:
-    * `npm view openwrk version`
+    * `npm view openwork-orchestrator version`

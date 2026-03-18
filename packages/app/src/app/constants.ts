@@ -6,6 +6,7 @@ export const THINKING_PREF_KEY = "openwork.showThinking";
 export const VARIANT_PREF_KEY = "openwork.modelVariant";
 export const LANGUAGE_PREF_KEY = "openwork.language";
 export const HIDE_TITLEBAR_PREF_KEY = "openwork.hideTitlebar";
+export const AUTO_COMPACT_CONTEXT_PREF_KEY = "openwork.autoCompactContext";
 
 export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",
@@ -23,6 +24,7 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
 ];
 
 export type McpDirectoryInfo = {
+  id?: string;
   name: string;
   description: string;
   url?: string;
@@ -61,13 +63,6 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     oauth: true,
   },
   {
-    name: "HubSpot",
-    description: "CRM notes, companies, and pipeline status.",
-    url: "https://mcp.hubspot.com/anthropic",
-    type: "remote",
-    oauth: true,
-  },
-  {
     name: "Context7",
     description: "Search product docs with richer context.",
     url: "https://mcp.context7.com/mcp",
@@ -75,10 +70,11 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     oauth: false,
   },
   {
+    id: "chrome-devtools",
     name: "Control Chrome",
     description: "Drive Chrome tabs with browser automation.",
     type: "local",
-    command: ["chrome-devtools-mcp"],
+    command: ["npx", "-y", "chrome-devtools-mcp@latest"],
     oauth: false,
   },
 ];

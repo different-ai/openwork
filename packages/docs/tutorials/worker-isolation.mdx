@@ -1,0 +1,33 @@
+---
+title: "Worker isolation by domain"
+description: "Avoid free-for-all behavior with worker boundaries"
+---
+
+When teams share one hot context, behavior becomes unpredictable. Use worker isolation instead.
+
+## Rule
+
+Enforce isolation by worker, not by thread.
+
+## Setup
+
+Create separate workers per domain:
+
+- `agency-core`
+- `client-a`
+- `client-b`
+
+Assign skills, commands, and automations to the correct worker.
+
+## Team operating model
+
+1. Work starts by selecting the target worker.
+2. Only that worker's skills and automations are used.
+3. Cross-domain tasks are copied intentionally, not merged by default.
+
+## Benefits
+
+- Better prompt determinism
+- Clearer audit history
+- Safer data boundaries
+- Easier onboarding for non-technical teammates

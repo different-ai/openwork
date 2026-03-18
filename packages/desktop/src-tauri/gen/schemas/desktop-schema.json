@@ -2661,6 +2661,60 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Allows reading the opened deep link via the get_current command\n#### This default permission set includes:\n\n- `allow-get-current`",
+          "type": "string",
+          "const": "deep-link:default",
+          "markdownDescription": "Allows reading the opened deep link via the get_current command\n#### This default permission set includes:\n\n- `allow-get-current`"
+        },
+        {
+          "description": "Enables the get_current command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-get-current",
+          "markdownDescription": "Enables the get_current command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_registered command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-is-registered",
+          "markdownDescription": "Enables the is_registered command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-register",
+          "markdownDescription": "Enables the register command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:allow-unregister",
+          "markdownDescription": "Enables the unregister command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_current command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-get-current",
+          "markdownDescription": "Denies the get_current command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_registered command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-is-registered",
+          "markdownDescription": "Denies the is_registered command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-register",
+          "markdownDescription": "Denies the register command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "deep-link:deny-unregister",
+          "markdownDescription": "Denies the unregister command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-ask`\n- `allow-confirm`\n- `allow-message`\n- `allow-save`\n- `allow-open`",
           "type": "string",
           "const": "dialog:default",

@@ -1,12 +1,22 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
-import type { HubSkillCard, SkillCard } from "../types";
+import type { HubSkillCard, HubSkillRepo, SkillCard } from "../types";
 
 import Button from "../components/button";
-import { Edit2, FolderOpen, Loader2, Package, Plus, RefreshCw, Search, Sparkles, Trash2, Upload } from "lucide-solid";
+import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
+import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
 
 type InstallResult = { ok: boolean; message: string };
+
+type SkillBundleV1 = {
+  schemaVersion: 1;
+  type: "skill";
+  name: string;
+  content: string;
+  description?: string;
+  trigger?: string;
+};
 
 const OPENWORK_DEFAULT_SKILL_NAMES = new Set([
   "workspace-guide",
@@ -29,9 +39,14 @@ export type SkillsViewProps = {
   skillsStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
+  hubRepo: HubSkillRepo | null;
+  hubRepos: HubSkillRepo[];
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<InstallResult>;
   installHubSkill: (name: string) => Promise<InstallResult>;
+  setHubRepo: (repo: Partial<HubSkillRepo> | null) => void;
+  addHubRepo: (repo: Partial<HubSkillRepo>) => void;
+  removeHubRepo: (repo: Partial<HubSkillRepo>) => void;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -51,6 +66,23 @@ export default function SkillsView(props: SkillsViewProps) {
   const [uninstallTarget, setUninstallTarget] = createSignal<SkillCard | null>(null);
   const uninstallOpen = createMemo(() => uninstallTarget() != null);
   const [searchQuery, setSearchQuery] = createSignal("");
+  const [customRepoOpen, setCustomRepoOpen] = createSignal(false);
+  const [customRepoOwner, setCustomRepoOwner] = createSignal("");
+  const [customRepoName, setCustomRepoName] = createSignal("");
+  const [customRepoRef, setCustomRepoRef] = createSignal("main");
+  const [customRepoError, setCustomRepoError] = createSignal<string | null>(null);
+
+  const [shareTarget, setShareTarget] = createSignal<SkillCard | null>(null);
+  const shareOpen = createMemo(() => shareTarget() != null);
+  const [shareBusy, setShareBusy] = createSignal(false);
+  const [shareUrl, setShareUrl] = createSignal<string | null>(null);
+  const [shareError, setShareError] = createSignal<string | null>(null);
+
+  const [installLinkOpen, setInstallLinkOpen] = createSignal(false);
+  const [installLinkUrl, setInstallLinkUrl] = createSignal("");
+  const [installLinkBusy, setInstallLinkBusy] = createSignal(false);
+  const [installLinkError, setInstallLinkError] = createSignal<string | null>(null);
+  const [installLinkBundle, setInstallLinkBundle] = createSignal<SkillBundleV1 | null>(null);
 
   const [selectedSkill, setSelectedSkill] = createSignal<SkillCard | null>(null);
   const [selectedContent, setSelectedContent] = createSignal("");
@@ -72,6 +104,65 @@ export default function SkillsView(props: SkillsViewProps) {
     const id = window.setTimeout(() => setToast(null), 2400);
     onCleanup(() => window.clearTimeout(id));
   });
+
+  const maskError = (value: unknown) => (value instanceof Error ? value.message : "Something went wrong");
+
+  const stripFrontmatter = (content: string) => {
+    const raw = String(content ?? "");
+    const match = raw.match(/^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?/);
+    if (!match) return raw;
+    return raw.slice(match[0].length);
+  };
+
+  const resolveUniqueSkillName = (base: string, taken: Set<string>) => {
+    const trimmed = String(base ?? "").trim();
+    if (!trimmed) return "";
+    if (!taken.has(trimmed)) return trimmed;
+    for (let i = 2; i < 1_000; i++) {
+      const candidate = `${trimmed}-${i}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${trimmed}-${Date.now()}`;
+  };
+
+  const hubRepoKey = (repo: HubSkillRepo) => `${repo.owner}/${repo.repo}@${repo.ref}`;
+  const defaultHubRepoKey = "different-ai/openwork-hub@main";
+
+  const activeHubRepoLabel = createMemo(() => (props.hubRepo ? hubRepoKey(props.hubRepo) : "No hub repo selected"));
+
+  const hasDefaultHubRepo = createMemo(() => props.hubRepos.some((repo) => hubRepoKey(repo) === defaultHubRepoKey));
+
+  const selectHubRepo = (repo: HubSkillRepo) => {
+    props.setHubRepo(repo);
+    props.refreshHubSkills({ force: true });
+  };
+
+  const openCustomRepoModal = () => {
+    if (props.busy) return;
+    setCustomRepoOpen(true);
+    setCustomRepoOwner(props.hubRepo?.owner ?? "");
+    setCustomRepoName(props.hubRepo?.repo ?? "");
+    setCustomRepoRef(props.hubRepo?.ref || "main");
+    setCustomRepoError(null);
+  };
+
+  const closeCustomRepoModal = () => {
+    setCustomRepoOpen(false);
+    setCustomRepoError(null);
+  };
+
+  const saveCustomRepo = () => {
+    const owner = customRepoOwner().trim();
+    const repo = customRepoName().trim();
+    const ref = customRepoRef().trim() || "main";
+    if (!owner || !repo) {
+      setCustomRepoError("Owner and repo are required.");
+      return;
+    }
+    props.addHubRepo({ owner, repo, ref });
+    props.refreshHubSkills({ force: true });
+    closeCustomRepoModal();
+  };
 
   const filteredSkills = createMemo(() => {
     const query = searchQuery().trim().toLowerCase();
@@ -188,6 +279,175 @@ export default function SkillsView(props: SkillsViewProps) {
     // Open a new session and preselect /skill-creator.
     await Promise.resolve(props.createSessionAndOpen());
     props.setPrompt("/skill-creator");
+  };
+
+  const openShareLink = (skill: SkillCard) => {
+    if (props.busy) return;
+    setShareTarget(skill);
+    setShareBusy(false);
+    setShareUrl(null);
+    setShareError(null);
+  };
+
+  const closeShareLink = () => {
+    setShareTarget(null);
+    setShareBusy(false);
+    setShareUrl(null);
+    setShareError(null);
+  };
+
+  const publishShareLink = async () => {
+    const target = shareTarget();
+    if (!target) return;
+    if (props.busy || shareBusy()) return;
+    setShareBusy(true);
+    setShareUrl(null);
+    setShareError(null);
+
+    try {
+      const skill = await props.readSkill(target.name);
+      if (!skill) throw new Error("Failed to load skill");
+
+      const payload: SkillBundleV1 = {
+        schemaVersion: 1,
+        type: "skill",
+        name: target.name,
+        content: skill.content,
+        description: target.description ?? undefined,
+        trigger: target.trigger ?? undefined,
+      };
+
+      const result = await publishOpenworkBundleJson({
+        payload,
+        bundleType: "skill",
+        name: target.name,
+      });
+
+      setShareUrl(result.url);
+      try {
+        await navigator.clipboard.writeText(result.url);
+        setToast("Link copied");
+      } catch {
+        // ignore
+      }
+    } catch (e) {
+      setShareError(maskError(e));
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const copyShareLink = async () => {
+    const url = shareUrl()?.trim();
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setToast("Link copied");
+    } catch {
+      setShareError("Failed to copy link");
+    }
+  };
+
+  const openInstallFromLink = () => {
+    if (props.busy) return;
+    setInstallLinkOpen(true);
+    setInstallLinkUrl("");
+    setInstallLinkBusy(false);
+    setInstallLinkError(null);
+    setInstallLinkBundle(null);
+  };
+
+  const closeInstallFromLink = () => {
+    setInstallLinkOpen(false);
+    setInstallLinkBusy(false);
+    setInstallLinkError(null);
+    setInstallLinkBundle(null);
+  };
+
+  const previewInstallLink = async () => {
+    const raw = installLinkUrl().trim();
+    if (!raw) {
+      setInstallLinkError("Paste a link to preview");
+      return;
+    }
+    if (installLinkBusy()) return;
+
+    setInstallLinkBusy(true);
+    setInstallLinkError(null);
+    setInstallLinkBundle(null);
+    try {
+      const url = new URL(raw);
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 15_000);
+      try {
+        const response = await fetch(url.toString(), {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const text = (await response.text()).trim();
+          const suffix = text ? `: ${text}` : "";
+          throw new Error(`Failed to fetch bundle (${response.status})${suffix}`);
+        }
+        const json = (await response.json()) as Record<string, unknown>;
+        const schemaVersion = typeof json.schemaVersion === "number" ? json.schemaVersion : null;
+        const type = typeof json.type === "string" ? json.type : "";
+        const name = typeof json.name === "string" ? json.name.trim() : "";
+        const content = typeof json.content === "string" ? json.content : "";
+        if (schemaVersion !== 1 || type !== "skill") {
+          throw new Error("This link is not an OpenWork skill bundle");
+        }
+        if (!name) throw new Error("Bundle is missing a skill name");
+        if (!content) throw new Error("Bundle is missing skill content");
+        setInstallLinkBundle({
+          schemaVersion: 1,
+          type: "skill",
+          name,
+          content,
+          description: typeof json.description === "string" ? json.description : undefined,
+          trigger: typeof json.trigger === "string" ? json.trigger : undefined,
+        });
+      } finally {
+        window.clearTimeout(timer);
+      }
+    } catch (e) {
+      setInstallLinkError(maskError(e));
+    } finally {
+      setInstallLinkBusy(false);
+    }
+  };
+
+  const installFromPreview = async (mode: "overwrite" | "keep-both") => {
+    const bundle = installLinkBundle();
+    if (!bundle) return;
+    if (props.busy || installLinkBusy()) return;
+    setInstallLinkBusy(true);
+    setInstallLinkError(null);
+
+    try {
+      const taken = installedNames();
+      const desiredName = bundle.name.trim();
+      const conflict = taken.has(desiredName);
+      const shouldRename = conflict && mode === "keep-both";
+      const finalName = shouldRename ? resolveUniqueSkillName(desiredName, taken) : desiredName;
+      const content = shouldRename ? stripFrontmatter(bundle.content) : bundle.content;
+
+      await Promise.resolve(
+        props.saveSkill({
+          name: finalName,
+          content,
+          description: bundle.description,
+        }),
+      );
+      props.refreshSkills({ force: true });
+      setToast(`Installed ${finalName}`);
+      closeInstallFromLink();
+    } catch (e) {
+      setInstallLinkError(maskError(e));
+    } finally {
+      setInstallLinkBusy(false);
+    }
   };
 
   const recommendedDisabledReason = (id: string) => {
@@ -373,6 +633,20 @@ export default function SkillsView(props: SkillsViewProps) {
           <Plus size={14} />
           New skill
         </button>
+        <button
+          type="button"
+          onClick={openInstallFromLink}
+          disabled={props.busy}
+          class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border ${
+            props.busy
+              ? "border-dls-border bg-dls-hover text-dls-secondary"
+              : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
+          }`}
+          title="Install a skill from a link"
+        >
+          <Link2 size={14} />
+          Install from link
+        </button>
       </div>
 
       <Show when={props.accessHint}>
@@ -446,6 +720,19 @@ export default function SkillsView(props: SkillsViewProps) {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        openShareLink(skill);
+                      }}
+                      disabled={props.busy}
+                      title="Share"
+                    >
+                      <Share2 size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      class="p-1.5 text-dls-secondary hover:text-dls-text hover:bg-dls-active rounded-md transition-colors"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
                         void openSkill(skill);
                       }}
                       disabled={props.busy}
@@ -482,20 +769,95 @@ export default function SkillsView(props: SkillsViewProps) {
       <div class="space-y-4">
         <div class="flex items-center justify-between gap-3">
           <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">Install skills</h3>
-          <button
-            type="button"
-            onClick={() => props.refreshHubSkills({ force: true })}
-            disabled={props.busy}
-            class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
-              props.busy
-                ? "text-dls-secondary"
-                : "text-dls-secondary hover:text-dls-text"
-            }`}
-            title="Refresh hub catalog"
-          >
-            <RefreshCw size={14} />
-            Refresh hub
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openCustomRepoModal}
+              disabled={props.busy}
+              class={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                props.busy
+                  ? "border-dls-border bg-dls-hover text-dls-secondary"
+                  : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
+              }`}
+              title="Add custom GitHub repo"
+            >
+              <Plus size={14} />
+              Add git repo
+            </button>
+            <button
+              type="button"
+              onClick={() => props.refreshHubSkills({ force: true })}
+              disabled={props.busy}
+              class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                props.busy
+                  ? "text-dls-secondary"
+                  : "text-dls-secondary hover:text-dls-text"
+              }`}
+              title="Refresh hub catalog"
+            >
+              <RefreshCw size={14} />
+              Refresh hub
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <div class="text-xs text-dls-secondary">
+            Source: <span class="font-mono text-dls-text">{activeHubRepoLabel()}</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <Show when={!hasDefaultHubRepo()}>
+              <button
+                type="button"
+                onClick={() => {
+                  props.addHubRepo({ owner: "different-ai", repo: "openwork-hub", ref: "main" });
+                  props.refreshHubSkills({ force: true });
+                }}
+                class={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
+                  props.busy
+                    ? "border-dls-border bg-dls-hover text-dls-secondary"
+                    : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
+                }`}
+                disabled={props.busy}
+              >
+                Add OpenWork Hub
+              </button>
+            </Show>
+            <For each={props.hubRepos}>
+              {(repo) => {
+                const key = hubRepoKey(repo);
+                const active = props.hubRepo ? key === hubRepoKey(props.hubRepo) : false;
+                return (
+                  <div class="inline-flex items-center rounded-md border border-dls-border bg-dls-surface">
+                    <button
+                      type="button"
+                      onClick={() => selectHubRepo(repo)}
+                      class={`px-2 py-1 text-[11px] font-medium transition-colors ${
+                        active
+                          ? "bg-dls-active text-dls-text"
+                          : "text-dls-secondary hover:text-dls-text"
+                      }`}
+                      disabled={props.busy}
+                    >
+                      {key}
+                    </button>
+                    <button
+                      type="button"
+                      class="px-1.5 py-1 text-[11px] text-dls-secondary hover:text-red-11"
+                      onClick={() => {
+                        props.removeHubRepo(repo);
+                        props.refreshHubSkills({ force: true });
+                      }}
+                      disabled={props.busy}
+                      title="Remove saved repo"
+                    >
+                      x
+                    </button>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
         </div>
 
         <Show when={props.hubSkillsStatus}>
@@ -508,7 +870,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={filteredHubSkills().length}
           fallback={
             <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
-              No hub skills available.
+              {props.hubRepo ? "No hub skills available." : "No hub repo selected. Add a GitHub repo to browse skills."}
             </div>
           }
         >
@@ -524,7 +886,10 @@ export default function SkillsView(props: SkillsViewProps) {
                       <div class="flex items-center gap-2 mb-0.5">
                         <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
                       </div>
-                      <Show when={skill.description} fallback={<p class="text-xs text-dls-secondary">From openwork-hub</p>}>
+                      <Show
+                        when={skill.description}
+                        fallback={<p class="text-xs text-dls-secondary">From {skill.source.owner}/{skill.source.repo}</p>}
+                      >
                         <p class="text-xs text-dls-secondary line-clamp-2">{skill.description}</p>
                       </Show>
                       <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
@@ -532,7 +897,10 @@ export default function SkillsView(props: SkillsViewProps) {
                           {skill.source.owner}/{skill.source.repo}
                         </span>
                         <Show when={skill.trigger}>
-                          <span class="rounded-md border border-dls-border bg-dls-hover px-2 py-1 line-clamp-1">
+                          <span
+                            class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
+                            title={`Trigger: ${skill.trigger}`}
+                          >
                             Trigger: {skill.trigger}
                           </span>
                         </Show>
@@ -738,6 +1106,231 @@ export default function SkillsView(props: SkillsViewProps) {
                   disabled={props.busy}
                 >
                   {translate("skills.uninstall")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={shareOpen()}>
+        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-6 space-y-4">
+              <div>
+                <h3 class="text-lg font-semibold text-dls-text">Share link</h3>
+                <p class="text-sm text-dls-secondary mt-1">
+                  Publish a public link. Anyone with the URL can install this skill.
+                </p>
+              </div>
+
+              <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
+                <div class="font-semibold text-dls-text">{shareTarget()?.name}</div>
+                <div class="mt-1 font-mono break-all">Publisher: {DEFAULT_OPENWORK_PUBLISHER_BASE_URL}</div>
+              </div>
+
+              <Show when={shareError()}>
+                <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
+                  {shareError()}
+                </div>
+              </Show>
+
+              <Show
+                when={shareUrl()}
+                fallback={
+                  <div class="flex justify-end gap-2">
+                    <Button variant="outline" onClick={closeShareLink} disabled={shareBusy()}>
+                      {translate("common.cancel")}
+                    </Button>
+                    <Button variant="secondary" onClick={() => void publishShareLink()} disabled={shareBusy()}>
+                      {shareBusy() ? "Publishing…" : "Create link"}
+                    </Button>
+                  </div>
+                }
+              >
+                <div class="flex items-start gap-2 rounded-xl bg-dls-hover border border-dls-border p-3">
+                  <div class="min-w-0 flex-1 text-xs text-dls-secondary font-mono break-all">{shareUrl()}</div>
+                  <Button
+                    variant="outline"
+                    onClick={() => void copyShareLink()}
+                    disabled={!shareUrl()}
+                  >
+                    <Copy size={14} />
+                    Copy link
+                  </Button>
+                </div>
+                <div class="flex justify-end gap-2">
+                  <Button variant="secondary" onClick={closeShareLink}>
+                    Done
+                  </Button>
+                </div>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={installLinkOpen()}>
+        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-6 space-y-4">
+              <div>
+                <h3 class="text-lg font-semibold text-dls-text">Install from link</h3>
+                <p class="text-sm text-dls-secondary mt-1">Paste a skill bundle URL, preview it, then install.</p>
+              </div>
+
+              <div class="space-y-2">
+                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Link</div>
+                <input
+                  type="url"
+                  value={installLinkUrl()}
+                  onInput={(e) => setInstallLinkUrl(e.currentTarget.value)}
+                  placeholder="https://share.openwork.software/b/..."
+                  class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
+                  spellcheck={false}
+                />
+              </div>
+
+              <Show when={installLinkError()}>
+                <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
+                  {installLinkError()}
+                </div>
+              </Show>
+
+              <Show when={installLinkBundle()}>
+                {(bundle) => {
+                  const taken = installedNames();
+                  const conflict = taken.has(bundle().name.trim());
+                  return (
+                    <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
+                      <div class="text-xs font-semibold text-dls-text">Preview</div>
+                      <div class="text-xs text-dls-secondary">
+                        Skill: <span class="font-mono">{bundle().name}</span>
+                      </div>
+                      <Show when={bundle().description}>
+                        <div class="text-xs text-dls-secondary">{bundle().description}</div>
+                      </Show>
+                      <Show when={conflict}>
+                        <div class="text-xs text-amber-11">A skill with this name is already installed.</div>
+                      </Show>
+                    </div>
+                  );
+                }}
+              </Show>
+
+              <div class="flex justify-end gap-2">
+                <Button variant="outline" onClick={closeInstallFromLink} disabled={installLinkBusy()}>
+                  {translate("common.cancel")}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void previewInstallLink()}
+                  disabled={installLinkBusy() || !installLinkUrl().trim()}
+                >
+                  {installLinkBusy() && !installLinkBundle() ? "Loading…" : "Preview"}
+                </Button>
+                <Show when={installLinkBundle()} keyed>
+                  {(bundle) => {
+                    const conflict = installedNames().has(bundle.name.trim());
+                    return (
+                      <Show
+                        when={conflict}
+                        fallback={
+                          <Button
+                            variant="secondary"
+                            onClick={() => void installFromPreview("overwrite")}
+                            disabled={installLinkBusy()}
+                          >
+                            {installLinkBusy() ? "Installing…" : "Install"}
+                          </Button>
+                        }
+                      >
+                        <div class="flex gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => void installFromPreview("keep-both")}
+                            disabled={installLinkBusy()}
+                          >
+                            {installLinkBusy() ? "Installing…" : "Keep both"}
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => void installFromPreview("overwrite")}
+                            disabled={installLinkBusy()}
+                          >
+                            {installLinkBusy() ? "Installing…" : "Overwrite"}
+                          </Button>
+                        </div>
+                      </Show>
+                    );
+                  }}
+                </Show>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={customRepoOpen()}>
+        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-6 space-y-4">
+              <div>
+                <h3 class="text-lg font-semibold text-dls-text">Add custom GitHub repo</h3>
+                <p class="text-sm text-dls-secondary mt-1">
+                  Skills are loaded from <span class="font-mono">skills/&lt;name&gt;/SKILL.md</span>.
+                </p>
+              </div>
+
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label class="space-y-1">
+                  <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Owner</div>
+                  <input
+                    type="text"
+                    value={customRepoOwner()}
+                    onInput={(e) => setCustomRepoOwner(e.currentTarget.value)}
+                    placeholder="different-ai"
+                    class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
+                    spellcheck={false}
+                  />
+                </label>
+                <label class="space-y-1">
+                  <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Repo</div>
+                  <input
+                    type="text"
+                    value={customRepoName()}
+                    onInput={(e) => setCustomRepoName(e.currentTarget.value)}
+                    placeholder="openwork-hub"
+                    class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
+                    spellcheck={false}
+                  />
+                </label>
+              </div>
+
+              <label class="space-y-1">
+                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Ref (branch/tag/commit)</div>
+                <input
+                  type="text"
+                  value={customRepoRef()}
+                  onInput={(e) => setCustomRepoRef(e.currentTarget.value)}
+                  placeholder="main"
+                  class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
+                  spellcheck={false}
+                />
+              </label>
+
+              <Show when={customRepoError()}>
+                <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
+                  {customRepoError()}
+                </div>
+              </Show>
+
+              <div class="flex justify-end gap-2">
+                <Button variant="outline" onClick={closeCustomRepoModal} disabled={props.busy}>
+                  {translate("common.cancel")}
+                </Button>
+                <Button variant="secondary" onClick={saveCustomRepo} disabled={props.busy}>
+                  Save and load
                 </Button>
               </div>
             </div>

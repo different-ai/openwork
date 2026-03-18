@@ -1,0 +1,69 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "OpenWork Docs",
+  "favicon": "/logo/light.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "colors": {
+    "primary": "#0F766E",
+    "light": "#14B8A6",
+    "dark": "#0F766E"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Product",
+        "groups": [
+          {
+            "group": "Choose a path",
+            "pages": [
+              "introduction",
+              "non-technical",
+              "technical"
+            ]
+          },
+          {
+            "group": "Run and share",
+            "pages": [
+              "quickstart",
+              "create-openwork-instance",
+              "tutorials/share-worker-invite-link",
+              "tutorials/automations-repeatable-jobs",
+              "tutorials/worker-isolation"
+            ]
+          },
+          {
+            "group": "Technical setup",
+            "pages": [
+              "openwork",
+              "cli",
+              "opencode-router",
+              "worker-runtime-upgrades"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "tutorials/share-workspace-url-service",
+              "orbita-layout-style"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": ["development"]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "primary": {
+      "type": "button",
+      "label": "Download OpenWork",
+      "href": "https://openwork.software/download"
+    }
+  }
+}

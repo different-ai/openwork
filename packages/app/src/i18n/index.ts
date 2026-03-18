@@ -1,25 +1,29 @@
 import { createSignal, createRoot } from "solid-js";
 import en from "./locales/en";
+import ja from "./locales/ja";
 import zh from "./locales/zh";
+import vi from "./locales/vi";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
- * Supported languages - only en and zh for initial PR
+ * Supported languages
  */
-export type Language = "en" | "zh";
+export type Language = "en" | "ja" | "zh" | "vi";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "zh"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi"];
 
 /**
  * Language options for UI - single source of truth
  */
 export const LANGUAGE_OPTIONS = [
   { value: "en" as Language, label: "English", nativeName: "English" },
+  { value: "ja" as Language, label: "日本語", nativeName: "日本語" },
   { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
+  { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
 ] as const;
 
 /**
@@ -27,7 +31,9 @@ export const LANGUAGE_OPTIONS = [
  */
 const TRANSLATIONS: Record<Language, Record<string, string>> = {
   en,
+  ja,
   zh,
+  vi,
 };
 
 /**
@@ -58,6 +64,10 @@ export const setLocale = (newLocale: Language) => {
   }
 
   setLocaleSignal(newLocale);
+
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("lang", newLocale);
+  }
 
   // Persist to localStorage
   if (typeof window !== "undefined") {
@@ -107,10 +117,17 @@ export const initLocale = (): Language => {
     const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
     if (isLanguage(stored)) {
       setLocaleSignal(stored);
+      if (typeof document !== "undefined") {
+        document.documentElement.setAttribute("lang", stored);
+      }
       return stored;
     }
   } catch (e) {
     console.warn("Failed to read language preference:", e);
+  }
+
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("lang", "en");
   }
 
   return "en";

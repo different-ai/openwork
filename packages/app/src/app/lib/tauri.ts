@@ -5,7 +5,7 @@ import { validateMcpServerName } from "../mcp";
 
 export type EngineInfo = {
   running: boolean;
-  runtime: "direct" | "openwrk";
+  runtime: "direct" | "openwork-orchestrator";
   baseUrl: string | null;
   projectDir: string | null;
   hostname: string | null;
@@ -26,38 +26,39 @@ export type OpenworkServerInfo = {
   mdnsUrl: string | null;
   lanUrl: string | null;
   clientToken: string | null;
+  ownerToken: string | null;
   hostToken: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
 };
 
-export type OpenwrkDaemonState = {
+export type OrchestratorDaemonState = {
   pid: number;
   port: number;
   baseUrl: string;
   startedAt: number;
 };
 
-export type OpenwrkOpencodeState = {
+export type OrchestratorOpencodeState = {
   pid: number;
   port: number;
   baseUrl: string;
   startedAt: number;
 };
 
-export type OpenwrkBinaryInfo = {
+export type OrchestratorBinaryInfo = {
   path: string;
   source: string;
   expectedVersion?: string | null;
   actualVersion?: string | null;
 };
 
-export type OpenwrkBinaryState = {
-  opencode?: OpenwrkBinaryInfo | null;
+export type OrchestratorBinaryState = {
+  opencode?: OrchestratorBinaryInfo | null;
 };
 
-export type OpenwrkSidecarInfo = {
+export type OrchestratorSidecarInfo = {
   dir?: string | null;
   baseUrl?: string | null;
   manifestUrl?: string | null;
@@ -67,7 +68,7 @@ export type OpenwrkSidecarInfo = {
   allowExternal?: boolean | null;
 };
 
-export type OpenwrkWorkspace = {
+export type OrchestratorWorkspace = {
   id: string;
   name: string;
   path: string;
@@ -78,17 +79,17 @@ export type OpenwrkWorkspace = {
   lastUsedAt?: number | null;
 };
 
-export type OpenwrkStatus = {
+export type OrchestratorStatus = {
   running: boolean;
   dataDir: string;
-  daemon: OpenwrkDaemonState | null;
-  opencode: OpenwrkOpencodeState | null;
+  daemon: OrchestratorDaemonState | null;
+  opencode: OrchestratorOpencodeState | null;
   cliVersion?: string | null;
-  sidecar?: OpenwrkSidecarInfo | null;
-  binaries?: OpenwrkBinaryState | null;
+  sidecar?: OrchestratorSidecarInfo | null;
+  binaries?: OrchestratorBinaryState | null;
   activeId: string | null;
   workspaceCount: number;
-  workspaces: OpenwrkWorkspace[];
+  workspaces: OrchestratorWorkspace[];
   lastError: string | null;
 };
 
@@ -140,7 +141,7 @@ export async function engineStart(
   projectDir: string,
   options?: {
     preferSidecar?: boolean;
-    runtime?: "direct" | "openwrk";
+    runtime?: "direct" | "openwork-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
   },
@@ -361,37 +362,47 @@ export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
 }
 
-export async function openwrkStatus(): Promise<OpenwrkStatus> {
-  return invoke<OpenwrkStatus>("openwrk_status");
+export async function engineRestart(): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_restart");
 }
 
-export async function openwrkWorkspaceActivate(input: {
+export async function orchestratorStatus(): Promise<OrchestratorStatus> {
+  return invoke<OrchestratorStatus>("orchestrator_status");
+}
+
+export async function orchestratorWorkspaceActivate(input: {
   workspacePath: string;
   name?: string | null;
-}): Promise<OpenwrkWorkspace> {
-  return invoke<OpenwrkWorkspace>("openwrk_workspace_activate", {
+}): Promise<OrchestratorWorkspace> {
+  return invoke<OrchestratorWorkspace>("orchestrator_workspace_activate", {
     workspacePath: input.workspacePath,
     name: input.name ?? null,
   });
 }
 
-export async function openwrkInstanceDispose(workspacePath: string): Promise<boolean> {
-  return invoke<boolean>("openwrk_instance_dispose", { workspacePath });
+export async function orchestratorInstanceDispose(workspacePath: string): Promise<boolean> {
+  return invoke<boolean>("orchestrator_instance_dispose", { workspacePath });
 }
 
 export type AppBuildInfo = {
   version: string;
   gitSha?: string | null;
   buildEpoch?: string | null;
+  openworkDevMode?: boolean;
 };
 
 export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
 }
 
-export type OpenwrkDetachedHost = {
+export async function nukeOpencodeDevConfigAndExit(): Promise<void> {
+  return invoke<void>("nuke_opencode_dev_config_and_exit");
+}
+
+export type OrchestratorDetachedHost = {
   openworkUrl: string;
   token: string;
+  ownerToken?: string | null;
   hostToken: string;
   port: number;
   sandboxBackend?: "docker" | null;
@@ -399,15 +410,19 @@ export type OpenwrkDetachedHost = {
   sandboxContainerName?: string | null;
 };
 
-export async function openwrkStartDetached(input: {
+export async function orchestratorStartDetached(input: {
   workspacePath: string;
   sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
-}): Promise<OpenwrkDetachedHost> {
-  return invoke<OpenwrkDetachedHost>("openwrk_start_detached", {
+  openworkToken?: string | null;
+  openworkHostToken?: string | null;
+}): Promise<OrchestratorDetachedHost> {
+  return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
     sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,
+    openworkToken: input.openworkToken ?? null,
+    openworkHostToken: input.openworkHostToken ?? null,
   });
 }
 
@@ -419,6 +434,20 @@ export type SandboxDoctorResult = {
   clientVersion?: string | null;
   serverVersion?: string | null;
   error?: string | null;
+  debug?: {
+    candidates: string[];
+    selectedBin?: string | null;
+    versionCommand?: {
+      status: number;
+      stdout: string;
+      stderr: string;
+    } | null;
+    infoCommand?: {
+      status: number;
+      stdout: string;
+      stderr: string;
+    } | null;
+  } | null;
 };
 
 export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
@@ -429,8 +458,58 @@ export async function sandboxStop(containerName: string): Promise<ExecResult> {
   return invoke<ExecResult>("sandbox_stop", { containerName });
 }
 
+export type OpenworkDockerCleanupResult = {
+  candidates: string[];
+  removed: string[];
+  errors: string[];
+};
+
+export async function sandboxCleanupOpenworkContainers(): Promise<OpenworkDockerCleanupResult> {
+  return invoke<OpenworkDockerCleanupResult>("sandbox_cleanup_openwork_containers");
+}
+
+export type SandboxDebugProbeResult = {
+  startedAt: number;
+  finishedAt: number;
+  runId: string;
+  workspacePath: string;
+  ready: boolean;
+  doctor: SandboxDoctorResult;
+  detachedHost?: OrchestratorDetachedHost | null;
+  dockerInspect?: {
+    status: number;
+    stdout: string;
+    stderr: string;
+  } | null;
+  dockerLogs?: {
+    status: number;
+    stdout: string;
+    stderr: string;
+  } | null;
+  cleanup: {
+    containerName?: string | null;
+    containerRemoved: boolean;
+    removeResult?: {
+      status: number;
+      stdout: string;
+      stderr: string;
+    } | null;
+    workspaceRemoved: boolean;
+    errors: string[];
+  };
+  error?: string | null;
+};
+
+export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
+  return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
+}
+
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
   return invoke<OpenworkServerInfo>("openwork_server_info");
+}
+
+export async function openworkServerRestart(): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_restart");
 }
 
 export async function engineInfo(): Promise<EngineInfo> {
@@ -643,6 +722,63 @@ export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
 }
 
+export async function obsidianIsAvailable(): Promise<boolean> {
+  return invoke<boolean>("obsidian_is_available");
+}
+
+export async function openInObsidian(filePath: string): Promise<void> {
+  const safePath = filePath.trim();
+  if (!safePath) {
+    throw new Error("filePath is required");
+  }
+  return invoke<void>("open_in_obsidian", { filePath: safePath });
+}
+
+export async function writeObsidianMirrorFile(
+  workspaceId: string,
+  filePath: string,
+  content: string,
+): Promise<string> {
+  const safeWorkspaceId = workspaceId.trim();
+  const safePath = filePath.trim();
+  if (!safeWorkspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  if (!safePath) {
+    throw new Error("filePath is required");
+  }
+  return invoke<string>("write_obsidian_mirror_file", {
+    workspaceId: safeWorkspaceId,
+    filePath: safePath,
+    content,
+  });
+}
+
+export type ObsidianMirrorFileContent = {
+  exists: boolean;
+  path: string;
+  content: string | null;
+  updatedAtMs: number | null;
+};
+
+export async function readObsidianMirrorFile(
+  workspaceId: string,
+  filePath: string,
+): Promise<ObsidianMirrorFileContent> {
+  const safeWorkspaceId = workspaceId.trim();
+  const safePath = filePath.trim();
+  if (!safeWorkspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  if (!safePath) {
+    throw new Error("filePath is required");
+  }
+  return invoke<ObsidianMirrorFileContent>("read_obsidian_mirror_file", {
+    workspaceId: safeWorkspaceId,
+    filePath: safePath,
+  });
+}
+
 export async function schedulerListJobs(scopeRoot?: string): Promise<ScheduledJob[]> {
   return invoke<ScheduledJob[]>("scheduler_list_jobs", { scopeRoot });
 }
@@ -680,6 +816,7 @@ export type OpenCodeRouterInfo = {
   version: string | null;
   workspacePath: string | null;
   opencodeUrl: string | null;
+  healthPort: number | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
@@ -742,6 +879,23 @@ export async function setOpenCodeRouterGroupsEnabled(enabled: boolean): Promise<
   } catch (e) {
     return { ok: false, status: 1, stdout: "", stderr: String(e) };
   }
+}
+
+export async function opencodeDbMigrate(input: {
+  projectDir: string;
+  preferSidecar?: boolean;
+  opencodeBinPath?: string | null;
+}): Promise<ExecResult> {
+  const safeProjectDir = input.projectDir.trim();
+  if (!safeProjectDir) {
+    throw new Error("project_dir is required");
+  }
+
+  return invoke<ExecResult>("opencode_db_migrate", {
+    projectDir: safeProjectDir,
+    preferSidecar: input.preferSidecar ?? false,
+    opencodeBinPath: input.opencodeBinPath ?? null,
+  });
 }
 
 export async function opencodeMcpAuth(

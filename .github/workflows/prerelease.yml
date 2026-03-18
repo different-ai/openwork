@@ -16,7 +16,7 @@ concurrency:
 jobs:
   prepare-release:
     name: Prepare Prerelease
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     outputs:
       release_tag: ${{ steps.prerelease-meta.outputs.release_tag }}
@@ -75,7 +75,8 @@ jobs:
   publish-tauri:
     name: Build + Publish (${{ matrix.target }})
     needs: prepare-release
-    runs-on: ${{ matrix.platform }}
+    # Set OPENWORK_LINUX_X64_RUNNER_LABEL to route only the Linux x86_64 build to a larger runner.
+    runs-on: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || matrix.platform }}
     timeout-minutes: 360
 
     env:
@@ -83,6 +84,8 @@ jobs:
       RELEASE_NAME: ${{ needs.prepare-release.outputs.release_name }}
       RELEASE_BODY: ${{ needs.prepare-release.outputs.release_body }}
       MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'false' }}
+      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
 
     strategy:
       fail-fast: false
@@ -100,12 +103,25 @@ jobs:
             os_type: linux
             target: x86_64-unknown-linux-gnu
             args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            target: aarch64-unknown-linux-gnu
+            args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
           - platform: windows-2022
             os_type: windows
             target: x86_64-pc-windows-msvc
             args: "--target x86_64-pc-windows-msvc --bundles msi"
 
     steps:
+      - name: Log runner selection
+        shell: bash
+        run: |
+          echo "Requested larger runner label: ${RUNNER_LABEL:-<unset>}"
+          echo "Effective runs-on: ${EFFECTIVE_RUNS_ON}"
+        env:
+          RUNNER_LABEL: ${{ vars.OPENWORK_LINUX_X64_RUNNER_LABEL }}
+          EFFECTIVE_RUNS_ON: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || matrix.platform }}
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -161,6 +177,7 @@ jobs:
         run: |
           node <<'NODE' >> "$GITHUB_OUTPUT"
           const fs = require('fs');
+          const repo = (process.env.OPENCODE_GITHUB_REPO || 'anomalyco/opencode').trim() || 'anomalyco/opencode';
 
           async function resolveLatest() {
             const token = (process.env.GITHUB_TOKEN || '').trim();
@@ -173,7 +190,7 @@ jobs:
 
             // Prefer API, but fall back to the web "latest" redirect if rate-limited (403) or otherwise blocked.
             try {
-              const res = await fetch('https://api.github.com/repos/anomalyco/opencode/releases/latest', { headers });
+              const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers });
               if (res.ok) {
                 const data = await res.json();
                 const tag = (typeof data.tag_name === 'string' ? data.tag_name : '').trim();
@@ -188,7 +205,7 @@ jobs:
               // continue to fallback
             }
 
-            const web = await fetch('https://github.com/anomalyco/opencode/releases/latest', {
+            const web = await fetch(`https://github.com/${repo}/releases/latest`, {
               headers: { 'User-Agent': 'openwork-ci' },
               redirect: 'follow',
             });
@@ -240,6 +257,9 @@ jobs:
             x86_64-unknown-linux-gnu)
               opencode_asset="opencode-linux-x64-baseline.tar.gz"
               ;;
+            aarch64-unknown-linux-gnu)
+              opencode_asset="opencode-linux-arm64.tar.gz"
+              ;;
             x86_64-pc-windows-msvc)
               opencode_asset="opencode-windows-x64-baseline.zip"
               ;;
@@ -249,7 +269,8 @@ jobs:
               ;;
           esac
 
-          url="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${opencode_asset}"
+          repo="${OPENCODE_GITHUB_REPO:-anomalyco/opencode}"
+          url="https://github.com/${repo}/releases/download/v${OPENCODE_VERSION}/${opencode_asset}"
           tmp_dir="$RUNNER_TEMP/opencode"
           extract_dir="$tmp_dir/extracted"
           rm -rf "$tmp_dir"

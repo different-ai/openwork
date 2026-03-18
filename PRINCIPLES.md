@@ -14,10 +14,13 @@
 ## Principles
 
 - **Parity**: UI actions map to OpenCode server APIs.
+- **Server-consumption first**: OpenWork app consumes OpenWork server surfaces (desktop-hosted, orchestrator-hosted, or cloud-hosted) instead of inventing parallel behavior.
 - **Transparency**: plans, steps, tool calls, permissions are visible.
 - **Least privilege**: only user-authorized folders + explicit approvals.
 - **Prompt is the workflow**: product logic lives in prompts, rules, and skills.
 - **Graceful degradation**: if access is missing, guide the user.
+- **Progressive disclosure by default**: non-technical users should see clear primary actions first; IDs/URLs/diagnostics stay behind explicit "manual" or "advanced" sections.
+- **Cloud + self-hosted consistency**: the same connect mental model (`Add worker` -> `Connect remote`) should work regardless of where the server runs.
 
 ## Security & Privacy
 

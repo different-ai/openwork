@@ -1,0 +1,54 @@
+---
+title: "Create an OpenWork instance"
+description: "Agent playbook for spinning up a shareable instance"
+---
+
+This playbook is optimized for agents or operators who need a repeatable setup.
+
+## Goal
+
+Produce one working OpenWork instance with:
+
+- at least one worker
+- a stable connect URL + token
+- one scheduled automation
+- one teammate-ready share path
+
+## Path A: Desktop app
+
+1. Install and open OpenWork.
+2. Create worker `agency-core`.
+3. Open **Automations** and add one scheduled task.
+4. Open worker menu -> **Share** and copy:
+   - `OpenWork worker URL`
+   - `Access token`
+   - `OpenWork invite link`
+
+## Path B: CLI (`openwrk`)
+
+```bash
+npm install -g openwrk
+openwrk start --workspace /path/to/agency-core --approval auto
+```
+
+Then capture pairing details printed by `openwrk`:
+
+- OpenWork URL
+- client token
+- host token (owner actions)
+
+## Instance acceptance checks
+
+- `GET /health` responds.
+- Worker appears in OpenWork UI.
+- You can run one prompt and see output.
+- Automation fires once on schedule.
+- Teammate can connect using invite link or URL + token.
+
+## Recommended first worker set
+
+- `agency-core`
+- `client-a`
+- `client-b`
+
+This structure prevents cross-client contamination and keeps prompts deterministic.

@@ -6,9 +6,12 @@ import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
+import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { isTauriRuntime } from "./app/utils";
+import { initLocale } from "./i18n";
 
 bootstrapTheme();
+initLocale();
 
 const root = document.getElementById("root");
 
@@ -16,7 +19,13 @@ if (!root) {
   throw new Error("Root element not found");
 }
 
+root.dataset.openworkDeployment = getOpenWorkDeployment();
+
 const RouterComponent = isTauriRuntime() ? HashRouter : Router;
+
+function shouldOpenInCurrentTab(url: string) {
+  return /^(mailto|tel):/i.test(url.trim());
+}
 
 const platform: Platform = {
   platform: isTauriRuntime() ? "desktop" : "web",
@@ -25,6 +34,11 @@ const platform: Platform = {
       void import("@tauri-apps/plugin-opener")
         .then(({ openUrl }) => openUrl(url))
         .catch(() => undefined);
+      return;
+    }
+
+    if (shouldOpenInCurrentTab(url)) {
+      window.location.href = url;
       return;
     }
 

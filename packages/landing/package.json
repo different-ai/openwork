@@ -3,12 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0",
+    "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "lint": "next lint"
   },
   "dependencies": {
+    "@paper-design/shaders-react": "0.0.71",
+    "framer-motion": "^12.35.1",
+    "lucide-react": "^0.577.0",
     "next": "14.2.5",
     "react": "18.2.0",
     "react-dom": "18.2.0"

@@ -78,6 +78,14 @@ function createInvalidToolStream() {
   ];
 }
 
+function hasChromeQuickstartPrompt(haystack) {
+  return (
+    haystack.includes("chrome devtools mcp") ||
+    haystack.includes("chrome-devtools_*") ||
+    haystack.includes("control chrome")
+  );
+}
+
 const args = parseArgs(process.argv.slice(2));
 const keepTmp = args.get("keep-tmp") === "true";
 
@@ -108,6 +116,7 @@ function step(name, fn) {
 let tmpdir;
 let mock;
 let opencode;
+let sawChromeQuickstartPrompt = false;
 
 try {
   tmpdir = await mkdtemp(path.join(os.tmpdir(), "openwork-browser-entry-"));
@@ -154,10 +163,16 @@ try {
         }
 
         const haystack = JSON.stringify(body).toLowerCase();
-        const safe = haystack.includes("do not call any tools");
+        const triesChromeMcp = hasChromeQuickstartPrompt(haystack);
 
-        if (safe) {
-          writeSse(res, createTextStream("Browser automation setup: tell me if you're on desktop or web, then we'll enable the browser plugin/extension."));
+        if (triesChromeMcp) {
+          sawChromeQuickstartPrompt = true;
+          writeSse(
+            res,
+            createTextStream(
+              "Trying Control Chrome first. If Chrome MCP is unavailable, open the MCP tab, connect Control Chrome, and retry.",
+            ),
+          );
         } else {
           writeSse(res, createInvalidToolStream());
         }
@@ -222,6 +237,11 @@ try {
       model: "alibaba/qwen-plus",
     });
     return {};
+  });
+
+  await step("assert.chrome-mcp-quickstart", async () => {
+    assert.equal(sawChromeQuickstartPrompt, true, "Expected browser quickstart prompt to reference Chrome DevTools MCP");
+    return { sawChromeQuickstartPrompt };
   });
 
   await step("assert.no-tool-errors", async () => {

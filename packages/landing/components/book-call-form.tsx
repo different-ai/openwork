@@ -1,111 +1,173 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Mail } from "lucide-react";
+import { useEffect, useState } from "react";
 
-type Props = {
-  calUrl: string;
+type FormState = "idle" | "loading" | "success" | "error";
+
+type FormFields = {
+  fullName: string;
+  companyEmail: string;
+  message: string;
 };
 
-const buildCalUrl = (baseUrl: string, params: Record<string, string>) => {
-  try {
-    const url = new URL(baseUrl);
-    for (const [key, value] of Object.entries(params)) {
-      if (!value) continue;
-      url.searchParams.set(key, value);
+const initialFields: FormFields = {
+  fullName: "",
+  companyEmail: "",
+  message: ""
+};
+
+export function BookCallForm() {
+  const [fields, setFields] = useState<FormFields>(initialFields);
+  const [state, setState] = useState<FormState>("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  const setField = (key: keyof FormFields, value: string) => {
+    setFields(current => ({ ...current, [key]: value }));
+  };
+
+  const reset = () => {
+    setFields(initialFields);
+    setState("idle");
+    setErrorMsg("");
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setState("loading");
+    setErrorMsg("");
+
+    try {
+      const response = await fetch("/api/enterprise-contact", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(fields)
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        setState("error");
+        setErrorMsg(
+          data?.error ?? "Something went wrong. Please try again."
+        );
+        return;
+      }
+
+      setState("success");
+      setFields(initialFields);
+    } catch (error) {
+      setState("error");
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again."
+      );
     }
-    return url.toString();
-  } catch {
-    return baseUrl;
-  }
-};
-
-export function BookCallForm(props: Props) {
-  const [email, setEmail] = useState("");
-  const [company, setCompany] = useState("");
-
-  const href = useMemo(() => {
-    if (!props.calUrl) return "";
-    return buildCalUrl(props.calUrl, {
-      email,
-      company
-    });
-  }, [props.calUrl, email, company]);
+  };
 
   return (
-    <section
-      id="book"
-      className="rounded-2xl border border-gray-100 bg-white p-8 shadow-sm"
-    >
-      <div className="mb-2 text-[12px] font-bold uppercase tracking-wider text-gray-500">
-        Book a call
-      </div>
-      <h3 className="mb-2 text-[18px] font-bold">Let us know how we can help</h3>
-      <p className="mb-6 text-[14px] leading-relaxed text-gray-600">
-        You'll answer a few questions on the booking page.
-      </p>
-
-      <form
-        className="space-y-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!href) return;
-          window.open(href, "_blank", "noopener,noreferrer");
-        }}
-      >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-[13px] font-semibold text-gray-700">
-              Company email
-            </label>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="jeff@amazon.com"
-              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[14px] text-gray-900 outline-none transition focus:border-gray-300"
-              autoComplete="email"
-              type="email"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[13px] font-semibold text-gray-700">
-              Company
-            </label>
-            <input
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              placeholder="Amazon"
-              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[14px] text-gray-900 outline-none transition focus:border-gray-300"
-              autoComplete="organization"
-            />
-          </div>
+    <section id="book" className="landing-shell rounded-[2rem] p-6 md:p-8">
+      <div className="rounded-[1.5rem] border border-slate-200/70 bg-white/80 p-5 shadow-sm md:p-6">
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200/70 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <Mail size={12} />
+          Get in touch with us
         </div>
+        <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
+          Tell us what you need.
+        </h3>
+        <p className="mb-6 max-w-2xl text-[15px] leading-relaxed text-slate-600">
+          Share your team context and we&apos;ll get back to you over email.
+        </p>
 
-        <div className="rounded-xl border border-gray-100 bg-gray-50 p-5 text-[13px] text-gray-600">
-          You'll fill the rest on the booking page.
-        </div>
-
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          {props.calUrl ? (
-            <button type="submit" className="doc-button">
-              Continue to booking
-            </button>
-          ) : (
-            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4 text-[13px] text-gray-500">
-              Cal link not set yet.
-            </div>
-          )}
-          {props.calUrl ? (
-            <a
-              href={props.calUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[13px] text-gray-400 transition hover:text-black"
+        {state === "success" ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-[14px] leading-relaxed text-emerald-800">
+            Thanks. We&apos;ve got your note and will follow up soon.
+            <button
+              type="button"
+              onClick={reset}
+              className="mt-3 block text-[13px] font-medium text-emerald-700 transition hover:text-emerald-900"
             >
-              Open booking link
-            </a>
-          ) : null}
-        </div>
-      </form>
+              Send another message
+            </button>
+          </div>
+        ) : (
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Full name
+                </label>
+                <input
+                  value={fields.fullName}
+                  onChange={event => setField("fullName", event.target.value)}
+                  placeholder="Jeff Bezos"
+                  className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                  autoComplete="name"
+                  required
+                  type="text"
+                  disabled={state === "loading"}
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Company email
+                </label>
+                <input
+                  value={fields.companyEmail}
+                  onChange={event =>
+                    setField("companyEmail", event.target.value)
+                  }
+                  placeholder="jeff@amazon.com"
+                  className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                  autoComplete="email"
+                  required
+                  type="email"
+                  disabled={state === "loading"}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                How can we help?
+              </label>
+              <textarea
+                value={fields.message}
+                onChange={event => setField("message", event.target.value)}
+                placeholder="Share more about what you want to accomplish"
+                className="min-h-[160px] w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                required
+                disabled={state === "loading"}
+              />
+            </div>
+
+            {state === "error" ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50/80 px-4 py-3 text-[13px] leading-relaxed text-red-700">
+                {errorMsg}
+              </div>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={!hydrated || state === "loading"}
+              className="doc-button w-full sm:w-auto disabled:opacity-60"
+            >
+              {!hydrated
+                ? "Loading..."
+                : state === "loading"
+                  ? "Sending..."
+                  : "Get in touch"}
+            </button>
+          </form>
+        )}
+      </div>
     </section>
   );
 }

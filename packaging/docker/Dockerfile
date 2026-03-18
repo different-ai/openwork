@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim
 
-ARG OPENWRK_VERSION=0.11.22
+ARG OPENWORK_ORCHESTRATOR_VERSION=0.11.22
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -11,11 +11,11 @@ RUN apt-get update \
     unzip \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g "openwrk@${OPENWRK_VERSION}"
+RUN npm install -g "openwork-orchestrator@${OPENWORK_ORCHESTRATOR_VERSION}"
 
 # Persistent directories (mount volumes here on PaaS/SSH).
-ENV OPENWRK_DATA_DIR=/data/openwrk
-ENV OPENWRK_SIDECAR_DIR=/data/sidecars
+ENV OPENWORK_DATA_DIR=/data/openwork-orchestrator
+ENV OPENWORK_SIDECAR_DIR=/data/sidecars
 
 # The workspace is mounted from the host/volume.
 ENV OPENWORK_WORKSPACE=/workspace
@@ -34,7 +34,7 @@ VOLUME ["/workspace", "/data"]
 # - OpenWork server proxies OpenCode via localhost
 # - OpenCode Router disabled by default
 CMD [
-  "openwrk",
+  "openwork",
   "serve",
   "--workspace", "/workspace",
   "--openwork-host", "0.0.0.0",

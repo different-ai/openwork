@@ -222,3 +222,225 @@ test("health /send can deliver directly with peerId", async () => {
   await bridge.stop();
   store.close();
 });
+
+test("health /send can deliver file parts end-to-end", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-media-"));
+  const dbPath = path.join(dir, "opencode-router.db");
+  const store = new BridgeStore(dbPath);
+  const healthPort = await freePort();
+  const sourceFile = path.join(dir, "payload.txt");
+  fs.writeFileSync(sourceFile, "payload-from-test");
+
+  const deliveries = [];
+  const slackAdapter = {
+    key: "slack:default",
+    name: "slack",
+    identityId: "default",
+    maxTextLength: 39_000,
+    async start() {},
+    async stop() {},
+    async sendText(peerId, text) {
+      deliveries.push({ peerId, text });
+    },
+    async sendMessage(peerId, message) {
+      deliveries.push({ peerId, message });
+      const mediaPart = message.parts.find((part) => part.type === "file");
+      assert.ok(mediaPart);
+      assert.equal(path.isAbsolute(mediaPart.filePath), true);
+      assert.equal(fs.readFileSync(mediaPart.filePath, "utf8"), "payload-from-test");
+      return {
+        attemptedParts: message.parts.length,
+        sentParts: message.parts.length,
+        partResults: message.parts.map((part, index) => ({
+          index,
+          type: part.type,
+          sent: true,
+        })),
+      };
+    },
+  };
+
+  const bridge = await startBridge(
+    {
+      configPath: path.join(dir, "opencode-router.json"),
+      configFile: { version: 1 },
+      opencodeUrl: "http://127.0.0.1:4096",
+      opencodeDirectory: dir,
+      telegramBots: [],
+      slackApps: [],
+      dataDir: dir,
+      dbPath,
+      logFile: path.join(dir, "opencode-router.log"),
+      toolUpdatesEnabled: false,
+      groupsEnabled: false,
+      permissionMode: "allow",
+      toolOutputLimit: 1200,
+      healthPort,
+      logLevel: "silent",
+    },
+    createLoggerStub(),
+    undefined,
+    {
+      client: {
+        global: {
+          health: async () => ({ healthy: true, version: "test" }),
+        },
+      },
+      store,
+      adapters: new Map([["slack:default", slackAdapter]]),
+      disableEventStream: true,
+    },
+  );
+
+  const response = await fetch(`http://127.0.0.1:${healthPort}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      channel: "slack",
+      peerId: "D999",
+      parts: [{ type: "file", filePath: "payload.txt" }],
+    }),
+  });
+  assert.equal(response.status, 200);
+  const json = await response.json();
+  assert.equal(json.ok, true);
+  assert.equal(json.sent, 1);
+  assert.equal(Array.isArray(json.targets), true);
+  assert.equal(json.targets[0].sentParts, 1);
+  assert.equal(deliveries.length, 1);
+
+  await bridge.stop();
+  store.close();
+});
+
+test("health /send rejects invalid telegram direct peerId", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-"));
+  const dbPath = path.join(dir, "opencode-router.db");
+  const store = new BridgeStore(dbPath);
+  const healthPort = await freePort();
+
+  const bridge = await startBridge(
+    {
+      configPath: path.join(dir, "opencode-router.json"),
+      configFile: { version: 1 },
+      opencodeUrl: "http://127.0.0.1:4096",
+      opencodeDirectory: dir,
+      telegramBots: [],
+      slackApps: [],
+      dataDir: dir,
+      dbPath,
+      logFile: path.join(dir, "opencode-router.log"),
+      toolUpdatesEnabled: false,
+      groupsEnabled: false,
+      permissionMode: "allow",
+      toolOutputLimit: 1200,
+      healthPort,
+      logLevel: "silent",
+    },
+    createLoggerStub(),
+    undefined,
+    {
+      client: {
+        global: {
+          health: async () => ({ healthy: true, version: "test" }),
+        },
+      },
+      store,
+      adapters: new Map(),
+      disableEventStream: true,
+    },
+  );
+
+  const response = await fetch(`http://127.0.0.1:${healthPort}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel: "telegram", peerId: "@hotkartoffel", text: "hello-direct" }),
+  });
+  assert.equal(response.status, 400);
+  const json = await response.json();
+  assert.equal(json.ok, false);
+  assert.match(String(json.error || ""), /numeric chat_id/i);
+
+  await bridge.stop();
+  store.close();
+});
+
+test("health /send removes invalid telegram bindings and still sends valid ones", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-"));
+  const dbPath = path.join(dir, "opencode-router.db");
+  const store = new BridgeStore(dbPath);
+  const healthPort = await freePort();
+
+  const sent = [];
+  const telegramAdapter = {
+    key: "telegram:default",
+    name: "telegram",
+    identityId: "default",
+    maxTextLength: 39_000,
+    async start() {},
+    async stop() {},
+    async sendText(peerId, text) {
+      sent.push({ peerId, text });
+    },
+  };
+
+  const normalizedDir = dir.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  store.upsertBinding("telegram", "default", "@bad-target", normalizedDir);
+  store.upsertBinding("telegram", "default", "351743020", normalizedDir);
+
+  const bridge = await startBridge(
+    {
+      configPath: path.join(dir, "opencode-router.json"),
+      configFile: { version: 1 },
+      opencodeUrl: "http://127.0.0.1:4096",
+      opencodeDirectory: dir,
+      telegramBots: [],
+      slackApps: [],
+      dataDir: dir,
+      dbPath,
+      logFile: path.join(dir, "opencode-router.log"),
+      toolUpdatesEnabled: false,
+      groupsEnabled: false,
+      permissionMode: "allow",
+      toolOutputLimit: 1200,
+      healthPort,
+      logLevel: "silent",
+    },
+    createLoggerStub(),
+    undefined,
+    {
+      client: {
+        global: {
+          health: async () => ({ healthy: true, version: "test" }),
+        },
+      },
+      store,
+      adapters: new Map([["telegram:default", telegramAdapter]]),
+      disableEventStream: true,
+    },
+  );
+
+  const response = await fetch(`http://127.0.0.1:${healthPort}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel: "telegram", directory: dir, text: "hello" }),
+  });
+  assert.equal(response.status, 200);
+  const json = await response.json();
+  assert.equal(json.ok, true);
+  assert.equal(json.attempted, 2);
+  assert.equal(json.sent, 1);
+  assert.equal(Array.isArray(json.failures), true);
+  assert.equal(json.failures.length, 1);
+  assert.match(String(json.failures[0].error || ""), /invalid telegram peerid binding removed/i);
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].peerId, "351743020");
+  assert.equal(sent[0].text, "hello");
+
+  assert.equal(store.getBinding("telegram", "default", "@bad-target"), null);
+  assert.notEqual(store.getBinding("telegram", "default", "351743020"), null);
+
+  await bridge.stop();
+  store.close();
+});

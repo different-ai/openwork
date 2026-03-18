@@ -65,7 +65,8 @@ impl WorkspaceOpenworkConfig {
 #[serde(rename_all = "lowercase")]
 pub enum EngineRuntime {
     Direct,
-    Openwrk,
+    #[serde(rename = "openwork-orchestrator")]
+    Orchestrator,
 }
 
 impl Default for EngineRuntime {
@@ -101,6 +102,7 @@ pub struct OpenworkServerInfo {
     pub mdns_url: Option<String>,
     pub lan_url: Option<String>,
     pub client_token: Option<String>,
+    pub owner_token: Option<String>,
     pub host_token: Option<String>,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,
@@ -109,7 +111,7 @@ pub struct OpenworkServerInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkDaemonState {
+pub struct OrchestratorDaemonState {
     pub pid: u32,
     pub port: u16,
     pub base_url: String,
@@ -118,7 +120,7 @@ pub struct OpenwrkDaemonState {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkOpencodeState {
+pub struct OrchestratorOpencodeState {
     pub pid: u32,
     pub port: u16,
     pub base_url: String,
@@ -127,7 +129,7 @@ pub struct OpenwrkOpencodeState {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkBinaryInfo {
+pub struct OrchestratorBinaryInfo {
     pub path: String,
     pub source: String,
     pub expected_version: Option<String>,
@@ -136,13 +138,13 @@ pub struct OpenwrkBinaryInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkBinaryState {
-    pub opencode: Option<OpenwrkBinaryInfo>,
+pub struct OrchestratorBinaryState {
+    pub opencode: Option<OrchestratorBinaryInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkSidecarInfo {
+pub struct OrchestratorSidecarInfo {
     pub dir: Option<String>,
     pub base_url: Option<String>,
     pub manifest_url: Option<String>,
@@ -154,7 +156,7 @@ pub struct OpenwrkSidecarInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkWorkspace {
+pub struct OrchestratorWorkspace {
     pub id: String,
     pub name: String,
     pub path: String,
@@ -167,17 +169,17 @@ pub struct OpenwrkWorkspace {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkStatus {
+pub struct OrchestratorStatus {
     pub running: bool,
     pub data_dir: String,
-    pub daemon: Option<OpenwrkDaemonState>,
-    pub opencode: Option<OpenwrkOpencodeState>,
+    pub daemon: Option<OrchestratorDaemonState>,
+    pub opencode: Option<OrchestratorOpencodeState>,
     pub cli_version: Option<String>,
-    pub sidecar: Option<OpenwrkSidecarInfo>,
-    pub binaries: Option<OpenwrkBinaryState>,
+    pub sidecar: Option<OrchestratorSidecarInfo>,
+    pub binaries: Option<OrchestratorBinaryState>,
     pub active_id: Option<String>,
     pub workspace_count: usize,
-    pub workspaces: Vec<OpenwrkWorkspace>,
+    pub workspaces: Vec<OrchestratorWorkspace>,
     pub last_error: Option<String>,
 }
 
@@ -188,6 +190,7 @@ pub struct OpenCodeRouterInfo {
     pub version: Option<String>,
     pub workspace_path: Option<String>,
     pub opencode_url: Option<String>,
+    pub health_port: Option<u16>,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,

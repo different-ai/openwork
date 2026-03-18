@@ -180,7 +180,7 @@ const headlessEnv = {
   OPENWORK_TOKEN: openworkToken,
   OPENWORK_HOST_TOKEN: openworkHostToken,
   OPENWORK_SERVER_BIN: openworkServerBin,
-  OPENWRK_SIDECAR_SOURCE: process.env.OPENWRK_SIDECAR_SOURCE ?? "external",
+  OPENWORK_SIDECAR_SOURCE: process.env.OPENWORK_SIDECAR_SOURCE ?? "external",
   OPENCODE_ROUTER_BIN: process.env.OPENCODE_ROUTER_BIN ?? opencodeRouterBin,
 };
 
@@ -224,7 +224,7 @@ const headlessProcess = spawnLogged(
   "pnpm",
   [
     "--filter",
-    "openwrk",
+    "openwork-orchestrator",
     "dev",
     "--",
     "start",
@@ -263,4 +263,4 @@ process.on("SIGTERM", () => {
 });
 
 webProcess.on("exit", (code, signal) => shutdown("web", code, signal));
-headlessProcess.on("exit", (code, signal) => shutdown("openwrk", code, signal));
+headlessProcess.on("exit", (code, signal) => shutdown("orchestrator", code, signal));

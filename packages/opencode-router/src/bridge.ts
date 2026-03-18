@@ -1,5 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -8,12 +9,15 @@ import type { Logger } from "pino";
 import type { Config, ChannelName, OpenCodeRouterConfigFile } from "./config.js";
 import { readConfigFile, writeConfigFile } from "./config.js";
 import { BridgeStore } from "./db.js";
+import { classifyDeliveryError } from "./delivery.js";
 import { normalizeEvent } from "./events.js";
 import { startHealthServer, type HealthSnapshot } from "./health.js";
+import { type InboundMessagePart, type MessageDeliveryResult, type OutboundMessagePart, normalizeOutboundParts, summarizeInboundPartsForPrompt, summarizeInboundPartsForReporter, textFromInboundParts } from "./media.js";
+import { MediaStore } from "./media-store.js";
 import { buildPermissionRules, createClient } from "./opencode.js";
 import { chunkText, formatInputSummary, truncateText } from "./text.js";
 import { createSlackAdapter } from "./slack.js";
-import { createTelegramAdapter } from "./telegram.js";
+import { createTelegramAdapter, isTelegramPeerId } from "./telegram.js";
 
 type Adapter = {
   key: string;
@@ -22,6 +26,7 @@ type Adapter = {
   maxTextLength: number;
   start(): Promise<void>;
   stop(): Promise<void>;
+  sendMessage?: (peerId: string, message: { parts: OutboundMessagePart[] }) => Promise<MessageDeliveryResult>;
   sendText(peerId: string, text: string): Promise<void>;
   sendFile?: (peerId: string, filePath: string, caption?: string) => Promise<void>;
   sendTyping?: (peerId: string) => Promise<void>;
@@ -93,8 +98,17 @@ type InboundMessage = {
   identityId: string;
   peerId: string;
   text: string;
+  parts?: InboundMessagePart[];
   raw: unknown;
   fromMe?: boolean;
+};
+
+type SendTargetDelivery = {
+  identityId: string;
+  peerId: string;
+  attemptedParts: number;
+  sentParts: number;
+  partResults: MessageDeliveryResult["partResults"];
 };
 
 type ModelRef = {
@@ -138,6 +152,15 @@ const CHANNEL_LABELS: Record<ChannelName, string> = {
 const TYPING_INTERVAL_MS = 6000;
 const OPENCODE_ROUTER_AGENT_FILE_RELATIVE_PATH = ".opencode/agents/opencode-router.md";
 const OPENCODE_ROUTER_AGENT_MAX_CHARS = 16_000;
+const DEFAULT_MESSAGING_AGENT_INSTRUCTIONS = [
+  "Respond for non-technical users first.",
+  "Do not tell users to run router commands; use tools on their behalf.",
+  "Never expose raw peer IDs or Telegram chat IDs unless the user explicitly asks for debug details.",
+  "Do not ask end users for peer IDs or identity IDs.",
+  "For Telegram send requests, try delivery immediately using existing bindings or direct tool calls.",
+  "If Telegram returns 'chat not found', explain that the recipient must message the bot first (for example with /start), then ask the user to retry.",
+  "Keep status updates concise and action-oriented.",
+].join("\n");
 
 type MessagingAgentConfig = {
   filePath: string;
@@ -177,6 +200,42 @@ function adapterKey(channel: ChannelName, identityId: string): string {
   return `${channel}:${identityId}`;
 }
 
+function invalidTelegramPeerIdError(): Error & { status?: number } {
+  const error = new Error(
+    "Telegram requires a numeric chat_id for direct targets. Usernames like @name cannot be used as peerId.",
+  ) as Error & { status?: number };
+  error.status = 400;
+  return error;
+}
+
+const PAIRING_CODE_HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+function normalizeTelegramAccess(value: unknown): "public" | "private" {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return raw === "private" ? "private" : "public";
+}
+
+function normalizePairingCodeHash(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!PAIRING_CODE_HASH_PATTERN.test(raw)) return "";
+  return raw;
+}
+
+function normalizePairingCodeValue(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function hashPairingCode(value: string): string {
+  return createHash("sha256").update(normalizePairingCodeValue(value)).digest("hex");
+}
+
+function extractPairingCodeFromCommand(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\/pair(?:@[A-Za-z0-9_]+)?\s+(.+)$/i);
+  if (!match?.[1]) return "";
+  return normalizePairingCodeValue(match[1]);
+}
+
 function normalizeIdentityId(value: string | undefined): string {
   const trimmed = (value ?? "").trim();
   if (!trimmed) return "default";
@@ -190,6 +249,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   const clients = new Map<string, ReturnType<typeof createClient>>();
   const defaultDirectory = config.opencodeDirectory;
   const workspaceRoot = resolve(defaultDirectory || process.cwd());
+  const mediaStore = new MediaStore(join(workspaceRoot, ".opencode-router", "media"));
+  await mediaStore.ensureReady();
   const workspaceAgentFilePath = join(workspaceRoot, OPENCODE_ROUTER_AGENT_FILE_RELATIVE_PATH);
   const agentPromptCache = new Map<string, { mtimeMs: number; config: MessagingAgentConfig }>();
   let latestAgentConfig: MessagingAgentConfig = {
@@ -288,6 +349,25 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     return typeof (app as any)?.directory === "string" ? String((app as any).directory).trim() : "";
   };
 
+  const resolveTelegramIdentityAccess = (
+    identityId: string,
+  ): { access: "public" | "private"; pairingCodeHash: string } => {
+    const id = identityId.trim();
+    if (!id) {
+      return { access: "public", pairingCodeHash: "" };
+    }
+    const bot = config.telegramBots.find((entry) => entry.id === id);
+    if (!bot) {
+      return { access: "public", pairingCodeHash: "" };
+    }
+    const access = normalizeTelegramAccess((bot as any).access);
+    const pairingCodeHash = normalizePairingCodeHash((bot as any).pairingCodeHash);
+    if (access !== "private") {
+      return { access: "public", pairingCodeHash: "" };
+    }
+    return { access: "private", pairingCodeHash };
+  };
+
   const listIdentityConfigs = (channel: ChannelName): Array<{ id: string; directory: string }> => {
     if (channel === "telegram") {
       return config.telegramBots.map((bot) => ({ id: bot.id, directory: (bot.directory ?? "").trim() }));
@@ -336,7 +416,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     for (const bot of enabledTelegram) {
       const key = adapterKey("telegram", bot.id);
       logger.debug({ identityId: bot.id }, "telegram adapter enabled");
-      const base = createTelegramAdapter(bot, config, logger, handleInbound);
+      const base = createTelegramAdapter(bot, config, logger, handleInbound, mediaStore);
       adapters.set(key, { ...base, key });
     }
 
@@ -348,7 +428,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     for (const app of enabledSlack) {
       const key = adapterKey("slack", app.id);
       logger.debug({ identityId: app.id }, "slack adapter enabled");
-      const base = createSlackAdapter(app, config, logger, handleInbound);
+      const base = createSlackAdapter(app, config, logger, handleInbound, undefined, mediaStore);
       adapters.set(key, { ...base, key });
     }
   }
@@ -520,6 +600,139 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
   await loadMessagingAgentConfig();
 
+  const outboundMediaMaxBytesRaw = Number.parseInt(process.env.OPENCODE_ROUTER_MAX_MEDIA_BYTES ?? "", 10);
+  const outboundMediaMaxBytes =
+    Number.isFinite(outboundMediaMaxBytesRaw) && outboundMediaMaxBytesRaw > 0
+      ? outboundMediaMaxBytesRaw
+      : 50 * 1024 * 1024;
+
+  const resolveOutboundParts = async (
+    baseDirectory: string,
+    input: { text?: string; parts?: unknown },
+  ): Promise<OutboundMessagePart[]> => {
+    const normalized = normalizeOutboundParts(input);
+    if (normalized.length === 0) {
+      const error = new Error("text or parts is required") as Error & { status?: number };
+      error.status = 400;
+      throw error;
+    }
+
+    const resolved: OutboundMessagePart[] = [];
+    for (const part of normalized) {
+      if (part.type === "text") {
+        resolved.push(part);
+        continue;
+      }
+
+      const file = await mediaStore.resolveOutboundFile({
+        filePath: part.filePath,
+        baseDirectory,
+        maxBytes: outboundMediaMaxBytes,
+      });
+      resolved.push({
+        ...part,
+        filePath: file.filePath,
+        ...(part.filename ? {} : { filename: file.filename }),
+      });
+    }
+
+    return resolved;
+  };
+
+  const deliverParts = async (
+    channel: ChannelName,
+    identityId: string,
+    peerId: string,
+    parts: OutboundMessagePart[],
+    options: { kind?: OutboundKind; display?: boolean } = {},
+  ): Promise<MessageDeliveryResult> => {
+    const adapter = adapters.get(adapterKey(channel, identityId));
+    if (!adapter) {
+      return {
+        attemptedParts: parts.length,
+        sentParts: 0,
+        partResults: parts.map((part, index) => ({
+          index,
+          type: part.type,
+          sent: false,
+          error: "Adapter not running",
+          code: "not_found",
+          retryable: false,
+        })),
+      };
+    }
+
+    const kind = options.kind ?? "system";
+    if (options.display !== false) {
+      for (const part of parts) {
+        const preview =
+          part.type === "text"
+            ? truncateText(part.text, 240)
+            : `[${part.type}] ${part.filename || part.filePath}`;
+        reporter?.onOutbound?.({ channel, identityId, peerId, text: preview, kind });
+      }
+    }
+
+    recordOutboundActivity(Date.now());
+
+    if (adapter.sendMessage) {
+      try {
+        return await adapter.sendMessage(peerId, { parts });
+      } catch (error) {
+        const classified = classifyDeliveryError(error);
+        return {
+          attemptedParts: parts.length,
+          sentParts: 0,
+          partResults: parts.map((part, index) => ({
+            index,
+            type: part.type,
+            sent: false,
+            error: classified.message,
+            code: classified.code,
+            retryable: classified.retryable,
+          })),
+        };
+      }
+    }
+
+    const partResults: MessageDeliveryResult["partResults"] = [];
+    let sentParts = 0;
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      try {
+        if (part.type === "text") {
+          const chunks = chunkText(part.text, adapter.maxTextLength);
+          for (const chunk of chunks) {
+            await adapter.sendText(peerId, chunk);
+          }
+        } else if (adapter.sendFile) {
+          await adapter.sendFile(peerId, part.filePath, part.caption);
+        } else {
+          throw new Error(`Adapter does not support ${part.type} media`);
+        }
+
+        sentParts += 1;
+        partResults.push({ index, type: part.type, sent: true });
+      } catch (error) {
+        const classified = classifyDeliveryError(error);
+        partResults.push({
+          index,
+          type: part.type,
+          sent: false,
+          error: classified.message,
+          code: classified.code,
+          retryable: classified.retryable,
+        });
+      }
+    }
+
+    return {
+      attemptedParts: parts.length,
+      sentParts,
+      partResults,
+    };
+  };
+
   let stopHealthServer: (() => void) | null = null;
   if (!deps.disableHealthServer && config.healthPort) {
     stopHealthServer = await startHealthServer(
@@ -585,16 +798,28 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               id: bot.id,
               enabled: bot.enabled !== false,
               running: adapters.has(adapterKey("telegram", bot.id)),
+              access: normalizeTelegramAccess((bot as any).access),
+              pairingRequired: normalizeTelegramAccess((bot as any).access) === "private",
             })),
           };
         },
-        upsertTelegramIdentity: async (input: { id?: string; token: string; enabled?: boolean; directory?: string }) => {
+        upsertTelegramIdentity: async (input: {
+          id?: string;
+          token: string;
+          enabled?: boolean;
+          directory?: string;
+          access?: "public" | "private";
+          pairingCodeHash?: string;
+        }) => {
           const token = input.token?.trim() ?? "";
           if (!token) throw new Error("token is required");
           const id = normalizeIdentityId(input.id);
           if (id === "env") throw new Error("identity id 'env' is reserved");
           const enabled = input.enabled !== false;
           const directoryInput = typeof input.directory === "string" ? input.directory.trim() : "";
+          const requestedAccess =
+            typeof input.access === "string" && input.access.trim() ? normalizeTelegramAccess(input.access) : undefined;
+          const requestedPairingCodeHash = normalizePairingCodeHash(input.pairingCodeHash);
 
           // Persist to config file.
           const { config: current } = readConfigFile(config.configPath);
@@ -613,10 +838,36 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             found = true;
             const existingDirectory = typeof record.directory === "string" ? record.directory.trim() : "";
             const directory = directoryInput || existingDirectory;
-            nextBots.push({ id, token, enabled, ...(directory ? { directory } : {}) });
+            const existingAccess = normalizeTelegramAccess(record.access);
+            const existingPairingCodeHash = normalizePairingCodeHash(record.pairingCodeHash);
+            const access = requestedAccess ?? existingAccess;
+            const pairingCodeHash = access === "private" ? requestedPairingCodeHash || existingPairingCodeHash : "";
+            if (access === "private" && !pairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            nextBots.push({
+              id,
+              token,
+              enabled,
+              ...(directory ? { directory } : {}),
+              access,
+              ...(access === "private" ? { pairingCodeHash } : {}),
+            });
           }
           if (!found) {
-            nextBots.push({ id, token, enabled, ...(directoryInput ? { directory: directoryInput } : {}) });
+            const access = requestedAccess ?? "public";
+            const pairingCodeHash = access === "private" ? requestedPairingCodeHash : "";
+            if (access === "private" && !pairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            nextBots.push({
+              id,
+              token,
+              enabled,
+              ...(directoryInput ? { directory: directoryInput } : {}),
+              access,
+              ...(access === "private" ? { pairingCodeHash } : {}),
+            });
           }
 
           const next: OpenCodeRouterConfigFile = {
@@ -636,12 +887,40 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
           // Update runtime identity list.
           const existingIdx = config.telegramBots.findIndex((bot) => bot.id === id);
+          let runtimeAccess: "public" | "private" = requestedAccess ?? "public";
+          let runtimePairingCodeHash = requestedPairingCodeHash;
           if (existingIdx >= 0) {
             const prev = config.telegramBots[existingIdx];
             const nextDirectory = directoryInput || (prev as any)?.directory || undefined;
-            config.telegramBots[existingIdx] = { id, token, enabled, ...(nextDirectory ? { directory: String(nextDirectory).trim() } : {}) };
+            const prevAccess = normalizeTelegramAccess((prev as any)?.access);
+            const prevPairingCodeHash = normalizePairingCodeHash((prev as any)?.pairingCodeHash);
+            runtimeAccess = requestedAccess ?? prevAccess;
+            runtimePairingCodeHash = runtimeAccess === "private" ? requestedPairingCodeHash || prevPairingCodeHash : "";
+            if (runtimeAccess === "private" && !runtimePairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            config.telegramBots[existingIdx] = {
+              id,
+              token,
+              enabled,
+              ...(nextDirectory ? { directory: String(nextDirectory).trim() } : {}),
+              access: runtimeAccess,
+              ...(runtimeAccess === "private" ? { pairingCodeHash: runtimePairingCodeHash } : {}),
+            };
           } else {
-            config.telegramBots.push({ id, token, enabled, ...(directoryInput ? { directory: directoryInput } : {}) });
+            runtimeAccess = requestedAccess ?? "public";
+            runtimePairingCodeHash = runtimeAccess === "private" ? requestedPairingCodeHash : "";
+            if (runtimeAccess === "private" && !runtimePairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            config.telegramBots.push({
+              id,
+              token,
+              enabled,
+              ...(directoryInput ? { directory: directoryInput } : {}),
+              access: runtimeAccess,
+              ...(runtimeAccess === "private" ? { pairingCodeHash: runtimePairingCodeHash } : {}),
+            });
           }
 
           // Start/stop adapter.
@@ -656,7 +935,13 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               }
               adapters.delete(key);
             }
-            return { id, enabled: false, applied: true };
+            return {
+              id,
+              enabled: false,
+              access: runtimeAccess,
+              pairingRequired: runtimeAccess === "private",
+              applied: true,
+            };
           }
 
           if (existing) {
@@ -667,7 +952,22 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
             adapters.delete(key);
           }
-          const base = createTelegramAdapter({ id, token, enabled, ...(directoryInput ? { directory: directoryInput } : {}) }, config, logger, handleInbound);
+          const base = createTelegramAdapter(
+            {
+              id,
+              token,
+              enabled,
+              ...(directoryInput ? { directory: directoryInput } : {}),
+              access: runtimeAccess,
+              ...(runtimeAccess === "private" && runtimePairingCodeHash
+                ? { pairingCodeHash: runtimePairingCodeHash }
+                : {}),
+            },
+            config,
+            logger,
+            handleInbound,
+            mediaStore,
+          );
           const adapter = { ...base, key };
           adapters.set(key, adapter);
 
@@ -680,12 +980,32 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           });
 
           if (startResult.status === "timeout") {
-            return { id, enabled: true, applied: false, starting: true };
+            return {
+              id,
+              enabled: true,
+              access: runtimeAccess,
+              pairingRequired: runtimeAccess === "private",
+              applied: false,
+              starting: true,
+            };
           }
           if (startResult.status === "error") {
-            return { id, enabled: true, applied: false, error: String(startResult.error) };
+            return {
+              id,
+              enabled: true,
+              access: runtimeAccess,
+              pairingRequired: runtimeAccess === "private",
+              applied: false,
+              error: String(startResult.error),
+            };
           }
-          return { id, enabled: true, applied: true };
+          return {
+            id,
+            enabled: true,
+            access: runtimeAccess,
+            pairingRequired: runtimeAccess === "private",
+            applied: true,
+          };
         },
         deleteTelegramIdentity: async (rawId: string) => {
           const id = normalizeIdentityId(rawId);
@@ -836,6 +1156,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             config,
             logger,
             handleInbound,
+            undefined,
+            mediaStore,
           );
           const adapter = { ...base, key };
           adapters.set(key, adapter);
@@ -938,6 +1260,9 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           if (!peerKey || !directory) {
             throw new Error("peerId and directory are required");
           }
+          if (channel === "telegram" && !isTelegramPeerId(peerKey)) {
+            throw invalidTelegramPeerIdError();
+          }
           const scoped = resolveScopedDirectory(directory);
           if (!scoped.ok) {
             const error = new Error(scoped.error) as Error & { status?: number };
@@ -968,7 +1293,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           identityId?: string;
           directory?: string;
           peerId?: string;
-          text: string;
+          text?: string;
+          parts?: OutboundMessagePart[];
           autoBind?: boolean;
         }) => {
           const channelRaw = input.channel.trim().toLowerCase();
@@ -980,13 +1306,12 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           const directoryInput = (input.directory ?? "").trim();
           const peerId = (input.peerId ?? "").trim();
           const autoBind = input.autoBind === true;
-          const text = input.text ?? "";
-          if (!text.trim()) {
-            throw new Error("text is required");
-          }
 
           if (!directoryInput && !peerId) {
             throw new Error("directory or peerId is required");
+          }
+          if (channel === "telegram" && peerId && !isTelegramPeerId(peerId)) {
+            throw invalidTelegramPeerIdError();
           }
 
           const normalizedDir = directoryInput ? (() => {
@@ -998,6 +1323,38 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
             return scoped.directory;
           })() : "";
+
+          const baseDirectory = normalizedDir || workspaceRoot;
+          const outboundParts = await resolveOutboundParts(baseDirectory, {
+            text: input.text,
+            parts: input.parts,
+          });
+
+          const makeTargetError = (
+            targetIdentityId: string,
+            targetPeerId: string,
+            errorMessage: string,
+            errorCode = "not_found",
+          ): SendTargetDelivery => ({
+            identityId: targetIdentityId,
+            peerId: targetPeerId,
+            attemptedParts: outboundParts.length,
+            sentParts: 0,
+            partResults: outboundParts.map((part, index) => ({
+              index,
+              type: part.type,
+              sent: false,
+              error: errorMessage,
+              code: errorCode,
+              retryable: false,
+            })),
+          });
+
+          const deliveryFailed = (delivery: MessageDeliveryResult) =>
+            delivery.attemptedParts > 0 && delivery.sentParts < delivery.attemptedParts;
+
+          const primaryFailureMessage = (delivery: MessageDeliveryResult) =>
+            delivery.partResults.find((part) => !part.sent)?.error || "Delivery failed";
 
           const resolveSendIdentityId = () => {
             if (identityId) return identityId;
@@ -1022,12 +1379,14 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               attempted: 0,
               sent: 0,
               reason: `No ${channel} adapter is running for direct send`,
+              targets: [],
             };
           }
 
           if (peerId && targetIdentityId) {
             const adapter = adapters.get(adapterKey(channel, targetIdentityId));
             if (!adapter) {
+              const target = makeTargetError(targetIdentityId, peerId, "Adapter not running");
               return {
                 channel,
                 directory: normalizedDir || workspaceRootNormalized,
@@ -1036,6 +1395,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
                 attempted: 1,
                 sent: 0,
                 failures: [{ identityId: targetIdentityId, peerId, error: "Adapter not running" }],
+                targets: [target],
               };
             }
 
@@ -1045,31 +1405,39 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               ensureEventSubscription(normalizedDir);
             }
 
-            try {
-              await sendText(channel, targetIdentityId, peerId, text, { kind: "system", display: false });
-              return {
-                channel,
-                directory: normalizedDir || workspaceRootNormalized,
-                identityId: targetIdentityId,
-                peerId,
-                attempted: 1,
-                sent: 1,
-              };
-            } catch (error) {
-              return {
-                channel,
-                directory: normalizedDir || workspaceRootNormalized,
-                identityId: targetIdentityId,
-                peerId,
-                attempted: 1,
-                sent: 0,
-                failures: [{
+            const delivery = await deliverParts(channel, targetIdentityId, peerId, outboundParts, {
+              kind: "system",
+              display: false,
+            });
+            const failed = deliveryFailed(delivery);
+            return {
+              channel,
+              directory: normalizedDir || workspaceRootNormalized,
+              identityId: targetIdentityId,
+              peerId,
+              attempted: 1,
+              sent: failed ? 0 : 1,
+              ...(failed
+                ? {
+                    failures: [
+                      {
+                        identityId: targetIdentityId,
+                        peerId,
+                        error: primaryFailureMessage(delivery),
+                      },
+                    ],
+                  }
+                : {}),
+              targets: [
+                {
                   identityId: targetIdentityId,
                   peerId,
-                  error: error instanceof Error ? error.message : String(error),
-                }],
-              };
-            }
+                  attemptedParts: delivery.attemptedParts,
+                  sentParts: delivery.sentParts,
+                  partResults: delivery.partResults,
+                },
+              ],
+            };
           }
 
           const bindings = store.listBindings({
@@ -1085,16 +1453,37 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               attempted: 0,
               sent: 0,
               reason: `No bound conversations for ${channel}${identityId ? `/${identityId}` : ""} at directory ${normalizedDir}`,
+              targets: [],
             };
           }
 
           const failures: Array<{ identityId: string; peerId: string; error: string }> = [];
+          const targets: SendTargetDelivery[] = [];
           let attempted = 0;
           let sent = 0;
           for (const binding of bindings) {
             attempted += 1;
+            if (channel === "telegram" && !isTelegramPeerId(binding.peer_id)) {
+              store.deleteBinding(channel, binding.identity_id, binding.peer_id);
+              store.deleteSession(channel, binding.identity_id, binding.peer_id);
+              const target = makeTargetError(
+                binding.identity_id,
+                binding.peer_id,
+                "Invalid Telegram peerId binding removed (expected numeric chat_id)",
+                "invalid_target",
+              );
+              targets.push(target);
+              failures.push({
+                identityId: binding.identity_id,
+                peerId: binding.peer_id,
+                error: "Invalid Telegram peerId binding removed (expected numeric chat_id)",
+              });
+              continue;
+            }
             const adapter = adapters.get(adapterKey(channel, binding.identity_id));
             if (!adapter) {
+              const target = makeTargetError(binding.identity_id, binding.peer_id, "Adapter not running");
+              targets.push(target);
               failures.push({
                 identityId: binding.identity_id,
                 peerId: binding.peer_id,
@@ -1102,15 +1491,25 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               });
               continue;
             }
-            try {
-              await sendText(channel, binding.identity_id, binding.peer_id, text, { kind: "system", display: false });
-              sent += 1;
-            } catch (error) {
+            const delivery = await deliverParts(channel, binding.identity_id, binding.peer_id, outboundParts, {
+              kind: "system",
+              display: false,
+            });
+            targets.push({
+              identityId: binding.identity_id,
+              peerId: binding.peer_id,
+              attemptedParts: delivery.attemptedParts,
+              sentParts: delivery.sentParts,
+              partResults: delivery.partResults,
+            });
+            if (deliveryFailed(delivery)) {
               failures.push({
                 identityId: binding.identity_id,
                 peerId: binding.peer_id,
-                error: error instanceof Error ? error.message : String(error),
+                error: primaryFailureMessage(delivery),
               });
+            } else {
+              sent += 1;
             }
           }
 
@@ -1121,6 +1520,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             attempted,
             sent,
             ...(failures.length ? { failures } : {}),
+            targets,
           };
         },
       },
@@ -1248,55 +1648,169 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     text: string,
     options: { kind?: OutboundKind; display?: boolean } = {},
   ) {
-    const adapter = adapters.get(adapterKey(channel, identityId));
-    if (!adapter) return;
-    recordOutboundActivity(Date.now());
-    const kind = options.kind ?? "system";
-    logger.debug({ channel, identityId, peerId, kind, length: text.length }, "sendText requested");
-    if (options.display !== false) {
-      reporter?.onOutbound?.({ channel, identityId, peerId, text, kind });
+    const parts: OutboundMessagePart[] =
+      text.startsWith("FILE:") && text.substring(5).trim()
+        ? [{ type: "file", filePath: text.substring(5).trim() }]
+        : [{ type: "text", text }];
+    const delivery = await deliverParts(channel, identityId, peerId, parts, options);
+    if (delivery.sentParts < delivery.attemptedParts) {
+      const message = delivery.partResults.find((part) => !part.sent)?.error || "Failed to send message";
+      throw new Error(message);
+    }
+  }
+
+  async function handleTelegramPairingGate(input: {
+    identityId: string;
+    peerKey: string;
+    peerId: string;
+    text: string;
+    bindingDirectory?: string;
+    sessionDirectory?: string;
+  }): Promise<"continue" | "handled"> {
+    const access = resolveTelegramIdentityAccess(input.identityId);
+    if (access.access !== "private") {
+      return "continue";
     }
 
-    // CHECK IF IT'S A FILE COMMAND
-    if (text.startsWith("FILE:")) {
-      const filePath = text.substring(5).trim();
-      if (adapter.sendFile) {
-        await adapter.sendFile(peerId, filePath);
-        return; // Stop here, don't send text
-      }
+    const hasKnownBinding = Boolean(input.bindingDirectory?.trim() || input.sessionDirectory?.trim());
+    if (hasKnownBinding) {
+      return "continue";
     }
 
-    const chunks = chunkText(text, adapter.maxTextLength);
-    for (const chunk of chunks) {
-      logger.info({ channel, peerId, length: chunk.length }, "sending message");
-      await adapter.sendText(peerId, chunk);
+    const pairingCode = extractPairingCodeFromCommand(input.text);
+    if (!pairingCode) {
+      await sendText(
+        "telegram",
+        input.identityId,
+        input.peerId,
+        "This Telegram bot is private. Ask your OpenWork host for the pairing code, then send /pair <code>.",
+        { kind: "system" },
+      );
+      return "handled";
     }
+
+    if (!access.pairingCodeHash) {
+      await sendText(
+        "telegram",
+        input.identityId,
+        input.peerId,
+        "This Telegram bot is private but missing a pairing code. Ask your OpenWork host to reconnect it.",
+        { kind: "system" },
+      );
+      return "handled";
+    }
+
+    if (hashPairingCode(pairingCode) !== access.pairingCodeHash) {
+      await sendText("telegram", input.identityId, input.peerId, "Invalid pairing code. Try again with /pair <code>.", {
+        kind: "system",
+      });
+      return "handled";
+    }
+
+    const identityDirectory = resolveIdentityDirectory("telegram", input.identityId);
+    const boundDirectoryCandidate = identityDirectory || defaultDirectory;
+    const hasExplicitBinding = Boolean(identityDirectory);
+    if (!boundDirectoryCandidate || (!hasExplicitBinding && isDangerousRootDirectory(boundDirectoryCandidate))) {
+      await sendText(
+        "telegram",
+        input.identityId,
+        input.peerId,
+        "No workspace directory configured for this identity. Ask your OpenWork host to set it, or reply with /dir <path>.",
+        { kind: "system" },
+      );
+      return "handled";
+    }
+
+    const scopedBound = resolveScopedDirectory(boundDirectoryCandidate);
+    if (!scopedBound.ok) {
+      await sendText("telegram", input.identityId, input.peerId, scopedBound.error, { kind: "system" });
+      return "handled";
+    }
+
+    const boundDirectory = scopedBound.directory;
+    store.upsertBinding("telegram", input.identityId, input.peerKey, boundDirectory);
+    store.deleteSession("telegram", input.identityId, input.peerKey);
+    ensureEventSubscription(boundDirectory);
+    logger.info(
+      { channel: "telegram", identityId: input.identityId, peerId: input.peerKey, directory: boundDirectory },
+      "telegram private identity paired",
+    );
+    await sendText(
+      "telegram",
+      input.identityId,
+      input.peerId,
+      "Pairing successful. This chat is now linked to your worker.",
+      { kind: "system" },
+    );
+    return "handled";
   }
 
   async function handleInbound(message: InboundMessage) {
     const adapter = adapters.get(adapterKey(message.channel, message.identityId));
     if (!adapter) return;
     recordInboundActivity(Date.now());
-    let inbound = message;
+    const normalizedParts: InboundMessagePart[] =
+      Array.isArray(message.parts) && message.parts.length
+        ? message.parts
+        : message.text.trim()
+          ? [{ type: "text", text: message.text }]
+          : [];
+    const inboundText = textFromInboundParts(normalizedParts, message.text).trim();
+    let inbound: InboundMessage = {
+      ...message,
+      text: inboundText,
+      ...(normalizedParts.length ? { parts: normalizedParts } : {}),
+    };
+
+    if (inbound.fromMe) {
+      logger.debug(
+        {
+          channel: inbound.channel,
+          identityId: inbound.identityId,
+          peerId: inbound.peerId,
+        },
+        "inbound ignored (self-authored)",
+      );
+      return;
+    }
+
+    const reporterInboundText =
+      inbound.text || summarizeInboundPartsForReporter(inbound.parts) || "[empty message]";
     logger.debug(
       {
         channel: inbound.channel,
         identityId: inbound.identityId,
         peerId: inbound.peerId,
         fromMe: inbound.fromMe,
-        length: inbound.text.length,
-        preview: truncateText(inbound.text.trim(), 120),
+        length: reporterInboundText.length,
+        preview: truncateText(reporterInboundText.trim(), 120),
       },
       "inbound received",
     );
     logger.info(
-      { channel: inbound.channel, identityId: inbound.identityId, peerId: inbound.peerId, length: inbound.text.length },
+      { channel: inbound.channel, identityId: inbound.identityId, peerId: inbound.peerId, length: reporterInboundText.length },
       "received message",
     );
     const peerKey = inbound.peerId;
+    const trimmedText = inbound.text.trim();
+    let binding = store.getBinding(inbound.channel, inbound.identityId, peerKey);
+    let session = store.getSession(inbound.channel, inbound.identityId, peerKey);
+
+    if (inbound.channel === "telegram") {
+      const pairingGate = await handleTelegramPairingGate({
+        identityId: inbound.identityId,
+        peerKey,
+        peerId: inbound.peerId,
+        text: trimmedText,
+        ...(binding?.directory?.trim() ? { bindingDirectory: binding.directory } : {}),
+        ...(session?.directory?.trim() ? { sessionDirectory: session.directory ?? undefined } : {}),
+      });
+      if (pairingGate === "handled") return;
+      binding = store.getBinding(inbound.channel, inbound.identityId, peerKey);
+      session = store.getSession(inbound.channel, inbound.identityId, peerKey);
+    }
 
     // Handle bot commands
-    const trimmedText = inbound.text.trim();
     if (trimmedText.startsWith("/")) {
       const commandHandled = await handleCommand(
         inbound.channel,
@@ -1312,12 +1826,9 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       channel: inbound.channel,
       identityId: inbound.identityId,
       peerId: inbound.peerId,
-      text: inbound.text,
+      text: reporterInboundText,
       fromMe: inbound.fromMe,
     });
-
-    const binding = store.getBinding(inbound.channel, inbound.identityId, peerKey);
-    const session = store.getSession(inbound.channel, inbound.identityId, peerKey);
 
     const identityDirectory = resolveIdentityDirectory(inbound.channel, inbound.identityId);
 
@@ -1343,7 +1854,10 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     }
     const boundDirectory = scopedBound.directory;
 
-    if (!binding?.directory?.trim()) {
+    const shouldAutoBind = !(
+      inbound.channel === "telegram" && resolveTelegramIdentityAccess(inbound.identityId).access === "private"
+    );
+    if (shouldAutoBind && !binding?.directory?.trim()) {
       store.upsertBinding(inbound.channel, inbound.identityId, peerKey, boundDirectory);
     }
 
@@ -1389,18 +1903,23 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       try {
         const effectiveModel = getUserModel(inbound.channel, inbound.identityId, peerKey, config.model);
         const messagingAgent = await loadMessagingAgentConfig();
-        const promptText = messagingAgent.instructions
-          ? [
-              "You are handling a Slack/Telegram message via OpenWork.",
-              `Workspace agent file: ${messagingAgent.filePath}`,
-              ...(messagingAgent.selectedAgent ? [`Selected OpenCode agent: ${messagingAgent.selectedAgent}`] : []),
-              "Follow these workspace messaging instructions:",
-              messagingAgent.instructions,
-              "",
-              "Incoming user message:",
-              inbound.text,
-            ].join("\n")
-          : inbound.text;
+        const effectiveInstructions = [messagingAgent.instructions, DEFAULT_MESSAGING_AGENT_INSTRUCTIONS]
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .join("\n\n");
+        const attachmentSummary = summarizeInboundPartsForPrompt(inbound.parts);
+        const incomingText = inbound.text || "(no text; user sent media)";
+        const promptText = [
+          "You are handling a Slack/Telegram message via OpenWork.",
+          `Workspace agent file: ${messagingAgent.filePath}`,
+          ...(messagingAgent.selectedAgent ? [`Selected OpenCode agent: ${messagingAgent.selectedAgent}`] : []),
+          "Follow these workspace messaging instructions:",
+          effectiveInstructions,
+          "",
+          "Incoming user message:",
+          incomingText,
+          ...(attachmentSummary.length ? ["", "Incoming attachments:", ...attachmentSummary] : []),
+        ].join("\n");
         logger.debug(
           {
             sessionID,
@@ -1410,38 +1929,70 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           },
           "prompt start",
         );
-        const response = await getClient(boundDirectory).session.prompt({
-          sessionID,
-          parts: [{ type: "text", text: promptText }],
-          ...(effectiveModel ? { model: effectiveModel } : {}),
-          ...(messagingAgent.selectedAgent ? { agent: messagingAgent.selectedAgent } : {}),
-        });
-        const parts = (response as { parts?: Array<{ type?: string; text?: string; ignored?: boolean }> }).parts ?? [];
-        const textParts = parts.filter((part) => part.type === "text" && !part.ignored);
-        logger.debug(
-          {
+
+        type PromptPart = { type?: string; text?: string; ignored?: boolean };
+
+        const extractReply = (parts: PromptPart[]) =>
+          parts
+            .filter((part) => part.type === "text" && !part.ignored)
+            .map((part) => part.text ?? "")
+            .join("\n")
+            .trim();
+
+        const logPromptResponse = (attempt: "initial" | "retry", parts: PromptPart[]) => {
+          const textParts = parts.filter((part) => part.type === "text" && !part.ignored);
+          logger.debug(
+            {
+              sessionID,
+              attempt,
+              partCount: parts.length,
+              textCount: textParts.length,
+              partTypes: parts.map((p) => p.type),
+              ignoredCount: parts.filter((p) => p.ignored).length,
+            },
+            "prompt response",
+          );
+        };
+
+        const runPrompt = async (): Promise<PromptPart[]> => {
+          const response = await getClient(boundDirectory).session.prompt({
             sessionID,
-            partCount: parts.length,
-            textCount: textParts.length,
-            partTypes: parts.map((p) => p.type),
-            ignoredCount: parts.filter((p) => p.ignored).length,
-          },
-          "prompt response",
-        );
-        const reply = parts
-          .filter((part) => part.type === "text" && !part.ignored)
-          .map((part) => part.text ?? "")
-          .join("\n")
-          .trim();
+            parts: [{ type: "text", text: promptText }],
+            ...(effectiveModel ? { model: effectiveModel } : {}),
+            ...(messagingAgent.selectedAgent ? { agent: messagingAgent.selectedAgent } : {}),
+          });
+          return (response as { parts?: PromptPart[] }).parts ?? [];
+        };
+
+        let parts = await runPrompt();
+        logPromptResponse("initial", parts);
+        let reply = extractReply(parts);
+
+        if (!reply && !parts.some((part) => part.type === "tool")) {
+          logger.warn({ sessionID }, "prompt returned no visible text; retrying once");
+          parts = await runPrompt();
+          logPromptResponse("retry", parts);
+          reply = extractReply(parts);
+        }
 
         if (reply) {
           logger.debug({ sessionID, replyLength: reply.length }, "reply built");
           await sendText(inbound.channel, inbound.identityId, inbound.peerId, reply, { kind: "reply" });
         } else {
-          logger.debug({ sessionID }, "reply empty");
-          await sendText(inbound.channel, inbound.identityId, inbound.peerId, "No response generated. Try again.", {
-            kind: "system",
-          });
+          logger.warn(
+            { sessionID, partTypes: parts.map((part) => part.type), ignoredCount: parts.filter((part) => part.ignored).length },
+            "prompt returned no visible text; clearing session",
+          );
+          store.deleteSession(inbound.channel, inbound.identityId, peerKey);
+          await sendText(
+            inbound.channel,
+            inbound.identityId,
+            inbound.peerId,
+            "No visible response was generated. I reset this chat session in case stale state was blocking replies. Send your message again.",
+            {
+              kind: "system",
+            },
+          );
         }
       } catch (error) {
         // Log full error details for debugging
@@ -1531,6 +2082,28 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       return true;
     }
 
+    if (command === "pair") {
+      if (channel !== "telegram") {
+        await sendText(channel, identityId, peerId, "Pairing is only available for Telegram private bots.", {
+          kind: "system",
+        });
+        return true;
+      }
+      const binding = store.getBinding(channel, identityId, peerKey);
+      const session = store.getSession(channel, identityId, peerKey);
+      const pairingGate = await handleTelegramPairingGate({
+        identityId,
+        peerKey,
+        peerId,
+        text,
+        ...(binding?.directory?.trim() ? { bindingDirectory: binding.directory } : {}),
+        ...(session?.directory?.trim() ? { sessionDirectory: session.directory ?? undefined } : {}),
+      });
+      if (pairingGate === "handled") return true;
+      await sendText(channel, identityId, peerId, "This chat is already paired.", { kind: "system" });
+      return true;
+    }
+
     if (command === "dir" || command === "cd") {
       const next = args.join(" ").trim();
       if (!next) {
@@ -1572,7 +2145,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
     // /help command
     if (command === "help") {
-      const helpText = `/opus - Claude Opus 4.5\n/codex - GPT 5.2 Codex\n/dir <path> - bind this chat to a workspace directory\n/dir - show current directory\n/agent - show workspace agent scope/path\n/model - show current\n/reset - start fresh\n/help - this`;
+      const helpText = `/opus - Claude Opus 4.5\n/codex - GPT 5.2 Codex\n/pair <code> - pair this chat with a private Telegram bot\n/dir <path> - bind this chat to a workspace directory\n/dir - show current directory\n/agent - show workspace agent scope/path\n/model - show current\n/reset - start fresh\n/help - this`;
       await sendText(channel, identityId, peerId, helpText, { kind: "system" });
       return true;
     }
@@ -1673,7 +2246,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       channel: ChannelName;
       identityId?: string;
       peerId: string;
-      text: string;
+      text?: string;
+      parts?: InboundMessagePart[];
       raw?: unknown;
       fromMe?: boolean;
     }) {
@@ -1682,7 +2256,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         channel: message.channel,
         identityId,
         peerId: message.peerId,
-        text: message.text,
+        text: message.text ?? "",
+        ...(Array.isArray(message.parts) ? { parts: message.parts } : {}),
         raw: message.raw ?? null,
         fromMe: message.fromMe,
       });

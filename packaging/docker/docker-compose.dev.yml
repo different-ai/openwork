@@ -11,7 +11,14 @@
 #   OPENWORK_WORKSPACE    — host path to mount as workspace (default: ./workspace)
 #   OPENWORK_PORT         — host port to map to container :8787 (default: 8787)
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
+#   SHARE_PORT            — host port to map to the share service :3000 (default: 3006)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
+#   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state (set by dev-up.sh)
+#   OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
+#   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
+#   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
+#   OPENWORK_HOST_OPENCODE_CONFIG_DIR — import source for OpenCode config (set by dev-up.sh)
+#   OPENWORK_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data (set by dev-up.sh)
 
 x-shared: &shared
   image: node:22-bookworm-slim
@@ -22,9 +29,11 @@ x-shared: &shared
     - pnpm-store:/root/.local/share/pnpm/store
     - bun-install:/root/.bun
     - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
+    - ${OPENWORK_HOST_OPENCODE_CONFIG_DIR:-./workspace/.openwork-host-opencode-config}:/persist/.config/opencode:ro
+    - ${OPENWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.openwork-host-opencode-data}:/persist/.openwork-host-opencode-data:ro
 
 services:
-  headless:
+  orchestrator:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -42,7 +51,7 @@ services:
         export BUN_INSTALL="/root/.bun"
         export PATH="$$BUN_INSTALL/bin:$$PATH"
         if ! command -v bun >/dev/null 2>&1; then
-          echo "[headless] Installing bun..."
+          echo "[orchestrator] Installing bun..."
           curl -fsSL https://bun.sh/install | bash
         fi
 
@@ -50,38 +59,14 @@ services:
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
         # --- Install deps ---
-        echo "[headless] Installing dependencies..."
+        echo "[orchestrator] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
-        # --- Build Linux binaries into container-local path ---
-        # Avoids overwriting macOS-native binaries on the host mount.
-        export OPENWORK_SERVER_BIN="/tmp/openwork-bins/openwork-server"
-        export OPENCODE_ROUTER_BIN="/tmp/openwork-bins/opencode-router"
-        mkdir -p /tmp/openwork-bins
-
-        # --- Compile sidecars for the container architecture ---
-        case "$(uname -m)" in
-          x86_64|amd64)
-            BUN_TARGET="bun-linux-x64"
-            ;;
-          aarch64|arm64)
-            BUN_TARGET="bun-linux-arm64"
-            ;;
-          *)
-            echo "Unsupported container architecture: $(uname -m)" >&2
-            exit 1
-            ;;
-        esac
-
-        echo "[headless] Building openwork-server binary (linux)..."
-        cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
-
-        echo "[headless] Building opencode-router binary (linux)..."
-        OPENCODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
-        cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
-          --define "__OPENCODE_ROUTER_VERSION__=\"$${OPENCODE_ROUTER_VERSION}\"" --outfile "$$OPENCODE_ROUTER_BIN"
-
-        cd /app
+        # --- Use source entrypoints for the dev stack ---
+        # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
+        # issues from bun --compile inside Docker on macOS.
+        export OPENWORK_SERVER_BIN="/app/packages/server/src/cli.ts"
+        export OPENCODE_ROUTER_BIN="/app/packages/opencode-router/src/cli.ts"
 
         # --- Resolve tokens ---
         if [ -z "$$OPENWORK_TOKEN" ]; then
@@ -100,7 +85,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork headless"
+        echo "  OpenWork orchestrator"
         echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
         echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
         echo "  Token:      $$OPENWORK_TOKEN"
@@ -108,7 +93,7 @@ services:
         echo "============================================"
         echo ""
 
-        exec pnpm --filter openwrk dev -- start \
+        exec pnpm --filter openwork-orchestrator dev -- start \
           --workspace /workspace \
           --openwork-host 0.0.0.0 \
           --openwork-port 8787 \
@@ -133,12 +118,17 @@ services:
       OPENWORK_TOKEN: ${OPENWORK_TOKEN:-}
       OPENWORK_HOST_TOKEN: ${OPENWORK_HOST_TOKEN:-}
       OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
-      OPENWRK_SIDECAR_SOURCE: external
-
+      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
+      OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
+      OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.openwork-host-opencode-data
+      OPENWORK_SIDECAR_SOURCE: external
+ 
   web:
     <<: *shared
     depends_on:
-      headless:
+      orchestrator:
+        condition: service_healthy
+      share:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -157,7 +147,7 @@ services:
         fi
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Read token written by headless ---
+        # --- Read token written by orchestrator ---
         if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
           . "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
           export VITE_OPENWORK_TOKEN="$$OPENWORK_TOKEN"
@@ -167,12 +157,13 @@ services:
         echo "============================================"
         echo "  OpenWork web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see headless logs>}"
+        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
         echo "============================================"
         echo ""
 
         export VITE_OPENWORK_URL="http://localhost:${OPENWORK_PORT:-8787}"
         export VITE_OPENWORK_PORT="${OPENWORK_PORT:-8787}"
+        export VITE_OPENWORK_PUBLISHER_BASE_URL="http://localhost:${SHARE_PORT:-3006}"
         export VITE_ALLOWED_HOSTS="all"
         export HOST="0.0.0.0"
         export PORT="5173"
@@ -185,6 +176,49 @@ services:
       - "${WEB_PORT:-5173}:5173"
     environment:
       OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
+
+  share:
+    <<: *shared
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+          curl ca-certificates >/dev/null 2>&1
+
+        corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+        echo "[share] Installing dependencies..."
+        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+
+        mkdir -p /app/tmp/share-service-blobs
+
+        echo "[share] Building Next app..."
+        pnpm --dir services/openwork-share build
+
+        echo ""
+        echo "============================================"
+        echo "  OpenWork share service"
+        echo "  URL: http://localhost:${SHARE_PORT:-3006}"
+        echo "============================================"
+        echo ""
+
+        exec pnpm --dir services/openwork-share exec next start --hostname 0.0.0.0 --port 3000
+    ports:
+      - "${SHARE_PORT:-3006}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 180s
+    environment:
+      CI: "true"
+      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
+      LOCAL_BLOB_DIR: /app/tmp/share-service-blobs
+      PUBLIC_BASE_URL: http://localhost:${SHARE_PORT:-3006}
+      PUBLIC_OPENWORK_APP_URL: http://localhost:${WEB_PORT:-5173}
 
 volumes:
   pnpm-store:
