@@ -7,11 +7,33 @@ const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
+export const DEN_BASE_URL_STORAGE_KEY = STORAGE_BASE_URL;
+export const DEN_API_BASE_URL_STORAGE_KEY = STORAGE_API_BASE_URL;
+export const DEN_AUTH_TOKEN_STORAGE_KEY = STORAGE_AUTH_TOKEN;
+export const DEN_ACTIVE_ORG_ID_STORAGE_KEY = STORAGE_ACTIVE_ORG_ID;
+
 export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
+export const ENV_DEN_BASE_URL = (() => {
+  const rawValue =
+    typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
+      ? import.meta.env.VITE_DEN_BASE_URL.trim()
+      : "";
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const url = new URL(rawValue);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+})();
 export const DEFAULT_DEN_BASE_URL =
-  (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
-    ? import.meta.env.VITE_DEN_BASE_URL
-    : "").trim() || "https://app.openworklabs.com";
+  ENV_DEN_BASE_URL ?? "https://app.openworklabs.com";
 
 export type DenSettings = {
   baseUrl: string;
@@ -240,6 +262,23 @@ export function readDenSettings(): DenSettings {
     ...baseUrls,
     authToken: (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() || null,
     activeOrgId: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_ID) ?? "").trim() || null,
+  };
+}
+
+export function readStoredDenBaseUrls(): {
+  baseUrl: string | null;
+  apiBaseUrl: string | null;
+} {
+  if (typeof window === "undefined") {
+    return {
+      baseUrl: null,
+      apiBaseUrl: null,
+    };
+  }
+
+  return {
+    baseUrl: normalizeDenBaseUrl(window.localStorage.getItem(STORAGE_BASE_URL) ?? ""),
+    apiBaseUrl: normalizeDenBaseUrl(window.localStorage.getItem(STORAGE_API_BASE_URL) ?? ""),
   };
 }
 
