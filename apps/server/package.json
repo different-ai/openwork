@@ -4,7 +4,7 @@
   "description": "Filesystem-backed API for OpenWork remote clients",
   "type": "module",
   "bin": {
-    "openwork-server": "dist/bin/openwork-server"
+    "openwork-server": "bin/openwork-server.mjs"
   },
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
@@ -17,6 +17,7 @@
     "prepublishOnly": "pnpm build:bin"
   },
   "files": [
+    "bin",
     "dist",
     "README.md"
   ],
