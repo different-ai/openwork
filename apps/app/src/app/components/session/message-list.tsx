@@ -1149,9 +1149,9 @@ export default function MessageList(props: MessageListProps) {
                 >
                   <ToolIcon tool={toolName()} class="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                 </span>
-                <span class={`block min-w-0 leading-5 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
-                  <span class="break-words [overflow-wrap:anywhere]">{displayHeadline()}</span>
-                  <span class="ml-1 inline-flex align-middle text-gray-7 transition-colors group-hover:text-gray-10" aria-hidden="true">
+                <span class={`inline-flex min-w-0 items-center gap-1 leading-5 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
+                  <span class="min-w-0 break-words [overflow-wrap:anywhere]">{displayHeadline()}</span>
+                  <span class="inline-flex shrink-0 self-center text-gray-7 transition-colors group-hover:text-gray-10" aria-hidden="true">
                     <ChevronRight size={14} class={`transition-transform duration-200 ${open() ? "rotate-90" : ""}`} />
                   </span>
                 </span>
