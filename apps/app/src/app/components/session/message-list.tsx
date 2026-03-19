@@ -1091,39 +1091,43 @@ export default function MessageList(props: MessageListProps) {
     return (
       <div class="flex items-start gap-3 text-[14px] text-gray-9">
         <div class="min-w-0 flex-1 leading-relaxed">
-          <div class="flex min-w-0 items-start gap-2.5">
-            <span class="mt-0.5 inline-flex shrink-0 items-center rounded-md border border-gray-5/70 bg-gray-3 px-1.5 py-0.5 font-mono text-[11px] leading-none text-gray-11">
-              {label()}
-            </span>
-            <Show
-              when={hasDisclosure()}
-              fallback={<span class="mt-[2px] h-[14px] w-[14px] shrink-0" aria-hidden="true" />}
-            >
-              <button
-                type="button"
-                class="mt-[1px] shrink-0 rounded-sm p-0.5 text-gray-7 transition-colors hover:bg-gray-3 hover:text-gray-10"
-                onClick={toggleDisclosure}
-                aria-expanded={open()}
-                aria-label={open() ? `Collapse ${label()} details` : `Expand ${label()} details`}
-              >
-                <ChevronRight size={14} class={`transition-transform duration-200 ${open() ? "rotate-90" : ""}`} />
-              </button>
-            </Show>
+          <Show
+            when={hasDisclosure()}
+            fallback={
+              <div class="flex min-w-0 items-start gap-2.5">
+                <div class="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2.5">
+                  <span class="mt-0.5 inline-flex w-fit shrink-0 items-center rounded-md border border-gray-5/70 bg-gray-3 px-1.5 py-0.5 font-mono text-[11px] leading-none text-gray-11">
+                    {label()}
+                  </span>
+                  <span class={`block min-w-0 break-words text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
+                    {displayHeadline()}
+                  </span>
+                </div>
+              </div>
+            }
+          >
             <button
               type="button"
-              class={`min-w-0 flex-1 text-left ${hasDisclosure() ? "cursor-pointer" : "cursor-default"}`}
-              onClick={() => {
-                if (hasDisclosure()) toggleDisclosure();
-              }}
-              aria-expanded={hasDisclosure() ? open() : undefined}
+              class="group flex w-full min-w-0 items-start gap-2.5 text-left"
+              onClick={toggleDisclosure}
+              aria-expanded={open()}
+              aria-label={open() ? `Collapse ${label()} details` : `Expand ${label()} details`}
             >
-              <span class={`block min-w-0 truncate text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
-                {displayHeadline()}
+              <div class="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2.5">
+                <span class="mt-0.5 inline-flex w-fit shrink-0 items-center rounded-md border border-gray-5/70 bg-gray-3 px-1.5 py-0.5 font-mono text-[11px] leading-none text-gray-11">
+                  {label()}
+                </span>
+                <span class={`block min-w-0 break-words text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
+                  {displayHeadline()}
+                </span>
+              </div>
+              <span class="mt-[1px] shrink-0 rounded-sm p-0.5 text-gray-7 transition-colors group-hover:text-gray-10" aria-hidden="true">
+                <ChevronRight size={14} class={`transition-transform duration-200 ${open() ? "rotate-90" : ""}`} />
               </span>
             </button>
-          </div>
+          </Show>
           <Show when={open() && (body().fields.length > 0 || body().blocks.length > 0 || body().todos.length > 0)}>
-            <div class="pt-2 pl-[34px]">
+            <div class="pt-2 sm:pl-[18px]">
               <div class="grid gap-2 rounded-[18px] border border-gray-6/60 bg-gray-2/40 px-3 py-3">
                 <Show when={body().todos.length > 0}>
                   <div class="grid gap-1.5 text-[12px] text-gray-10">
@@ -1163,7 +1167,7 @@ export default function MessageList(props: MessageListProps) {
                             <div class="mb-1 text-[11px] font-medium text-gray-10">{block.label}</div>
                           </Show>
                           <pre
-                            class={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-[14px] px-3 py-2 text-[12px] leading-5 ${block.tone === "error" ? "bg-red-1/60 text-red-12" : "bg-gray-3 text-gray-11"}`}
+                            class={`max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-[14px] px-3 py-2 text-[12px] leading-5 ${block.tone === "error" ? "bg-red-1/60 text-red-12" : "bg-gray-3 text-gray-11"}`}
                           >
                             {block.value}
                           </pre>
@@ -1176,7 +1180,7 @@ export default function MessageList(props: MessageListProps) {
             </div>
           </Show>
           <Show when={task().isTask && task().sessionId && open()}>
-            <div class="pt-2 pl-[34px]">
+            <div class="pt-2 sm:pl-[18px]">
               <SubagentThread part={rowProps.part} />
             </div>
           </Show>
