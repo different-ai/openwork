@@ -6084,7 +6084,6 @@ export default function App() {
       try {
         const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
         const recentDeepLinkEvents = new Map<string, number>();
-        let lastObservedDeepLinkSignature: string | null = null;
 
         const consumeUrls = (
           urls: string[] | null | undefined,
@@ -6099,12 +6098,6 @@ export default function App() {
             return;
           }
 
-          const signature = normalized.join("\n");
-          if (source === "current" && signature === lastObservedDeepLinkSignature) {
-            return;
-          }
-          lastObservedDeepLinkSignature = signature;
-
           const now = Date.now();
           for (const [url, seenAt] of recentDeepLinkEvents) {
             if (now - seenAt > 1500) {
@@ -6117,8 +6110,8 @@ export default function App() {
             if (now - seenAt < 1500) {
               continue;
             }
-            recentDeepLinkEvents.set(url, now);
             if (queueDenAuthDeepLink(url) || queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
+              recentDeepLinkEvents.set(url, now);
               break;
             }
           }
