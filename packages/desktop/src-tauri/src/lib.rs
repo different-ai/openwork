@@ -77,11 +77,18 @@ fn set_dev_app_name() {
 #[cfg(not(target_os = "macos"))]
 fn set_dev_app_name() {}
 
+fn issue_1022_h1_log(message: &str) {
+    println!("[issue-1022][h1] {message}");
+}
+
 fn show_main_window(app_handle: &AppHandle) {
+    issue_1022_h1_log("show_main_window called");
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    } else {
+        issue_1022_h1_log("main window missing while trying to focus running app");
     }
 }
 
@@ -108,7 +115,10 @@ fn stop_managed_services(app_handle: &tauri::AppHandle) {
 
 pub fn run() {
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            issue_1022_h1_log(&format!(
+                "single-instance callback fired cwd={cwd:?} args={args:?}"
+            ));
             show_main_window(app);
         }))
         .plugin(tauri_plugin_deep_link::init())
@@ -245,6 +255,9 @@ pub fn run() {
             has_visible_windows,
             ..
         } => {
+            issue_1022_h1_log(&format!(
+                "macOS reopen event received has_visible_windows={has_visible_windows}"
+            ));
             if !has_visible_windows {
                 show_main_window(&app_handle);
             }
