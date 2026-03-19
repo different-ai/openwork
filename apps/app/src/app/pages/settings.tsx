@@ -6,6 +6,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  onCleanup,
   onMount,
 } from "solid-js";
 
@@ -20,6 +21,10 @@ import Button from "../components/button";
 import DenSettingsPanel from "../components/den-settings-panel";
 import { usePlatform } from "../context/platform";
 import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
+import {
+  DEN_CONFIG_UPDATED_EVENT,
+  readDenFeatureGate,
+} from "../lib/den-gate";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import {
   ArrowUpRight,
@@ -804,10 +809,36 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
+  const [denGateVersion, setDenGateVersion] = createSignal(0);
+  const denFeatureGate = createMemo(() => {
+    denGateVersion();
+    return readDenFeatureGate(props.developerMode);
+  });
+
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "den", "model", "advanced"];
+    const tabs: SettingsTab[] = ["general", "model", "advanced"];
+    if (
+      denFeatureGate().enabled ||
+      denFeatureGate().canConfigureInDeveloperMode
+    ) {
+      tabs.splice(1, 0, "den");
+    }
     if (props.developerMode) tabs.push("debug");
     return tabs;
+  });
+
+  onMount(() => {
+    const handleDenConfigUpdated = () => {
+      setDenGateVersion((value) => value + 1);
+    };
+
+    window.addEventListener(DEN_CONFIG_UPDATED_EVENT, handleDenConfigUpdated);
+    onCleanup(() => {
+      window.removeEventListener(
+        DEN_CONFIG_UPDATED_EVENT,
+        handleDenConfigUpdated,
+      );
+    });
   });
 
   const activeTab = createMemo<SettingsTab>(() => {
