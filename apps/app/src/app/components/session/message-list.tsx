@@ -205,43 +205,42 @@ function explorationStatus(parts: Part[]) {
 }
 
 /** Icon for a given tool */
-function ToolIcon(props: { tool?: string; size?: number }) {
-  const s = () => props.size ?? 12;
+function ToolIcon(props: { tool?: string; class?: string }) {
   switch ((props.tool ?? "").toLowerCase()) {
     case "bash":
-      return <Terminal size={s()} />;
+      return <Terminal class={props.class} />;
     case "read":
-      return <BookOpen size={s()} />;
+      return <BookOpen class={props.class} />;
     case "list":
     case "list_files":
-      return <List size={s()} />;
+      return <List class={props.class} />;
     case "glob":
-      return <FolderSearch size={s()} />;
+      return <FolderSearch class={props.class} />;
     case "grep":
     case "search":
-      return <Search size={s()} />;
+      return <Search class={props.class} />;
     case "task":
-      return <Workflow size={s()} />;
+      return <Workflow class={props.class} />;
     case "todowrite":
-      return <SquareCheck size={s()} />;
+      return <SquareCheck class={props.class} />;
     case "todoread":
-      return <ListTodo size={s()} />;
+      return <ListTodo class={props.class} />;
     case "edit":
-      return <SquarePen size={s()} />;
+      return <SquarePen class={props.class} />;
     case "write":
-      return <PenLine size={s()} />;
+      return <PenLine class={props.class} />;
     case "apply_patch":
-      return <Wrench size={s()} />;
+      return <Wrench class={props.class} />;
     case "webfetch":
-      return <Globe size={s()} />;
+      return <Globe class={props.class} />;
     case "skill":
-      return <Zap size={s()} />;
+      return <Zap class={props.class} />;
     case "question":
-      return <MessageCircleQuestion size={s()} />;
+      return <MessageCircleQuestion class={props.class} />;
     case "reasoning":
-      return <Zap size={s()} />;
+      return <Zap class={props.class} />;
     default:
-      return <Zap size={s()} />;
+      return <Zap class={props.class} />;
   }
 }
 
@@ -1122,11 +1121,11 @@ export default function MessageList(props: MessageListProps) {
               <div class="flex min-w-0 items-start gap-2.5">
                 <div class="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2.5">
                   <span
-                    class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11"
+                    class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
                     title={label()}
                     aria-label={label()}
                   >
-                    <ToolIcon tool={toolName()} size={13} />
+                    <ToolIcon tool={toolName()} class="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                   </span>
                   <span class={`block min-w-0 break-words text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
                     {displayHeadline()}
@@ -1144,11 +1143,11 @@ export default function MessageList(props: MessageListProps) {
             >
               <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-2.5 sm:gap-y-1">
                 <span
-                  class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11"
+                  class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
                   title={label()}
                   aria-label={label()}
                 >
-                  <ToolIcon tool={toolName()} size={13} />
+                  <ToolIcon tool={toolName()} class="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                 </span>
                 <span class={`block min-w-0 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
                   <span class="break-words [overflow-wrap:anywhere]">{displayHeadline()}</span>
