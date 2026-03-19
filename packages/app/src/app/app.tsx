@@ -4054,6 +4054,9 @@ export default function App() {
     if (!parsed) {
       return false;
     }
+    workspaceStore.setCreateWorkspaceOpen(false);
+    workspaceStore.setCreateRemoteWorkspaceOpen(false);
+    setDeepLinkRemoteWorkspaceDefaults(null);
     setPendingSharedBundleInvite(parsed);
     setSharedSkillDestinationRequest(null);
     setSharedSkillDestinationBusyId(null);
