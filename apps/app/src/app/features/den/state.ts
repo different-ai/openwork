@@ -47,6 +47,63 @@ type DenFeatureStateOptions = {
 };
 
 const DEFAULT_WORKER_NAME = "My Worker";
+const ONBOARDING_INTENT_STORAGE_KEY = "openwork:web:onboarding-intent";
+
+type OnboardingIntent = {
+  version: 1;
+  workerName: string;
+  shouldLaunch: boolean;
+  completed: boolean;
+  authMethod: "email" | "github" | "google";
+};
+
+function deriveOnboardingWorkerName(user: DenUser): string {
+  const rawIdentity = (user.name?.trim() || user.email.split("@")[0] || DEFAULT_WORKER_NAME)
+    .replace(/[._-]+/g, " ")
+    .trim();
+  const base = rawIdentity
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+
+  const owner = base || DEFAULT_WORKER_NAME;
+  const suffix = owner.endsWith("s") ? "' Worker" : "'s Worker";
+  return `${owner}${suffix}`;
+}
+
+function readOnboardingIntent(): OnboardingIntent | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ONBOARDING_INTENT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<OnboardingIntent> | null;
+    if (!parsed || parsed.version !== 1 || typeof parsed.workerName !== "string") {
+      return null;
+    }
+    return {
+      version: 1,
+      workerName: parsed.workerName,
+      shouldLaunch: parsed.shouldLaunch === true,
+      completed: parsed.completed === true,
+      authMethod:
+        parsed.authMethod === "github" || parsed.authMethod === "google"
+          ? parsed.authMethod
+          : "email",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeOnboardingIntent(next: OnboardingIntent | null) {
+  if (typeof window === "undefined") return;
+  if (!next) {
+    window.localStorage.removeItem(ONBOARDING_INTENT_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(ONBOARDING_INTENT_STORAGE_KEY, JSON.stringify(next));
+}
 
 function workerSummaryToLaunch(
   worker: DenWorkerSummary,
@@ -90,6 +147,8 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
   const [selectedWorkerId, setSelectedWorkerId] = createSignal<string | null>(null);
   const [selectedWorkerLaunch, setSelectedWorkerLaunch] =
     createSignal<DenWorkerLaunch | null>(null);
+  const [onboardingIntent, setOnboardingIntent] =
+    createSignal<OnboardingIntent | null>(readOnboardingIntent());
   const [desktopAuthRequested, setDesktopAuthRequested] = createSignal(false);
   const [desktopAuthScheme, setDesktopAuthScheme] = createSignal("openwork");
   const [desktopRedirectBusy, setDesktopRedirectBusy] = createSignal(false);
@@ -163,6 +222,9 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
   const selectedWorkerStatus = createMemo(
     () => selectedWorker()?.status ?? selectedWorkerSummary()?.status ?? "",
   );
+  const onboardingPending = createMemo(
+    () => Boolean(onboardingIntent()?.shouldLaunch && !onboardingIntent()?.completed),
+  );
 
   const clearRuntimeState = () => {
     setRuntimeSnapshot(null);
@@ -186,6 +248,21 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
     setDesktopRedirectUrl(null);
     setDesktopRedirectBusy(false);
     clearRuntimeState();
+  };
+
+  const persistOnboardingIntent = (next: OnboardingIntent | null) => {
+    setOnboardingIntent(next);
+    writeOnboardingIntent(next);
+  };
+
+  const markOnboardingComplete = () => {
+    const current = onboardingIntent();
+    if (!current) return;
+    persistOnboardingIntent({
+      ...current,
+      shouldLaunch: false,
+      completed: true,
+    });
   };
 
   const clearSignedInState = (message?: string | null) => {
@@ -328,6 +405,34 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
   createEffect(() => {
     if (!user()) return;
     void refreshBilling({ quiet: true });
+  });
+
+  createEffect(() => {
+    const currentUser = user();
+    if (!currentUser) return;
+    if (onboardingPending()) return;
+    if (workerName().trim() && workerName().trim() !== DEFAULT_WORKER_NAME) return;
+    setWorkerName(deriveOnboardingWorkerName(currentUser));
+  });
+
+  createEffect(() => {
+    if (!user() || !onboardingPending()) {
+      return;
+    }
+
+    const summary = billingSummary();
+    if (!summary) return;
+    if (summary.featureGateEnabled && !summary.hasActivePlan) return;
+    if (workers().length > 0) {
+      markOnboardingComplete();
+      return;
+    }
+    if (workerActionBusy()) return;
+
+    void launchWorker({
+      workerNameOverride: onboardingIntent()?.workerName ?? DEFAULT_WORKER_NAME,
+      source: "signup_auto",
+    });
   });
 
   createEffect(() => {
@@ -570,6 +675,17 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
       setAuthToken(result.token);
       setUser(result.user);
       setPassword("");
+      if (authMode() === "sign-up") {
+        const autoName = deriveOnboardingWorkerName(result.user);
+        setWorkerName(autoName);
+        persistOnboardingIntent({
+          version: 1,
+          workerName: autoName,
+          shouldLaunch: true,
+          completed: false,
+          authMethod: "email",
+        });
+      }
       setStatusMessage(
         authMode() === "sign-up"
           ? `Created Cloud account for ${result.user.email}.`
@@ -751,14 +867,18 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
     options.openLink(target);
   }
 
-  async function launchWorker() {
+  async function launchWorker(options: {
+    workerNameOverride?: string | null;
+    source?: "manual" | "signup_auto";
+  } = {}) {
     const activeClient = client();
     if (!activeClient || !isSignedIn()) {
       setWorkersError("Sign in before launching a Cloud worker.");
       return null;
     }
 
-    const nextWorkerName = workerName().trim() || DEFAULT_WORKER_NAME;
+    const nextWorkerName =
+      options.workerNameOverride?.trim() || workerName().trim() || DEFAULT_WORKER_NAME;
     setWorkerActionBusy(true);
     setWorkersError(null);
     try {
@@ -787,6 +907,7 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
 
       setSelectedWorkerId(result.worker.workerId);
       setSelectedWorkerLaunch(result.worker);
+      markOnboardingComplete();
       setStatusMessage(
         result.launchMode === "async"
           ? `Provisioning ${result.worker.workerName}...`
@@ -1065,6 +1186,7 @@ export function createDenFeatureState(options: DenFeatureStateOptions) {
     setPassword,
     workerName,
     setWorkerName,
+    onboardingPending,
     baseUrl,
     baseUrlDraft,
     setBaseUrlDraft,
