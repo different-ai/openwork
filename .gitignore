@@ -28,6 +28,7 @@ apps/desktop/src-tauri/sidecars/
 
 # Bun build artifacts
 *.bun-build
+apps/server/cli
 
 # pnpm store (created by Docker volume mounts)
 .pnpm-store/

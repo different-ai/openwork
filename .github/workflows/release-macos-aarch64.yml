@@ -824,7 +824,7 @@ jobs:
           # npm view exits non-zero for packages that don't exist yet (404).
           # Treat missing packages as "not published" so release can publish them.
           orchestrator_current="$(npm view openwork-orchestrator version 2>/dev/null || true)"
-          server_current="$(npm view openwork-server version 2>/dev/null || true)"
+          server_current="$(npm view @openwork/server version 2>/dev/null || true)"
           opencodeRouter_current="$(npm view opencode-router version 2>/dev/null || true)"
 
           if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
