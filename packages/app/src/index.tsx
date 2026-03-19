@@ -6,7 +6,7 @@ import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
-import { nativeDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
+import { logDeepLinkBoundary, nativeDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { isTauriRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
@@ -24,29 +24,20 @@ root.dataset.openworkDeployment = getOpenWorkDeployment();
 
 let deepLinkBridgeStarted = false;
 
-function issue1022BridgeLog(message: string, details?: unknown) {
-  if (details === undefined) {
-    console.log(`[issue-1022][bridge] ${message}`);
-    return;
-  }
-
-  console.log(`[issue-1022][bridge] ${message}`, details);
-}
-
 function startDeepLinkBridge() {
   if (typeof window === "undefined") {
     return;
   }
 
   if (deepLinkBridgeStarted) {
-    issue1022BridgeLog("skipping duplicate bridge startup");
+    logDeepLinkBoundary("skipping duplicate bridge startup");
     return;
   }
 
   deepLinkBridgeStarted = true;
 
   if (!isTauriRuntime()) {
-    issue1022BridgeLog("queueing browser location for web runtime", {
+    logDeepLinkBoundary("queueing browser location for web runtime", {
       href: window.location.href,
     });
     pushPendingDeepLinks(window, [window.location.href]);
@@ -55,25 +46,25 @@ function startDeepLinkBridge() {
 
   void (async () => {
     try {
-      issue1022BridgeLog("starting tauri deep-link bridge");
+      logDeepLinkBoundary("starting tauri deep-link bridge");
       const [{ getCurrent, onOpenUrl }, { listen }] = await Promise.all([
         import("@tauri-apps/plugin-deep-link"),
         import("@tauri-apps/api/event"),
       ]);
 
       const startUrls = await getCurrent().catch((error) => {
-        issue1022BridgeLog("getCurrent failed", error instanceof Error ? error.message : String(error));
+        logDeepLinkBoundary("getCurrent failed", error instanceof Error ? error.message : String(error));
         return null;
       });
-      issue1022BridgeLog("getCurrent result", startUrls ?? null);
+      logDeepLinkBoundary("getCurrent result", startUrls ?? null);
       if (Array.isArray(startUrls)) {
         pushPendingDeepLinks(window, startUrls);
       }
 
       await listen<string[]>("deep-link://new-url", (event) => {
-        issue1022BridgeLog("observed raw plugin deep-link event", event.payload);
+        logDeepLinkBoundary("observed raw plugin deep-link event", event.payload);
       }).catch((error) => {
-        issue1022BridgeLog(
+        logDeepLinkBoundary(
           "failed to listen for raw plugin deeplink event",
           error instanceof Error ? error.message : String(error),
         );
@@ -81,10 +72,10 @@ function startDeepLinkBridge() {
       });
 
       await onOpenUrl((urls) => {
-        issue1022BridgeLog("received plugin onOpenUrl", urls);
+        logDeepLinkBoundary("received plugin onOpenUrl", urls);
         pushPendingDeepLinks(window, urls);
       }).catch((error) => {
-        issue1022BridgeLog(
+        logDeepLinkBoundary(
           "failed to register plugin onOpenUrl listener",
           error instanceof Error ? error.message : String(error),
         );
@@ -95,19 +86,19 @@ function startDeepLinkBridge() {
         nativeDeepLinkEvent,
         (event) => {
           if (Array.isArray(event.payload)) {
-            issue1022BridgeLog("received native deep-link event", event.payload);
+            logDeepLinkBoundary("received native deep-link event", event.payload);
             pushPendingDeepLinks(window, event.payload);
           }
         },
       ).catch((error) => {
-        issue1022BridgeLog(
+        logDeepLinkBoundary(
           "failed to register native deep-link listener",
           error instanceof Error ? error.message : String(error),
         );
         return undefined;
       });
     } catch (error) {
-      issue1022BridgeLog(
+      logDeepLinkBoundary(
         "failed to start tauri deep-link bridge",
         error instanceof Error ? error.message : String(error),
       );

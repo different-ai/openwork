@@ -57,10 +57,11 @@ use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Emitter, Listener, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
 
 const NATIVE_DEEP_LINK_EVENT: &str = "openwork:deep-link-native";
+const DEEP_LINK_DEBUG_EVENT: &str = "openwork:deep-link-debug";
 
 #[cfg(target_os = "macos")]
 fn set_dev_app_name() {
@@ -175,6 +176,9 @@ pub fn run() {
     let app = builder
         .setup(|app| {
             set_dev_app_name();
+            app.listen(DEEP_LINK_DEBUG_EVENT, |event: tauri::Event| {
+                issue_1022_h1_log(&format!("bridge JS log payload={}", event.payload()));
+            });
 
             let show_item = MenuItemBuilder::with_id("tray-show", "Show OpenWork").build(app)?;
             let quit_item = MenuItemBuilder::with_id("tray-quit", "Quit OpenWork").build(app)?;
