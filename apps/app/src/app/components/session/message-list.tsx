@@ -1152,7 +1152,7 @@ export default function MessageList(props: MessageListProps) {
                       {(field) => (
                         <div class="flex flex-wrap items-start gap-x-2 gap-y-1">
                           <span class="font-medium text-gray-11">{field.label}:</span>
-                          <span class="font-mono text-[11px] text-gray-10 break-all">{field.value}</span>
+                          <span class="font-mono text-[11px] text-gray-10 break-words [overflow-wrap:anywhere]">{field.value}</span>
                         </div>
                       )}
                     </For>
@@ -1167,7 +1167,7 @@ export default function MessageList(props: MessageListProps) {
                             <div class="mb-1 text-[11px] font-medium text-gray-10">{block.label}</div>
                           </Show>
                           <pre
-                            class={`max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-[14px] px-3 py-2 text-[12px] leading-5 ${block.tone === "error" ? "bg-red-1/60 text-red-12" : "bg-gray-3 text-gray-11"}`}
+                            class={`max-h-80 max-w-full overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[14px] px-3 py-2 text-[12px] leading-5 ${block.tone === "error" ? "bg-red-1/60 text-red-12" : "bg-gray-3 text-gray-11"}`}
                           >
                             {block.value}
                           </pre>
