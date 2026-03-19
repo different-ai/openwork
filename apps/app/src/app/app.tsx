@@ -40,6 +40,7 @@ import StatusToast from "./components/status-toast";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
+import CloudView from "./pages/cloud";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
@@ -288,6 +289,7 @@ type SettingsReturnTarget = {
   view: View;
   tab: DashboardTab;
   sessionId: string | null;
+  cloudPath: string | null;
 };
 
 function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
@@ -845,6 +847,7 @@ export default function App() {
     const path = location.pathname.toLowerCase();
     if (path.startsWith("/onboarding")) return "onboarding";
     if (path.startsWith("/session")) return "session";
+    if (path.startsWith("/cloud")) return "cloud";
     if (path.startsWith("/proto")) return "proto";
     return "dashboard";
   });
@@ -877,6 +880,10 @@ export default function App() {
     }
     if (next === "proto") {
       navigate("/proto/workspaces");
+      return;
+    }
+    if (next === "cloud") {
+      navigate("/cloud");
       return;
     }
     if (next === "onboarding") {
@@ -1352,6 +1359,7 @@ export default function App() {
     view: "dashboard",
     tab: "scheduled",
     sessionId: null,
+    cloudPath: null,
   });
   const SESSION_BY_WORKSPACE_KEY = "openwork.workspace-last-session.v1";
   const readSessionByWorkspace = () => {
@@ -1404,6 +1412,10 @@ export default function App() {
       view,
       tab: currentTab,
       sessionId: selectedSessionId(),
+      cloudPath:
+        view === "cloud"
+          ? `${location.pathname}${location.search}`
+          : null,
     });
   });
 
@@ -1423,6 +1435,10 @@ export default function App() {
     }
     if (target.view === "proto") {
       navigate("/proto/workspaces");
+      return;
+    }
+    if (target.view === "cloud") {
+      navigate(target.cloudPath || "/cloud");
       return;
     }
     goToDashboard(target.tab);
@@ -4326,9 +4342,8 @@ export default function App() {
 
     setProcessingDenAuthDeepLink(true);
     setPendingDenAuthDeepLink(null);
-    setView("dashboard");
-    setSettingsTab("den");
-    goToDashboard("settings");
+    setView("cloud");
+    navigate("/cloud", { replace: true });
 
     void createDenClient({ baseUrl: pending.denBaseUrl })
       .exchangeDesktopHandoff(pending.grant)
@@ -7203,6 +7218,10 @@ export default function App() {
       return;
     }
 
+    if (path.startsWith("/cloud")) {
+      return;
+    }
+
     if (path.startsWith("/session")) {
       const [, , sessionSegment] = rawPath.split("/");
       const id = (sessionSegment ?? "").trim();
@@ -7283,6 +7302,13 @@ export default function App() {
         </Match>
         <Match when={currentView() === "session"}>
           <SessionView {...sessionProps()} />
+        </Match>
+        <Match when={currentView() === "cloud"}>
+          <CloudView
+            developerMode={developerMode()}
+            openCloudSettings={() => toggleSettingsView("den")}
+            connectRemoteWorkspace={workspaceStore.createRemoteWorkspaceFlow}
+          />
         </Match>
         <Match when={true}>
           <DashboardView {...dashboardProps()} />

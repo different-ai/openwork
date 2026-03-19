@@ -138,7 +138,7 @@ export type OpencodeEvent = {
   properties?: unknown;
 };
 
-export type View = "onboarding" | "dashboard" | "session" | "proto";
+export type View = "onboarding" | "dashboard" | "session" | "proto" | "cloud";
 
 export type StartupPreference = "local" | "server";
 

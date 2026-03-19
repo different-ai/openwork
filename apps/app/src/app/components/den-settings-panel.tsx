@@ -14,6 +14,15 @@ import {
   writeDenSettings,
 } from "../lib/den";
 import {
+  denStatusBadgeClass,
+  denWorkerStatusMeta,
+  formatDenIsoDate,
+  formatDenMoneyMinor,
+  formatDenRecurringInterval,
+  formatDenSubscriptionStatus,
+} from "../features/den/formatters";
+import { buildDenBrowserAuthUrl } from "../features/den/browser-auth";
+import {
   canConfigureDenBaseUrlOverride,
   dispatchDenConfigUpdated,
   readDenFeatureGate,
@@ -30,100 +39,6 @@ type DenSettingsPanelProps = {
     displayName?: string | null;
   }) => Promise<boolean>;
 };
-
-function statusBadgeClass(kind: "ready" | "warning" | "neutral" | "error") {
-  switch (kind) {
-    case "ready":
-      return "border-green-7/30 bg-green-3/20 text-green-11";
-    case "warning":
-      return "border-amber-7/30 bg-amber-3/20 text-amber-11";
-    case "error":
-      return "border-red-7/30 bg-red-3/20 text-red-11";
-    default:
-      return "border-gray-6/60 bg-gray-3/20 text-gray-11";
-  }
-}
-
-function workerStatusMeta(status: string) {
-  const normalized = status.trim().toLowerCase();
-  switch (normalized) {
-    case "healthy":
-      return { label: "Ready", tone: "ready" as const, canOpen: true };
-    case "provisioning":
-      return { label: "Provisioning", tone: "warning" as const, canOpen: false };
-    case "failed":
-      return { label: "Failed", tone: "error" as const, canOpen: false };
-    case "stopped":
-      return { label: "Stopped", tone: "neutral" as const, canOpen: false };
-    default:
-      return {
-        label: normalized ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}` : "Unknown",
-        tone: "neutral" as const,
-        canOpen: normalized === "ready",
-      };
-  }
-}
-
-function formatMoneyMinor(amount: number | null, currency: string | null): string {
-  if (typeof amount !== "number" || !Number.isFinite(amount)) {
-    return "Not available";
-  }
-
-  const normalizedCurrency = (currency ?? "USD").toUpperCase();
-  const majorValue = amount / 100;
-
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: normalizedCurrency,
-    }).format(majorValue);
-  } catch {
-    return `${majorValue.toFixed(2)} ${normalizedCurrency}`;
-  }
-}
-
-function formatIsoDate(value: string | null): string {
-  if (!value) {
-    return "Not available";
-  }
-
-  try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return "Not available";
-    }
-    return date.toLocaleDateString();
-  } catch {
-    return "Not available";
-  }
-}
-
-function formatRecurringInterval(interval: string | null, count: number | null): string {
-  if (!interval) {
-    return "billing cycle";
-  }
-
-  const normalizedInterval = interval.replace(/_/g, " ");
-  const normalizedCount = typeof count === "number" && Number.isFinite(count) ? count : 1;
-  if (normalizedCount <= 1) {
-    return `per ${normalizedInterval}`;
-  }
-
-  const pluralSuffix = normalizedInterval.endsWith("s") ? "" : "s";
-  return `every ${normalizedCount} ${normalizedInterval}${pluralSuffix}`;
-}
-
-function formatSubscriptionStatus(status: string): string {
-  const normalized = status.trim().toLowerCase();
-  if (!normalized) {
-    return "Unknown";
-  }
-
-  return normalized
-    .split("_")
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
-}
 
 export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
@@ -223,13 +138,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       setBaseUrlError("Set a Den control plane URL before starting Cloud auth.");
       return;
     }
-    const target = new URL(resolveDenBaseUrls(baseUrl()).baseUrl);
-    target.searchParams.set("mode", mode);
-    if (isDesktopDeployment()) {
-      target.searchParams.set("desktopAuth", "1");
-      target.searchParams.set("desktopScheme", "openwork");
-    }
-    platform.openLink(target.toString());
+    const target = buildDenBrowserAuthUrl({
+      baseUrl: baseUrl(),
+      mode,
+      desktopAuth: isDesktopDeployment(),
+      desktopScheme: "openwork",
+    });
+    platform.openLink(target);
     setStatusMessage(mode === "sign-up" ? "Finish account creation in your browser to connect OpenWork." : "Finish signing in in your browser to connect OpenWork.");
     setAuthError(null);
   };
@@ -616,7 +531,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   </div>
                 </div>
               </div>
-            <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusBadgeClass(summaryTone())}`}>
+            <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${denStatusBadgeClass(summaryTone())}`}>
               <span class={`h-2 w-2 rounded-full ${summaryTone() === "ready" ? "bg-green-9" : summaryTone() === "warning" ? "bg-amber-9" : summaryTone() === "error" ? "bg-red-9" : "bg-gray-8"}`} />
               {summaryLabel()}
             </div>
@@ -828,7 +743,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                         </div>
                         <div class="text-sm font-medium text-gray-11">
                           {summary.price && summary.price.amount !== null
-                            ? `${formatMoneyMinor(summary.price.amount, summary.price.currency)} ${formatRecurringInterval(summary.price.recurringInterval, summary.price.recurringIntervalCount)}`
+                            ? `${formatDenMoneyMinor(summary.price.amount, summary.price.currency)} ${formatDenRecurringInterval(summary.price.recurringInterval, summary.price.recurringIntervalCount)}`
                             : "Current plan amount is unavailable."}
                         </div>
                       </div>
@@ -843,14 +758,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                             const subscription = subscriptionAccessor();
                             return (
                               <>
-                                <div class="text-base font-semibold text-gray-12">{formatSubscriptionStatus(subscription.status)}</div>
+                                <div class="text-base font-semibold text-gray-12">{formatDenSubscriptionStatus(subscription.status)}</div>
                                 <div class="text-sm text-gray-10">
-                                  {formatMoneyMinor(subscription.amount, subscription.currency)} {formatRecurringInterval(subscription.recurringInterval, subscription.recurringIntervalCount)}
+                                  {formatDenMoneyMinor(subscription.amount, subscription.currency)} {formatDenRecurringInterval(subscription.recurringInterval, subscription.recurringIntervalCount)}
                                 </div>
                                 <div class="text-xs text-gray-9">
                                   {subscription.cancelAtPeriodEnd
-                                    ? `Cancels on ${formatIsoDate(subscription.currentPeriodEnd)}`
-                                    : `Renews on ${formatIsoDate(subscription.currentPeriodEnd)}`}
+                                    ? `Cancels on ${formatDenIsoDate(subscription.currentPeriodEnd)}`
+                                    : `Renews on ${formatDenIsoDate(subscription.currentPeriodEnd)}`}
                                 </div>
                               </>
                             );
@@ -905,9 +820,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                             {(invoice) => (
                               <div class="flex flex-col gap-2 rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 md:flex-row md:items-center md:justify-between">
                                 <div>
-                                  <div class="text-sm font-medium text-gray-12">{invoice.invoiceNumber ?? formatSubscriptionStatus(invoice.status)}</div>
+                                  <div class="text-sm font-medium text-gray-12">{invoice.invoiceNumber ?? formatDenSubscriptionStatus(invoice.status)}</div>
                                   <div class="text-xs text-gray-9">
-                                    {formatIsoDate(invoice.createdAt)} · {formatMoneyMinor(invoice.totalAmount, invoice.currency)} · {formatSubscriptionStatus(invoice.status)}
+                                    {formatDenIsoDate(invoice.createdAt)} · {formatDenMoneyMinor(invoice.totalAmount, invoice.currency)} · {formatDenSubscriptionStatus(invoice.status)}
                                   </div>
                                 </div>
                                 <Show
@@ -969,14 +884,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
             <div class="space-y-3">
               <For each={workers()}>
                 {(worker) => {
-                  const status = createMemo(() => workerStatusMeta(worker.status));
+                    const status = createMemo(() => denWorkerStatusMeta(worker.status));
                   return (
                     <div class="rounded-2xl border border-gray-6/60 bg-gray-1/50 p-4">
                       <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div class="min-w-0 space-y-2">
                           <div class="flex flex-wrap items-center gap-2">
                             <div class="text-sm font-medium text-gray-12">{worker.workerName}</div>
-                            <div class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(status().tone)}`}>
+                            <div class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${denStatusBadgeClass(status().tone)}`}>
                               {status().label}
                             </div>
                             <Show when={worker.isMine}>
