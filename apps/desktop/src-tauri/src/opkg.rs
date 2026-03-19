@@ -1,5 +1,6 @@
 use std::process::{Command, Stdio};
 
+use crate::paths::apply_augmented_path;
 use crate::platform::configure_hidden;
 use crate::types::ExecResult;
 
@@ -24,6 +25,7 @@ pub fn run_capture_optional(command: &mut Command) -> Result<Option<ExecResult>,
 
 pub fn opkg_install(project_dir: &str, package: &str) -> Result<ExecResult, String> {
     let mut opkg = Command::new("opkg");
+    apply_augmented_path(&mut opkg);
     configure_hidden(&mut opkg);
     opkg.arg("install")
         .arg(package)
@@ -37,6 +39,7 @@ pub fn opkg_install(project_dir: &str, package: &str) -> Result<ExecResult, Stri
     }
 
     let mut openpackage = Command::new("openpackage");
+    apply_augmented_path(&mut openpackage);
     configure_hidden(&mut openpackage);
     openpackage
         .arg("install")
@@ -51,6 +54,7 @@ pub fn opkg_install(project_dir: &str, package: &str) -> Result<ExecResult, Stri
     }
 
     let mut pnpm = Command::new("pnpm");
+    apply_augmented_path(&mut pnpm);
     configure_hidden(&mut pnpm);
     pnpm.arg("dlx")
         .arg("opkg")
@@ -66,6 +70,7 @@ pub fn opkg_install(project_dir: &str, package: &str) -> Result<ExecResult, Stri
     }
 
     let mut npx = Command::new("npx");
+    apply_augmented_path(&mut npx);
     configure_hidden(&mut npx);
     npx.arg("opkg")
         .arg("install")
@@ -80,9 +85,9 @@ pub fn opkg_install(project_dir: &str, package: &str) -> Result<ExecResult, Stri
     }
 
     Ok(ExecResult {
-    ok: false,
-    status: -1,
-    stdout: String::new(),
-    stderr: "OpenPackage CLI not found. Install with `npm install -g opkg` (or `openpackage`), or ensure pnpm/npx is available.".to_string(),
-  })
+        ok: false,
+        status: -1,
+        stdout: String::new(),
+        stderr: "OpenPackage CLI not found. Install with `npm install -g opkg` (or `openpackage`), or ensure pnpm/npx is available.".to_string(),
+    })
 }

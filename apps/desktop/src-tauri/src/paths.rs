@@ -1,5 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[cfg(target_os = "macos")]
 const MACOS_APP_SUPPORT_DIR: &str = "Library/Application Support";
@@ -130,6 +131,30 @@ pub fn sidecar_path_candidates(
 /// so tools installed via Homebrew, nvm, volta, etc. won't be found unless we
 /// explicitly include these common locations.
 fn common_tool_paths() -> Vec<PathBuf> {
+    common_tool_paths_for_home(home_dir().as_deref())
+}
+
+fn nvm_version_bin_paths(home: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let base = home.join(".nvm").join("versions").join("node");
+
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return paths;
+    };
+
+    for entry in entries.flatten() {
+        let candidate = entry.path().join("bin");
+        if candidate.is_dir() {
+            paths.push(candidate);
+        }
+    }
+
+    paths.sort();
+    paths.reverse();
+    paths
+}
+
+fn common_tool_paths_for_home(home: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     #[cfg(target_os = "macos")]
@@ -141,9 +166,10 @@ fn common_tool_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from("/usr/local/sbin"));
 
         // User-specific paths for common version managers
-        if let Some(home) = home_dir() {
+        if let Some(home) = home {
             // nvm, fnm (Node version managers)
             paths.push(home.join(".nvm/current/bin"));
+            paths.extend(nvm_version_bin_paths(home));
             paths.push(home.join(".fnm/current/bin"));
             // volta
             paths.push(home.join(".volta/bin"));
@@ -165,9 +191,10 @@ fn common_tool_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from("/usr/local/bin"));
         paths.push(PathBuf::from("/usr/local/sbin"));
 
-        if let Some(home) = home_dir() {
+        if let Some(home) = home {
             // nvm, fnm
             paths.push(home.join(".nvm/current/bin"));
+            paths.extend(nvm_version_bin_paths(home));
             paths.push(home.join(".fnm/current/bin"));
             // volta
             paths.push(home.join(".volta/bin"));
@@ -186,7 +213,7 @@ fn common_tool_paths() -> Vec<PathBuf> {
 
     #[cfg(windows)]
     {
-        if let Some(home) = home_dir() {
+        if let Some(home) = home {
             // volta
             paths.push(home.join(".volta/bin"));
             // pnpm
@@ -206,6 +233,16 @@ fn common_tool_paths() -> Vec<PathBuf> {
     }
 
     paths
+}
+
+pub fn augmented_path_env() -> Option<std::ffi::OsString> {
+    prepended_path_env(&[])
+}
+
+pub fn apply_augmented_path(command: &mut Command) {
+    if let Some(path_env) = augmented_path_env() {
+        command.env("PATH", path_env);
+    }
 }
 
 pub fn prepended_path_env(prefixes: &[PathBuf]) -> Option<std::ffi::OsString> {
@@ -237,4 +274,51 @@ pub fn prepended_path_env(prefixes: &[PathBuf]) -> Option<std::ffi::OsString> {
     }
 
     env::join_paths(entries).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{common_tool_paths_for_home, nvm_version_bin_paths};
+    use std::fs::create_dir_all;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_home() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("openwork-paths-{unique}"));
+        create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn nvm_version_bin_paths_include_installed_versions() {
+        let home = temp_home();
+        let v20 = home.join(".nvm/versions/node/v20.12.2/bin");
+        let v24 = home.join(".nvm/versions/node/v24.12.0/bin");
+        create_dir_all(&v20).unwrap();
+        create_dir_all(&v24).unwrap();
+
+        let paths = nvm_version_bin_paths(&home);
+        assert_eq!(paths, vec![v24, v20]);
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn common_tool_paths_include_nvm_current_and_versions() {
+        let home = temp_home();
+        let current = home.join(".nvm/current/bin");
+        let version = home.join(".nvm/versions/node/v24.12.0/bin");
+        create_dir_all(&current).unwrap();
+        create_dir_all(&version).unwrap();
+
+        let paths = common_tool_paths_for_home(Some(&home));
+        assert!(paths.contains(&current));
+        assert!(paths.contains(&version));
+
+        let _ = std::fs::remove_dir_all(home);
+    }
 }

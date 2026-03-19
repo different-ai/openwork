@@ -19,6 +19,7 @@ import {
   writeFile,
   realpath,
 } from "node:fs/promises";
+import { readdirSync, statSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
@@ -143,6 +144,9 @@ const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH =
   "/persist/.config/opencode";
 const SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH =
   "/persist/.openwork-host-opencode-data";
+const CLI_SOURCE_DIR = dirname(fileURLToPath(import.meta.url));
+const ORCHESTRATOR_ROOT_DIR = resolve(CLI_SOURCE_DIR, "..");
+const REPO_ROOT_DIR = resolve(ORCHESTRATOR_ROOT_DIR, "..", "..");
 
 type ParsedArgs = {
   positionals: string[];
@@ -1279,6 +1283,130 @@ const remoteManifestCache = new Map<
 >();
 
 let latestOpencodeVersionTask: Promise<string | undefined> | null = null;
+let cachedExtraPathEntries: string[] | null = null;
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function splitPathEntries(value?: string): string[] {
+  if (!value) return [];
+  return value.split(delimiter).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function pushPath(entries: string[], path?: string | null) {
+  if (!path) return;
+  const candidate = resolve(path.trim());
+  if (!isDirectory(candidate)) return;
+  if (!entries.includes(candidate)) entries.push(candidate);
+}
+
+function nvmVersionBinPaths(home: string): string[] {
+  const base = join(home, ".nvm", "versions", "node");
+  try {
+    return readdirSync(base, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(base, entry.name, "bin"))
+      .filter(isDirectory)
+      .sort()
+      .reverse();
+  } catch {
+    return [];
+  }
+}
+
+function resolveExtraPathEntries(): string[] {
+  if (cachedExtraPathEntries) return cachedExtraPathEntries;
+
+  const entries: string[] = [];
+  const sidecarOverride =
+    process.env.OPENWRK_SIDECAR_DIR ?? process.env.OPENWORK_SIDECAR_DIR;
+  const sidecarCandidates = [
+    sidecarOverride,
+    dirname(process.execPath),
+    join(dirname(process.execPath), "sidecars"),
+    join(ORCHESTRATOR_ROOT_DIR, "dist"),
+    resolve(REPO_ROOT_DIR, "apps", "desktop", "src-tauri", "sidecars"),
+  ];
+  for (const candidate of sidecarCandidates) {
+    pushPath(entries, candidate);
+  }
+
+  const home = homedir();
+  if (process.platform === "darwin") {
+    for (const candidate of [
+      "/opt/homebrew/bin",
+      "/opt/homebrew/sbin",
+      "/usr/local/bin",
+      "/usr/local/sbin",
+      join(home, ".nvm", "current", "bin"),
+      ...nvmVersionBinPaths(home),
+      join(home, ".fnm", "current", "bin"),
+      join(home, ".volta", "bin"),
+      join(home, "Library", "pnpm"),
+      join(home, ".bun", "bin"),
+      join(home, ".cargo", "bin"),
+      join(home, ".pyenv", "shims"),
+      join(home, ".local", "bin"),
+    ]) {
+      pushPath(entries, candidate);
+    }
+  }
+
+  if (process.platform === "linux") {
+    for (const candidate of [
+      "/usr/local/bin",
+      "/usr/local/sbin",
+      join(home, ".nvm", "current", "bin"),
+      ...nvmVersionBinPaths(home),
+      join(home, ".fnm", "current", "bin"),
+      join(home, ".volta", "bin"),
+      join(home, ".local", "share", "pnpm"),
+      join(home, ".bun", "bin"),
+      join(home, ".cargo", "bin"),
+      join(home, ".pyenv", "shims"),
+      join(home, ".local", "bin"),
+    ]) {
+      pushPath(entries, candidate);
+    }
+  }
+
+  if (process.platform === "win32") {
+    for (const candidate of [
+      join(home, ".volta", "bin"),
+      join(home, ".bun", "bin"),
+      join(home, ".cargo", "bin"),
+      process.env.APPDATA ? join(process.env.APPDATA, "npm") : null,
+      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "pnpm") : null,
+    ]) {
+      pushPath(entries, candidate);
+    }
+  }
+
+  cachedExtraPathEntries = entries;
+  return entries;
+}
+
+function buildSpawnEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const base = env ?? process.env;
+  const pathKey =
+    Object.prototype.hasOwnProperty.call(base, "PATH") ||
+    !Object.prototype.hasOwnProperty.call(base, "Path")
+      ? "PATH"
+      : "Path";
+  const currentPath = pathKey === "PATH" ? base.PATH : base.Path;
+  const entries = [
+    ...resolveExtraPathEntries(),
+    ...splitPathEntries(currentPath),
+  ];
+  const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
+  if (!deduped.length) return { ...base };
+  return { ...base, [pathKey]: deduped.join(delimiter) };
+}
 
 function resolveSidecarTarget(): SidecarTarget | null {
   if (process.platform === "darwin") {
@@ -1328,10 +1456,12 @@ function spawnProcess(
   args: string[],
   options: SpawnOptions = {},
 ) {
+  const env = buildSpawnEnv(options.env);
+  const resolvedOptions = { ...options, env };
   if (process.platform === "win32") {
-    return spawn(command, args, { ...options, windowsHide: true });
+    return spawn(command, args, { ...resolvedOptions, windowsHide: true });
   }
-  return spawn(command, args, options);
+  return spawn(command, args, resolvedOptions);
 }
 
 async function probeCommand(
@@ -3700,6 +3830,7 @@ async function writeSandboxEntrypoint(options: {
     'export XDG_CACHE_HOME="$HOME/.cache"',
     'export XDG_DATA_HOME="$HOME/.local/share"',
     'export XDG_STATE_HOME="$HOME/.local/state"',
+    `export PATH=${shQuote(`${options.rootInContainer}/sidecars`)}:"\${PATH:-}"`,
     'mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"',
     // Do not `cd` into the mounted workspace: bun-compiled sidecars read bunfig.toml
     // from cwd, and user workspaces may include preloads that break startup.
