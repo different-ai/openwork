@@ -94,14 +94,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://download.daytona.io/daytona/install.sh | bash
-          if [ -x "$HOME/.daytona/bin/daytona" ]; then
-            echo "$HOME/.daytona/bin" >> "$GITHUB_PATH"
-          fi
-          if [ -x "$HOME/.local/bin/daytona" ]; then
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          fi
-          daytona --version
+
+          case "$(uname -s)" in
+            Linux) platform="linux" ;;
+            Darwin) platform="darwin" ;;
+            *)
+              echo "Unsupported OS: $(uname -s)" >&2
+              exit 1
+              ;;
+          esac
+
+          case "$(uname -m)" in
+            x86_64|amd64) arch="amd64" ;;
+            aarch64|arm64) arch="arm64" ;;
+            *)
+              echo "Unsupported architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          asset_name="daytona-${platform}-${arch}"
+          install_dir="$HOME/.local/bin"
+          mkdir -p "$install_dir"
+
+          release_json="$(curl -fsSL https://api.github.com/repos/daytonaio/daytona/releases/latest)"
+          asset_url="$(python3 -c 'import json, sys; data = json.load(sys.stdin); name = sys.argv[1]; print(next(asset["browser_download_url"] for asset in data["assets"] if asset["name"] == name))' "$asset_name" <<<"$release_json")"
+
+          curl -fL "$asset_url" -o "$install_dir/daytona"
+          chmod +x "$install_dir/daytona"
+
+          echo "$install_dir" >> "$GITHUB_PATH"
+          export PATH="$install_dir:$PATH"
+
+          daytona version
 
       - name: Build and push snapshot
         shell: bash
