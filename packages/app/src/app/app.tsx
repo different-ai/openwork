@@ -24,7 +24,6 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
-import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
@@ -55,6 +54,7 @@ import {
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
@@ -3928,6 +3928,7 @@ export default function App() {
   const [sharedBundleImportError, setSharedBundleImportError] = createSignal<string | null>(null);
   const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
   const [sharedSkillSuccessToast, setSharedSkillSuccessToast] = createSignal<SharedSkillSuccessToast | null>(null);
+  const recentClaimedDeepLinks = new Map<string, number>();
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
   const [renameWorkspaceName, setRenameWorkspaceName] = createSignal("");
@@ -4062,6 +4063,59 @@ export default function App() {
     setSharedBundleImportError(null);
     setSharedBundleNoticeShown(false);
     return true;
+  };
+
+  const stripHandledBrowserDeepLink = (rawUrl: string) => {
+    if (typeof window === "undefined" || isTauriRuntime()) {
+      return;
+    }
+
+    if (window.location.href !== rawUrl) {
+      return;
+    }
+
+    const remoteStripped = stripRemoteConnectQuery(rawUrl) ?? rawUrl;
+    const bundleStripped = stripSharedBundleQuery(remoteStripped) ?? remoteStripped;
+    if (bundleStripped !== rawUrl) {
+      window.history.replaceState({}, "", bundleStripped);
+    }
+  };
+
+  const consumeDeepLinks = (urls: readonly string[] | null | undefined) => {
+    if (!Array.isArray(urls)) {
+      return;
+    }
+
+    const normalized = urls.map((url) => url.trim()).filter(Boolean);
+    if (normalized.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const [url, seenAt] of recentClaimedDeepLinks) {
+      if (now - seenAt > 1500) {
+        recentClaimedDeepLinks.delete(url);
+      }
+    }
+
+    for (const url of normalized) {
+      const seenAt = recentClaimedDeepLinks.get(url) ?? 0;
+      if (now - seenAt < 1500) {
+        continue;
+      }
+
+      const claimed =
+        queueDenAuthDeepLink(url) ||
+        queueRemoteConnectDeepLink(url) ||
+        queueSharedBundleDeepLink(url);
+      if (!claimed) {
+        continue;
+      }
+
+      recentClaimedDeepLinks.set(url, now);
+      stripHandledBrowserDeepLink(url);
+      break;
+    }
   };
 
   const openDebugDeepLink = async (rawUrl: string): Promise<{ ok: boolean; message: string }> => {
@@ -6080,89 +6134,19 @@ export default function App() {
         setLaunchUpdateCheckTriggered(true);
         checkForUpdates({ quiet: true }).catch(() => undefined);
       }
-
-      try {
-        const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
-        const recentDeepLinkEvents = new Map<string, number>();
-        let lastObservedDeepLinkSignature: string | null = null;
-
-        const consumeUrls = (
-          urls: string[] | null | undefined,
-          source: "event" | "current" = "event",
-        ) => {
-          if (!Array.isArray(urls)) {
-            return;
-          }
-
-          const normalized = urls.map((url) => url.trim()).filter(Boolean);
-          if (normalized.length === 0) {
-            return;
-          }
-
-          const signature = normalized.join("\n");
-          if (source === "current" && signature === lastObservedDeepLinkSignature) {
-            return;
-          }
-          lastObservedDeepLinkSignature = signature;
-
-          const now = Date.now();
-          for (const [url, seenAt] of recentDeepLinkEvents) {
-            if (now - seenAt > 1500) {
-              recentDeepLinkEvents.delete(url);
-            }
-          }
-
-          for (const url of normalized) {
-            const seenAt = recentDeepLinkEvents.get(url) ?? 0;
-            if (now - seenAt < 1500) {
-              continue;
-            }
-            recentDeepLinkEvents.set(url, now);
-            if (queueDenAuthDeepLink(url) || queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
-              break;
-            }
-          }
-        };
-
-        const syncCurrentDeepLinks = async () => {
-          consumeUrls(await getCurrent(), "current");
-        };
-
-        await syncCurrentDeepLinks();
-        const unlisten = await onOpenUrl((urls) => {
-          consumeUrls(urls, "event");
-        });
-        const handleWindowFocus = () => {
-          void syncCurrentDeepLinks().catch(() => undefined);
-        };
-        const handleVisibilityChange = () => {
-          if (document.visibilityState !== "visible") return;
-          void syncCurrentDeepLinks().catch(() => undefined);
-        };
-        window.addEventListener("focus", handleWindowFocus);
-        document.addEventListener("visibilitychange", handleVisibilityChange);
-        onCleanup(() => {
-          unlisten();
-          window.removeEventListener("focus", handleWindowFocus);
-          document.removeEventListener("visibilitychange", handleVisibilityChange);
-        });
-      } catch {
-        // ignore
-      }
     }
 
-    if (!isTauriRuntime()) {
-        const currentUrl = typeof window === "undefined" ? "" : window.location.href;
-        if (currentUrl) {
-        queueDenAuthDeepLink(currentUrl);
-          queueRemoteConnectDeepLink(currentUrl);
-          queueSharedBundleDeepLink(currentUrl);
-        const remoteStripped = stripRemoteConnectQuery(currentUrl) ?? currentUrl;
-        const bundleStripped = stripSharedBundleQuery(remoteStripped) ?? remoteStripped;
-        if (bundleStripped !== currentUrl) {
-          window.history.replaceState({}, "", bundleStripped);
-        }
-      }
+    if (typeof window !== "undefined") {
+      const handleDeepLinkEvent = (event: Event) => {
+        const detail = (event as CustomEvent<DeepLinkBridgeDetail>).detail;
+        consumeDeepLinks(detail?.urls ?? []);
+      };
+
+      consumeDeepLinks(drainPendingDeepLinks(window));
+      window.addEventListener(deepLinkBridgeEvent, handleDeepLinkEvent as EventListener);
+      onCleanup(() => {
+        window.removeEventListener(deepLinkBridgeEvent, handleDeepLinkEvent as EventListener);
+      });
     }
 
     void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));

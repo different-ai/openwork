@@ -6,6 +6,7 @@ import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
+import { forwardedDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { isTauriRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
@@ -20,6 +21,74 @@ if (!root) {
 }
 
 root.dataset.openworkDeployment = getOpenWorkDeployment();
+
+function startDeepLinkBridge() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!isTauriRuntime()) {
+    pushPendingDeepLinks(window, [window.location.href]);
+    return;
+  }
+
+  void (async () => {
+    try {
+      const [{ getCurrent, onOpenUrl }, { listen }] = await Promise.all([
+        import("@tauri-apps/plugin-deep-link"),
+        import("@tauri-apps/api/event"),
+      ]);
+
+      const syncCurrentDeepLinks = async () => {
+        const urls = await getCurrent().catch(() => null);
+        if (Array.isArray(urls)) {
+          pushPendingDeepLinks(window, urls);
+        }
+      };
+
+      await syncCurrentDeepLinks();
+      const unlistenOpenUrl = await onOpenUrl((urls) => {
+        pushPendingDeepLinks(window, urls);
+      }).catch(() => undefined);
+      const unlistenForwarded = await listen<string[]>(
+        forwardedDeepLinkEvent,
+        (event) => {
+          if (Array.isArray(event.payload)) {
+            pushPendingDeepLinks(window, event.payload);
+          }
+        },
+      ).catch(() => undefined);
+      const handleWindowFocus = () => {
+        void syncCurrentDeepLinks().catch(() => undefined);
+      };
+      const handleVisibilityChange = () => {
+        if (document.visibilityState !== "visible") {
+          return;
+        }
+        void syncCurrentDeepLinks().catch(() => undefined);
+      };
+      const cleanup = () => {
+        if (typeof unlistenOpenUrl === "function") {
+          unlistenOpenUrl();
+        }
+        if (typeof unlistenForwarded === "function") {
+          unlistenForwarded();
+        }
+        window.removeEventListener("focus", handleWindowFocus);
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+        window.removeEventListener("pagehide", cleanup);
+      };
+
+      window.addEventListener("focus", handleWindowFocus);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      window.addEventListener("pagehide", cleanup, { once: true });
+    } catch {
+      // ignore
+    }
+  })();
+}
+
+startDeepLinkBridge();
 
 const RouterComponent = isTauriRuntime() ? HashRouter : Router;
 
