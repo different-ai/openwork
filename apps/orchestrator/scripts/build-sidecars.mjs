@@ -1,6 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,10 +15,14 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..");
 const outdir = resolve(root, "dist", "sidecars");
 
-const orchestratorPkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+const orchestratorPkg = JSON.parse(
+  readFileSync(resolve(root, "package.json"), "utf8"),
+);
 const orchestratorVersion = String(orchestratorPkg.version ?? "").trim();
 if (!orchestratorVersion) {
-  throw new Error("openwork-orchestrator version missing in apps/orchestrator/package.json");
+  throw new Error(
+    "openwork-orchestrator version missing in apps/orchestrator/package.json",
+  );
 }
 
 const sourceDateEpoch = process.env.SOURCE_DATE_EPOCH
@@ -21,18 +32,27 @@ const generatedAt = Number.isFinite(sourceDateEpoch)
   ? new Date(sourceDateEpoch * 1000).toISOString()
   : new Date().toISOString();
 
-const serverPkg = JSON.parse(readFileSync(resolve(repoRoot, "apps", "server", "package.json"), "utf8"));
+const serverPkg = JSON.parse(
+  readFileSync(resolve(repoRoot, "apps", "server", "package.json"), "utf8"),
+);
 const serverVersion = String(serverPkg.version ?? "").trim();
 if (!serverVersion) {
-  throw new Error("openwork-server version missing in apps/server/package.json");
+  throw new Error(
+    "openwork-server version missing in apps/server/package.json",
+  );
 }
 
 const routerPkg = JSON.parse(
-  readFileSync(resolve(repoRoot, "apps", "opencode-router", "package.json"), "utf8"),
+  readFileSync(
+    resolve(repoRoot, "apps", "opencode-router", "package.json"),
+    "utf8",
+  ),
 );
 const routerVersion = String(routerPkg.version ?? "").trim();
 if (!routerVersion) {
-  throw new Error("opencode-router version missing in apps/opencode-router/package.json");
+  throw new Error(
+    "opencode-router version missing in apps/opencode-router/package.json",
+  );
 }
 
 const run = (command, args, cwd) => {
@@ -42,7 +62,7 @@ const run = (command, args, cwd) => {
   }
 };
 
-run("pnpm", ["--filter", "@openwork/server", "build:bin:all"], repoRoot);
+run("pnpm", ["--filter", "openwork-server", "build:bin:all"], repoRoot);
 run("pnpm", ["--filter", "opencode-router", "build:bin:all"], repoRoot);
 
 const targets = [

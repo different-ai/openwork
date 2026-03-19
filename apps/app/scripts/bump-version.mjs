@@ -36,7 +36,8 @@ if (mode === "--set") {
 
 const semverPattern = /^\d+\.\d+\.\d+$/;
 
-const readJson = async (filePath) => JSON.parse(await readFile(filePath, "utf8"));
+const readJson = async (filePath) =>
+  JSON.parse(await readFile(filePath, "utf8"));
 
 const bump = (value, bumpMode) => {
   if (!semverPattern.test(value)) {
@@ -58,9 +59,19 @@ const targetVersion = async () => {
 const updatePackageJson = async (nextVersion) => {
   const uiPath = path.join(ROOT, "package.json");
   const tauriPath = path.join(REPO_ROOT, "apps", "desktop", "package.json");
-  const orchestratorPath = path.join(REPO_ROOT, "apps", "orchestrator", "package.json");
+  const orchestratorPath = path.join(
+    REPO_ROOT,
+    "apps",
+    "orchestrator",
+    "package.json",
+  );
   const serverPath = path.join(REPO_ROOT, "apps", "server", "package.json");
-  const opencodeRouterPath = path.join(REPO_ROOT, "apps", "opencode-router", "package.json");
+  const opencodeRouterPath = path.join(
+    REPO_ROOT,
+    "apps",
+    "opencode-router",
+    "package.json",
+  );
   const uiData = await readJson(uiPath);
   const tauriData = await readJson(tauriPath);
   const orchestratorData = await readJson(orchestratorPath);
@@ -74,7 +85,7 @@ const updatePackageJson = async (nextVersion) => {
 
   // Ensure openwork-orchestrator uses the same openwork-server/opencode-router versions.
   orchestratorData.dependencies = orchestratorData.dependencies ?? {};
-  orchestratorData.dependencies["@openwork/server"] = nextVersion;
+  orchestratorData.dependencies["openwork-server"] = nextVersion;
   orchestratorData.dependencies["opencode-router"] = nextVersion;
 
   serverData.version = nextVersion;
@@ -82,23 +93,38 @@ const updatePackageJson = async (nextVersion) => {
   if (!isDryRun) {
     await writeFile(uiPath, JSON.stringify(uiData, null, 2) + "\n");
     await writeFile(tauriPath, JSON.stringify(tauriData, null, 2) + "\n");
-    await writeFile(orchestratorPath, JSON.stringify(orchestratorData, null, 2) + "\n");
+    await writeFile(
+      orchestratorPath,
+      JSON.stringify(orchestratorData, null, 2) + "\n",
+    );
     await writeFile(serverPath, JSON.stringify(serverData, null, 2) + "\n");
-    await writeFile(opencodeRouterPath, JSON.stringify(opencodeRouterData, null, 2) + "\n");
+    await writeFile(
+      opencodeRouterPath,
+      JSON.stringify(opencodeRouterData, null, 2) + "\n",
+    );
   }
 };
 
 const updateCargoToml = async (nextVersion) => {
-  const filePath = path.join(REPO_ROOT, "apps", "desktop", "src-tauri", "Cargo.toml");
+  const filePath = path.join(
+    REPO_ROOT,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "Cargo.toml",
+  );
   const raw = await readFile(filePath, "utf8");
-  const updated = raw.replace(/\bversion\s*=\s*"[^"]+"/m, `version = "${nextVersion}"`);
+  const updated = raw.replace(
+    /\bversion\s*=\s*"[^"]+"/m,
+    `version = "${nextVersion}"`,
+  );
   if (!isDryRun) {
     await writeFile(filePath, updated);
     // Regenerate Cargo.lock so it stays in sync with the version bump.
     const { execFileSync } = await import("node:child_process");
     try {
       execFileSync("cargo", ["generate-lockfile"], {
-          cwd: path.join(REPO_ROOT, "apps", "desktop", "src-tauri"),
+        cwd: path.join(REPO_ROOT, "apps", "desktop", "src-tauri"),
         stdio: "ignore",
       });
     } catch {
@@ -108,7 +134,13 @@ const updateCargoToml = async (nextVersion) => {
 };
 
 const updateTauriConfig = async (nextVersion) => {
-  const filePath = path.join(REPO_ROOT, "apps", "desktop", "src-tauri", "tauri.conf.json");
+  const filePath = path.join(
+    REPO_ROOT,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "tauri.conf.json",
+  );
   const data = JSON.parse(await readFile(filePath, "utf8"));
   data.version = nextVersion;
   if (!isDryRun) {

@@ -49,7 +49,7 @@
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
     "opencode-router": "0.11.171",
-    "@openwork/server": "0.11.171",
+    "openwork-server": "0.11.171",
     "solid-js": "1.9.9"
   },
   "devDependencies": {

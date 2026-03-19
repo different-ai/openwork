@@ -53,14 +53,20 @@ const logLine = (message: string) => {
 
 const readBool = (value: string | undefined) => {
   const normalized = (value ?? "").trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+  return (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    normalized === "on"
+  );
 };
 
 const silent = process.argv.includes("--silent");
 
-const autoBuildEnabled = process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD == null
-  ? true
-  : readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD);
+const autoBuildEnabled =
+  process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD == null
+    ? true
+    : readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD);
 
 const runCommand = (command: string, args: string[]) =>
   new Promise<void>((resolve, reject) => {
@@ -75,11 +81,20 @@ const runCommand = (command: string, args: string[]) =>
         resolve();
         return;
       }
-      reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
+      reject(
+        new Error(
+          `${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`,
+        ),
+      );
     });
   });
 
-const spawnLogged = (command: string, args: string[], logPath: string, env: NodeJS.ProcessEnv) => {
+const spawnLogged = (
+  command: string,
+  args: string[],
+  logPath: string,
+  env: NodeJS.ProcessEnv,
+) => {
   const logFd = openSync(logPath, "w");
   return spawn(command, args, {
     cwd,
@@ -88,8 +103,13 @@ const spawnLogged = (command: string, args: string[], logPath: string, env: Node
   });
 };
 
-const shutdown = (label: string, code: number | null, signal: NodeJS.Signals | null) => {
-  const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
+const shutdown = (
+  label: string,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+) => {
+  const reason =
+    code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
   logLine(`[dev:headless-web] ${label} exited (${reason})`);
   process.exit(code ?? 1);
 };
@@ -105,28 +125,48 @@ const openworkPort = await resolvePort(process.env.OPENWORK_PORT, "127.0.0.1");
 const webPort = await resolvePort(process.env.OPENWORK_WEB_PORT, "127.0.0.1");
 const openworkToken = process.env.OPENWORK_TOKEN ?? randomUUID();
 const openworkHostToken = process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
-const openworkServerBin = path.join(cwd, "apps/server/dist/bin/openwork-server");
-const opencodeRouterBin = path.join(cwd, "apps/opencode-router/dist/bin/opencode-router");
+const openworkServerBin = path.join(
+  cwd,
+  "apps/server/dist/bin/openwork-server",
+);
+const opencodeRouterBin = path.join(
+  cwd,
+  "apps/opencode-router/dist/bin/opencode-router",
+);
 
 const ensureOpenworkServer = async () => {
   try {
     await access(openworkServerBin);
   } catch {
     if (!autoBuildEnabled) {
-      logLine(`[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`);
-      logLine("[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)");
-      logLine("[dev:headless-web] Run: pnpm --filter @openwork/server build:bin");
-      logLine("[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.");
+      logLine(
+        `[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`,
+      );
+      logLine(
+        "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
+      );
+      logLine(
+        "[dev:headless-web] Run: pnpm --filter openwork-server build:bin",
+      );
+      logLine(
+        "[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
+      );
       process.exit(1);
     }
 
-    logLine(`[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`);
-    logLine("[dev:headless-web] Auto-building: pnpm --filter @openwork/server build:bin");
+    logLine(
+      `[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`,
+    );
+    logLine(
+      "[dev:headless-web] Auto-building: pnpm --filter openwork-server build:bin",
+    );
     try {
-      await runCommand("pnpm", ["--filter", "@openwork/server", "build:bin"]);
+      await runCommand("pnpm", ["--filter", "openwork-server", "build:bin"]);
       await access(openworkServerBin);
     } catch (error) {
-      logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
+      logLine(
+        `[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       process.exit(1);
     }
   }
@@ -137,20 +177,34 @@ const ensureOpencodeRouter = async () => {
     await access(opencodeRouterBin);
   } catch {
     if (!autoBuildEnabled) {
-      logLine(`[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`);
-      logLine("[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)");
-      logLine("[dev:headless-web] Run: pnpm --filter opencode-router build:bin");
-      logLine("[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.");
+      logLine(
+        `[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`,
+      );
+      logLine(
+        "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
+      );
+      logLine(
+        "[dev:headless-web] Run: pnpm --filter opencode-router build:bin",
+      );
+      logLine(
+        "[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
+      );
       process.exit(1);
     }
 
-    logLine(`[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`);
-    logLine("[dev:headless-web] Auto-building: pnpm --filter opencode-router build:bin");
+    logLine(
+      `[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`,
+    );
+    logLine(
+      "[dev:headless-web] Auto-building: pnpm --filter opencode-router build:bin",
+    );
     try {
       await runCommand("pnpm", ["--filter", "opencode-router", "build:bin"]);
       await access(opencodeRouterBin);
     } catch (error) {
-      logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
+      logLine(
+        `[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       process.exit(1);
     }
   }
@@ -160,10 +214,13 @@ const openworkUrl = `http://${clientHost}:${openworkPort}`;
 const webUrl = `http://${clientHost}:${webPort}`;
 // In practice we want opencode-router on for end-to-end messaging tests.
 // Allow opt-out via OPENWORK_DEV_OPENCODE_ROUTER=0.
-const opencodeRouterEnabled = process.env.OPENWORK_DEV_OPENCODE_ROUTER == null
-  ? true
-  : readBool(process.env.OPENWORK_DEV_OPENCODE_ROUTER);
-const opencodeRouterRequired = readBool(process.env.OPENWORK_DEV_OPENCODE_ROUTER_REQUIRED);
+const opencodeRouterEnabled =
+  process.env.OPENWORK_DEV_OPENCODE_ROUTER == null
+    ? true
+    : readBool(process.env.OPENWORK_DEV_OPENCODE_ROUTER);
+const opencodeRouterRequired = readBool(
+  process.env.OPENWORK_DEV_OPENCODE_ROUTER_REQUIRED,
+);
 const viteEnv = {
   ...process.env,
   HOST: viteHost,
@@ -200,8 +257,12 @@ logLine(
 );
 logLine(`[dev:headless-web] OPENWORK_TOKEN: ${openworkToken}`);
 logLine(`[dev:headless-web] OPENWORK_HOST_TOKEN: ${openworkHostToken}`);
-logLine(`[dev:headless-web] Web logs: ${path.relative(cwd, path.join(tmpDir, "dev-web.log"))}`);
-logLine(`[dev:headless-web] Headless logs: ${path.relative(cwd, path.join(tmpDir, "dev-headless.log"))}`);
+logLine(
+  `[dev:headless-web] Web logs: ${path.relative(cwd, path.join(tmpDir, "dev-web.log"))}`,
+);
+logLine(
+  `[dev:headless-web] Headless logs: ${path.relative(cwd, path.join(tmpDir, "dev-headless.log"))}`,
+);
 
 const webProcess = spawnLogged(
   "pnpm",
@@ -263,4 +324,6 @@ process.on("SIGTERM", () => {
 });
 
 webProcess.on("exit", (code, signal) => shutdown("web", code, signal));
-headlessProcess.on("exit", (code, signal) => shutdown("orchestrator", code, signal));
+headlessProcess.on("exit", (code, signal) =>
+  shutdown("orchestrator", code, signal),
+);

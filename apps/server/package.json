@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/server",
+  "name": "openwork-server",
   "version": "0.11.171",
   "description": "Filesystem-backed API for OpenWork remote clients",
   "type": "module",

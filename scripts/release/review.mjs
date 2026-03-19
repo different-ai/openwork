@@ -18,11 +18,19 @@ const readCargoVersion = (path) => {
 
 const appPkg = readJson(resolve(root, "apps", "app", "package.json"));
 const desktopPkg = readJson(resolve(root, "apps", "desktop", "package.json"));
-const orchestratorPkg = readJson(resolve(root, "apps", "orchestrator", "package.json"));
+const orchestratorPkg = readJson(
+  resolve(root, "apps", "orchestrator", "package.json"),
+);
 const serverPkg = readJson(resolve(root, "apps", "server", "package.json"));
-const opencodeRouterPkg = readJson(resolve(root, "apps", "opencode-router", "package.json"));
-const tauriConfig = readJson(resolve(root, "apps", "desktop", "src-tauri", "tauri.conf.json"));
-const cargoVersion = readCargoVersion(resolve(root, "apps", "desktop", "src-tauri", "Cargo.toml"));
+const opencodeRouterPkg = readJson(
+  resolve(root, "apps", "opencode-router", "package.json"),
+);
+const tauriConfig = readJson(
+  resolve(root, "apps", "desktop", "src-tauri", "tauri.conf.json"),
+);
+const cargoVersion = readCargoVersion(
+  resolve(root, "apps", "desktop", "src-tauri", "Cargo.toml"),
+);
 
 const versions = {
   app: appPkg.version ?? null,
@@ -37,7 +45,8 @@ const versions = {
     orchestrator: orchestratorPkg.opencodeVersion ?? null,
   },
   opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
-  orchestratorOpenworkServerRange: orchestratorPkg.dependencies?.["@openwork/server"] ?? null,
+  orchestratorOpenworkServerRange:
+    orchestratorPkg.dependencies?.["openwork-server"] ?? null,
 };
 
 const checks = [];
@@ -58,7 +67,9 @@ addCheck(
 );
 addCheck(
   "App/openwork-orchestrator versions match",
-  versions.app && versions.orchestrator && versions.app === versions.orchestrator,
+  versions.app &&
+    versions.orchestrator &&
+    versions.app === versions.orchestrator,
   `${versions.app ?? "?"} vs ${versions.orchestrator ?? "?"}`,
 );
 addCheck(
@@ -68,7 +79,9 @@ addCheck(
 );
 addCheck(
   "App/opencode-router versions match",
-  versions.app && versions.opencodeRouter && versions.app === versions.opencodeRouter,
+  versions.app &&
+    versions.opencodeRouter &&
+    versions.app === versions.opencodeRouter,
   `${versions.app ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
 addCheck(
@@ -83,7 +96,9 @@ addCheck(
 );
 addCheck(
   "OpenCodeRouter version pinned in desktop",
-  versions.opencodeRouter && versions.opencodeRouterVersionPinned && versions.opencodeRouter === versions.opencodeRouterVersionPinned,
+  versions.opencodeRouter &&
+    versions.opencodeRouterVersionPinned &&
+    versions.opencodeRouter === versions.opencodeRouterVersionPinned,
   `${versions.opencodeRouterVersionPinned ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
 if (versions.opencode.desktop || versions.opencode.orchestrator) {
@@ -105,7 +120,9 @@ const openworkServerPinned = /^\d+\.\d+\.\d+/.test(openworkServerRange);
 if (!openworkServerRange) {
   addWarning("openwork-orchestrator is missing an openwork-server dependency.");
 } else if (!openworkServerPinned) {
-  addWarning(`openwork-orchestrator openwork-server dependency is not pinned (${openworkServerRange}).`);
+  addWarning(
+    `openwork-orchestrator openwork-server dependency is not pinned (${openworkServerRange}).`,
+  );
 } else {
   addCheck(
     "Openwork-server dependency matches server version",
@@ -114,7 +131,14 @@ if (!openworkServerRange) {
   );
 }
 
-const sidecarManifestPath = resolve(root, "apps", "orchestrator", "dist", "sidecars", "openwork-orchestrator-sidecars.json");
+const sidecarManifestPath = resolve(
+  root,
+  "apps",
+  "orchestrator",
+  "dist",
+  "sidecars",
+  "openwork-orchestrator-sidecars.json",
+);
 if (existsSync(sidecarManifestPath)) {
   const manifest = readJson(sidecarManifestPath);
   addCheck(
@@ -145,7 +169,9 @@ if (existsSync(sidecarManifestPath)) {
 }
 
 if (!process.env.SOURCE_DATE_EPOCH) {
-  addWarning("SOURCE_DATE_EPOCH is not set (sidecar manifests will include current time).");
+  addWarning(
+    "SOURCE_DATE_EPOCH is not set (sidecar manifests will include current time).",
+  );
 }
 
 const report = { ok, versions, checks, warnings };
