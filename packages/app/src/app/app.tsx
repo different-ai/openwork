@@ -290,6 +290,14 @@ type SettingsReturnTarget = {
   sessionId: string | null;
 };
 
+function issue1022H5Log(message: string, details?: unknown) {
+  if (details === undefined) {
+    console.log(`[issue-1022][h5] ${message}`);
+    return;
+  }
+  console.log(`[issue-1022][h5] ${message}`, details);
+}
+
 function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
@@ -3777,6 +3785,20 @@ export default function App() {
   });
 
   createEffect(() => {
+    const request = sharedSkillDestinationRequest();
+    if (!request) {
+      return;
+    }
+
+    issue1022H5Log("shared skill modal state updated", {
+      bundleName: request.bundle.name,
+      createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
+      createRemoteWorkspaceOpen: workspaceStore.createRemoteWorkspaceOpen(),
+      modalVisible: !workspaceStore.createWorkspaceOpen() && !workspaceStore.createRemoteWorkspaceOpen(),
+    });
+  });
+
+  createEffect(() => {
     if (!developerMode()) {
       setDevtoolsWorkspaceId(null);
       return;
@@ -4054,6 +4076,12 @@ export default function App() {
     if (!parsed) {
       return false;
     }
+    issue1022H5Log("queueSharedBundleDeepLink closing competing modals", {
+      rawUrl,
+      parsed,
+      createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
+      createRemoteWorkspaceOpen: workspaceStore.createRemoteWorkspaceOpen(),
+    });
     workspaceStore.setCreateWorkspaceOpen(false);
     workspaceStore.setCreateRemoteWorkspaceOpen(false);
     setDeepLinkRemoteWorkspaceDefaults(null);
