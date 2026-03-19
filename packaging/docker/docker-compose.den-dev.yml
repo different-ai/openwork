@@ -112,7 +112,6 @@ services:
     build:
       context: ../../
       dockerfile: packaging/docker/Dockerfile.den-web
-    command: ["sh", "-lc", "npm run build && npm run start"]
     depends_on:
       den:
         condition: service_healthy

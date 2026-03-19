@@ -7,20 +7,20 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
 COPY .npmrc /app/.npmrc
 COPY patches /app/patches
-COPY packages/utils/package.json /app/packages/utils/package.json
-COPY packages/den-db/package.json /app/packages/den-db/package.json
-COPY services/den-worker-proxy/package.json /app/services/den-worker-proxy/package.json
+COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
+COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
+COPY ee/apps/den-worker-proxy/package.json /app/ee/apps/den-worker-proxy/package.json
 
 RUN pnpm install --frozen-lockfile
 
-COPY packages/utils /app/packages/utils
-COPY packages/den-db /app/packages/den-db
-COPY services/den-worker-proxy /app/services/den-worker-proxy
+COPY ee/packages/utils /app/ee/packages/utils
+COPY ee/packages/den-db /app/ee/packages/den-db
+COPY ee/apps/den-worker-proxy /app/ee/apps/den-worker-proxy
 
-RUN pnpm --dir /app/packages/utils run build
-RUN pnpm --dir /app/packages/den-db run build
-RUN pnpm --dir /app/services/den-worker-proxy run build
+RUN pnpm --dir /app/ee/packages/utils run build
+RUN pnpm --dir /app/ee/packages/den-db run build
+RUN pnpm --dir /app/ee/apps/den-worker-proxy run build
 
 EXPOSE 8789
 
-CMD ["sh", "-lc", "node services/den-worker-proxy/dist/server.js"]
+CMD ["sh", "-lc", "node ee/apps/den-worker-proxy/dist/server.js"]
