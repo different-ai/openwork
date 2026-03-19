@@ -274,6 +274,7 @@ pub fn run() {
             api.prevent_close();
             hide_main_window(&app_handle);
         }
+        #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
             let urls = urls.into_iter().map(|url| url.to_string()).collect::<Vec<_>>();
             show_main_window(&app_handle);
