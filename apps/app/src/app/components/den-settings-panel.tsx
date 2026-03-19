@@ -13,6 +13,11 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../lib/den";
+import {
+  canConfigureDenBaseUrlOverride,
+  dispatchDenConfigUpdated,
+  readDenFeatureGate,
+} from "../lib/den-gate";
 import { isDesktopDeployment } from "../lib/openwork-deployment";
 import { usePlatform } from "../context/platform";
 
@@ -122,14 +127,15 @@ function formatSubscriptionStatus(status: string): string {
 
 export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
+  const initialGate = readDenFeatureGate(props.developerMode);
   const initial = readDenSettings();
-  const initialBaseUrl = props.developerMode ? initial.baseUrl || DEFAULT_DEN_BASE_URL : DEFAULT_DEN_BASE_URL;
+  const initialBaseUrl = initialGate.baseUrl ?? "";
 
   const [baseUrl, setBaseUrl] = createSignal(initialBaseUrl);
   const [baseUrlDraft, setBaseUrlDraft] = createSignal(initialBaseUrl);
   const [baseUrlError, setBaseUrlError] = createSignal<string | null>(null);
-  const [authToken, setAuthToken] = createSignal(initial.authToken?.trim() || "");
-  const [activeOrgId, setActiveOrgId] = createSignal(initial.activeOrgId?.trim() || "");
+  const [authToken, setAuthToken] = createSignal(initialGate.enabled ? initial.authToken?.trim() || "" : "");
+  const [activeOrgId, setActiveOrgId] = createSignal(initialGate.enabled ? initial.activeOrgId?.trim() || "" : "");
   const [authBusy, setAuthBusy] = createSignal(false);
   const [sessionBusy, setSessionBusy] = createSignal(false);
   const [orgsBusy, setOrgsBusy] = createSignal(false);
@@ -159,17 +165,21 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [billingError, setBillingError] = createSignal<string | null>(null);
 
   const activeOrg = createMemo(() => orgs().find((org) => org.id === activeOrgId()) ?? null);
+  const canEditBaseUrl = createMemo(() => canConfigureDenBaseUrlOverride(props.developerMode));
+  const isConfigured = createMemo(() => Boolean(baseUrl().trim()));
   const client = createMemo(() => createDenClient({ baseUrl: baseUrl(), token: authToken() }));
-  const isSignedIn = createMemo(() => Boolean(user() && authToken().trim()));
+  const isSignedIn = createMemo(() => isConfigured() && Boolean(user() && authToken().trim()));
   const billingSubscription = createMemo(() => billingSummary()?.subscription ?? null);
   const billingCheckoutUrl = createMemo(() => billingSummary()?.checkoutUrl ?? null);
   const summaryTone = createMemo(() => {
+    if (!isConfigured()) return "neutral" as const;
     if (authError() || workersError() || orgsError() || billingError()) return "error" as const;
     if (sessionBusy() || orgsBusy() || workersBusy() || billingBusy() || billingCheckoutBusy() || billingSubscriptionBusy()) return "warning" as const;
     if (isSignedIn()) return "ready" as const;
     return "neutral" as const;
   });
   const summaryLabel = createMemo(() => {
+    if (!isConfigured()) return canEditBaseUrl() ? "Cloud hidden" : "Unavailable";
     if (authError()) return "Needs attention";
     if (billingError()) return "Billing issue";
     if (sessionBusy()) return "Checking session";
@@ -178,26 +188,41 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   });
 
   createEffect(() => {
+    const nextBaseUrl = baseUrl().trim();
+    if (!nextBaseUrl) {
+      clearDenSession({ includeBaseUrls: true });
+      return;
+    }
+
     writeDenSettings({
-      baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
+      baseUrl: nextBaseUrl,
       authToken: authToken() || null,
       activeOrgId: activeOrgId() || null,
     });
   });
 
   createEffect(() => {
-    if (!props.developerMode) {
-      setBaseUrl(DEFAULT_DEN_BASE_URL);
-      setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
+    if (!canEditBaseUrl()) {
+      const nextBaseUrl = readDenFeatureGate(props.developerMode).baseUrl ?? "";
+      setBaseUrl(nextBaseUrl);
+      setBaseUrlDraft(nextBaseUrl);
       setBaseUrlError(null);
     }
   });
 
   const openControlPlane = () => {
+    if (!isConfigured()) {
+      setBaseUrlError("Set a Den control plane URL before opening Cloud in your browser.");
+      return;
+    }
     platform.openLink(resolveDenBaseUrls(baseUrl()).baseUrl);
   };
 
   const openBrowserAuth = (mode: "sign-in" | "sign-up") => {
+    if (!isConfigured()) {
+      setBaseUrlError("Set a Den control plane URL before starting Cloud auth.");
+      return;
+    }
     const target = new URL(resolveDenBaseUrls(baseUrl()).baseUrl);
     target.searchParams.set("mode", mode);
     if (isDesktopDeployment()) {
@@ -232,11 +257,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   };
 
   const clearSignedInState = (message?: string | null) => {
-    clearDenSession({ includeBaseUrls: !props.developerMode });
-    if (!props.developerMode) {
-      setBaseUrl(DEFAULT_DEN_BASE_URL);
-      setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
-    }
+    clearDenSession();
     setAuthToken("");
     setOpeningWorkerId(null);
     clearSessionState();
@@ -246,6 +267,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   };
 
   const applyBaseUrl = () => {
+    if (!canEditBaseUrl()) {
+      return;
+    }
+
     const normalized = normalizeDenBaseUrl(baseUrlDraft());
     if (!normalized) {
       setBaseUrlError("Enter a valid http:// or https:// Den control plane URL.");
@@ -263,6 +288,31 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
     clearSignedInState("Updated the Den control plane URL. Sign in again to continue.");
+    dispatchDenConfigUpdated({
+      source: "override",
+      baseUrl: resolved.baseUrl,
+      enabled: true,
+    });
+  };
+
+  const disableCloud = () => {
+    if (!canEditBaseUrl()) {
+      return;
+    }
+
+    setBaseUrl("");
+    setBaseUrlDraft("");
+    setAuthToken("");
+    setOpeningWorkerId(null);
+    clearSessionState();
+    setBaseUrlError(null);
+    setAuthError(null);
+    setStatusMessage("Cloud features disabled on this device.");
+    dispatchDenConfigUpdated({
+      source: "none",
+      baseUrl: null,
+      enabled: false,
+    });
   };
 
   const refreshOrgs = async (quiet = false) => {
@@ -391,6 +441,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     const currentBaseUrl = baseUrl();
     let cancelled = false;
 
+    if (!currentBaseUrl.trim()) {
+      setSessionBusy(false);
+      clearSessionState();
+      setAuthError(null);
+      return;
+    }
+
     if (!token) {
       setSessionBusy(false);
       clearSessionState();
@@ -453,10 +510,12 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     const handler = (event: Event) => {
       const customEvent = event as CustomEvent<{ status?: string; email?: string | null; message?: string | null }>;
       const nextSettings = readDenSettings();
-      setBaseUrl(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
-      setBaseUrlDraft(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
-      setAuthToken(nextSettings.authToken?.trim() || "");
-      setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
+      const nextGate = readDenFeatureGate(props.developerMode);
+      const nextBaseUrl = nextGate.baseUrl ?? nextSettings.baseUrl ?? "";
+      setBaseUrl(nextBaseUrl);
+      setBaseUrlDraft(nextBaseUrl);
+      setAuthToken(nextGate.enabled ? nextSettings.authToken?.trim() || "" : "");
+      setActiveOrgId(nextGate.enabled ? nextSettings.activeOrgId?.trim() || "" : "");
       if (customEvent.detail?.status === "success") {
         setAuthError(null);
         setStatusMessage(
@@ -534,17 +593,29 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <div class="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-sky-6/15 blur-2xl" />
         <div class="pointer-events-none absolute -bottom-10 left-4 h-24 w-24 rounded-full bg-cyan-6/15 blur-2xl" />
         <div class="relative space-y-4">
-          <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div class="space-y-2">
-              <div class="inline-flex items-center gap-2 rounded-full border border-sky-7/25 bg-sky-3/20 px-2.5 py-1 text-[11px] font-medium text-sky-11">
-                <Cloud size={12} />
-                OpenWork Den
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div class="space-y-2">
+                <div class="inline-flex items-center gap-2 rounded-full border border-sky-7/25 bg-sky-3/20 px-2.5 py-1 text-[11px] font-medium text-sky-11">
+                  <Cloud size={12} />
+                  OpenWork Den
+                </div>
+                <div>
+                  <div class="text-sm font-semibold text-gray-12">
+                    {isConfigured()
+                      ? "Sign in, pick an org, and open Den workers from Settings."
+                      : canEditBaseUrl()
+                        ? "Cloud stays hidden until you save a Den control plane URL."
+                        : "Cloud is unavailable in this build until a Den URL is configured."}
+                  </div>
+                  <div class="mt-1 max-w-[60ch] text-xs text-gray-10">
+                    {isConfigured()
+                      ? "Sign in to OpenWork Den to keep your tasks alive even when your computer sleeps."
+                      : canEditBaseUrl()
+                        ? "Developer mode lets you unlock Cloud locally by pointing OpenWork at a Den control plane."
+                        : "Set VITE_DEN_BASE_URL for this build to enable Cloud features for users."}
+                  </div>
+                </div>
               </div>
-              <div>
-                <div class="text-sm font-semibold text-gray-12">Sign in, pick an org, and open Den workers from Settings.</div>
-                <div class="mt-1 max-w-[60ch] text-xs text-gray-10">Sign in to OpenWork Den to keep your tasks alive even when your computer sleeps.</div>
-              </div>
-            </div>
             <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusBadgeClass(summaryTone())}`}>
               <span class={`h-2 w-2 rounded-full ${summaryTone() === "ready" ? "bg-green-9" : summaryTone() === "warning" ? "bg-amber-9" : summaryTone() === "error" ? "bg-red-9" : "bg-gray-8"}`} />
               {summaryLabel()}
@@ -552,7 +623,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           </div>
 
           <Show
-            when={props.developerMode}
+            when={canEditBaseUrl()}
             fallback={<></>}
           >
             <>
@@ -572,10 +643,17 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   <Button variant="secondary" class="h-9 px-3 text-xs" onClick={applyBaseUrl} disabled={authBusy() || sessionBusy()}>
                     Save URL
                   </Button>
-                  <Button variant="outline" class="h-9 px-3 text-xs" onClick={openControlPlane}>
-                    Open in browser
-                    <ArrowUpRight size={13} />
-                  </Button>
+                  <Show when={isConfigured()}>
+                    <>
+                      <Button variant="outline" class="h-9 px-3 text-xs" onClick={openControlPlane}>
+                        Open in browser
+                        <ArrowUpRight size={13} />
+                      </Button>
+                      <Button variant="outline" class="h-9 px-3 text-xs" onClick={disableCloud}>
+                        Hide Cloud
+                      </Button>
+                    </>
+                  </Show>
                 </div>
               </div>
 
@@ -590,7 +668,20 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         </div>
       </div>
 
-      <Show when={!isSignedIn()}>
+      <Show when={!isConfigured()}>
+        <div class="rounded-2xl border border-gray-7/60 bg-gray-2/30 p-5 space-y-3">
+          <div class="text-sm font-medium text-gray-12">
+            {canEditBaseUrl() ? "Unlock Cloud locally" : "Cloud is turned off"}
+          </div>
+          <div class="max-w-[60ch] text-sm text-gray-10">
+            {canEditBaseUrl()
+              ? "Save a Den control plane URL above to enable Cloud routes, auth, billing, and worker access on this device."
+              : "This build does not expose Cloud because no Den control plane URL was provided. In developer mode, you can add one locally."}
+          </div>
+        </div>
+      </Show>
+
+      <Show when={isConfigured() && !isSignedIn()}>
         <div class="rounded-2xl border border-gray-7/60 bg-gray-2/30 p-5 space-y-4">
           <div class="space-y-2">
             <div class="text-sm font-medium text-gray-12">Sign in to OpenWork Den</div>
@@ -616,7 +707,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         </div>
       </Show>
 
-      <Show when={isSignedIn()}>
+      <Show when={isConfigured() && isSignedIn()}>
         <div class="space-y-6">
           <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div class="rounded-2xl border border-gray-7/60 bg-gray-2/30 p-5 space-y-4">
