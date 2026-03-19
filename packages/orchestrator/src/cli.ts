@@ -258,6 +258,17 @@ type RouterState = {
   workspaces: RouterWorkspace[];
 };
 
+type OpenworkServerAuthState = {
+  version: number;
+  workspaceId: string;
+  workspacePath: string;
+  token: string;
+  hostToken: string;
+  ownerToken?: string;
+  port: number;
+  updatedAt: number;
+};
+
 type OpencodeStateLayout = {
   devMode: boolean;
   rootDir: string;
@@ -2110,6 +2121,10 @@ function routerStatePath(dataDir: string): string {
   return join(dataDir, "openwork-orchestrator-state.json");
 }
 
+function openworkAuthStatePath(dataDir: string, workspaceId: string): string {
+  return join(dataDir, "openwork-auth", `${workspaceId}.json`);
+}
+
 function nowMs(): number {
   return Date.now();
 }
@@ -2137,6 +2152,38 @@ async function loadRouterState(path: string): Promise<RouterState> {
 }
 
 async function saveRouterState(path: string, state: RouterState): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const payload = JSON.stringify(state, null, 2);
+  await writeFile(path, `${payload}\n`, "utf8");
+}
+
+async function loadOpenworkServerAuthState(path: string): Promise<OpenworkServerAuthState | null> {
+  try {
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw) as Partial<OpenworkServerAuthState>;
+    const token = typeof parsed.token === "string" ? parsed.token.trim() : "";
+    const hostToken = typeof parsed.hostToken === "string" ? parsed.hostToken.trim() : "";
+    const ownerToken = typeof parsed.ownerToken === "string" ? parsed.ownerToken.trim() : "";
+    const port = typeof parsed.port === "number" && Number.isFinite(parsed.port) && parsed.port > 0
+      ? parsed.port
+      : 0;
+    if (!token || !hostToken || !port) return null;
+    return {
+      version: typeof parsed.version === "number" ? parsed.version : 1,
+      workspaceId: typeof parsed.workspaceId === "string" ? parsed.workspaceId : "",
+      workspacePath: typeof parsed.workspacePath === "string" ? parsed.workspacePath : "",
+      token,
+      hostToken,
+      ...(ownerToken ? { ownerToken } : {}),
+      port,
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function saveOpenworkServerAuthState(path: string, state: OpenworkServerAuthState): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const payload = JSON.stringify(state, null, 2);
   await writeFile(path, `${payload}\n`, "utf8");
@@ -3773,6 +3820,24 @@ async function issueOpenworkOwnerToken(baseUrl: string, hostToken: string, label
   return token;
 }
 
+async function readOpenworkOwnerToken(baseUrl: string, token: string): Promise<string | null> {
+  const trimmed = token.trim();
+  if (!trimmed) return null;
+  try {
+    const payload = await fetchJson(`${baseUrl.replace(/\/$/, "")}/tokens`, {
+      headers: {
+        Authorization: `Bearer ${trimmed}`,
+      },
+    });
+    if (Array.isArray(payload?.items)) {
+      return trimmed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 function normalizeEvent(raw: unknown): { type: string } | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
@@ -5114,6 +5179,7 @@ async function runStart(args: ParsedArgs) {
 
   const workspace = readFlag(args.flags, "workspace") ?? process.env.OPENWORK_WORKSPACE ?? process.cwd();
   const resolvedWorkspace = await ensureWorkspace(workspace);
+  const workspaceId = workspaceIdForLocal(resolvedWorkspace);
   logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "openwork-orchestrator");
 
   const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "OPENWORK_SANDBOX");
@@ -5123,6 +5189,8 @@ async function runStart(args: ParsedArgs) {
   const sandboxPersistOverride =
     readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWORK_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
+  const openworkAuthPath = openworkAuthStatePath(dataDir, workspaceId);
+  const persistedOpenworkAuth = await loadOpenworkServerAuthState(openworkAuthPath);
   const devMode = resolveInternalDevMode(args.flags);
   const opencodeStateLayout = resolveOpencodeStateLayout({
     dataDir,
@@ -5133,14 +5201,14 @@ async function runStart(args: ParsedArgs) {
   await ensureOpencodeStateLayout(opencodeStateLayout);
   await ensureOpencodeManagedTools(opencodeConfigDir);
   const opencodeRouterDataDir =
-    sandboxMode === "none" ? join(dataDir, "opencode-router", workspaceIdForLocal(resolvedWorkspace)) : null;
+    sandboxMode === "none" ? join(dataDir, "opencode-router", workspaceId) : null;
   if (opencodeRouterDataDir) {
     await mkdir(opencodeRouterDataDir, { recursive: true });
   }
   const sandboxPersistDir = resolve(
     sandboxPersistOverride?.trim()
       ? sandboxPersistOverride.trim()
-      : join(dataDir, "sandbox", workspaceIdForLocal(resolvedWorkspace)),
+      : join(dataDir, "sandbox", workspaceId),
   );
   if (sandboxMode !== "none") {
     await mkdir(sandboxPersistDir, { recursive: true });
@@ -5189,7 +5257,7 @@ async function runStart(args: ParsedArgs) {
 
   const openworkHost = readFlag(args.flags, "openwork-host") ?? process.env.OPENWORK_HOST ?? "0.0.0.0";
   const openworkPort = await resolvePort(
-    readNumber(args.flags, "openwork-port", undefined, "OPENWORK_PORT"),
+    readNumber(args.flags, "openwork-port", persistedOpenworkAuth?.port, "OPENWORK_PORT"),
     "127.0.0.1",
   );
   // Always choose a free opencodeRouter health port by default (avoid conflicts with
@@ -5198,8 +5266,24 @@ async function runStart(args: ParsedArgs) {
     readNumber(args.flags, "opencode-router-health-port", undefined, "OPENCODE_ROUTER_HEALTH_PORT"),
     "127.0.0.1",
   );
-  const openworkToken = readFlag(args.flags, "openwork-token") ?? process.env.OPENWORK_TOKEN ?? randomUUID();
-  const openworkHostToken = readFlag(args.flags, "openwork-host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
+  const openworkToken =
+    readFlag(args.flags, "openwork-token") ?? process.env.OPENWORK_TOKEN ?? persistedOpenworkAuth?.token ?? randomUUID();
+  const openworkHostToken =
+    readFlag(args.flags, "openwork-host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? persistedOpenworkAuth?.hostToken ?? randomUUID();
+  let persistedOwnerToken = persistedOpenworkAuth?.ownerToken?.trim() || "";
+  const persistOpenworkAuth = async () => {
+    await saveOpenworkServerAuthState(openworkAuthPath, {
+      version: 1,
+      workspaceId,
+      workspacePath: resolvedWorkspace,
+      token: openworkToken,
+      hostToken: openworkHostToken,
+      ...(persistedOwnerToken ? { ownerToken: persistedOwnerToken } : {}),
+      port: openworkPort,
+      updatedAt: nowMs(),
+    });
+  };
+  await persistOpenworkAuth();
   const approvalMode =
     (readFlag(args.flags, "approval") as ApprovalMode | undefined) ??
     (process.env.OPENWORK_APPROVAL_MODE as ApprovalMode | undefined) ??
@@ -6057,7 +6141,11 @@ async function runStart(args: ParsedArgs) {
         // proved the server is running and proxying correctly.
         logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "openwork-server");
       }
-      openworkOwnerToken = await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork sandbox owner token");
+      openworkOwnerToken =
+        (await readOpenworkOwnerToken(openworkBaseUrl, persistedOwnerToken)) ??
+        (await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork sandbox owner token"));
+      persistedOwnerToken = openworkOwnerToken;
+      await persistOpenworkAuth();
       tui?.setConnectInfo({ ownerToken: openworkOwnerToken });
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
     } else {
@@ -6222,7 +6310,11 @@ async function runStart(args: ParsedArgs) {
         expectedOpencodeUsername: opencodeUsername,
         expectedOpencodePassword: opencodePassword,
       });
-      openworkOwnerToken = await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork owner token");
+      openworkOwnerToken =
+        (await readOpenworkOwnerToken(openworkBaseUrl, persistedOwnerToken)) ??
+        (await issueOpenworkOwnerToken(openworkBaseUrl, openworkHostToken, "OpenWork owner token"));
+      persistedOwnerToken = openworkOwnerToken;
+      await persistOpenworkAuth();
       tui?.setConnectInfo({ ownerToken: openworkOwnerToken });
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
 
