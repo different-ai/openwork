@@ -15,6 +15,7 @@
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test:router": "pnpm build && node scripts/router.mjs",
     "test:files": "pnpm build && node scripts/files-session.mjs",
+    "test:token-persistence": "pnpm build && pnpm --dir ../server build:bin && pnpm --dir ../opencode-router build:bin && node scripts/token-persistence.mjs",
     "prepublishOnly": "node -e \"console.error('openwork-orchestrator is published via packages/orchestrator/scripts/publish-npm.mjs (meta + platform packages)'); process.exit(1);\""
   },
   "files": [
