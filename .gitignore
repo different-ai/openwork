@@ -1,9 +1,15 @@
 node_modules/
 packages/*/node_modules/
+apps/*/node_modules/
+ee/apps/*/node_modules/
+ee/packages/*/node_modules/
 .next/
 out/
 dist/
 packages/*/dist/
+apps/*/dist/
+ee/apps/*/dist/
+ee/packages/*/dist/
 tmp/
 
 # Local git worktrees
@@ -12,6 +18,8 @@ _worktrees/
 # Tauri/Rust
 packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/sidecars/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/sidecars/
 
 # Env
 .env

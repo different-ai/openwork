@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-echo 'Sidecar missing. Install the binary or set the *_BIN_PATH env var.'
-exit 1
