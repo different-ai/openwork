@@ -6,7 +6,7 @@ import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
-import { forwardedDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
+import { nativeDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { isTauriRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
@@ -22,70 +22,95 @@ if (!root) {
 
 root.dataset.openworkDeployment = getOpenWorkDeployment();
 
+let deepLinkBridgeStarted = false;
+
+function issue1022BridgeLog(message: string, details?: unknown) {
+  if (details === undefined) {
+    console.log(`[issue-1022][bridge] ${message}`);
+    return;
+  }
+
+  console.log(`[issue-1022][bridge] ${message}`, details);
+}
+
 function startDeepLinkBridge() {
   if (typeof window === "undefined") {
     return;
   }
 
+  if (deepLinkBridgeStarted) {
+    issue1022BridgeLog("skipping duplicate bridge startup");
+    return;
+  }
+
+  deepLinkBridgeStarted = true;
+
   if (!isTauriRuntime()) {
+    issue1022BridgeLog("queueing browser location for web runtime", {
+      href: window.location.href,
+    });
     pushPendingDeepLinks(window, [window.location.href]);
     return;
   }
 
   void (async () => {
     try {
+      issue1022BridgeLog("starting tauri deep-link bridge");
       const [{ getCurrent, onOpenUrl }, { listen }] = await Promise.all([
         import("@tauri-apps/plugin-deep-link"),
         import("@tauri-apps/api/event"),
       ]);
 
-      const syncCurrentDeepLinks = async () => {
-        const urls = await getCurrent().catch(() => null);
-        if (Array.isArray(urls)) {
-          pushPendingDeepLinks(window, urls);
-        }
-      };
+      const startUrls = await getCurrent().catch((error) => {
+        issue1022BridgeLog("getCurrent failed", error instanceof Error ? error.message : String(error));
+        return null;
+      });
+      issue1022BridgeLog("getCurrent result", startUrls ?? null);
+      if (Array.isArray(startUrls)) {
+        pushPendingDeepLinks(window, startUrls);
+      }
 
-      await syncCurrentDeepLinks();
-      const unlistenOpenUrl = await onOpenUrl((urls) => {
-        console.log("[issue-1022][bridge] received plugin onOpenUrl", urls);
+      await listen<string[]>("deep-link://new-url", (event) => {
+        issue1022BridgeLog("observed raw plugin deep-link event", event.payload);
+      }).catch((error) => {
+        issue1022BridgeLog(
+          "failed to listen for raw plugin deeplink event",
+          error instanceof Error ? error.message : String(error),
+        );
+        return undefined;
+      });
+
+      await onOpenUrl((urls) => {
+        issue1022BridgeLog("received plugin onOpenUrl", urls);
         pushPendingDeepLinks(window, urls);
-      }).catch(() => undefined);
-      const unlistenForwarded = await listen<string[]>(
-        forwardedDeepLinkEvent,
+      }).catch((error) => {
+        issue1022BridgeLog(
+          "failed to register plugin onOpenUrl listener",
+          error instanceof Error ? error.message : String(error),
+        );
+        return undefined;
+      });
+
+      await listen<string[]>(
+        nativeDeepLinkEvent,
         (event) => {
           if (Array.isArray(event.payload)) {
-            console.log("[issue-1022][bridge] received forwarded native deeplinks", event.payload);
+            issue1022BridgeLog("received native deep-link event", event.payload);
             pushPendingDeepLinks(window, event.payload);
           }
         },
-      ).catch(() => undefined);
-      const handleWindowFocus = () => {
-        void syncCurrentDeepLinks().catch(() => undefined);
-      };
-      const handleVisibilityChange = () => {
-        if (document.visibilityState !== "visible") {
-          return;
-        }
-        void syncCurrentDeepLinks().catch(() => undefined);
-      };
-      const cleanup = () => {
-        if (typeof unlistenOpenUrl === "function") {
-          unlistenOpenUrl();
-        }
-        if (typeof unlistenForwarded === "function") {
-          unlistenForwarded();
-        }
-        window.removeEventListener("focus", handleWindowFocus);
-        document.removeEventListener("visibilitychange", handleVisibilityChange);
-        window.removeEventListener("pagehide", cleanup);
-      };
-
-      window.addEventListener("focus", handleWindowFocus);
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-      window.addEventListener("pagehide", cleanup, { once: true });
-    } catch {
-      // ignore
+      ).catch((error) => {
+        issue1022BridgeLog(
+          "failed to register native deep-link listener",
+          error instanceof Error ? error.message : String(error),
+        );
+        return undefined;
+      });
+    } catch (error) {
+      issue1022BridgeLog(
+        "failed to start tauri deep-link bridge",
+        error instanceof Error ? error.message : String(error),
+      );
     }
   })();
 }

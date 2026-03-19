@@ -1,5 +1,5 @@
 export const deepLinkBridgeEvent = "openwork:deep-link";
-export const forwardedDeepLinkEvent = "openwork:deep-link-argv";
+export const nativeDeepLinkEvent = "openwork:deep-link-native";
 
 export type DeepLinkBridgeDetail = {
   urls: string[];

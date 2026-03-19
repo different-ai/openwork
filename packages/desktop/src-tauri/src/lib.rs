@@ -60,7 +60,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
 
-const FORWARDED_DEEP_LINK_EVENT: &str = "openwork:deep-link-argv";
+const NATIVE_DEEP_LINK_EVENT: &str = "openwork:deep-link-native";
 
 #[cfg(target_os = "macos")]
 fn set_dev_app_name() {
@@ -101,17 +101,23 @@ fn forwarded_deep_links(args: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn emit_forwarded_deep_links(app_handle: &AppHandle, args: &[String]) {
-    let urls = forwarded_deep_links(args);
+fn emit_native_deep_links(app_handle: &AppHandle, source: &str, urls: Vec<String>) {
     if urls.is_empty() {
-        issue_1022_h1_log("single-instance args did not include a forwardable deeplink URL");
+        issue_1022_h1_log(&format!("native deeplink emit skipped for source={source}; no URLs"));
         return;
     }
 
-    issue_1022_h1_log(&format!("emitting forwarded deeplinks to JS urls={urls:?}"));
-    if let Err(error) = app_handle.emit(FORWARDED_DEEP_LINK_EVENT, urls) {
-        issue_1022_h1_log(&format!("failed to emit forwarded deeplinks to JS: {error}"));
+    issue_1022_h1_log(&format!(
+        "emitting native deeplinks to JS source={source} urls={urls:?}"
+    ));
+    if let Err(error) = app_handle.emit(NATIVE_DEEP_LINK_EVENT, urls) {
+        issue_1022_h1_log(&format!("failed to emit native deeplinks to JS: {error}"));
     }
+}
+
+fn emit_forwarded_deep_links(app_handle: &AppHandle, args: &[String]) {
+    let urls = forwarded_deep_links(args);
+    emit_native_deep_links(app_handle, "single-instance", urls);
 }
 
 fn show_main_window(app_handle: &AppHandle) {
@@ -283,6 +289,12 @@ pub fn run() {
         } if label == "main" => {
             api.prevent_close();
             hide_main_window(&app_handle);
+        }
+        RunEvent::Opened { urls } => {
+            let urls = urls.into_iter().map(|url| url.to_string()).collect::<Vec<_>>();
+            issue_1022_h1_log(&format!("RunEvent::Opened received urls={urls:?}"));
+            show_main_window(&app_handle);
+            emit_native_deep_links(&app_handle, "opened", urls);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen {

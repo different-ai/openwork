@@ -3687,7 +3687,16 @@ export default function App() {
   };
 
   const processSharedBundleInvite = async (request: SharedBundleDeepLink) => {
+    console.log("[issue-1022][bridge] processSharedBundleInvite start", {
+      bundleUrl: request.bundleUrl,
+      intent: request.intent,
+      label: request.label,
+    });
     const bundle = await fetchSharedBundle(request.bundleUrl);
+    console.log("[issue-1022][bridge] fetched shared bundle", {
+      bundleType: bundle.type,
+      bundleName: bundle.name,
+    });
 
     if (bundle.type === "skill") {
       setView("dashboard");
@@ -3756,7 +3765,14 @@ export default function App() {
       return;
     }
 
+    console.log("[issue-1022][bridge] pending shared bundle invite effect triggered", {
+      bundleUrl: request.bundleUrl,
+      intent: request.intent,
+      label: request.label,
+    });
+
     if (sharedBundleImportBusy()) {
+      console.log("[issue-1022][bridge] pending invite paused because import is already busy");
       return;
     }
 
@@ -4079,6 +4095,12 @@ export default function App() {
     if (!parsed) {
       return false;
     }
+    console.log("[issue-1022][bridge] queueing shared bundle deeplink", {
+      rawUrl,
+      bundleUrl: parsed.bundleUrl,
+      intent: parsed.intent,
+      label: parsed.label,
+    });
     setPendingSharedBundleInvite(parsed);
     setSharedSkillDestinationRequest(null);
     setSharedSkillDestinationBusyId(null);
@@ -4115,6 +4137,8 @@ export default function App() {
       return;
     }
 
+    console.log("[issue-1022][bridge] consumeDeepLinks received urls", normalized);
+
     const now = Date.now();
     for (const [url, seenAt] of recentClaimedDeepLinks) {
       if (now - seenAt > 1500) {
@@ -4125,6 +4149,10 @@ export default function App() {
     for (const url of normalized) {
       const seenAt = recentClaimedDeepLinks.get(url) ?? 0;
       if (now - seenAt < 1500) {
+        console.log("[issue-1022][bridge] skipping recently claimed deeplink", {
+          url,
+          ageMs: now - seenAt,
+        });
         continue;
       }
 
