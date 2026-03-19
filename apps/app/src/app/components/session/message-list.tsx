@@ -9,19 +9,26 @@ import {
 import type { JSX } from "solid-js";
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import {
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Copy,
-  Eye,
   File,
-  FileEdit,
   FolderSearch,
-  Pencil,
+  Globe,
+  List,
+  ListTodo,
+  MessageCircleQuestion,
+  PenLine,
   Search,
-  Sparkles,
+  SquareCheck,
+  SquarePen,
   Terminal,
+  Wrench,
+  Workflow,
+  Zap,
 } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
@@ -197,28 +204,44 @@ function explorationStatus(parts: Part[]) {
   return pending ? "exploring" : "explored";
 }
 
-/** Icon for a given tool category */
-function ToolIcon(props: { category: string; size?: number }) {
+/** Icon for a given tool */
+function ToolIcon(props: { tool?: string; size?: number }) {
   const s = () => props.size ?? 12;
-  switch (props.category) {
-    case "read":
-      return <Eye size={s()} />;
-    case "edit":
-      return <Pencil size={s()} />;
-    case "write":
-      return <FileEdit size={s()} />;
-    case "search":
-      return <Search size={s()} />;
-    case "terminal":
+  switch ((props.tool ?? "").toLowerCase()) {
+    case "bash":
       return <Terminal size={s()} />;
+    case "read":
+      return <BookOpen size={s()} />;
+    case "list":
+    case "list_files":
+      return <List size={s()} />;
     case "glob":
       return <FolderSearch size={s()} />;
+    case "grep":
+    case "search":
+      return <Search size={s()} />;
     case "task":
-      return <Sparkles size={s()} />;
+      return <Workflow size={s()} />;
+    case "todowrite":
+      return <SquareCheck size={s()} />;
+    case "todoread":
+      return <ListTodo size={s()} />;
+    case "edit":
+      return <SquarePen size={s()} />;
+    case "write":
+      return <PenLine size={s()} />;
+    case "apply_patch":
+      return <Wrench size={s()} />;
+    case "webfetch":
+      return <Globe size={s()} />;
     case "skill":
-      return <Sparkles size={s()} />;
+      return <Zap size={s()} />;
+    case "question":
+      return <MessageCircleQuestion size={s()} />;
+    case "reasoning":
+      return <Zap size={s()} />;
     default:
-      return <File size={s()} />;
+      return <Zap size={s()} />;
   }
 }
 
@@ -1053,6 +1076,12 @@ export default function MessageList(props: MessageListProps) {
   }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
     const task = createMemo(() => getTaskStepInfo(rowProps.part));
+    const toolName = createMemo(() => {
+      if (rowProps.part.type !== "tool") return "reasoning";
+      return typeof (rowProps.part as any).tool === "string"
+        ? String((rowProps.part as any).tool)
+        : "tool";
+    });
     const disclosureId = createMemo(() => getStepDisclosureId(rowProps.part));
     const body = createMemo(() => getStepBody(rowProps.part));
     const hasDisclosure = createMemo(() => {
@@ -1065,11 +1094,7 @@ export default function MessageList(props: MessageListProps) {
     });
     const label = createMemo(() => {
       if (rowProps.part.type !== "tool") return summary().title?.trim() || "Thinking";
-      const toolName =
-        typeof (rowProps.part as any).tool === "string"
-          ? String((rowProps.part as any).tool)
-          : "tool";
-      return formatToolLabel(toolName);
+      return formatToolLabel(toolName());
     });
     const headline = createMemo(() => {
       if (rowProps.part.type === "reasoning") {
@@ -1096,8 +1121,12 @@ export default function MessageList(props: MessageListProps) {
             fallback={
               <div class="flex min-w-0 items-start gap-2.5">
                 <div class="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2.5">
-                  <span class="mt-0.5 inline-flex w-fit shrink-0 items-center rounded-md border border-gray-5/70 bg-gray-3 px-1.5 py-0.5 font-mono text-[11px] leading-none text-gray-11">
-                    {label()}
+                  <span
+                    class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11"
+                    title={label()}
+                    aria-label={label()}
+                  >
+                    <ToolIcon tool={toolName()} size={13} />
                   </span>
                   <span class={`block min-w-0 break-words text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
                     {displayHeadline()}
@@ -1114,8 +1143,12 @@ export default function MessageList(props: MessageListProps) {
               aria-label={open() ? `Collapse ${label()} details` : `Expand ${label()} details`}
             >
               <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-2.5 sm:gap-y-1">
-                <span class="mt-0.5 inline-flex w-fit shrink-0 items-center rounded-md border border-gray-5/70 bg-gray-3 px-1.5 py-0.5 font-mono text-[11px] leading-none text-gray-11">
-                  {label()}
+                <span
+                  class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11"
+                  title={label()}
+                  aria-label={label()}
+                >
+                  <ToolIcon tool={toolName()} size={13} />
                 </span>
                 <span class={`block min-w-0 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
                   <span class="break-words [overflow-wrap:anywhere]">{displayHeadline()}</span>
