@@ -570,6 +570,36 @@ function hasExpandableStepBody(part: Part): boolean {
   return body.fields.length > 0 || body.blocks.length > 0 || body.todos.length > 0;
 }
 
+function serializeStepBody(body: StepBody): string {
+  const sections: string[] = [];
+
+  if (body.todos.length > 0) {
+    sections.push(
+      body.todos
+        .map((todo) =>
+          todo.status && todo.status !== "pending"
+            ? `- ${todo.content} (${todo.status})`
+            : `- ${todo.content}`,
+        )
+        .join("\n"),
+    );
+  }
+
+  if (body.fields.length > 0) {
+    sections.push(body.fields.map((field) => `${field.label}: ${field.value}`).join("\n"));
+  }
+
+  if (body.blocks.length > 0) {
+    sections.push(
+      body.blocks
+        .map((block) => (block.label ? `${block.label}:\n${block.value}` : block.value))
+        .join("\n\n"),
+    );
+  }
+
+  return sections.join("\n\n").trim();
+}
+
 function isErrorStep(part: Part): boolean {
   if (part.type !== "tool") return false;
   const state = (part as any).state ?? {};
@@ -625,6 +655,22 @@ export default function MessageList(props: MessageListProps) {
       // ignore
     }
   };
+
+  const CopyAction = (copyProps: { id: string; text: string; title: string }) => (
+    <button
+      class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
+      title={copyProps.title}
+      aria-label={copyProps.title}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleCopy(copyProps.text, copyProps.id);
+      }}
+    >
+      <Show when={copyingId() === copyProps.id} fallback={<Copy size={12} />}>
+        <Check size={12} class="text-green-10" />
+      </Show>
+    </button>
+  );
 
   const partToText = (part: Part) => {
     if (part.type === "text") {
@@ -1106,6 +1152,10 @@ export default function MessageList(props: MessageListProps) {
       if (!isErrorStep(rowProps.part)) return base;
       return base.startsWith("ERROR:") ? base : `ERROR: ${base || firstMeaningfulLine(trimBodyText((rowProps.part as any)?.state?.error)) || "Tool failed"}`;
     });
+    const summaryCopyText = createMemo(() => displayHeadline().trim());
+    const fullResponseCopyText = createMemo(() => serializeStepBody(body()));
+    const summaryCopyId = createMemo(() => `step-summary:${disclosureId() || toolName()}:${displayHeadline()}`);
+    const fullResponseCopyId = createMemo(() => `step-body:${disclosureId() || toolName()}`);
     const toggleDisclosure = () => {
       const id = disclosureId();
       if (!id || !hasDisclosure()) return;
@@ -1113,7 +1163,7 @@ export default function MessageList(props: MessageListProps) {
     };
 
     return (
-      <div class="flex items-start gap-3 text-[14px] text-gray-9">
+      <div class="group/step flex items-start gap-3 text-[14px] text-gray-9">
         <div class="min-w-0 flex-1 leading-relaxed">
           <Show
             when={hasDisclosure()}
@@ -1131,36 +1181,53 @@ export default function MessageList(props: MessageListProps) {
                     {displayHeadline()}
                   </span>
                 </div>
+                <Show when={summaryCopyText()}>
+                  <div class="flex shrink-0 self-center opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover/step:opacity-100 md:group-hover/step:pointer-events-auto md:group-focus-within/step:opacity-100 md:group-focus-within/step:pointer-events-auto transition-opacity select-none">
+                    <CopyAction id={summaryCopyId()} text={summaryCopyText()} title="Copy summary" />
+                  </div>
+                </Show>
               </div>
             }
           >
-            <button
-              type="button"
-              class="group flex w-full min-w-0 items-start gap-2.5 text-left sm:items-center"
-              onClick={toggleDisclosure}
-              aria-expanded={open()}
-              aria-label={open() ? `Collapse ${label()} details` : `Expand ${label()} details`}
-            >
-              <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-2.5 sm:gap-y-1">
-                <span
-                  class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
-                  title={label()}
-                  aria-label={label()}
-                >
-                  <ToolIcon tool={toolName()} class="h-2.5 w-2.5 sm:h-3 sm:w-3" />
-                </span>
-                <span class={`inline-flex min-w-0 items-center gap-1 leading-5 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
-                  <span class="min-w-0 break-words [overflow-wrap:anywhere]">{displayHeadline()}</span>
-                  <span class="inline-flex shrink-0 self-center text-gray-7 transition-colors group-hover:text-gray-10" aria-hidden="true">
-                    <ChevronRight size={14} class={`transition-transform duration-200 ${open() ? "rotate-90" : ""}`} />
+            <div class="flex min-w-0 items-start gap-2.5 sm:items-center">
+              <button
+                type="button"
+                class="group flex min-w-0 flex-1 items-start gap-2.5 text-left sm:items-center"
+                onClick={toggleDisclosure}
+                aria-expanded={open()}
+                aria-label={open() ? `Collapse ${label()} details` : `Expand ${label()} details`}
+              >
+                <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-2.5 sm:gap-y-1">
+                  <span
+                    class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
+                    title={label()}
+                    aria-label={label()}
+                  >
+                    <ToolIcon tool={toolName()} class="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                   </span>
-                </span>
-              </div>
-            </button>
+                  <span class={`inline-flex min-w-0 items-center gap-1 leading-5 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
+                    <span class="min-w-0 break-words [overflow-wrap:anywhere]">{displayHeadline()}</span>
+                    <span class="inline-flex shrink-0 self-center text-gray-7 transition-colors group-hover:text-gray-10" aria-hidden="true">
+                      <ChevronRight size={14} class={`transition-transform duration-200 ${open() ? "rotate-90" : ""}`} />
+                    </span>
+                  </span>
+                </div>
+              </button>
+              <Show when={summaryCopyText()}>
+                <div class="flex shrink-0 self-center opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover/step:opacity-100 md:group-hover/step:pointer-events-auto md:group-focus-within/step:opacity-100 md:group-focus-within/step:pointer-events-auto transition-opacity select-none">
+                  <CopyAction id={summaryCopyId()} text={summaryCopyText()} title="Copy summary" />
+                </div>
+              </Show>
+            </div>
           </Show>
           <Show when={open() && (body().fields.length > 0 || body().blocks.length > 0 || body().todos.length > 0)}>
             <div class="min-w-0 pt-2 sm:pl-[18px]">
               <div class="grid min-w-0 w-full gap-2 overflow-hidden rounded-[18px] border border-gray-6/60 bg-gray-2/40 px-3 py-3">
+                <Show when={fullResponseCopyText()}>
+                  <div class="flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover/step:opacity-100 md:group-hover/step:pointer-events-auto md:group-focus-within/step:opacity-100 md:group-focus-within/step:pointer-events-auto transition-opacity select-none">
+                    <CopyAction id={fullResponseCopyId()} text={fullResponseCopyText()} title="Copy full response" />
+                  </div>
+                </Show>
                 <Show when={body().todos.length > 0}>
                   <div class="grid gap-1.5 text-[12px] text-gray-10">
                     <For each={body().todos}>
