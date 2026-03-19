@@ -1,13 +1,19 @@
 use gethostname::gethostname;
 use local_ip_address::local_ip;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
+use tauri::Manager;
 use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
 use crate::types::OpenworkServerInfo;
+use crate::utils::now_ms;
 use crate::utils::truncate_output;
 
 pub mod manager;
@@ -18,6 +24,121 @@ use spawn::{resolve_openwork_port, spawn_openwork_server};
 
 fn generate_token() -> String {
     Uuid::new_v4().to_string()
+}
+
+const OPENWORK_SERVER_TOKEN_STORE_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedOpenworkServerTokens {
+    client_token: String,
+    host_token: String,
+    owner_token: Option<String>,
+    updated_at: u64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct PersistedOpenworkServerTokenStore {
+    version: u32,
+    workspaces: HashMap<String, PersistedOpenworkServerTokens>,
+}
+
+fn openwork_server_token_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    Ok(data_dir.join("openwork-server-tokens.json"))
+}
+
+fn load_openwork_server_token_store(
+    path: &Path,
+) -> Result<PersistedOpenworkServerTokenStore, String> {
+    if !path.exists() {
+        return Ok(PersistedOpenworkServerTokenStore {
+            version: OPENWORK_SERVER_TOKEN_STORE_VERSION,
+            workspaces: HashMap::new(),
+        });
+    }
+
+    let raw =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let mut store: PersistedOpenworkServerTokenStore = serde_json::from_str(&raw)
+        .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+    if store.version < OPENWORK_SERVER_TOKEN_STORE_VERSION {
+        store.version = OPENWORK_SERVER_TOKEN_STORE_VERSION;
+    }
+    Ok(store)
+}
+
+fn save_openwork_server_token_store(
+    path: &Path,
+    store: &PersistedOpenworkServerTokenStore,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(
+        path,
+        serde_json::to_string_pretty(store).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn load_or_create_workspace_tokens(
+    app: &AppHandle,
+    workspace_key: &str,
+) -> Result<PersistedOpenworkServerTokens, String> {
+    let path = openwork_server_token_store_path(app)?;
+    load_or_create_workspace_tokens_at_path(&path, workspace_key)
+}
+
+fn load_or_create_workspace_tokens_at_path(
+    path: &Path,
+    workspace_key: &str,
+) -> Result<PersistedOpenworkServerTokens, String> {
+    let mut store = load_openwork_server_token_store(&path)?;
+    if let Some(tokens) = store.workspaces.get(workspace_key) {
+        return Ok(tokens.clone());
+    }
+
+    // Keep the desktop-hosted share codes stable for the same workspace across
+    // full app restarts so reconnecting clients do not need a fresh invite.
+    let tokens = PersistedOpenworkServerTokens {
+        client_token: generate_token(),
+        host_token: generate_token(),
+        owner_token: None,
+        updated_at: now_ms(),
+    };
+    store
+        .workspaces
+        .insert(workspace_key.to_string(), tokens.clone());
+    save_openwork_server_token_store(&path, &store)?;
+    Ok(tokens)
+}
+
+fn persist_workspace_owner_token(
+    app: &AppHandle,
+    workspace_key: &str,
+    owner_token: &str,
+) -> Result<(), String> {
+    let path = openwork_server_token_store_path(app)?;
+    persist_workspace_owner_token_at_path(&path, workspace_key, owner_token)
+}
+
+fn persist_workspace_owner_token_at_path(
+    path: &Path,
+    workspace_key: &str,
+    owner_token: &str,
+) -> Result<(), String> {
+    let mut store = load_openwork_server_token_store(&path)?;
+    let Some(tokens) = store.workspaces.get_mut(workspace_key) else {
+        return Ok(());
+    };
+    tokens.owner_token = Some(owner_token.to_string());
+    tokens.updated_at = now_ms();
+    save_openwork_server_token_store(&path, &store)
 }
 
 fn wait_for_openwork_health(base_url: &str, timeout: Duration) -> Result<(), String> {
@@ -99,12 +220,13 @@ pub fn start_openwork_server(
 
     let host = "0.0.0.0".to_string();
     let port = resolve_openwork_port()?;
-    let client_token = generate_token();
-    let host_token = generate_token();
     let active_workspace = workspace_paths
         .first()
         .map(|path| path.as_str())
         .unwrap_or("");
+    let workspace_tokens = load_or_create_workspace_tokens(app, active_workspace)?;
+    let client_token = workspace_tokens.client_token.clone();
+    let host_token = workspace_tokens.host_token.clone();
 
     let (mut rx, child) = spawn_openwork_server(
         app,
@@ -138,9 +260,15 @@ pub fn start_openwork_server(
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
     state.client_token = Some(client_token);
-    state.owner_token = wait_for_openwork_health(&base_url, Duration::from_secs(10))
-        .ok()
-        .and_then(|_| issue_owner_token(&base_url, &host_token).ok());
+    state.owner_token = workspace_tokens.owner_token.clone();
+    if state.owner_token.is_none() {
+        state.owner_token = wait_for_openwork_health(&base_url, Duration::from_secs(10))
+            .ok()
+            .and_then(|_| issue_owner_token(&base_url, &host_token).ok());
+        if let Some(owner_token) = state.owner_token.as_deref() {
+            let _ = persist_workspace_owner_token(app, active_workspace, owner_token);
+        }
+    }
     state.host_token = Some(host_token);
     state.last_stdout = None;
     state.last_stderr = None;
@@ -189,4 +317,115 @@ pub fn start_openwork_server(
     });
 
     Ok(OpenworkServerManager::snapshot_locked(&mut state))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        generate_token, load_openwork_server_token_store, load_or_create_workspace_tokens_at_path,
+        persist_workspace_owner_token_at_path, save_openwork_server_token_store,
+        PersistedOpenworkServerTokenStore, PersistedOpenworkServerTokens,
+        OPENWORK_SERVER_TOKEN_STORE_VERSION,
+    };
+    use std::collections::HashMap;
+    use std::fs;
+
+    #[test]
+    fn round_trips_workspace_tokens() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openwork-server-token-store-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let path = temp_dir.join("openwork-server-tokens.json");
+
+        let mut workspaces = HashMap::new();
+        workspaces.insert(
+            "/tmp/workspace-a".to_string(),
+            PersistedOpenworkServerTokens {
+                client_token: "client-token".to_string(),
+                host_token: "host-token".to_string(),
+                owner_token: Some("owner-token".to_string()),
+                updated_at: 123,
+            },
+        );
+        let store = PersistedOpenworkServerTokenStore {
+            version: OPENWORK_SERVER_TOKEN_STORE_VERSION,
+            workspaces,
+        };
+
+        save_openwork_server_token_store(&path, &store).expect("save token store");
+        let loaded = load_openwork_server_token_store(&path).expect("load token store");
+
+        assert_eq!(loaded.version, OPENWORK_SERVER_TOKEN_STORE_VERSION);
+        assert_eq!(loaded.workspaces.len(), 1);
+        let tokens = loaded
+            .workspaces
+            .get("/tmp/workspace-a")
+            .expect("workspace tokens present");
+        assert_eq!(tokens.client_token, "client-token");
+        assert_eq!(tokens.host_token, "host-token");
+        assert_eq!(tokens.owner_token.as_deref(), Some("owner-token"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn legacy_unpersisted_tokens_change_between_starts() {
+        let first_client = generate_token();
+        let second_client = generate_token();
+        let first_owner = generate_token();
+        let second_owner = generate_token();
+
+        println!("before collaborator launch1={first_client}");
+        println!("before collaborator launch2={second_client}");
+        println!("before collaborator same={}", first_client == second_client);
+        println!("before owner launch1={first_owner}");
+        println!("before owner launch2={second_owner}");
+        println!("before owner same={}", first_owner == second_owner);
+
+        assert_ne!(first_client, second_client);
+        assert_ne!(first_owner, second_owner);
+    }
+
+    #[test]
+    fn reuses_tokens_for_the_same_workspace_after_restart() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openwork-server-token-store-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let path = temp_dir.join("openwork-server-tokens.json");
+
+        let first = load_or_create_workspace_tokens_at_path(&path, "/tmp/workspace-a")
+            .expect("create first token set");
+        persist_workspace_owner_token_at_path(&path, "/tmp/workspace-a", "owner-token")
+            .expect("persist owner token");
+        let second = load_or_create_workspace_tokens_at_path(&path, "/tmp/workspace-a")
+            .expect("load second token set");
+
+        println!("after collaborator launch1={}", first.client_token);
+        println!("after collaborator launch2={}", second.client_token);
+        println!(
+            "after collaborator same={}",
+            first.client_token == second.client_token
+        );
+        println!("after owner launch1={}", "owner-token");
+        println!(
+            "after owner launch2={}",
+            second.owner_token.as_deref().unwrap_or("")
+        );
+        println!(
+            "after owner same={}",
+            second.owner_token.as_deref() == Some("owner-token")
+        );
+
+        assert_eq!(first.client_token, second.client_token);
+        assert_eq!(first.host_token, second.host_token);
+        assert_eq!(second.owner_token.as_deref(), Some("owner-token"));
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
