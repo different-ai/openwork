@@ -22,7 +22,7 @@ const timestamps = {
 export const OrgRole = ["owner", "member"] as const
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
-export const TokenScope = ["client", "host"] as const
+export const TokenScope = ["client", "host", "activity"] as const
 
 export const AuthUserTable = mysqlTable(
   "user",
@@ -166,12 +166,16 @@ export const WorkerTable = mysqlTable(
     image_version: varchar("image_version", { length: 128 }),
     workspace_path: varchar("workspace_path", { length: 1024 }),
     sandbox_backend: varchar("sandbox_backend", { length: 64 }),
+    last_heartbeat_at: timestamp("last_heartbeat_at", { fsp: 3 }),
+    last_active_at: timestamp("last_active_at", { fsp: 3 }),
     ...timestamps,
   },
   (table) => [
     index("worker_org_id").on(table.org_id),
     index("worker_created_by_user_id").on(table.created_by_user_id),
     index("worker_status").on(table.status),
+    index("worker_last_heartbeat_at").on(table.last_heartbeat_at),
+    index("worker_last_active_at").on(table.last_active_at),
   ],
 )
 

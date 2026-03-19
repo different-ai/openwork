@@ -16,6 +16,7 @@ export type ProvisionInput = {
   name: string;
   hostToken: string;
   clientToken: string;
+  activityToken: string;
 };
 
 export type ProvisionedInstance = {

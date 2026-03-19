@@ -20,6 +20,7 @@ const schema = z.object({
   CORS_ORIGINS: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
+  WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   OPENWORK_DAYTONA_ENV_PATH: z.string().optional(),
   RENDER_API_BASE: z.string().optional(),
   RENDER_API_KEY: z.string().optional(),
@@ -71,7 +72,6 @@ const schema = z.object({
   DAYTONA_SIDECAR_DIR: z.string().optional(),
   DAYTONA_OPENWORK_PORT: z.string().optional(),
   DAYTONA_OPENCODE_PORT: z.string().optional(),
-  DAYTONA_OPENWORK_VERSION: z.string().optional(),
   DAYTONA_CREATE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
@@ -161,6 +161,9 @@ export const env = {
   corsOrigins: corsOrigins ?? [],
   provisionerMode: parsed.PROVISIONER_MODE ?? "daytona",
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
+  workerActivityBaseUrl:
+    optionalString(parsed.WORKER_ACTIVITY_BASE_URL) ??
+    parsed.BETTER_AUTH_URL.trim().replace(/\/+$/, ""),
   render: {
     apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
     apiKey: parsed.RENDER_API_KEY,
@@ -242,7 +245,6 @@ export const env = {
       optionalString(parsed.DAYTONA_SIDECAR_DIR) ?? "/tmp/openwork-sidecars",
     openworkPort: Number(parsed.DAYTONA_OPENWORK_PORT ?? "8787"),
     opencodePort: Number(parsed.DAYTONA_OPENCODE_PORT ?? "4096"),
-    openworkVersion: optionalString(parsed.DAYTONA_OPENWORK_VERSION),
     createTimeoutSeconds: Number(parsed.DAYTONA_CREATE_TIMEOUT_SECONDS ?? "300"),
     deleteTimeoutSeconds: Number(parsed.DAYTONA_DELETE_TIMEOUT_SECONDS ?? "120"),
     healthcheckTimeoutMs: Number(

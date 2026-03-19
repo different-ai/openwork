@@ -1,0 +1,112 @@
+name: Release Daytona Snapshot
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build from (e.g., v0.11.200). Defaults to release tag/current ref."
+        required: false
+        type: string
+      snapshot_name:
+        description: "Optional explicit Daytona snapshot name"
+        required: false
+        type: string
+      snapshot_region:
+        description: "Optional Daytona region override for snapshot push"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-daytona-snapshot:
+    name: Build and Push Daytona Snapshot
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Resolve release tag and snapshot name
+        id: resolve
+        shell: bash
+        env:
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_SNAPSHOT_NAME: ${{ github.event.inputs.snapshot_name }}
+          INPUT_SNAPSHOT_REGION: ${{ github.event.inputs.snapshot_region }}
+          DEFAULT_SNAPSHOT_NAME: ${{ vars.DAYTONA_SNAPSHOT }}
+          SNAPSHOT_NAME_BASE: ${{ vars.DAYTONA_SNAPSHOT_NAME_BASE }}
+          DEFAULT_SNAPSHOT_REGION: ${{ vars.DAYTONA_SNAPSHOT_REGION }}
+        run: |
+          set -euo pipefail
+
+          tag="${INPUT_TAG:-}"
+          if [ -z "$tag" ]; then
+            tag="${EVENT_RELEASE_TAG:-${GITHUB_REF_NAME}}"
+          fi
+          if [[ "$tag" != v* ]]; then
+            tag="v${tag}"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          base_name="${SNAPSHOT_NAME_BASE:-openwork-runtime}"
+          if [ -n "${INPUT_SNAPSHOT_NAME:-}" ]; then
+            snapshot_name="${INPUT_SNAPSHOT_NAME}"
+          elif [ -n "${DEFAULT_SNAPSHOT_NAME:-}" ]; then
+            snapshot_name="${DEFAULT_SNAPSHOT_NAME}"
+          else
+            snapshot_name="${base_name}-${tag#v}"
+          fi
+          snapshot_region="${INPUT_SNAPSHOT_REGION:-${DEFAULT_SNAPSHOT_REGION:-}}"
+
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "snapshot_name=$snapshot_name" >> "$GITHUB_OUTPUT"
+          echo "snapshot_region=$snapshot_region" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.resolve.outputs.release_tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Daytona CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://download.daytona.io/daytona/install.sh | bash
+          if [ -x "$HOME/.daytona/bin/daytona" ]; then
+            echo "$HOME/.daytona/bin" >> "$GITHUB_PATH"
+          fi
+          if [ -x "$HOME/.local/bin/daytona" ]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+          daytona --version
+
+      - name: Build and push snapshot
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
+          DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
+          DAYTONA_SNAPSHOT_REGION: ${{ steps.resolve.outputs.snapshot_region }}
+          DAYTONA_SNAPSHOT_NAME: ${{ steps.resolve.outputs.snapshot_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DAYTONA_API_KEY:-}" ]; then
+            echo "Missing required secret: DAYTONA_API_KEY" >&2
+            exit 1
+          fi
+
+          echo "Publishing Daytona snapshot: ${DAYTONA_SNAPSHOT_NAME}"
+          ./scripts/create-daytona-openwork-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"

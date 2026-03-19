@@ -12,6 +12,7 @@ type ProvisionInput = {
   name: string
   hostToken: string
   clientToken: string
+  activityToken: string
 }
 
 type ProvisionedInstance = {
@@ -61,6 +62,11 @@ function workerProxyUrl(workerId: WorkerId) {
   return `${env.daytona.workerProxyBaseUrl.replace(/\/+$/, "")}/${encodeURIComponent(workerId)}`
 }
 
+function workerActivityHeartbeatUrl(workerId: WorkerId) {
+  const base = env.workerActivityBaseUrl.replace(/\/+$/, "")
+  return `${base}/v1/workers/${encodeURIComponent(workerId)}/activity-heartbeat`
+}
+
 function assertDaytonaConfig() {
   if (!env.daytona.apiKey) {
     throw new Error("DAYTONA_API_KEY is required for daytona provisioner")
@@ -93,12 +99,9 @@ function dataVolumeName(workerId: WorkerId) {
 }
 
 function buildOpenWorkStartCommand(input: ProvisionInput) {
-  const orchestratorPackage = env.daytona.openworkVersion?.trim()
-    ? `openwork-orchestrator@${env.daytona.openworkVersion.trim()}`
-    : "openwork-orchestrator"
-  const installStep = [
-    `if ! command -v openwork >/dev/null 2>&1; then npm install -g ${shellQuote(orchestratorPackage)}; fi`,
-    "if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from Daytona runtime; bake it into the snapshot image and expose it on PATH' >&2; exit 1; fi",
+  const verifyRuntimeStep = [
+    "if ! command -v openwork >/dev/null 2>&1; then echo 'openwork binary missing from Daytona runtime image; rebuild and republish the Daytona snapshot' >&2; exit 1; fi",
+    "if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from Daytona runtime image; rebuild and republish the Daytona snapshot' >&2; exit 1; fi",
   ].join("; ")
   const openworkServe = [
     "OPENWORK_DATA_DIR=",
@@ -109,6 +112,16 @@ function buildOpenWorkStartCommand(input: ProvisionInput) {
     shellQuote(input.clientToken),
     " OPENWORK_HOST_TOKEN=",
     shellQuote(input.hostToken),
+    " DEN_RUNTIME_PROVIDER=",
+    shellQuote("daytona"),
+    " DEN_WORKER_ID=",
+    shellQuote(input.workerId),
+    " DEN_ACTIVITY_HEARTBEAT_ENABLED=",
+    shellQuote("1"),
+    " DEN_ACTIVITY_HEARTBEAT_URL=",
+    shellQuote(workerActivityHeartbeatUrl(input.workerId)),
+    " DEN_ACTIVITY_HEARTBEAT_TOKEN=",
+    shellQuote(input.activityToken),
     " openwork serve",
     ` --workspace ${shellQuote(env.daytona.runtimeWorkspacePath)}`,
     ` --openwork-host 0.0.0.0`,
@@ -130,7 +143,7 @@ set -u
 mkdir -p ${shellQuote(env.daytona.workspaceMountPath)} ${shellQuote(env.daytona.dataMountPath)} ${shellQuote(env.daytona.runtimeWorkspacePath)} ${shellQuote(env.daytona.runtimeDataPath)} ${shellQuote(env.daytona.sidecarDir)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes`)}
 ln -sfn ${shellQuote(env.daytona.workspaceMountPath)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes/workspace`) }
 ln -sfn ${shellQuote(env.daytona.dataMountPath)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes/data`) }
-${installStep}
+${verifyRuntimeStep}
 attempt=0
 while [ "$attempt" -lt 3 ]; do
   attempt=$((attempt + 1))
@@ -346,6 +359,7 @@ export async function provisionWorkerOnDaytona(
             labels,
             envVars: {
               DEN_WORKER_ID: input.workerId,
+              DEN_RUNTIME_PROVIDER: "daytona",
             },
             volumes: [
               {
@@ -371,6 +385,7 @@ export async function provisionWorkerOnDaytona(
             labels,
             envVars: {
               DEN_WORKER_ID: input.workerId,
+              DEN_RUNTIME_PROVIDER: "daytona",
             },
             resources: {
               cpu: env.daytona.resources.cpu,

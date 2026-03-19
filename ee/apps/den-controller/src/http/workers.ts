@@ -34,6 +34,13 @@ const billingSubscriptionSchema = z.object({
   cancelAtPeriodEnd: z.boolean().default(true),
 })
 
+const activityHeartbeatSchema = z.object({
+  sentAt: z.string().datetime().optional(),
+  isActiveRecently: z.boolean(),
+  lastActivityAt: z.string().datetime().optional().nullable(),
+  openSessionCount: z.number().int().min(0).optional(),
+})
+
 const token = () => randomBytes(32).toString("hex")
 
 type WorkerRow = typeof WorkerTable.$inferSelect
@@ -144,6 +151,36 @@ function queryIncludesFlag(value: unknown): boolean {
   }
 
   return false
+}
+
+function readBearerToken(value: string | undefined) {
+  const trimmed = value?.trim() ?? ""
+  if (!trimmed.toLowerCase().startsWith("bearer ")) {
+    return null
+  }
+  const token = trimmed.slice(7).trim()
+  return token ? token : null
+}
+
+function parseHeartbeatTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return null
+  }
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return null
+  }
+  return parsed
+}
+
+function newerDate(current: Date | null | undefined, candidate: Date | null | undefined) {
+  if (!candidate) {
+    return current ?? null
+  }
+  if (!current) {
+    return candidate
+  }
+  return candidate.getTime() > current.getTime() ? candidate : current
 }
 
 async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: string | null, clientToken: string) {
@@ -323,18 +360,27 @@ function toWorkerResponse(row: WorkerRow, userId: string) {
     imageVersion: row.image_version,
     workspacePath: row.workspace_path,
     sandboxBackend: row.sandbox_backend,
+    lastHeartbeatAt: row.last_heartbeat_at,
+    lastActiveAt: row.last_active_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
 }
 
-async function continueCloudProvisioning(input: { workerId: WorkerId; name: string; hostToken: string; clientToken: string }) {
+async function continueCloudProvisioning(input: {
+  workerId: WorkerId
+  name: string
+  hostToken: string
+  clientToken: string
+  activityToken: string
+}) {
   try {
     const provisioned = await provisionWorker({
       workerId: input.workerId,
       name: input.name,
       hostToken: input.hostToken,
       clientToken: input.clientToken,
+      activityToken: input.activityToken,
     })
 
     await db
@@ -362,6 +408,87 @@ async function continueCloudProvisioning(input: { workerId: WorkerId; name: stri
 }
 
 export const workersRouter = express.Router()
+
+workersRouter.post("/:id/activity-heartbeat", asyncRoute(async (req, res) => {
+  let workerId: WorkerId
+  try {
+    workerId = parseWorkerIdParam(req.params.id)
+  } catch {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const parsed = activityHeartbeatSchema.safeParse(req.body ?? {})
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+    return
+  }
+
+  const authorization =
+    readBearerToken(req.header("authorization") ?? undefined) ??
+    (req.header("x-den-worker-heartbeat-token")?.trim() || null)
+
+  if (!authorization) {
+    res.status(401).json({ error: "unauthorized" })
+    return
+  }
+
+  const tokenRows = await db
+    .select({ id: WorkerTokenTable.id })
+    .from(WorkerTokenTable)
+    .where(
+      and(
+        eq(WorkerTokenTable.worker_id, workerId),
+        eq(WorkerTokenTable.scope, "activity"),
+        eq(WorkerTokenTable.token, authorization),
+        isNull(WorkerTokenTable.revoked_at),
+      ),
+    )
+    .limit(1)
+
+  if (tokenRows.length === 0) {
+    res.status(401).json({ error: "unauthorized" })
+    return
+  }
+
+  const workerRows = await db
+    .select()
+    .from(WorkerTable)
+    .where(eq(WorkerTable.id, workerId))
+    .limit(1)
+
+  const worker = workerRows[0]
+  if (!worker) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const heartbeatAt = parseHeartbeatTimestamp(parsed.data.sentAt) ?? new Date()
+  const requestedActivityAt = parseHeartbeatTimestamp(parsed.data.lastActivityAt ?? null)
+  const activityAt = parsed.data.isActiveRecently ? (requestedActivityAt ?? heartbeatAt) : null
+
+  const nextHeartbeatAt = newerDate(worker.last_heartbeat_at, heartbeatAt)
+  const nextActiveAt = parsed.data.isActiveRecently
+    ? newerDate(worker.last_active_at, activityAt)
+    : worker.last_active_at
+
+  await db
+    .update(WorkerTable)
+    .set({
+      last_heartbeat_at: nextHeartbeatAt,
+      last_active_at: nextActiveAt,
+    })
+    .where(eq(WorkerTable.id, workerId))
+
+  res.json({
+    ok: true,
+    workerId,
+    isActiveRecently: parsed.data.isActiveRecently,
+    openSessionCount: parsed.data.openSessionCount ?? null,
+    lastHeartbeatAt: nextHeartbeatAt,
+    lastActiveAt: nextActiveAt,
+  })
+}))
 
 workersRouter.get("/", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
@@ -454,6 +581,7 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
 
   const hostToken = token()
   const clientToken = token()
+  const activityToken = token()
   await db.insert(WorkerTokenTable).values([
     {
       id: createDenTypeId("workerToken"),
@@ -467,6 +595,12 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
       scope: "client",
       token: clientToken,
     },
+    {
+      id: createDenTypeId("workerToken"),
+      worker_id: workerId,
+      scope: "activity",
+      token: activityToken,
+    },
   ])
 
   if (parsed.data.destination === "cloud") {
@@ -475,6 +609,7 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
       name: parsed.data.name,
       hostToken,
       clientToken,
+      activityToken,
     })
   }
 
@@ -491,6 +626,8 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
         image_version: parsed.data.imageVersion ?? null,
         workspace_path: parsed.data.workspacePath ?? null,
         sandbox_backend: parsed.data.sandboxBackend ?? null,
+        last_heartbeat_at: null,
+        last_active_at: null,
         created_at: new Date(),
         updated_at: new Date(),
       },

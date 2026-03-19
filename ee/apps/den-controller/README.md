@@ -80,7 +80,6 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
   - `DAYTONA_WORKSPACE_MOUNT_PATH`, `DAYTONA_DATA_MOUNT_PATH` volume mount paths inside the sandbox
   - `DAYTONA_RUNTIME_WORKSPACE_PATH`, `DAYTONA_RUNTIME_DATA_PATH`, `DAYTONA_SIDECAR_DIR` local sandbox paths used for the live OpenWork runtime; the mounted Daytona volumes are linked into the runtime workspace under `volumes/`
   - `DAYTONA_OPENWORK_PORT`, `DAYTONA_OPENCODE_PORT` ports used when launching `openwork serve`
-  - `DAYTONA_OPENWORK_VERSION` optional npm version to install instead of latest `openwork-orchestrator`
   - `DAYTONA_CREATE_TIMEOUT_SECONDS`, `DAYTONA_DELETE_TIMEOUT_SECONDS`, `DAYTONA_HEALTHCHECK_TIMEOUT_MS`, `DAYTONA_POLL_INTERVAL_MS` provisioning timeouts
 
 For local Daytona development, place your Daytona API credentials in `/_repos/openwork/.env.daytona` and Den will pick them up automatically, including from task worktrees.
@@ -139,7 +138,16 @@ Then start Den in Daytona mode:
 DEN_PROVISIONER_MODE=daytona packaging/docker/den-dev-up.sh
 ```
 
-If you do not set `DAYTONA_SNAPSHOT`, Den falls back to `DAYTONA_SANDBOX_IMAGE` and installs runtime dependencies at sandbox startup.
+If you do not set `DAYTONA_SNAPSHOT`, Den falls back to `DAYTONA_SANDBOX_IMAGE`. That image must already include `openwork` and `opencode` on `PATH`.
+
+## Release automation for snapshots
+
+GitHub workflow `.github/workflows/release-daytona-snapshot.yml` builds and pushes a new Daytona snapshot whenever a GitHub release is published.
+
+- Trigger: `release.published` (or manual `workflow_dispatch`)
+- Snapshot naming: `DAYTONA_SNAPSHOT` repo variable if set, otherwise `openwork-runtime-<tag-without-v>`
+- Required secret: `DAYTONA_API_KEY`
+- Optional repo vars: `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT_REGION`, `DAYTONA_SNAPSHOT_NAME_BASE`
 
 ## Auth setup (Better Auth)
 
