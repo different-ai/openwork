@@ -1347,6 +1347,12 @@ export default function MessageList(props: MessageListProps) {
     }
 
     if (block.kind === "session-error") {
+      const [title, ...detailLines] = block.text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const detail = detailLines.join(" ");
+
       return (
         <div
           class="flex group justify-start"
@@ -1360,7 +1366,12 @@ export default function MessageList(props: MessageListProps) {
               role="alert"
             >
               <CircleAlert size={14} class="mt-0.5 shrink-0" />
-              <div class="min-w-0 break-words whitespace-pre-wrap">{block.text}</div>
+              <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span class="font-medium break-words">{title || block.text}</span>
+                <Show when={detail}>
+                  <span class="min-w-[16rem] flex-1 break-words">{detail}</span>
+                </Show>
+              </div>
             </div>
           </div>
         </div>
