@@ -30,10 +30,13 @@ import {
   type MessageGroup,
   type MessageWithParts,
   type StepGroupMode,
+  type TodoItem,
 } from "../../types";
 import {
+  formatToolLabel,
   groupMessageParts,
   isUserVisiblePart,
+  safeStringify,
   summarizeStep,
 } from "../../utils";
 import PartView from "../part-view";
@@ -402,6 +405,153 @@ function toolHeadline(part: Part) {
   }
 
   return "";
+}
+
+type StepBodyField = {
+  label: string;
+  value: string;
+};
+
+type StepBodyBlock = {
+  label?: string;
+  value: string;
+  tone?: "default" | "error";
+};
+
+type StepBody = {
+  fields: StepBodyField[];
+  blocks: StepBodyBlock[];
+  todos: TodoItem[];
+};
+
+function trimBodyText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\r\n/g, "\n").trim();
+}
+
+function firstMeaningfulLine(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) ?? "";
+}
+
+function getStepDisclosureId(part: Part): string {
+  const record = part as { id?: string | number; callID?: string | number; messageID?: string | number };
+  const raw = record.id ?? record.callID ?? record.messageID;
+  if (typeof raw === "string" && raw.trim()) return `step:${raw.trim()}`;
+  if (typeof raw === "number") return `step:${String(raw)}`;
+  return "";
+}
+
+function getStepBody(part: Part): StepBody {
+  if (part.type === "reasoning") {
+    const text = trimBodyText((part as { text?: string }).text);
+    if (!text) return { fields: [], blocks: [], todos: [] };
+    return { fields: [], blocks: [{ value: text }], todos: [] };
+  }
+
+  if (part.type !== "tool") {
+    return { fields: [], blocks: [], todos: [] };
+  }
+
+  const record = part as any;
+  const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
+  const state = record.state ?? {};
+  const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+  const fields: StepBodyField[] = [];
+  const blocks: StepBodyBlock[] = [];
+
+  const pick = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = input[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
+    }
+    return "";
+  };
+
+  const pushField = (label: string, value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    fields.push({ label, value: trimmed });
+  };
+
+  const error = trimBodyText(state.error);
+  const output = trimBodyText(state.output);
+  const command = pick("command", "cmd");
+
+  if (tool === "todowrite" || tool === "todoread") {
+    const todos = Array.isArray(input.todos)
+      ? input.todos.filter((item): item is TodoItem => {
+          if (!item || typeof item !== "object") return false;
+          const content = (item as { content?: unknown }).content;
+          return typeof content === "string" && content.trim().length > 0;
+        })
+      : [];
+    return { fields: [], blocks: [], todos };
+  }
+
+  if (tool === "bash") {
+    if (command) {
+      const content = output ? `$ ${command}\n${output}` : `$ ${command}`;
+      blocks.push({ value: content });
+    } else if (output) {
+      blocks.push({ value: output });
+    }
+    if (error && error !== output) {
+      blocks.push({ label: "Error", value: error, tone: "error" });
+    }
+    return { fields, blocks, todos: [] };
+  }
+
+  if (tool === "grep" || tool === "search") {
+    pushField("pattern", pick("pattern", "query"));
+    pushField("path", pick("path"));
+    pushField("include", pick("include"));
+  } else if (tool === "glob") {
+    pushField("pattern", pick("pattern"));
+    pushField("path", pick("path"));
+  } else if (tool === "read") {
+    pushField("file", pick("filePath", "path", "file"));
+    pushField("offset", pick("offset"));
+    pushField("limit", pick("limit"));
+  } else if (tool === "list" || tool === "list_files") {
+    pushField("path", pick("path"));
+  } else if (tool === "webfetch") {
+    pushField("url", pick("url"));
+    pushField("format", pick("format"));
+  } else if (tool === "edit" || tool === "write") {
+    pushField("file", pick("filePath", "path", "file"));
+  } else if (tool === "apply_patch") {
+    const patch = trimBodyText(input.patchText);
+    if (patch) blocks.push({ value: patch });
+  }
+
+  if (output) {
+    blocks.push({ value: output });
+  }
+
+  if (error && error !== output) {
+    blocks.push({ label: "Error", value: error, tone: "error" });
+  }
+
+  if (!fields.length && !blocks.length && Object.keys(input).length > 0) {
+    blocks.push({ label: "Input", value: safeStringify(input) });
+  }
+
+  return { fields, blocks, todos: [] };
+}
+
+function hasExpandableStepBody(part: Part): boolean {
+  const body = getStepBody(part);
+  return body.fields.length > 0 || body.blocks.length > 0 || body.todos.length > 0;
+}
+
+function isErrorStep(part: Part): boolean {
+  if (part.type !== "tool") return false;
+  const state = (part as any).state ?? {};
+  return state.status === "error" || trimBodyText(state.error).length > 0;
 }
 
 export default function MessageList(props: MessageListProps) {
@@ -902,36 +1052,133 @@ export default function MessageList(props: MessageListProps) {
     groupMode?: StepGroupMode;
   }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
-    const headline = createMemo(() => {
-      const fromTool = toolHeadline(rowProps.part);
-      if (fromTool) return fromTool;
-      const title = summary().title?.trim() ?? "";
-      const detail = summary().detail?.trim() ?? "";
-      if (title && detail && detail.toLowerCase() !== title.toLowerCase()) {
-        return `${title} - ${detail}`;
-      }
-      return detail || title || "Updates progress";
-    });
     const task = createMemo(() => getTaskStepInfo(rowProps.part));
-
-    if (rowProps.part.type === "reasoning") {
-      return (
-        <div class="flex items-start gap-3 text-[14px] text-gray-9">
-          <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
-          <div class="min-w-0 leading-relaxed">
-            <span>{headline()}</span>
-          </div>
-        </div>
-      );
-    }
+    const disclosureId = createMemo(() => getStepDisclosureId(rowProps.part));
+    const body = createMemo(() => getStepBody(rowProps.part));
+    const hasDisclosure = createMemo(() => {
+      if (task().isTask && task().sessionId) return true;
+      return hasExpandableStepBody(rowProps.part);
+    });
+    const open = createMemo(() => {
+      const id = disclosureId();
+      return Boolean(id) && hasDisclosure() && isStepsExpanded(id);
+    });
+    const label = createMemo(() => {
+      if (rowProps.part.type !== "tool") return summary().title?.trim() || "Thinking";
+      const toolName =
+        typeof (rowProps.part as any).tool === "string"
+          ? String((rowProps.part as any).tool)
+          : "tool";
+      return formatToolLabel(toolName);
+    });
+    const headline = createMemo(() => {
+      if (rowProps.part.type === "reasoning") {
+        return summary().detail?.trim() || summary().title?.trim() || "Thinking";
+      }
+      return summary().detail?.trim() || toolHeadline(rowProps.part) || summary().title?.trim() || "Updates progress";
+    });
+    const displayHeadline = createMemo(() => {
+      const base = headline();
+      if (!isErrorStep(rowProps.part)) return base;
+      return base.startsWith("ERROR:") ? base : `ERROR: ${base || firstMeaningfulLine(trimBodyText((rowProps.part as any)?.state?.error)) || "Tool failed"}`;
+    });
+    const toggleDisclosure = () => {
+      const id = disclosureId();
+      if (!id || !hasDisclosure()) return;
+      toggleSteps(id);
+    };
 
     return (
       <div class="flex items-start gap-3 text-[14px] text-gray-9">
-        <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
         <div class="min-w-0 flex-1 leading-relaxed">
-          <span>{headline()}</span>
-          <Show when={task().isTask && task().sessionId}>
-            <SubagentThread part={rowProps.part} />
+          <div class="flex min-w-0 items-start gap-2.5">
+            <span class="mt-0.5 inline-flex shrink-0 items-center rounded-md border border-gray-5/70 bg-gray-3 px-1.5 py-0.5 font-mono text-[11px] leading-none text-gray-11">
+              {label()}
+            </span>
+            <Show
+              when={hasDisclosure()}
+              fallback={<span class="mt-[2px] h-[14px] w-[14px] shrink-0" aria-hidden="true" />}
+            >
+              <button
+                type="button"
+                class="mt-[1px] shrink-0 rounded-sm p-0.5 text-gray-7 transition-colors hover:bg-gray-3 hover:text-gray-10"
+                onClick={toggleDisclosure}
+                aria-expanded={open()}
+                aria-label={open() ? `Collapse ${label()} details` : `Expand ${label()} details`}
+              >
+                <ChevronRight size={14} class={`transition-transform duration-200 ${open() ? "rotate-90" : ""}`} />
+              </button>
+            </Show>
+            <button
+              type="button"
+              class={`min-w-0 flex-1 text-left ${hasDisclosure() ? "cursor-pointer" : "cursor-default"}`}
+              onClick={() => {
+                if (hasDisclosure()) toggleDisclosure();
+              }}
+              aria-expanded={hasDisclosure() ? open() : undefined}
+            >
+              <span class={`block min-w-0 truncate text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
+                {displayHeadline()}
+              </span>
+            </button>
+          </div>
+          <Show when={open() && (body().fields.length > 0 || body().blocks.length > 0 || body().todos.length > 0)}>
+            <div class="pt-2 pl-[34px]">
+              <div class="grid gap-2 rounded-[18px] border border-gray-6/60 bg-gray-2/40 px-3 py-3">
+                <Show when={body().todos.length > 0}>
+                  <div class="grid gap-1.5 text-[12px] text-gray-10">
+                    <For each={body().todos}>
+                      {(todo) => (
+                        <div class="flex items-start gap-2">
+                          <span class="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-gray-8" />
+                          <span class="leading-5">
+                            {todo.content}
+                            <Show when={todo.status && todo.status !== "pending"}>
+                              <span class="text-gray-8"> {`(${todo.status})`}</span>
+                            </Show>
+                          </span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                <Show when={body().fields.length > 0}>
+                  <div class="grid gap-1.5 text-[12px] text-gray-10">
+                    <For each={body().fields}>
+                      {(field) => (
+                        <div class="flex flex-wrap items-start gap-x-2 gap-y-1">
+                          <span class="font-medium text-gray-11">{field.label}:</span>
+                          <span class="font-mono text-[11px] text-gray-10 break-all">{field.value}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                <Show when={body().blocks.length > 0}>
+                  <div class="grid gap-2">
+                    <For each={body().blocks}>
+                      {(block) => (
+                        <div>
+                          <Show when={block.label}>
+                            <div class="mb-1 text-[11px] font-medium text-gray-10">{block.label}</div>
+                          </Show>
+                          <pre
+                            class={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-[14px] px-3 py-2 text-[12px] leading-5 ${block.tone === "error" ? "bg-red-1/60 text-red-12" : "bg-gray-3 text-gray-11"}`}
+                          >
+                            {block.value}
+                          </pre>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </div>
+          </Show>
+          <Show when={task().isTask && task().sessionId && open()}>
+            <div class="pt-2 pl-[34px]">
+              <SubagentThread part={rowProps.part} />
+            </div>
           </Show>
         </div>
       </div>
