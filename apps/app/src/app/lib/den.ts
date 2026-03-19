@@ -78,6 +78,135 @@ export type DenWorkerTokens = {
   workspaceId: string | null;
 };
 
+export type DenWorkerLaunch = {
+  workerId: string;
+  workerName: string;
+  status: string;
+  provider: string | null;
+  instanceUrl: string | null;
+  openworkUrl: string | null;
+  workspaceId: string | null;
+  clientToken: string | null;
+  ownerToken: string | null;
+  hostToken: string | null;
+};
+
+export type DenRuntimeServiceName =
+  | "openwork-server"
+  | "opencode"
+  | "opencode-router";
+
+export type DenWorkerRuntimeService = {
+  name: DenRuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  targetVersion: string | null;
+  actualVersion: string | null;
+  upgradeAvailable: boolean;
+};
+
+export type DenWorkerRuntimeSnapshot = {
+  services: DenWorkerRuntimeService[];
+  upgrade: {
+    status: "idle" | "running" | "failed";
+    startedAt: string | null;
+    finishedAt: string | null;
+    error: string | null;
+  };
+};
+
+export type DenSocialProvider = "github" | "google";
+
+export type DenDesktopHandoffGrant = {
+  grant: string;
+  expiresAt: string | null;
+  openworkUrl: string | null;
+};
+
+export type DenWorkerCreateInput = {
+  name: string;
+  description?: string;
+  destination: "local" | "cloud";
+  workspacePath?: string;
+  sandboxBackend?: string;
+  imageVersion?: string;
+};
+
+export type DenWorkerCreateResult =
+  | {
+      kind: "success";
+      worker: DenWorkerLaunch;
+      launchMode: "async" | "instant";
+      pollAfterMs: number;
+    }
+  | {
+      kind: "paywall";
+      checkoutUrl: string | null;
+      productId: string | null;
+      benefitId: string | null;
+    };
+
+export type DenAdminBillingStatus = {
+  status: "paid" | "unpaid" | "unavailable";
+  featureGateEnabled: boolean;
+  subscriptionId: string | null;
+  subscriptionStatus: string | null;
+  currentPeriodEnd: string | null;
+  source: "benefit" | "subscription" | "unavailable";
+  note: string | null;
+};
+
+export type DenAdminEntry = {
+  email: string;
+  note: string | null;
+};
+
+export type DenAdminSummary = {
+  totalUsers: number;
+  verifiedUsers: number;
+  recentUsers7d: number;
+  recentUsers30d: number;
+  totalWorkers: number;
+  cloudWorkers: number;
+  localWorkers: number;
+  usersWithWorkers: number;
+  usersWithoutWorkers: number;
+  paidUsers: number | null;
+  unpaidUsers: number | null;
+  billingUnavailableUsers: number | null;
+  adminCount: number;
+  billingLoaded: boolean;
+};
+
+export type DenAdminUser = {
+  id: string;
+  name: string | null;
+  email: string;
+  emailVerified: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+  lastSeenAt: string | null;
+  sessionCount: number;
+  authProviders: string[];
+  workerCount: number;
+  cloudWorkerCount: number;
+  localWorkerCount: number;
+  latestWorkerCreatedAt: string | null;
+  billing: DenAdminBillingStatus | null;
+};
+
+export type DenAdminOverview = {
+  viewer: {
+    id: string;
+    email: string | null;
+    name: string | null;
+  };
+  admins: DenAdminEntry[];
+  summary: DenAdminSummary;
+  users: DenAdminUser[];
+  generatedAt: string | null;
+};
+
 export type DenBillingPrice = {
   amount: number | null;
   currency: string | null;
@@ -136,6 +265,7 @@ type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
   json: T | null;
+  headers: Headers;
 };
 
 export class DenApiError extends Error {
@@ -364,6 +494,13 @@ function getToken(payload: unknown): string | null {
   return payload.token.trim() || null;
 }
 
+function getCheckoutUrl(payload: unknown): string | null {
+  if (!isRecord(payload) || !isRecord(payload.polar)) {
+    return null;
+  }
+  return typeof payload.polar.checkoutUrl === "string" ? payload.polar.checkoutUrl : null;
+}
+
 function getOrgList(payload: unknown): DenOrgSummary[] {
   if (!isRecord(payload) || !Array.isArray(payload.orgs)) {
     return [];
@@ -430,6 +567,146 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
     openworkUrl: connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null,
     workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
   };
+}
+
+function getEffectiveWorkerStatus(
+  workerStatus: unknown,
+  instance: Record<string, unknown> | null,
+): string {
+  const normalizedWorkerStatus = typeof workerStatus === "string" ? workerStatus : "unknown";
+  const normalized = normalizedWorkerStatus.trim().toLowerCase();
+  const instanceStatus =
+    instance && typeof instance.status === "string"
+      ? instance.status.trim().toLowerCase()
+      : null;
+
+  if (!instanceStatus) {
+    return normalizedWorkerStatus;
+  }
+
+  if (normalized === "provisioning" || normalized === "starting") {
+    return instanceStatus;
+  }
+
+  return normalizedWorkerStatus;
+}
+
+function getWorker(payload: unknown): DenWorkerLaunch | null {
+  if (!isRecord(payload) || !isRecord(payload.worker)) {
+    return null;
+  }
+
+  const worker = payload.worker;
+  if (typeof worker.id !== "string" || typeof worker.name !== "string") {
+    return null;
+  }
+
+  const instance = isRecord(payload.instance) ? payload.instance : null;
+  const tokens = isRecord(payload.tokens) ? payload.tokens : null;
+
+  return {
+    workerId: worker.id,
+    workerName: worker.name,
+    status: getEffectiveWorkerStatus(worker.status, instance),
+    provider: instance && typeof instance.provider === "string" ? instance.provider : null,
+    instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    workspaceId: null,
+    clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
+    ownerToken: tokens && typeof tokens.owner === "string" ? tokens.owner : null,
+    hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null,
+  };
+}
+
+function getWorkerSummary(payload: unknown): DenWorkerSummary | null {
+  if (!isRecord(payload) || !isRecord(payload.worker)) {
+    return null;
+  }
+
+  const worker = payload.worker;
+  if (typeof worker.id !== "string" || typeof worker.name !== "string") {
+    return null;
+  }
+
+  const instance = isRecord(payload.instance) ? payload.instance : null;
+
+  return {
+    workerId: worker.id,
+    workerName: worker.name,
+    status: getEffectiveWorkerStatus(worker.status, instance),
+    instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    provider: instance && typeof instance.provider === "string" ? instance.provider : null,
+    isMine: worker.isMine === true,
+    createdAt: typeof worker.createdAt === "string" ? worker.createdAt : null,
+  };
+}
+
+function getWorkerRuntimeSnapshot(payload: unknown): DenWorkerRuntimeSnapshot | null {
+  if (!isRecord(payload) || !Array.isArray(payload.services)) {
+    return null;
+  }
+
+  const services = payload.services
+    .map((value) => {
+      if (!isRecord(value) || typeof value.name !== "string") {
+        return null;
+      }
+
+      const name = value.name;
+      if (
+        name !== "openwork-server" &&
+        name !== "opencode" &&
+        name !== "opencode-router"
+      ) {
+        return null;
+      }
+
+      return {
+        name,
+        enabled: value.enabled === true,
+        running: value.running === true,
+        targetVersion:
+          typeof value.targetVersion === "string" ? value.targetVersion : null,
+        actualVersion:
+          typeof value.actualVersion === "string" ? value.actualVersion : null,
+        upgradeAvailable: value.upgradeAvailable === true,
+      } satisfies DenWorkerRuntimeService;
+    })
+    .filter((item): item is DenWorkerRuntimeService => item !== null);
+
+  const upgrade = isRecord(payload.upgrade) ? payload.upgrade : null;
+
+  return {
+    services,
+    upgrade: {
+      status:
+        upgrade?.status === "running" ||
+        upgrade?.status === "failed" ||
+        upgrade?.status === "idle"
+          ? upgrade.status
+          : "idle",
+      startedAt:
+        typeof upgrade?.startedAt === "number"
+          ? new Date(upgrade.startedAt).toISOString()
+          : null,
+      finishedAt:
+        typeof upgrade?.finishedAt === "number"
+          ? new Date(upgrade.finishedAt).toISOString()
+          : null,
+      error: typeof upgrade?.error === "string" ? upgrade.error : null,
+    },
+  };
+}
+
+export function getRuntimeServiceLabel(name: DenRuntimeServiceName): string {
+  switch (name) {
+    case "openwork-server":
+      return "OpenWork server";
+    case "opencode":
+      return "OpenCode";
+    case "opencode-router":
+      return "OpenCode Router";
+  }
 }
 
 function getBillingPrice(value: unknown): DenBillingPrice | null {
@@ -511,6 +788,136 @@ function getBillingSummary(payload: unknown): DenBillingSummary | null {
   };
 }
 
+function toNumberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function toNullableNumberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseAdminBillingStatus(value: unknown): DenAdminBillingStatus | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const status =
+    value.status === "paid" ||
+    value.status === "unpaid" ||
+    value.status === "unavailable"
+      ? value.status
+      : "unavailable";
+  const source =
+    value.source === "benefit" ||
+    value.source === "subscription" ||
+    value.source === "unavailable"
+      ? value.source
+      : "unavailable";
+
+  return {
+    status,
+    featureGateEnabled: value.featureGateEnabled === true,
+    subscriptionId:
+      typeof value.subscriptionId === "string" ? value.subscriptionId : null,
+    subscriptionStatus:
+      typeof value.subscriptionStatus === "string"
+        ? value.subscriptionStatus
+        : null,
+    currentPeriodEnd:
+      typeof value.currentPeriodEnd === "string" ? value.currentPeriodEnd : null,
+    source,
+    note: typeof value.note === "string" ? value.note : null,
+  };
+}
+
+function getAdminOverview(payload: unknown): DenAdminOverview | null {
+  if (
+    !isRecord(payload) ||
+    !isRecord(payload.summary) ||
+    !Array.isArray(payload.users) ||
+    !Array.isArray(payload.admins)
+  ) {
+    return null;
+  }
+
+  const viewer = isRecord(payload.viewer) ? payload.viewer : {};
+  const summary = payload.summary;
+
+  const users: DenAdminUser[] = payload.users
+    .map((value) => {
+      if (!isRecord(value) || typeof value.id !== "string" || typeof value.email !== "string") {
+        return null;
+      }
+
+      const authProviders = Array.isArray(value.authProviders)
+        ? value.authProviders.filter(
+            (provider): provider is string => typeof provider === "string",
+          )
+        : [];
+
+      return {
+        id: value.id,
+        name: typeof value.name === "string" ? value.name : null,
+        email: value.email,
+        emailVerified: value.emailVerified === true,
+        createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+        updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+        lastSeenAt: typeof value.lastSeenAt === "string" ? value.lastSeenAt : null,
+        sessionCount: toNumberValue(value.sessionCount),
+        authProviders,
+        workerCount: toNumberValue(value.workerCount),
+        cloudWorkerCount: toNumberValue(value.cloudWorkerCount),
+        localWorkerCount: toNumberValue(value.localWorkerCount),
+        latestWorkerCreatedAt:
+          typeof value.latestWorkerCreatedAt === "string"
+            ? value.latestWorkerCreatedAt
+            : null,
+        billing: parseAdminBillingStatus(value.billing),
+      } satisfies DenAdminUser;
+    })
+    .filter((value): value is DenAdminUser => value !== null);
+
+  const admins: DenAdminEntry[] = payload.admins
+    .map((value) => {
+      if (!isRecord(value) || typeof value.email !== "string") {
+        return null;
+      }
+
+      return {
+        email: value.email,
+        note: typeof value.note === "string" ? value.note : null,
+      } satisfies DenAdminEntry;
+    })
+    .filter((value): value is DenAdminEntry => value !== null);
+
+  return {
+    viewer: {
+      id: typeof viewer.id === "string" ? viewer.id : "unknown",
+      email: typeof viewer.email === "string" ? viewer.email : null,
+      name: typeof viewer.name === "string" ? viewer.name : null,
+    },
+    admins,
+    summary: {
+      totalUsers: toNumberValue(summary.totalUsers),
+      verifiedUsers: toNumberValue(summary.verifiedUsers),
+      recentUsers7d: toNumberValue(summary.recentUsers7d),
+      recentUsers30d: toNumberValue(summary.recentUsers30d),
+      totalWorkers: toNumberValue(summary.totalWorkers),
+      cloudWorkers: toNumberValue(summary.cloudWorkers),
+      localWorkers: toNumberValue(summary.localWorkers),
+      usersWithWorkers: toNumberValue(summary.usersWithWorkers),
+      usersWithoutWorkers: toNumberValue(summary.usersWithoutWorkers),
+      paidUsers: toNullableNumberValue(summary.paidUsers),
+      unpaidUsers: toNullableNumberValue(summary.unpaidUsers),
+      billingUnavailableUsers: toNullableNumberValue(summary.billingUnavailableUsers),
+      adminCount: toNumberValue(summary.adminCount),
+      billingLoaded: summary.billingLoaded === true,
+    },
+    users,
+    generatedAt: typeof payload.generatedAt === "string" ? payload.generatedAt : null,
+  };
+}
+
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -578,7 +985,7 @@ async function requestJsonRaw<T>(
   } catch {
     json = null;
   }
-  return { ok: response.ok, status: response.status, json };
+  return { ok: response.ok, status: response.status, json, headers: response.headers };
 }
 
 async function requestJson<T>(
@@ -624,6 +1031,36 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return { user: getUser(payload), token: getToken(payload) };
     },
 
+    async beginSocialAuth(input: {
+      provider: DenSocialProvider;
+      callbackURL: string;
+      errorCallbackURL?: string | null;
+    }): Promise<{ url: string }> {
+      const raw = await requestJsonRaw<unknown>(baseUrls, "/api/auth/sign-in/social", {
+        method: "POST",
+        body: {
+          provider: input.provider,
+          callbackURL: input.callbackURL,
+          errorCallbackURL: input.errorCallbackURL ?? input.callbackURL,
+        },
+      });
+
+      if (!raw.ok) {
+        const payload = raw.json;
+        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
+        const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
+        throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+      }
+
+      const payloadUrl = isRecord(raw.json) && typeof raw.json.url === "string" ? raw.json.url.trim() : "";
+      const headerUrl = raw.headers.get("location")?.trim() ?? "";
+      const url = payloadUrl || headerUrl;
+      if (!url) {
+        throw new DenApiError(500, "missing_redirect_url", "Social auth did not return a redirect URL.");
+      }
+      return { url };
+    },
+
     async signOut() {
       await requestJsonRaw(baseUrls, "/api/auth/sign-out", {
         method: "POST",
@@ -652,6 +1089,26 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return { user: getUser(payload), token: getToken(payload) };
     },
 
+    async createDesktopHandoffGrant(input: {
+      next?: string | null;
+      desktopScheme?: string | null;
+    } = {}): Promise<DenDesktopHandoffGrant> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/auth/desktop-handoff", {
+        method: "POST",
+        token,
+        body: {
+          next: input.next?.trim() || undefined,
+          desktopScheme: input.desktopScheme?.trim() || undefined,
+        },
+      });
+
+      return {
+        grant: isRecord(payload) && typeof payload.grant === "string" ? payload.grant : "",
+        expiresAt: isRecord(payload) && typeof payload.expiresAt === "string" ? payload.expiresAt : null,
+        openworkUrl: isRecord(payload) && typeof payload.openworkUrl === "string" ? payload.openworkUrl : null,
+      };
+    },
+
     async listOrgs(): Promise<{ orgs: DenOrgSummary[]; defaultOrgId: string | null }> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/me/orgs", {
         method: "GET",
@@ -674,6 +1131,62 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return getWorkers(payload);
     },
 
+    async createWorker(input: DenWorkerCreateInput): Promise<DenWorkerCreateResult> {
+      const raw = await requestJsonRaw<unknown>(baseUrls, "/v1/workers", {
+        method: "POST",
+        token,
+        body: {
+          name: input.name.trim(),
+          description: input.description?.trim() || undefined,
+          destination: input.destination,
+          workspacePath: input.workspacePath?.trim() || undefined,
+          sandboxBackend: input.sandboxBackend?.trim() || undefined,
+          imageVersion: input.imageVersion?.trim() || undefined,
+        },
+      });
+
+      if (raw.status === 402) {
+        return {
+          kind: "paywall",
+          checkoutUrl: getCheckoutUrl(raw.json),
+          productId: isRecord(raw.json) && isRecord(raw.json.polar) && typeof raw.json.polar.productId === "string" ? raw.json.polar.productId : null,
+          benefitId: isRecord(raw.json) && isRecord(raw.json.polar) && typeof raw.json.polar.benefitId === "string" ? raw.json.polar.benefitId : null,
+        };
+      }
+
+      if (!raw.ok) {
+        const payload = raw.json;
+        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
+        const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
+        throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+      }
+
+      const worker = getWorker(raw.json);
+      if (!worker) {
+        throw new DenApiError(500, "invalid_worker_payload", "Worker create response was missing worker details.");
+      }
+
+      const launch = isRecord(raw.json) && isRecord(raw.json.launch) ? raw.json.launch : null;
+      return {
+        kind: "success",
+        worker,
+        launchMode: launch?.mode === "instant" ? "instant" : "async",
+        pollAfterMs: typeof launch?.pollAfterMs === "number" ? launch.pollAfterMs : 0,
+      };
+    },
+
+    async getWorker(workerId: string): Promise<DenWorkerSummary> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}`, {
+        method: "GET",
+        token,
+      });
+      const worker = getWorkerSummary(payload);
+      if (!worker) {
+        throw new DenApiError(500, "invalid_worker_payload", "Worker response was missing summary details.");
+      }
+      return worker;
+    },
+
     async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
       const params = new URLSearchParams();
       params.set("orgId", orgId);
@@ -687,6 +1200,46 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
+    },
+
+    async getWorkerRuntime(workerId: string): Promise<DenWorkerRuntimeSnapshot> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/runtime`, {
+        method: "GET",
+        token,
+      });
+      const runtime = getWorkerRuntimeSnapshot(payload);
+      if (!runtime) {
+        throw new DenApiError(500, "invalid_runtime_payload", "Runtime response was missing service details.");
+      }
+      return runtime;
+    },
+
+    async upgradeWorkerRuntime(workerId: string, input: Record<string, unknown> = {}): Promise<DenWorkerRuntimeSnapshot> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/runtime/upgrade`, {
+        method: "POST",
+        token,
+        body: input,
+      });
+      const runtime = getWorkerRuntimeSnapshot(payload);
+      if (!runtime) {
+        throw new DenApiError(500, "invalid_runtime_payload", "Runtime upgrade response was missing service details.");
+      }
+      return runtime;
+    },
+
+    async deleteWorker(workerId: string): Promise<void> {
+      const raw = await requestJsonRaw<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}`, {
+        method: "DELETE",
+        token,
+      });
+      if (raw.status === 204 || raw.ok) {
+        return;
+      }
+
+      const payload = raw.json;
+      const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
+      const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
+      throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
     },
 
     async getBillingStatus(options: { includeCheckout?: boolean; includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
@@ -728,6 +1281,24 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         subscription: isRecord(payload) ? getBillingSubscription(payload.subscription) : null,
         billing,
       };
+    },
+
+    async getAdminOverview(options: { includeBilling?: boolean } = {}): Promise<DenAdminOverview> {
+      const params = new URLSearchParams();
+      if (options.includeBilling) {
+        params.set("includeBilling", "1");
+      }
+
+      const path = params.size > 0 ? `/v1/admin/overview?${params.toString()}` : "/v1/admin/overview";
+      const payload = await requestJson<unknown>(baseUrls, path, {
+        method: "GET",
+        token,
+      });
+      const overview = getAdminOverview(payload);
+      if (!overview) {
+        throw new DenApiError(500, "invalid_admin_payload", "Admin overview response was missing details.");
+      }
+      return overview;
     },
   };
 }
