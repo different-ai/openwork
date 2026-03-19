@@ -48,12 +48,14 @@ function startDeepLinkBridge() {
 
       await syncCurrentDeepLinks();
       const unlistenOpenUrl = await onOpenUrl((urls) => {
+        console.log("[issue-1022][bridge] received plugin onOpenUrl", urls);
         pushPendingDeepLinks(window, urls);
       }).catch(() => undefined);
       const unlistenForwarded = await listen<string[]>(
         forwardedDeepLinkEvent,
         (event) => {
           if (Array.isArray(event.payload)) {
+            console.log("[issue-1022][bridge] received forwarded native deeplinks", event.payload);
             pushPendingDeepLinks(window, event.payload);
           }
         },

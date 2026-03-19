@@ -298,6 +298,16 @@ function normalizeSharedBundleImportIntent(value: string | null | undefined): Sh
   return "import_current";
 }
 
+function isSupportedDeepLinkProtocol(protocol: string): boolean {
+  const normalized = protocol.toLowerCase();
+  return (
+    normalized === "openwork:" ||
+    normalized === "openwork-dev:" ||
+    normalized === "https:" ||
+    normalized === "http:"
+  );
+}
+
 function describeSharedBundleImport(bundle: SharedBundleV1): { title: string; description: string; items: string[] } {
   if (bundle.type === "skill") {
     return {
@@ -519,7 +529,7 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
   }
 
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "openwork-dev:" && protocol !== "https:" && protocol !== "http:") {
+  if (!isSupportedDeepLinkProtocol(protocol)) {
     return null;
   }
 
@@ -614,7 +624,7 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
   }
 
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "openwork-dev:" && protocol !== "https:" && protocol !== "http:") {
+  if (!isSupportedDeepLinkProtocol(protocol)) {
     return null;
   }
 
@@ -667,7 +677,7 @@ function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
   }
 
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "openwork-dev:" && protocol !== "https:" && protocol !== "http:") {
+  if (!isSupportedDeepLinkProtocol(protocol)) {
     return null;
   }
 
@@ -3777,6 +3787,20 @@ export default function App() {
   });
 
   createEffect(() => {
+    const request = sharedSkillDestinationRequest();
+    if (!request) {
+      return;
+    }
+
+    console.log("[issue-1022][bridge] shared skill modal ready", {
+      bundleName: request.bundle.name,
+      modalVisible:
+        !workspaceStore.createWorkspaceOpen() &&
+        !workspaceStore.createRemoteWorkspaceOpen(),
+    });
+  });
+
+  createEffect(() => {
     if (!developerMode()) {
       setDevtoolsWorkspaceId(null);
       return;
@@ -4104,14 +4128,20 @@ export default function App() {
         continue;
       }
 
-      const claimed =
-        queueDenAuthDeepLink(url) ||
-        queueRemoteConnectDeepLink(url) ||
-        queueSharedBundleDeepLink(url);
+      const matchedDen = queueDenAuthDeepLink(url);
+      const matchedRemote = !matchedDen && queueRemoteConnectDeepLink(url);
+      const matchedBundle = !matchedDen && !matchedRemote && queueSharedBundleDeepLink(url);
+      const claimed = matchedDen || matchedRemote || matchedBundle;
       if (!claimed) {
         continue;
       }
 
+      console.log("[issue-1022][bridge] claimed deeplink", {
+        url,
+        matchedDen,
+        matchedRemote,
+        matchedBundle,
+      });
       recentClaimedDeepLinks.set(url, now);
       stripHandledBrowserDeepLink(url);
       break;

@@ -32,4 +32,18 @@ Notes: Added `packages/app/src/app/lib/deep-link-bridge.ts`, moved startup/curre
 
 Decision: Option B. It is still transport-only, avoids polling, and directly closes the gap we observed between native single-instance launch and JS modal handling.
 
-Result: [ ] In progress.
+Result: [x] Worked.
+
+Notes: Added a native Tauri event bridge from the single-instance callback into JS. Verified with `pnpm --filter @different-ai/openwork exec cargo check --manifest-path src-tauri/Cargo.toml`, `pnpm --filter @different-ai/openwork exec cargo build --manifest-path src-tauri/Cargo.toml`, `pnpm typecheck`, and a rebuilt direct-binary two-launch repro. The running instance logged the second launch and `emitting forwarded deeplinks to JS urls=[...]` in `/tmp/openwork-direct-bridge.log`.
+
+## Step 3 - Choose the strongest local validation path for the full chain
+
+- Option A: Use macOS UI automation to assert that the desktop modal is visible after the second launch.
+- Option B: Attach Chrome DevTools directly to the Tauri webview and inspect modal state from there.
+- Option C: Combine the Step 1 browser proof of the canonical JS consumer opening the shared-skill modal with the Step 2 native proof that the already-running app forwards the raw deeplink into that same JS bridge.
+
+Decision: Option C. Options A and B were not available in this tool session, but the combined proof still exercises both halves of the new architecture with the exact shared-skill deeplink payload.
+
+Result: [x] Best available validation completed.
+
+Notes: The browser-side canonical consumer still opens the `SHARED SKILL` modal for `workspace-guide` when fed the same bundle URL, and the rebuilt desktop binary now forwards the already-running launch payload into the bridge. Direct desktop modal inspection remains blocked by missing local UI automation / webview inspection access in this session.

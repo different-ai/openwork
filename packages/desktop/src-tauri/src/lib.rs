@@ -57,8 +57,10 @@ use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
+
+const FORWARDED_DEEP_LINK_EVENT: &str = "openwork:deep-link-argv";
 
 #[cfg(target_os = "macos")]
 fn set_dev_app_name() {
@@ -79,6 +81,37 @@ fn set_dev_app_name() {}
 
 fn issue_1022_h1_log(message: &str) {
     println!("[issue-1022][h1] {message}");
+}
+
+fn forwarded_deep_links(args: &[String]) -> Vec<String> {
+    args.iter()
+        .skip(1)
+        .filter_map(|arg| {
+            let trimmed = arg.trim();
+            if trimmed.starts_with("openwork://")
+                || trimmed.starts_with("openwork-dev://")
+                || trimmed.starts_with("https://")
+                || trimmed.starts_with("http://")
+            {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn emit_forwarded_deep_links(app_handle: &AppHandle, args: &[String]) {
+    let urls = forwarded_deep_links(args);
+    if urls.is_empty() {
+        issue_1022_h1_log("single-instance args did not include a forwardable deeplink URL");
+        return;
+    }
+
+    issue_1022_h1_log(&format!("emitting forwarded deeplinks to JS urls={urls:?}"));
+    if let Err(error) = app_handle.emit(FORWARDED_DEEP_LINK_EVENT, urls) {
+        issue_1022_h1_log(&format!("failed to emit forwarded deeplinks to JS: {error}"));
+    }
 }
 
 fn show_main_window(app_handle: &AppHandle) {
@@ -120,6 +153,7 @@ pub fn run() {
                 "single-instance callback fired cwd={cwd:?} args={args:?}"
             ));
             show_main_window(app);
+            emit_forwarded_deep_links(app, &args);
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
