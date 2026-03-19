@@ -54,7 +54,7 @@ import {
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
-import { deepLinkBridgeEvent, drainPendingDeepLinks, logDeepLinkBoundary, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
+import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
@@ -3687,16 +3687,7 @@ export default function App() {
   };
 
   const processSharedBundleInvite = async (request: SharedBundleDeepLink) => {
-    logDeepLinkBoundary("processSharedBundleInvite start", {
-      bundleUrl: request.bundleUrl,
-      intent: request.intent,
-      label: request.label,
-    });
     const bundle = await fetchSharedBundle(request.bundleUrl);
-    logDeepLinkBoundary("fetched shared bundle", {
-      bundleType: bundle.type,
-      bundleName: bundle.name,
-    });
 
     if (bundle.type === "skill") {
       setView("dashboard");
@@ -3765,14 +3756,7 @@ export default function App() {
       return;
     }
 
-    logDeepLinkBoundary("pending shared bundle invite effect triggered", {
-      bundleUrl: request.bundleUrl,
-      intent: request.intent,
-      label: request.label,
-    });
-
     if (untrack(sharedBundleImportBusy)) {
-      logDeepLinkBoundary("pending invite paused because import is already busy");
       return;
     }
 
@@ -3792,21 +3776,11 @@ export default function App() {
         if (!cancelled) {
           const nextPendingInvite = pendingSharedBundleInvite();
           const shouldClearPendingInvite = nextPendingInvite === request;
-          logDeepLinkBoundary("shared bundle invite processing finished", {
-            bundleUrl: request.bundleUrl,
-            shouldClearPendingInvite,
-            nextPendingBundleUrl: nextPendingInvite?.bundleUrl ?? null,
-          });
           setSharedBundleImportBusy(false);
           if (shouldClearPendingInvite) {
             setPendingSharedBundleInvite(null);
             setSharedBundleNoticeShown(false);
           } else if (nextPendingInvite) {
-            logDeepLinkBoundary("re-queueing newer pending shared bundle invite", {
-              bundleUrl: nextPendingInvite.bundleUrl,
-              intent: nextPendingInvite.intent,
-              label: nextPendingInvite.label,
-            });
             setPendingSharedBundleInvite({ ...nextPendingInvite });
           }
         }
@@ -3815,20 +3789,6 @@ export default function App() {
 
     onCleanup(() => {
       cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    const request = sharedSkillDestinationRequest();
-    if (!request) {
-      return;
-    }
-
-    logDeepLinkBoundary("shared skill modal ready", {
-      bundleName: request.bundle.name,
-      modalVisible:
-        !workspaceStore.createWorkspaceOpen() &&
-        !workspaceStore.createRemoteWorkspaceOpen(),
     });
   });
 
@@ -4111,12 +4071,6 @@ export default function App() {
     if (!parsed) {
       return false;
     }
-    logDeepLinkBoundary("queueing shared bundle deeplink", {
-      rawUrl,
-      bundleUrl: parsed.bundleUrl,
-      intent: parsed.intent,
-      label: parsed.label,
-    });
     setPendingSharedBundleInvite(parsed);
     setSharedSkillDestinationRequest(null);
     setSharedSkillDestinationBusyId(null);
@@ -4153,8 +4107,6 @@ export default function App() {
       return;
     }
 
-    logDeepLinkBoundary("consumeDeepLinks received urls", normalized);
-
     const now = Date.now();
     for (const [url, seenAt] of recentClaimedDeepLinks) {
       if (now - seenAt > 1500) {
@@ -4165,10 +4117,6 @@ export default function App() {
     for (const url of normalized) {
       const seenAt = recentClaimedDeepLinks.get(url) ?? 0;
       if (now - seenAt < 1500) {
-        logDeepLinkBoundary("skipping recently claimed deeplink", {
-          url,
-          ageMs: now - seenAt,
-        });
         continue;
       }
 
@@ -4180,12 +4128,6 @@ export default function App() {
         continue;
       }
 
-      logDeepLinkBoundary("claimed deeplink", {
-        url,
-        matchedDen,
-        matchedRemote,
-        matchedBundle,
-      });
       recentClaimedDeepLinks.set(url, now);
       stripHandledBrowserDeepLink(url);
       break;

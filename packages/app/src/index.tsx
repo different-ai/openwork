@@ -6,7 +6,7 @@ import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
-import { logDeepLinkBoundary, nativeDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
+import { nativeDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { isTauriRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
@@ -30,78 +30,42 @@ function startDeepLinkBridge() {
   }
 
   if (deepLinkBridgeStarted) {
-    logDeepLinkBoundary("skipping duplicate bridge startup");
     return;
   }
 
   deepLinkBridgeStarted = true;
 
   if (!isTauriRuntime()) {
-    logDeepLinkBoundary("queueing browser location for web runtime", {
-      href: window.location.href,
-    });
     pushPendingDeepLinks(window, [window.location.href]);
     return;
   }
 
   void (async () => {
     try {
-      logDeepLinkBoundary("starting tauri deep-link bridge");
       const [{ getCurrent, onOpenUrl }, { listen }] = await Promise.all([
         import("@tauri-apps/plugin-deep-link"),
         import("@tauri-apps/api/event"),
       ]);
 
-      const startUrls = await getCurrent().catch((error) => {
-        logDeepLinkBoundary("getCurrent failed", error instanceof Error ? error.message : String(error));
-        return null;
-      });
-      logDeepLinkBoundary("getCurrent result", startUrls ?? null);
+      const startUrls = await getCurrent().catch(() => null);
       if (Array.isArray(startUrls)) {
         pushPendingDeepLinks(window, startUrls);
       }
 
-      await listen<string[]>("deep-link://new-url", (event) => {
-        logDeepLinkBoundary("observed raw plugin deep-link event", event.payload);
-      }).catch((error) => {
-        logDeepLinkBoundary(
-          "failed to listen for raw plugin deeplink event",
-          error instanceof Error ? error.message : String(error),
-        );
-        return undefined;
-      });
-
       await onOpenUrl((urls) => {
-        logDeepLinkBoundary("received plugin onOpenUrl", urls);
         pushPendingDeepLinks(window, urls);
-      }).catch((error) => {
-        logDeepLinkBoundary(
-          "failed to register plugin onOpenUrl listener",
-          error instanceof Error ? error.message : String(error),
-        );
-        return undefined;
-      });
+      }).catch(() => undefined);
 
       await listen<string[]>(
         nativeDeepLinkEvent,
         (event) => {
           if (Array.isArray(event.payload)) {
-            logDeepLinkBoundary("received native deep-link event", event.payload);
             pushPendingDeepLinks(window, event.payload);
           }
         },
-      ).catch((error) => {
-        logDeepLinkBoundary(
-          "failed to register native deep-link listener",
-          error instanceof Error ? error.message : String(error),
-        );
-        return undefined;
-      });
-    } catch (error) {
-      logDeepLinkBoundary(
-        "failed to start tauri deep-link bridge",
-        error instanceof Error ? error.message : String(error),
-      );
+      ).catch(() => undefined);
+    } catch {
+      // ignore
     }
   })();
 }

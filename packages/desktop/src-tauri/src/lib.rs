@@ -57,11 +57,10 @@ use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Listener, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
 
 const NATIVE_DEEP_LINK_EVENT: &str = "openwork:deep-link-native";
-const DEEP_LINK_DEBUG_EVENT: &str = "openwork:deep-link-debug";
 
 #[cfg(target_os = "macos")]
 fn set_dev_app_name() {
@@ -79,10 +78,6 @@ fn set_dev_app_name() {
 
 #[cfg(not(target_os = "macos"))]
 fn set_dev_app_name() {}
-
-fn issue_1022_h1_log(message: &str) {
-    println!("[issue-1022][h1] {message}");
-}
 
 fn forwarded_deep_links(args: &[String]) -> Vec<String> {
     args.iter()
@@ -102,33 +97,24 @@ fn forwarded_deep_links(args: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn emit_native_deep_links(app_handle: &AppHandle, source: &str, urls: Vec<String>) {
+fn emit_native_deep_links(app_handle: &AppHandle, urls: Vec<String>) {
     if urls.is_empty() {
-        issue_1022_h1_log(&format!("native deeplink emit skipped for source={source}; no URLs"));
         return;
     }
 
-    issue_1022_h1_log(&format!(
-        "emitting native deeplinks to JS source={source} urls={urls:?}"
-    ));
-    if let Err(error) = app_handle.emit(NATIVE_DEEP_LINK_EVENT, urls) {
-        issue_1022_h1_log(&format!("failed to emit native deeplinks to JS: {error}"));
-    }
+    let _ = app_handle.emit(NATIVE_DEEP_LINK_EVENT, urls);
 }
 
 fn emit_forwarded_deep_links(app_handle: &AppHandle, args: &[String]) {
     let urls = forwarded_deep_links(args);
-    emit_native_deep_links(app_handle, "single-instance", urls);
+    emit_native_deep_links(app_handle, urls);
 }
 
 fn show_main_window(app_handle: &AppHandle) {
-    issue_1022_h1_log("show_main_window called");
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
-    } else {
-        issue_1022_h1_log("main window missing while trying to focus running app");
     }
 }
 
@@ -155,10 +141,7 @@ fn stop_managed_services(app_handle: &tauri::AppHandle) {
 
 pub fn run() {
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            issue_1022_h1_log(&format!(
-                "single-instance callback fired cwd={cwd:?} args={args:?}"
-            ));
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             show_main_window(app);
             emit_forwarded_deep_links(app, &args);
         }))
@@ -176,9 +159,6 @@ pub fn run() {
     let app = builder
         .setup(|app| {
             set_dev_app_name();
-            app.listen(DEEP_LINK_DEBUG_EVENT, |event: tauri::Event| {
-                issue_1022_h1_log(&format!("bridge JS log payload={}", event.payload()));
-            });
 
             let show_item = MenuItemBuilder::with_id("tray-show", "Show OpenWork").build(app)?;
             let quit_item = MenuItemBuilder::with_id("tray-quit", "Quit OpenWork").build(app)?;
@@ -296,18 +276,14 @@ pub fn run() {
         }
         RunEvent::Opened { urls } => {
             let urls = urls.into_iter().map(|url| url.to_string()).collect::<Vec<_>>();
-            issue_1022_h1_log(&format!("RunEvent::Opened received urls={urls:?}"));
             show_main_window(&app_handle);
-            emit_native_deep_links(&app_handle, "opened", urls);
+            emit_native_deep_links(&app_handle, urls);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen {
             has_visible_windows,
             ..
         } => {
-            issue_1022_h1_log(&format!(
-                "macOS reopen event received has_visible_windows={has_visible_windows}"
-            ));
             if !has_visible_windows {
                 show_main_window(&app_handle);
             }
