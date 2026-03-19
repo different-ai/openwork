@@ -290,6 +290,14 @@ type SettingsReturnTarget = {
   sessionId: string | null;
 };
 
+function issue1022H4Log(message: string, details?: unknown) {
+  if (details === undefined) {
+    console.log(`[issue-1022][h4] ${message}`);
+    return;
+  }
+  console.log(`[issue-1022][h4] ${message}`, details);
+}
+
 function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
@@ -6090,10 +6098,12 @@ export default function App() {
           source: "event" | "current" = "event",
         ) => {
           if (!Array.isArray(urls)) {
+            issue1022H4Log(`ignored non-array deep link payload from ${source}`, urls ?? null);
             return;
           }
 
           const normalized = urls.map((url) => url.trim()).filter(Boolean);
+          issue1022H4Log(`received deep links from ${source}`, { urls, normalized });
           if (normalized.length === 0) {
             return;
           }
@@ -6108,9 +6118,20 @@ export default function App() {
           for (const url of normalized) {
             const seenAt = recentDeepLinkEvents.get(url) ?? 0;
             if (now - seenAt < 1500) {
+              issue1022H4Log("skipped recently handled deep link", { source, url, ageMs: now - seenAt });
               continue;
             }
-            if (queueDenAuthDeepLink(url) || queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
+            const matchedDen = queueDenAuthDeepLink(url);
+            const matchedRemote = !matchedDen && queueRemoteConnectDeepLink(url);
+            const matchedBundle = !matchedDen && !matchedRemote && queueSharedBundleDeepLink(url);
+            issue1022H4Log("deep link dispatch result", {
+              source,
+              url,
+              matchedDen,
+              matchedRemote,
+              matchedBundle,
+            });
+            if (matchedDen || matchedRemote || matchedBundle) {
               recentDeepLinkEvents.set(url, now);
               break;
             }
