@@ -1118,10 +1118,10 @@ export default function MessageList(props: MessageListProps) {
           <Show
             when={hasDisclosure()}
             fallback={
-              <div class="flex min-w-0 items-start gap-2.5">
-                <div class="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-start sm:gap-2.5">
+              <div class="flex min-w-0 items-start gap-2.5 sm:items-center">
+                <div class="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2.5">
                   <span
-                    class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
+                    class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
                     title={label()}
                     aria-label={label()}
                   >
@@ -1136,22 +1136,22 @@ export default function MessageList(props: MessageListProps) {
           >
             <button
               type="button"
-              class="group flex w-full min-w-0 items-start gap-2.5 text-left"
+              class="group flex w-full min-w-0 items-start gap-2.5 text-left sm:items-center"
               onClick={toggleDisclosure}
               aria-expanded={open()}
               aria-label={open() ? `Collapse ${label()} details` : `Expand ${label()} details`}
             >
-              <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-2.5 sm:gap-y-1">
+              <div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-2.5 sm:gap-y-1">
                 <span
-                  class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
+                  class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-5/70 bg-gray-3 text-gray-11 sm:h-6 sm:w-6"
                   title={label()}
                   aria-label={label()}
                 >
                   <ToolIcon tool={toolName()} class="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                 </span>
-                <span class={`block min-w-0 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
+                <span class={`block min-w-0 leading-5 text-[13px] ${isErrorStep(rowProps.part) ? "font-medium text-red-11" : "text-gray-9"}`}>
                   <span class="break-words [overflow-wrap:anywhere]">{displayHeadline()}</span>
-                  <span class="ml-1 inline-flex align-text-top text-gray-7 transition-colors group-hover:text-gray-10" aria-hidden="true">
+                  <span class="ml-1 inline-flex align-middle text-gray-7 transition-colors group-hover:text-gray-10" aria-hidden="true">
                     <ChevronRight size={14} class={`transition-transform duration-200 ${open() ? "rotate-90" : ""}`} />
                   </span>
                 </span>
