@@ -48,6 +48,11 @@ on:
         required: false
         type: boolean
         default: true
+      publish_daytona_snapshot:
+        description: "Build + push Daytona worker snapshot"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -71,6 +76,7 @@ jobs:
       build_tauri: ${{ steps.resolve.outputs.build_tauri }}
       publish_sidecars: ${{ steps.resolve.outputs.publish_sidecars }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
+      publish_daytona_snapshot: ${{ steps.resolve.outputs.publish_daytona_snapshot }}
     steps:
       - name: Resolve metadata
         id: resolve
@@ -85,8 +91,10 @@ jobs:
           INPUT_BUILD_TAURI: ${{ github.event.inputs.build_tauri }}
           INPUT_PUBLISH_SIDECARS: ${{ github.event.inputs.publish_sidecars }}
           INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
+          INPUT_PUBLISH_DAYTONA_SNAPSHOT: ${{ github.event.inputs.publish_daytona_snapshot }}
           DEFAULT_PUBLISH_SIDECARS: ${{ vars.RELEASE_PUBLISH_SIDECARS }}
           DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
+          DEFAULT_PUBLISH_DAYTONA_SNAPSHOT: ${{ vars.RELEASE_PUBLISH_DAYTONA_SNAPSHOT }}
           DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
           DEFAULT_BUILD_TAURI: ${{ vars.RELEASE_BUILD_TAURI }}
         run: |
@@ -151,6 +159,11 @@ jobs:
             publish_npm="${DEFAULT_PUBLISH_NPM:-true}"
           fi
 
+          publish_daytona_snapshot="${INPUT_PUBLISH_DAYTONA_SNAPSHOT:-}"
+          if [ -z "$publish_daytona_snapshot" ]; then
+            publish_daytona_snapshot="${DEFAULT_PUBLISH_DAYTONA_SNAPSHOT:-true}"
+          fi
+
           TAG="${TAG//$'\n'/}"
           TAG="${TAG//$'\r'/}"
           RELEASE_NAME="${RELEASE_NAME//$'\n'/ }"
@@ -164,6 +177,7 @@ jobs:
           echo "build_tauri=$build_tauri" >> "$GITHUB_OUTPUT"
           echo "publish_sidecars=$publish_sidecars" >> "$GITHUB_OUTPUT"
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
+          echo "publish_daytona_snapshot=$publish_daytona_snapshot" >> "$GITHUB_OUTPUT"
           {
             echo "release_body<<__OPENWORK_RELEASE_BODY_EOF__"
             printf '%s\n' "$RELEASE_BODY"
@@ -897,6 +911,15 @@ jobs:
           pnpm --filter openwork-orchestrator build:bin:all
           node apps/orchestrator/scripts/publish-npm.mjs
 
+  publish-daytona-snapshot:
+    name: Build + Push Daytona Snapshot
+    needs: [resolve-release, verify-release]
+    if: needs.resolve-release.outputs.publish_daytona_snapshot == 'true'
+    uses: ./.github/workflows/release-daytona-snapshot.yml
+    with:
+      tag: ${{ needs.resolve-release.outputs.release_tag }}
+    secrets: inherit
+
   aur-publish:
     name: Publish AUR
     needs: [resolve-release, publish-tauri, publish-release]
@@ -959,6 +982,7 @@ jobs:
       - publish-updater-json
       - release-orchestrator-sidecars
       - publish-npm
+      - publish-daytona-snapshot
     if: |
       always() &&
       needs.resolve-release.outputs.draft == 'true' &&
@@ -967,7 +991,8 @@ jobs:
       (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
       (needs.publish-updater-json.result == 'success' || needs.publish-updater-json.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
-      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')
+      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
+      (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
