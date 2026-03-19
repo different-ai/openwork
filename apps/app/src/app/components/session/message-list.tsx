@@ -33,11 +33,11 @@ import {
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import {
-  SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX,
   type MessageGroup,
   type MessageWithParts,
   type StepGroupMode,
   type TodoItem,
+  type TranscriptRow,
 } from "../../types";
 import {
   formatToolLabel,
@@ -50,7 +50,7 @@ import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 
 export type MessageListProps = {
-  messages: MessageWithParts[];
+  rows: TranscriptRow[];
   isStreaming?: boolean;
   developerMode: boolean;
   showThinking: boolean;
@@ -101,7 +101,13 @@ type MessageBlock = {
   messageId: string;
 };
 
-type MessageBlockItem = MessageBlock | StepClusterBlock;
+type SessionErrorBlock = {
+  kind: "session-error";
+  messageId: string;
+  text: string;
+};
+
+type MessageBlockItem = MessageBlock | SessionErrorBlock | StepClusterBlock;
 
 const EXPLORATION_TOOL_NAMES = new Set([
   "read",
@@ -703,7 +709,17 @@ export default function MessageList(props: MessageListProps) {
     let toolPartCount = 0;
     let stepGroupCount = 0;
 
-    props.messages.forEach((message, index) => {
+    props.rows.forEach((row, index) => {
+      if (row.kind === "session-error") {
+        blocks.push({
+          kind: "session-error",
+          messageId: row.id,
+          text: row.error.text,
+        });
+        return;
+      }
+
+      const message = row.message;
       const renderableParts = renderablePartsForMessage(message);
       if (!renderableParts.length) return;
 
@@ -722,7 +738,7 @@ export default function MessageList(props: MessageListProps) {
       const isUser = (message.info as any).role === "user";
       const canReuseStableBlock =
         previousBlockRenderKey === renderKey &&
-        index < props.messages.length - 1 &&
+        index < props.rows.length - 1 &&
         previousPartCount !== undefined &&
         previousPartCount === totalParts &&
         previousBlock?.kind === "message" &&
@@ -809,14 +825,14 @@ export default function MessageList(props: MessageListProps) {
       props.developerMode &&
       (elapsedMs >= 6 ||
         (Boolean(props.isStreaming) &&
-          props.messages.length >= 16 &&
+          props.rows.length >= 16 &&
           changedMessageCount <= 2 &&
           addedMessageCount <= 1 &&
           removedMessageCount === 0) ||
         (Boolean(props.isStreaming) && toolPartCount >= 10))
     ) {
       recordPerfLog(true, "session.render", "message-blocks", {
-        messageCount: props.messages.length,
+        messageCount: props.rows.length,
         blockCount: blocks.length,
         changedMessageCount,
         addedMessageCount,
@@ -832,8 +848,10 @@ export default function MessageList(props: MessageListProps) {
   });
 
   const latestAssistantMessageId = createMemo(() => {
-    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
-      const message = props.messages[index];
+    for (let index = props.rows.length - 1; index >= 0; index -= 1) {
+      const row = props.rows[index];
+      if (row.kind !== "message") continue;
+      const message = row.message;
       if ((message.info as any).role === "assistant") {
         return String((message.info as any).id ?? "");
       }
@@ -1045,7 +1063,11 @@ export default function MessageList(props: MessageListProps) {
                 fallback={<div class="text-[12px] leading-5 text-gray-9">Waiting for the subagent transcript to arrive.</div>}
               >
                 <MessageList
-                  messages={childMessages()}
+                  rows={childMessages().map((message, index) => ({
+                    kind: "message" as const,
+                    id: String((message.info as any).id ?? `nested-message-${index}`),
+                    message,
+                  }))}
                   isStreaming={streaming()}
                   developerMode={props.developerMode}
                   showThinking={props.showThinking}
@@ -1324,19 +1346,7 @@ export default function MessageList(props: MessageListProps) {
       );
     }
 
-    const groupSpacing = block.isUser ? "mb-3" : "mb-4";
-    const isSyntheticSessionError =
-      !block.isUser &&
-      block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
-
-    if (isSyntheticSessionError) {
-      const messageText = block.renderableParts
-        .map((part) => partToText(part))
-        .join(" ")
-        .replace(/\s*\n+\s*/g, " ")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-
+    if (block.kind === "session-error") {
       return (
         <div
           class="flex group justify-start"
@@ -1350,12 +1360,14 @@ export default function MessageList(props: MessageListProps) {
               role="alert"
             >
               <CircleAlert size={14} class="mt-0.5 shrink-0" />
-              <div class="min-w-0 break-words">{messageText}</div>
+              <div class="min-w-0 break-words whitespace-pre-wrap">{block.text}</div>
             </div>
           </div>
         </div>
       );
     }
+
+    const groupSpacing = block.isUser ? "mb-3" : "mb-4";
 
     return (
       <div

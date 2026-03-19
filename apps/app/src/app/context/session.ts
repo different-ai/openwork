@@ -28,7 +28,6 @@ import {
 } from "../utils";
 import { unwrap } from "../lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 
 export type SessionModelState = {
   overrides: Record<string, ModelRef>;
@@ -382,18 +381,7 @@ export function createSessionStore(options: {
     );
   };
 
-  const invalidToolNextStepHint = (part: Part) => {
-    const record = part as any;
-    const name = typeof record.tool === "string" ? record.tool : "";
-    const lower = name.toLowerCase();
-    if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
-      return "Chrome MCP is not ready yet. Open the MCP tab, connect `Control Chrome`, then retry.";
-    }
-    return "Try again, or switch to an agent/prompt that only uses available tools in this worker.";
-  };
-
   const maybeHandleInvalidToolError = (part: Part) => {
-    if (!options.setError) return;
     if (!isInvalidToolError(part)) return;
     if (!part?.id || !part.messageID) return;
 
@@ -409,8 +397,11 @@ export function createSessionStore(options: {
 
     const record = part as any;
     const tool = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : "(unknown tool)";
-    const hint = invalidToolNextStepHint(part);
-    options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
+    recordPerfLog(sessionDebugEnabled(), "session.tool", "invalid-tool-inline-only", {
+      sessionID: part.sessionID,
+      messageID: part.messageID,
+      tool,
+    });
   };
 
   const isSyntheticContinueControlPart = (part: Part) => {
@@ -465,9 +456,14 @@ export function createSessionStore(options: {
     options.setError(addOpencodeCacheHint(message));
   };
 
-  const appendSessionErrorTurn = (sessionID: string, message: string | null) => {
+  const appendSessionErrorTurn = (
+    sessionID: string,
+    message: string | null,
+    errorObj?: Record<string, unknown>,
+  ) => {
     const text = message?.trim() ?? "";
     if (!sessionID || !text) return;
+    if (shouldSuppressSessionChatError(text, errorObj)) return;
 
     const list = store.messages[sessionID] ?? [];
     const lastMessage = list.length > 0 ? list[list.length - 1] : null;
@@ -481,7 +477,7 @@ export function createSessionStore(options: {
       }
 
       return existing.concat({
-        id: `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${sessionID}:${Date.now()}:${existing.length}`,
+        id: `session-error-${sessionID}-${Date.now()}-${existing.length}`,
         text,
         afterMessageID,
         time: Date.now(),
@@ -551,6 +547,33 @@ export function createSessionStore(options: {
       }
     }
     return null;
+  };
+
+  const shouldSuppressSessionChatError = (message: string, errorObj?: Record<string, unknown>) => {
+    const normalized = message.toLowerCase();
+    if (
+      (normalized.includes("tool") && normalized.includes("timed out")) ||
+      (normalized.includes("tool") && normalized.includes("timeout")) ||
+      normalized.includes("invalid tool") ||
+      normalized.includes("model tried to call") ||
+      normalized.includes("unavailable tool") ||
+      normalized.includes("unknown tool") ||
+      normalized.includes("tool not found")
+    ) {
+      return true;
+    }
+
+    if (!errorObj) return false;
+    const haystack = safeStringify(getNestedRecords(errorObj)).toLowerCase();
+    return (
+      ((haystack.includes("tool") && haystack.includes("timed out")) ||
+        (haystack.includes("tool") && haystack.includes("timeout"))) ||
+      haystack.includes("invalid tool") ||
+      haystack.includes("model tried to call") ||
+      haystack.includes("unavailable tool") ||
+      haystack.includes("unknown tool") ||
+      haystack.includes("tool not found")
+    );
   };
 
   const formatSessionError = (errorObj: Record<string, unknown>) => {
@@ -1230,7 +1253,11 @@ export function createSessionStore(options: {
             return;
           }
           if (sessionID) {
-            appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatSessionError(errorObj)));
+            appendSessionErrorTurn(
+              sessionID,
+              addOpencodeCacheHint(formatSessionError(errorObj)),
+              errorObj,
+            );
           } else {
             options.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
           }
@@ -1239,7 +1266,7 @@ export function createSessionStore(options: {
 
         const fallback = truncateErrorField(record.error, 700) ?? "An unexpected error occurred";
         if (sessionID) {
-          appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback));
+          appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback), record);
         } else {
           options.setError(addOpencodeCacheHint(fallback));
         }

@@ -24,6 +24,7 @@ import type {
   SettingsTab,
   SkillCard,
   TodoItem,
+  TranscriptRow,
   View,
   WorkspaceConnectionState,
   WorkspaceDisplay,
@@ -179,6 +180,7 @@ export type SessionViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
+  transcriptRows: TranscriptRow[];
   getSessionById: (sessionId: string | null) => Session | null;
   getMessagesBySessionId: (sessionId: string | null) => MessageWithParts[];
   ensureSessionLoaded: (sessionId: string) => Promise<void> | void;
@@ -526,6 +528,8 @@ export default function SessionView(props: SessionViewProps) {
     return "";
   };
 
+  const transcriptRowId = (row: TranscriptRow) => row.id;
+
   const messageTextForSearch = (message: MessageWithParts) => {
     const chunks: string[] = [];
     let used = 0;
@@ -581,6 +585,11 @@ export default function SessionView(props: SessionViewProps) {
     return chunks.join("\n");
   };
 
+  const transcriptRowTextForSearch = (row: TranscriptRow) => {
+    if (row.kind === "session-error") return row.error.text;
+    return messageTextForSearch(row.message);
+  };
+
   createEffect(() => {
     const value = searchQuery();
     if (typeof window === "undefined") {
@@ -600,10 +609,10 @@ export default function SessionView(props: SessionViewProps) {
     const hits: SearchHit[] = [];
     let capped = false;
 
-    outer: for (const message of props.messages) {
-      const messageId = messageIdFromInfo(message);
+    outer: for (const row of props.transcriptRows) {
+      const messageId = transcriptRowId(row);
       if (!messageId) continue;
-      const haystack = messageTextForSearch(message).toLowerCase();
+      const haystack = transcriptRowTextForSearch(row).toLowerCase();
       if (!haystack) continue;
       let index = haystack.indexOf(query);
       while (index !== -1) {
@@ -620,7 +629,7 @@ export default function SessionView(props: SessionViewProps) {
     if (props.developerMode && (elapsedMs >= 8 || capped)) {
       recordPerfLog(true, "session.search", "scan", {
         queryLength: query.length,
-        messageCount: props.messages.length,
+        messageCount: props.transcriptRows.length,
         hitCount: hits.length,
         capped,
         ms: elapsedMs,
@@ -662,20 +671,20 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   const renderedMessages = createMemo(() => {
-    if (messageWindowExpanded() || searchActive()) return props.messages;
+    if (messageWindowExpanded() || searchActive()) return props.transcriptRows;
 
     const start = messageWindowStart();
-    if (start <= 0) return props.messages;
-    if (start >= props.messages.length) return [];
-    return props.messages.slice(start);
+    if (start <= 0) return props.transcriptRows;
+    if (start >= props.transcriptRows.length) return [];
+    return props.transcriptRows.slice(start);
   });
 
   const [batchedRenderedMessages, setBatchedRenderedMessages] =
-    createSignal<MessageWithParts[]>(renderedMessages());
+    createSignal<TranscriptRow[]>(renderedMessages());
 
   createEffect(() => {
     const next = renderedMessages();
-    const sourceMessageCount = props.messages.length;
+    const sourceMessageCount = props.transcriptRows.length;
     const sourcePartCount = totalPartCount();
     if (props.sessionStatus === "idle") {
       if (streamRenderBatchTimer !== undefined) {
@@ -753,7 +762,7 @@ export default function SessionView(props: SessionViewProps) {
         lagMs,
         sessionID: props.selectedSessionId,
         status: props.sessionStatus,
-        messageCount: props.messages.length,
+        messageCount: props.transcriptRows.length,
         partCount: totalPartCount(),
         renderedMessageCount: batchedRenderedMessages().length,
       });
@@ -766,7 +775,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const hiddenMessageCount = createMemo(() => {
     if (messageWindowExpanded() || searchActive()) return 0;
-    const hidden = props.messages.length - renderedMessages().length;
+    const hidden = props.transcriptRows.length - renderedMessages().length;
     return hidden > 0 ? hidden : 0;
   });
 
@@ -825,7 +834,7 @@ export default function SessionView(props: SessionViewProps) {
 
     const signature = [
       props.selectedSessionId ?? "",
-      props.messages.length,
+      props.transcriptRows.length,
       totalPartCount(),
       renderedMessages().length,
       hiddenMessageCount(),
@@ -838,7 +847,7 @@ export default function SessionView(props: SessionViewProps) {
 
     recordPerfLog(true, "session.window", "state", {
       sessionID: props.selectedSessionId,
-      messageCount: props.messages.length,
+      messageCount: props.transcriptRows.length,
       renderedMessageCount: renderedMessages().length,
       hiddenMessageCount: hiddenMessageCount(),
       partCount: totalPartCount(),
@@ -1813,7 +1822,7 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(
     on(
-      () => [props.selectedSessionId, props.messages.length] as const,
+      () => [props.selectedSessionId, props.transcriptRows.length] as const,
       ([sessionId, count], previous) => {
         const previousSessionId = previous?.[0] ?? null;
         if (sessionId !== previousSessionId) {
@@ -1849,7 +1858,7 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   createEffect(() => {
-    const count = props.messages.length;
+    const count = props.transcriptRows.length;
     const start = messageWindowStart();
     if (start <= count) return;
     setMessageWindowStart(count);
@@ -1993,8 +2002,6 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const runPhase = createMemo(() => {
-    if (props.error && (runStartedAt() !== null || runHasBegun()))
-      return "error";
     const status = props.sessionStatus;
     const started = runStartedAt() !== null;
     if (status === "idle") {
@@ -2140,8 +2147,6 @@ export default function SessionView(props: SessionViewProps) {
         return "Responding";
       case "thinking":
         return "Thinking";
-      case "error":
-        return "Run failed";
       default:
         return "";
     }
@@ -2255,7 +2260,7 @@ export default function SessionView(props: SessionViewProps) {
       () =>
         [
           props.selectedSessionId,
-          props.messages.length,
+          props.transcriptRows.length,
           isChatContainerReady(),
           initialAnchorPending(),
         ] as const,
@@ -2451,7 +2456,7 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(
     on(
-      () => [props.messages.length, props.todos.length, totalPartCount()],
+      () => [props.transcriptRows.length, props.todos.length, totalPartCount()],
       (current, previous) => {
         if (!previous) return;
         const [mLen, tLen, pCount] = current;
@@ -2467,7 +2472,6 @@ export default function SessionView(props: SessionViewProps) {
 
   const runStallMs = createMemo(() => {
     if (!showRunIndicator()) return 0;
-    if (runPhase() === "error") return 0;
     const last = runLastProgressAt() ?? runStartedAt() ?? Date.now();
     return Math.max(0, runTick() - last);
   });
@@ -2491,7 +2495,6 @@ export default function SessionView(props: SessionViewProps) {
 
   const stallStage = createMemo<"none" | "soft" | "hard">(() => {
     if (!showRunIndicator()) return "none";
-    if (runPhase() === "error") return "none";
     const ms = runStallMs();
     const { softMs, hardMs } = stallThresholds();
     if (!softMs || !hardMs) return "none";
@@ -2837,7 +2840,7 @@ export default function SessionView(props: SessionViewProps) {
     () =>
       !hasWorkspaceConfigured() &&
       !props.selectedSessionId &&
-      props.messages.length === 0,
+      props.transcriptRows.length === 0,
   );
 
   const renameCanSave = createMemo(() => {
@@ -4522,7 +4525,7 @@ export default function SessionView(props: SessionViewProps) {
                   </Show>
                   <Show
                     when={
-                      props.messages.length === 0 &&
+                      props.transcriptRows.length === 0 &&
                       !showWorkspaceSetupEmptyState()
                     }
                   >
@@ -4596,7 +4599,7 @@ export default function SessionView(props: SessionViewProps) {
                   </Show>
 
                   <MessageList
-                    messages={batchedRenderedMessages()}
+                    rows={batchedRenderedMessages()}
                     isStreaming={showRunIndicator()}
                     developerMode={props.developerMode}
                     showThinking={props.showThinking}
@@ -4622,7 +4625,7 @@ export default function SessionView(props: SessionViewProps) {
                         <div class="flex justify-start pl-2">
                           <div class="w-full max-w-[68ch]">
                             <div
-                              class={`ml-3 mt-3 flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
+                              class="ml-3 mt-3 flex items-center gap-2 text-xs py-1 text-gray-9"
                               role="status"
                               aria-live="polite"
                             >
@@ -4657,7 +4660,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
 
-              <Show when={props.messages.length > 0 && !jumpControlsSuppressed() && (!isViewingLatest() || Boolean(topClippedMessageId()))}>
+              <Show when={props.transcriptRows.length > 0 && !jumpControlsSuppressed() && (!isViewingLatest() || Boolean(topClippedMessageId()))}>
                 <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
                   <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
                     <Show when={Boolean(topClippedMessageId())}>

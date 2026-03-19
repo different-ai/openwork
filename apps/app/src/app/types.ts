@@ -75,7 +75,17 @@ export type SessionErrorTurn = {
   time: number;
 };
 
-export const SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX = "session-error:";
+export type TranscriptRow =
+  | {
+      kind: "message";
+      id: string;
+      message: MessageWithParts;
+    }
+  | {
+      kind: "session-error";
+      id: string;
+      error: SessionErrorTurn;
+    };
 
 export type StepGroupMode = "exploration" | "standalone";
 

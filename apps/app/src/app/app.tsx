@@ -72,12 +72,10 @@ import {
   mapConfigProvidersToList,
   providerPriorityRank,
 } from "./utils/providers";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
   DashboardTab,
   MessageWithParts,
-  PlaceholderAssistantMessage,
   StartupPreference,
   EngineRuntime,
   ModelOption,
@@ -101,6 +99,7 @@ import type {
   ComposerPart,
   ProviderListItem,
   SessionErrorTurn,
+  TranscriptRow,
   UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
@@ -1968,63 +1967,53 @@ export default function App() {
     return "";
   };
 
-  const createSyntheticSessionErrorMessage = (
-    sessionID: string,
-    errorTurn: SessionErrorTurn,
-  ): MessageWithParts => {
-    const info: PlaceholderAssistantMessage = {
-      id: errorTurn.id,
-      sessionID,
-      role: "assistant",
-      time: { created: errorTurn.time, completed: errorTurn.time },
-      parentID: errorTurn.afterMessageID ?? "",
-      modelID: "",
-      providerID: "",
-      mode: "",
-      agent: "",
-      path: { cwd: "", root: "" },
-      cost: 0,
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    };
-
-    return {
-      info,
-      parts: [
-        {
-          id: `${errorTurn.id}:text`,
-          sessionID,
-          messageID: errorTurn.id,
-          type: "text",
-          text: errorTurn.text,
-        } as Part,
-      ],
-    };
-  };
-
-  const insertSyntheticSessionErrors = (
+  const createTranscriptRows = (
     list: MessageWithParts[],
-    sessionID: string | null,
     errorTurns: SessionErrorTurn[],
-  ) => {
-    if (!sessionID || errorTurns.length === 0) return list;
+  ): TranscriptRow[] => {
+    const rows: TranscriptRow[] = [];
+    const errorsByAnchor = new Map<string, SessionErrorTurn[]>();
+    const trailingErrors: SessionErrorTurn[] = [];
+    const seenErrorIds = new Set<string>();
 
-    const next = list.slice();
     errorTurns.forEach((errorTurn) => {
-      if (next.some((message) => messageIdFromInfo(message) === errorTurn.id)) return;
-      const syntheticMessage = createSyntheticSessionErrorMessage(sessionID, errorTurn);
-      const anchorIndex = errorTurn.afterMessageID
-        ? next.findIndex((message) => messageIdFromInfo(message) === errorTurn.afterMessageID)
-        : -1;
-
-      if (anchorIndex === -1) {
-        next.push(syntheticMessage);
+      const anchor = errorTurn.afterMessageID?.trim();
+      if (!anchor) {
+        trailingErrors.push(errorTurn);
         return;
       }
-
-      next.splice(anchorIndex + 1, 0, syntheticMessage);
+      const existing = errorsByAnchor.get(anchor);
+      if (existing) {
+        existing.push(errorTurn);
+        return;
+      }
+      errorsByAnchor.set(anchor, [errorTurn]);
     });
 
-    return next;
+    list.forEach((message, index) => {
+      const messageId = messageIdFromInfo(message) || `message-${index}`;
+      rows.push({ kind: "message", id: messageId, message });
+
+      const anchoredErrors = errorsByAnchor.get(messageId) ?? [];
+      anchoredErrors.forEach((errorTurn) => {
+        rows.push({ kind: "session-error", id: errorTurn.id, error: errorTurn });
+        seenErrorIds.add(errorTurn.id);
+      });
+    });
+
+    trailingErrors.forEach((errorTurn) => {
+      if (seenErrorIds.has(errorTurn.id)) return;
+      rows.push({ kind: "session-error", id: errorTurn.id, error: errorTurn });
+      seenErrorIds.add(errorTurn.id);
+    });
+
+    errorTurns.forEach((errorTurn) => {
+      if (seenErrorIds.has(errorTurn.id)) return;
+      rows.push({ kind: "session-error", id: errorTurn.id, error: errorTurn });
+      seenErrorIds.add(errorTurn.id);
+    });
+
+    return rows;
   };
 
   const upsertLocalSession = (next: Session | null | undefined) => {
@@ -2046,19 +2035,17 @@ export default function App() {
   // as the visibility boundary. OpenWork mirrors that behavior by filtering the
   // displayed transcript.
   const visibleMessages = createMemo(() => {
-    const sessionID = selectedSessionId();
-    const errorTurns = sessionStore.selectedSessionErrorTurns();
-    const list = messages().filter((message) => {
-      const id = messageIdFromInfo(message);
-      return !id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
-    });
+    const list = messages();
     const revert = selectedSession()?.revert?.messageID ?? null;
-    const visible = !revert ? list : list.filter((message) => {
+    return !revert ? list : list.filter((message) => {
       const id = messageIdFromInfo(message);
       return Boolean(id) && id < revert;
     });
-    return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
   });
+
+  const visibleTranscriptRows = createMemo(() =>
+    createTranscriptRows(visibleMessages(), sessionStore.selectedSessionErrorTurns()),
+  );
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
     const text = message.parts
@@ -7088,6 +7075,7 @@ export default function App() {
     openRenameWorkspace,
     selectSession: selectSession,
     messages: visibleMessages(),
+    transcriptRows: visibleTranscriptRows(),
     getSessionById: sessionById,
     getMessagesBySessionId: messagesBySessionId,
     ensureSessionLoaded,
