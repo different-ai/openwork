@@ -21,6 +21,15 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker-compose)
+else
+  echo "docker compose or docker-compose is required" >&2
+  exit 1
+fi
+
 pick_port() {
   node -e "
     const net = require('net');
@@ -212,9 +221,10 @@ if ! DEN_API_PORT="$DEN_API_PORT" \
   DAYTONA_API_KEY="${DAYTONA_API_KEY:-}" \
   DAYTONA_TARGET="${DAYTONA_TARGET:-}" \
   DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT:-}" \
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --build --wait; then
+  DAYTONA_OPENWORK_VERSION="${DAYTONA_OPENWORK_VERSION:-}" \
+  "${COMPOSE_CMD[@]}" -p "$PROJECT" -f "$COMPOSE_FILE" up -d --build --wait; then
   echo "Den Docker stack failed to start. Recent logs:" >&2
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --tail=200 >&2 || true
+  "${COMPOSE_CMD[@]}" -p "$PROJECT" -f "$COMPOSE_FILE" logs --tail=200 >&2 || true
   exit 1
 fi
 
@@ -248,6 +258,6 @@ echo "Health check:          http://localhost:$DEN_API_PORT/health" >&2
 echo "Runtime env file:      $RUNTIME_FILE" >&2
 echo "" >&2
 echo "To stop this stack (keep DB data):" >&2
-echo "  docker compose -p $PROJECT -f $COMPOSE_FILE down" >&2
+echo "  ${COMPOSE_CMD[*]} -p $PROJECT -f $COMPOSE_FILE down" >&2
 echo "To stop and reset the DB:" >&2
-echo "  docker compose -p $PROJECT -f $COMPOSE_FILE down -v" >&2
+echo "  ${COMPOSE_CMD[*]} -p $PROJECT -f $COMPOSE_FILE down -v" >&2
