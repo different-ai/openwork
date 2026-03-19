@@ -13,7 +13,7 @@ importers:
 
   .: {}
 
-  packages/app:
+  apps/app:
     dependencies:
       '@codemirror/commands':
         specifier: ^6.8.0
@@ -38,19 +38,19 @@ importers:
         version: 3.0.0
       '@solid-primitives/event-bus':
         specifier: ^1.1.2
-        version: 1.1.2(solid-js@1.9.10)
+        version: 1.1.2(solid-js@1.9.9)
       '@solid-primitives/storage':
         specifier: ^4.3.3
-        version: 4.3.3(solid-js@1.9.10)
+        version: 4.3.3(solid-js@1.9.9)
       '@solidjs/router':
         specifier: ^0.15.4
-        version: 0.15.4(patch_hash=1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770)(solid-js@1.9.10)
+        version: 0.15.4(patch_hash=1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770)(solid-js@1.9.9)
       '@tanstack/solid-virtual':
         specifier: ^3.13.19
-        version: 3.13.19(solid-js@1.9.10)
+        version: 3.13.19(solid-js@1.9.9)
       '@tauri-apps/api':
         specifier: ^2.0.0
-        version: 2.9.1
+        version: 2.10.1
       '@tauri-apps/plugin-deep-link':
         specifier: ^2.4.7
         version: 2.4.7
@@ -77,13 +77,13 @@ importers:
         version: 3.3.1
       lucide-solid:
         specifier: ^0.562.0
-        version: 0.562.0(solid-js@1.9.10)
+        version: 0.562.0(solid-js@1.9.9)
       marked:
         specifier: ^17.0.1
         version: 17.0.1
       solid-js:
         specifier: ^1.9.0
-        version: 1.9.10
+        version: 1.9.9
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.1.18
@@ -99,86 +99,15 @@ importers:
         version: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
       vite-plugin-solid:
         specifier: ^2.11.0
-        version: 2.11.10(solid-js@1.9.10)(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
+        version: 2.11.10(solid-js@1.9.9)(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
 
-  packages/den-db:
-    dependencies:
-      '@different-ai/openwork-utils':
-        specifier: workspace:*
-        version: link:../utils
-      '@planetscale/database':
-        specifier: ^1.19.0
-        version: 1.19.0
-      drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4)
-      mysql2:
-        specifier: ^3.11.3
-        version: 3.17.4
-    devDependencies:
-      '@types/node':
-        specifier: ^20.11.30
-        version: 20.12.12
-      drizzle-kit:
-        specifier: ^0.31.9
-        version: 0.31.9
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.5.4
-        version: 5.9.3
-
-  packages/desktop:
+  apps/desktop:
     devDependencies:
       '@tauri-apps/cli':
         specifier: ^2.0.0
         version: 2.9.6
 
-  packages/landing:
-    dependencies:
-      '@paper-design/shaders-react':
-        specifier: 0.0.71
-        version: 0.0.71(@types/react@18.2.79)(react@18.2.0)
-      framer-motion:
-        specifier: ^12.35.1
-        version: 12.35.1(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
-      lucide-react:
-        specifier: ^0.577.0
-        version: 0.577.0(react@18.2.0)
-      next:
-        specifier: 14.2.5
-        version: 14.2.5(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
-      react:
-        specifier: 18.2.0
-        version: 18.2.0
-      react-dom:
-        specifier: 18.2.0
-        version: 18.2.0(react@18.2.0)
-    devDependencies:
-      '@types/node':
-        specifier: 20.12.12
-        version: 20.12.12
-      '@types/react':
-        specifier: 18.2.79
-        version: 18.2.79
-      '@types/react-dom':
-        specifier: 18.2.25
-        version: 18.2.25
-      autoprefixer:
-        specifier: 10.4.19
-        version: 10.4.19(postcss@8.4.38)
-      postcss:
-        specifier: 8.4.38
-        version: 8.4.38
-      tailwindcss:
-        specifier: 3.4.7
-        version: 3.4.7
-      typescript:
-        specifier: 5.4.5
-        version: 5.4.5
-
-  packages/opencode-router:
+  apps/opencode-router:
     dependencies:
       '@opencode-ai/sdk':
         specifier: ^1.1.31
@@ -212,7 +141,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/orchestrator:
+  apps/orchestrator:
     dependencies:
       '@opencode-ai/sdk':
         specifier: ^1.1.31
@@ -223,12 +152,12 @@ importers:
       '@opentui/solid':
         specifier: 0.1.77
         version: 0.1.77(solid-js@1.9.9)(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+      '@openwork/server':
+        specifier: 0.11.170
+        version: link:../server
       opencode-router:
         specifier: 0.11.170
         version: link:../opencode-router
-      openwork-server:
-        specifier: 0.11.170
-        version: link:../server
       solid-js:
         specifier: 1.9.9
         version: 1.9.9
@@ -258,7 +187,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/server:
+  apps/server:
     dependencies:
       jsonc-parser:
         specifier: ^3.2.1
@@ -283,128 +212,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/utils:
-    dependencies:
-      typeid-js:
-        specifier: ^1.2.0
-        version: 1.2.0
-    devDependencies:
-      '@types/node':
-        specifier: ^20.11.30
-        version: 20.12.12
-      typescript:
-        specifier: ^5.5.4
-        version: 5.9.3
-
-  packages/web:
-    dependencies:
-      next:
-        specifier: 14.2.5
-        version: 14.2.5(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
-      react:
-        specifier: 18.2.0
-        version: 18.2.0
-      react-dom:
-        specifier: 18.2.0
-        version: 18.2.0(react@18.2.0)
-    devDependencies:
-      '@types/node':
-        specifier: 20.12.12
-        version: 20.12.12
-      '@types/react':
-        specifier: 18.2.79
-        version: 18.2.79
-      '@types/react-dom':
-        specifier: 18.2.25
-        version: 18.2.25
-      autoprefixer:
-        specifier: 10.4.19
-        version: 10.4.19(postcss@8.4.38)
-      postcss:
-        specifier: 8.4.38
-        version: 8.4.38
-      tailwindcss:
-        specifier: 3.4.7
-        version: 3.4.7
-      typescript:
-        specifier: 5.4.5
-        version: 5.4.5
-
-  services/den-v2:
-    dependencies:
-      '@daytonaio/sdk':
-        specifier: ^0.150.0
-        version: 0.150.0(ws@8.19.0)
-      better-auth:
-        specifier: ^1.4.18
-        version: 1.4.18(drizzle-kit@0.31.9)(drizzle-orm@0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4))(mysql2@3.17.4)(next@16.1.6(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(solid-js@1.9.10)
-      cors:
-        specifier: ^2.8.5
-        version: 2.8.6
-      dotenv:
-        specifier: ^16.4.5
-        version: 16.6.1
-      drizzle-orm:
-        specifier: ^0.45.1
-        version: 0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4)
-      express:
-        specifier: ^4.19.2
-        version: 4.22.1
-      mysql2:
-        specifier: ^3.11.3
-        version: 3.17.4
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
-      '@types/cors':
-        specifier: ^2.8.17
-        version: 2.8.19
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
-      '@types/node':
-        specifier: ^20.11.30
-        version: 20.12.12
-      drizzle-kit:
-        specifier: ^0.31.9
-        version: 0.31.9
-      tsx:
-        specifier: ^4.15.7
-        version: 4.21.0
-      typescript:
-        specifier: ^5.5.4
-        version: 5.9.3
-
-  services/den-worker-proxy:
-    dependencies:
-      '@daytonaio/sdk':
-        specifier: ^0.150.0
-        version: 0.150.0(ws@8.19.0)
-      '@hono/node-server':
-        specifier: ^1.13.8
-        version: 1.19.11(hono@4.12.8)
-      dotenv:
-        specifier: ^16.4.5
-        version: 16.6.1
-      hono:
-        specifier: ^4.7.2
-        version: 4.12.8
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
-      '@types/node':
-        specifier: ^20.11.30
-        version: 20.12.12
-      tsx:
-        specifier: ^4.15.7
-        version: 4.21.0
-      typescript:
-        specifier: ^5.5.4
-        version: 5.9.3
-
-  services/openwork-share:
+  apps/share:
     dependencies:
       '@paper-design/shaders-react':
         specifier: 0.0.71
@@ -448,6 +256,210 @@ importers:
         version: 18.2.25
       typescript:
         specifier: ^5.9.3
+        version: 5.9.3
+
+  ee/apps/den-controller:
+    dependencies:
+      '@daytonaio/sdk':
+        specifier: ^0.150.0
+        version: 0.150.0(ws@8.19.0)
+      '@openwork-ee/den-db':
+        specifier: workspace:*
+        version: link:../../packages/den-db
+      '@openwork-ee/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
+      better-auth:
+        specifier: ^1.4.18
+        version: 1.4.18(drizzle-kit@0.31.9)(drizzle-orm@0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4))(mysql2@3.17.4)(next@16.1.6(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(solid-js@1.9.10)
+      cors:
+        specifier: ^2.8.5
+        version: 2.8.6
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      drizzle-orm:
+        specifier: ^0.45.1
+        version: 0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4)
+      express:
+        specifier: ^4.19.2
+        version: 4.22.1
+      mysql2:
+        specifier: ^3.11.3
+        version: 3.17.4
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/cors':
+        specifier: ^2.8.17
+        version: 2.8.19
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      drizzle-kit:
+        specifier: ^0.31.9
+        version: 0.31.9
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  ee/apps/den-web:
+    dependencies:
+      next:
+        specifier: 14.2.5
+        version: 14.2.5(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      react:
+        specifier: 18.2.0
+        version: 18.2.0
+      react-dom:
+        specifier: 18.2.0
+        version: 18.2.0(react@18.2.0)
+    devDependencies:
+      '@types/node':
+        specifier: 20.12.12
+        version: 20.12.12
+      '@types/react':
+        specifier: 18.2.79
+        version: 18.2.79
+      '@types/react-dom':
+        specifier: 18.2.25
+        version: 18.2.25
+      autoprefixer:
+        specifier: 10.4.19
+        version: 10.4.19(postcss@8.4.38)
+      postcss:
+        specifier: 8.4.38
+        version: 8.4.38
+      tailwindcss:
+        specifier: 3.4.7
+        version: 3.4.7
+      typescript:
+        specifier: 5.4.5
+        version: 5.4.5
+
+  ee/apps/den-worker-proxy:
+    dependencies:
+      '@daytonaio/sdk':
+        specifier: ^0.150.0
+        version: 0.150.0(ws@8.19.0)
+      '@hono/node-server':
+        specifier: ^1.13.8
+        version: 1.19.11(hono@4.12.8)
+      '@openwork-ee/den-db':
+        specifier: workspace:*
+        version: link:../../packages/den-db
+      '@openwork-ee/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      hono:
+        specifier: ^4.7.2
+        version: 4.12.8
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  ee/apps/landing:
+    dependencies:
+      '@paper-design/shaders-react':
+        specifier: 0.0.71
+        version: 0.0.71(@types/react@18.2.79)(react@18.2.0)
+      framer-motion:
+        specifier: ^12.35.1
+        version: 12.35.1(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      lucide-react:
+        specifier: ^0.577.0
+        version: 0.577.0(react@18.2.0)
+      next:
+        specifier: 14.2.5
+        version: 14.2.5(@opentelemetry/api@1.9.0)(@playwright/test@1.58.2)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
+      react:
+        specifier: 18.2.0
+        version: 18.2.0
+      react-dom:
+        specifier: 18.2.0
+        version: 18.2.0(react@18.2.0)
+    devDependencies:
+      '@types/node':
+        specifier: 20.12.12
+        version: 20.12.12
+      '@types/react':
+        specifier: 18.2.79
+        version: 18.2.79
+      '@types/react-dom':
+        specifier: 18.2.25
+        version: 18.2.25
+      autoprefixer:
+        specifier: 10.4.19
+        version: 10.4.19(postcss@8.4.38)
+      postcss:
+        specifier: 8.4.38
+        version: 8.4.38
+      tailwindcss:
+        specifier: 3.4.7
+        version: 3.4.7
+      typescript:
+        specifier: 5.4.5
+        version: 5.4.5
+
+  ee/packages/den-db:
+    dependencies:
+      '@openwork-ee/utils':
+        specifier: workspace:*
+        version: link:../utils
+      '@planetscale/database':
+        specifier: ^1.19.0
+        version: 1.19.0
+      drizzle-orm:
+        specifier: ^0.45.1
+        version: 0.45.1(@opentelemetry/api@1.9.0)(@planetscale/database@1.19.0)(bun-types@1.3.6)(kysely@0.28.11)(mysql2@3.17.4)
+      mysql2:
+        specifier: ^3.11.3
+        version: 3.17.4
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      drizzle-kit:
+        specifier: ^0.31.9
+        version: 0.31.9
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  ee/packages/utils:
+    dependencies:
+      typeid-js:
+        specifier: ^1.2.0
+        version: 1.2.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      typescript:
+        specifier: ^5.5.4
         version: 5.9.3
 
 packages:
@@ -2523,9 +2535,6 @@ packages:
   '@tauri-apps/api@2.10.1':
     resolution: {integrity: sha512-hKL/jWf293UDSUN09rR69hrToyIXBb8CjGaWC7gfinvnQrBVvnLr08FeFi38gxtugAVyVcTa5/FD/Xnkb1siBw==}
 
-  '@tauri-apps/api@2.9.1':
-    resolution: {integrity: sha512-IGlhP6EivjXHepbBic618GOmiWe4URJiIeZFlB7x3czM0yDHHYviH1Xvoiv4FefdkQtn6v7TuwWCRfOGdnVUGw==}
-
   '@tauri-apps/cli-darwin-arm64@2.9.6':
     resolution: {integrity: sha512-gf5no6N9FCk1qMrti4lfwP77JHP5haASZgVbBgpZG7BUepB3fhiLCXGUK8LvuOjP36HivXewjg72LTnPDScnQQ==}
     engines: {node: '>= 10'}
@@ -2772,9 +2781,6 @@ packages:
   aws-ssl-profiles@1.1.2:
     resolution: {integrity: sha512-NZKeq9AfyQvEeNlN0zSYAaWrmBffJh3IELMZfRpJVWgrpEbtEpnjvzqBPf+mxoI287JohRDoa+/nsfqqiZmF6g==}
     engines: {node: '>= 6.0.0'}
-
-  axios@1.13.4:
-    resolution: {integrity: sha512-1wVkUaAO6WyaYtCkcYCOx12ZgpGf9Zif+qXa4n+oYzK558YryKqiL6UWwd5DqiH3VRW0GYhTZQ/vlgJrCoNQlg==}
 
   axios@1.13.6:
     resolution: {integrity: sha512-ChTCHMouEe2kn713WHbQGcuYrr6fXTBiu460OTwWrWob16g1bXn4vtz07Ope7ewMozJAnEquLk5lWQWtBig9DQ==}
@@ -6613,7 +6619,7 @@ snapshots:
       '@slack/types': 2.19.0
       '@types/node': 20.12.12
       '@types/retry': 0.12.0
-      axios: 1.13.4
+      axios: 1.13.6
       eventemitter3: 5.0.4
       form-data: 4.0.5
       is-electron: 2.2.2
@@ -6963,23 +6969,23 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@solid-primitives/event-bus@1.1.2(solid-js@1.9.10)':
+  '@solid-primitives/event-bus@1.1.2(solid-js@1.9.9)':
     dependencies:
-      '@solid-primitives/utils': 6.3.2(solid-js@1.9.10)
-      solid-js: 1.9.10
+      '@solid-primitives/utils': 6.3.2(solid-js@1.9.9)
+      solid-js: 1.9.9
 
-  '@solid-primitives/storage@4.3.3(solid-js@1.9.10)':
+  '@solid-primitives/storage@4.3.3(solid-js@1.9.9)':
     dependencies:
-      '@solid-primitives/utils': 6.3.2(solid-js@1.9.10)
-      solid-js: 1.9.10
+      '@solid-primitives/utils': 6.3.2(solid-js@1.9.9)
+      solid-js: 1.9.9
 
-  '@solid-primitives/utils@6.3.2(solid-js@1.9.10)':
+  '@solid-primitives/utils@6.3.2(solid-js@1.9.9)':
     dependencies:
-      solid-js: 1.9.10
+      solid-js: 1.9.9
 
-  '@solidjs/router@0.15.4(patch_hash=1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770)(solid-js@1.9.10)':
+  '@solidjs/router@0.15.4(patch_hash=1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770)(solid-js@1.9.9)':
     dependencies:
-      solid-js: 1.9.10
+      solid-js: 1.9.9
 
   '@standard-schema/spec@1.1.0': {}
 
@@ -7062,16 +7068,14 @@ snapshots:
       tailwindcss: 4.1.18
       vite: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
-  '@tanstack/solid-virtual@3.13.19(solid-js@1.9.10)':
+  '@tanstack/solid-virtual@3.13.19(solid-js@1.9.9)':
     dependencies:
       '@tanstack/virtual-core': 3.13.19
-      solid-js: 1.9.10
+      solid-js: 1.9.9
 
   '@tanstack/virtual-core@3.13.19': {}
 
   '@tauri-apps/api@2.10.1': {}
-
-  '@tauri-apps/api@2.9.1': {}
 
   '@tauri-apps/cli-darwin-arm64@2.9.6':
     optional: true
@@ -7126,23 +7130,23 @@ snapshots:
 
   '@tauri-apps/plugin-dialog@2.6.0':
     dependencies:
-      '@tauri-apps/api': 2.9.1
+      '@tauri-apps/api': 2.10.1
 
   '@tauri-apps/plugin-http@2.5.6':
     dependencies:
-      '@tauri-apps/api': 2.9.1
+      '@tauri-apps/api': 2.10.1
 
   '@tauri-apps/plugin-opener@2.5.3':
     dependencies:
-      '@tauri-apps/api': 2.9.1
+      '@tauri-apps/api': 2.10.1
 
   '@tauri-apps/plugin-process@2.3.1':
     dependencies:
-      '@tauri-apps/api': 2.9.1
+      '@tauri-apps/api': 2.10.1
 
   '@tauri-apps/plugin-updater@2.9.0':
     dependencies:
-      '@tauri-apps/api': 2.9.1
+      '@tauri-apps/api': 2.10.1
 
   '@tokenizer/token@0.3.0': {}
 
@@ -7319,14 +7323,6 @@ snapshots:
 
   aws-ssl-profiles@1.1.2: {}
 
-  axios@1.13.4:
-    dependencies:
-      follow-redirects: 1.15.11
-      form-data: 4.0.5
-      proxy-from-env: 1.1.0
-    transitivePeerDependencies:
-      - debug
-
   axios@1.13.6:
     dependencies:
       follow-redirects: 1.15.11
@@ -7368,12 +7364,12 @@ snapshots:
     optionalDependencies:
       solid-js: 1.9.9
 
-  babel-preset-solid@1.9.9(@babel/core@7.28.6)(solid-js@1.9.10):
+  babel-preset-solid@1.9.9(@babel/core@7.28.6)(solid-js@1.9.9):
     dependencies:
       '@babel/core': 7.28.6
       babel-plugin-jsx-dom-expressions: 0.40.3(@babel/core@7.28.6)
     optionalDependencies:
-      solid-js: 1.9.10
+      solid-js: 1.9.9
 
   balanced-match@1.0.2: {}
 
@@ -8175,9 +8171,9 @@ snapshots:
     dependencies:
       react: 18.2.0
 
-  lucide-solid@0.562.0(solid-js@1.9.10):
+  lucide-solid@0.562.0(solid-js@1.9.9):
     dependencies:
-      solid-js: 1.9.10
+      solid-js: 1.9.9
 
   magic-string@0.30.21:
     dependencies:
@@ -8785,6 +8781,7 @@ snapshots:
       csstype: 3.2.3
       seroval: 1.3.2
       seroval-plugins: 1.3.3(seroval@1.3.2)
+    optional: true
 
   solid-js@1.9.9:
     dependencies:
@@ -8792,12 +8789,12 @@ snapshots:
       seroval: 1.3.2
       seroval-plugins: 1.3.3(seroval@1.3.2)
 
-  solid-refresh@0.6.3(solid-js@1.9.10):
+  solid-refresh@0.6.3(solid-js@1.9.9):
     dependencies:
       '@babel/generator': 7.28.6
       '@babel/helper-module-imports': 7.28.6
       '@babel/types': 7.28.6
-      solid-js: 1.9.10
+      solid-js: 1.9.9
     transitivePeerDependencies:
       - supports-color
 
@@ -9007,14 +9004,14 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite-plugin-solid@2.11.10(solid-js@1.9.10)(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)):
+  vite-plugin-solid@2.11.10(solid-js@1.9.9)(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)):
     dependencies:
       '@babel/core': 7.28.6
       '@types/babel__core': 7.20.5
-      babel-preset-solid: 1.9.9(@babel/core@7.28.6)(solid-js@1.9.10)
+      babel-preset-solid: 1.9.9(@babel/core@7.28.6)(solid-js@1.9.9)
       merge-anything: 5.1.7
-      solid-js: 1.9.10
-      solid-refresh: 0.6.3(solid-js@1.9.10)
+      solid-js: 1.9.9
+      solid-refresh: 0.6.3(solid-js@1.9.9)
       vite: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
       vitefu: 1.1.1(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
     transitivePeerDependencies:

@@ -64,7 +64,7 @@ jobs:
 
       - name: Create CI Tauri config (no updater artifacts)
         run: |
-          node -e "const fs=require('fs'); const configPath='packages/desktop/src-tauri/tauri.conf.json'; const ciPath='packages/desktop/src-tauri/tauri.conf.ci.json'; const config=JSON.parse(fs.readFileSync(configPath,'utf8')); config.bundle={...config.bundle, createUpdaterArtifacts:false}; fs.writeFileSync(ciPath, JSON.stringify(config, null, 2));"
+          node -e "const fs=require('fs'); const configPath='apps/desktop/src-tauri/tauri.conf.json'; const ciPath='apps/desktop/src-tauri/tauri.conf.ci.json'; const config=JSON.parse(fs.readFileSync(configPath,'utf8')); config.bundle={...config.bundle, createUpdaterArtifacts:false}; fs.writeFileSync(ciPath, JSON.stringify(config, null, 2));"
 
       - name: Download OpenCode sidecar
         shell: bash
@@ -79,7 +79,7 @@ jobs:
           version="${OPENCODE_VERSION:-}"
 
           if [ -z "$version" ]; then
-            version="$(node -p "require('./packages/desktop/package.json').opencodeVersion || ''" 2>/dev/null || true)"
+            version="$(node -p "require('./apps/desktop/package.json').opencodeVersion || ''" 2>/dev/null || true)"
           fi
 
           version="$(echo "$version" | tr -d '\r\n' | sed 's/^v//')"
@@ -133,15 +133,15 @@ jobs:
           fi
 
           target_name="opencode-x86_64-unknown-linux-gnu"
-          mkdir -p packages/desktop/src-tauri/sidecars
-          cp "$bin_path" "packages/desktop/src-tauri/sidecars/${target_name}"
-          chmod 755 "packages/desktop/src-tauri/sidecars/${target_name}"
+          mkdir -p apps/desktop/src-tauri/sidecars
+          cp "$bin_path" "apps/desktop/src-tauri/sidecars/${target_name}"
+          chmod 755 "apps/desktop/src-tauri/sidecars/${target_name}"
 
       - name: Prepare desktop sidecars
-        run: pnpm -C packages/desktop prepare:sidecar
+        run: pnpm -C apps/desktop prepare:sidecar
 
       - name: Run Rust tests (engine + sidecar resolution)
-        run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml --locked
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
 
       - name: Build desktop app
-        run: pnpm --filter @different-ai/openwork exec tauri build --config src-tauri/tauri.conf.ci.json --target x86_64-unknown-linux-gnu --bundles deb
+        run: pnpm --filter @openwork/desktop exec tauri build --config src-tauri/tauri.conf.ci.json --target x86_64-unknown-linux-gnu --bundles deb

@@ -105,8 +105,8 @@ const openworkPort = await resolvePort(process.env.OPENWORK_PORT, "127.0.0.1");
 const webPort = await resolvePort(process.env.OPENWORK_WEB_PORT, "127.0.0.1");
 const openworkToken = process.env.OPENWORK_TOKEN ?? randomUUID();
 const openworkHostToken = process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
-const openworkServerBin = path.join(cwd, "packages/server/dist/bin/openwork-server");
-const opencodeRouterBin = path.join(cwd, "packages/opencode-router/dist/bin/opencode-router");
+const openworkServerBin = path.join(cwd, "apps/server/dist/bin/openwork-server");
+const opencodeRouterBin = path.join(cwd, "apps/opencode-router/dist/bin/opencode-router");
 
 const ensureOpenworkServer = async () => {
   try {
@@ -115,15 +115,15 @@ const ensureOpenworkServer = async () => {
     if (!autoBuildEnabled) {
       logLine(`[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`);
       logLine("[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)");
-      logLine("[dev:headless-web] Run: pnpm --filter openwork-server build:bin");
+      logLine("[dev:headless-web] Run: pnpm --filter @openwork/server build:bin");
       logLine("[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.");
       process.exit(1);
     }
 
     logLine(`[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`);
-    logLine("[dev:headless-web] Auto-building: pnpm --filter openwork-server build:bin");
+    logLine("[dev:headless-web] Auto-building: pnpm --filter @openwork/server build:bin");
     try {
-      await runCommand("pnpm", ["--filter", "openwork-server", "build:bin"]);
+      await runCommand("pnpm", ["--filter", "@openwork/server", "build:bin"]);
       await access(openworkServerBin);
     } catch (error) {
       logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -207,7 +207,7 @@ const webProcess = spawnLogged(
   "pnpm",
   [
     "--filter",
-    "@different-ai/openwork-ui",
+    "@openwork/app",
     "exec",
     "vite",
     "--host",

@@ -216,7 +216,7 @@ jobs:
           }
 
           async function main() {
-            const pkg = JSON.parse(fs.readFileSync('./packages/desktop/package.json', 'utf8'));
+            const pkg = JSON.parse(fs.readFileSync('./apps/desktop/package.json', 'utf8'));
             const configuredRaw = (process.env.OPENCODE_VERSION || pkg.opencodeVersion || '').toString().trim();
             if (configuredRaw && configuredRaw.toLowerCase() !== 'latest') {
               const normalized = configuredRaw.startsWith('v') ? configuredRaw.slice(1) : configuredRaw;
@@ -305,9 +305,9 @@ jobs:
             target_name="${target_name}.exe"
           fi
 
-          mkdir -p packages/desktop/src-tauri/sidecars
-          cp "$bin_path" "packages/desktop/src-tauri/sidecars/${target_name}"
-          chmod 755 "packages/desktop/src-tauri/sidecars/${target_name}"
+          mkdir -p apps/desktop/src-tauri/sidecars
+          cp "$bin_path" "apps/desktop/src-tauri/sidecars/${target_name}"
+          chmod 755 "apps/desktop/src-tauri/sidecars/${target_name}"
 
       - name: Write notary API key
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
@@ -348,7 +348,7 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           prerelease: true
           releaseDraft: false
-          projectPath: packages/desktop
+          projectPath: apps/desktop
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3
@@ -374,7 +374,7 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           prerelease: true
           releaseDraft: false
-          projectPath: packages/desktop
+          projectPath: apps/desktop
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3

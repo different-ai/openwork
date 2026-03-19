@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/packaging/docker/docker-compose.web-local.yml"
 PROJECT_NAME="openwork-web-local"
-DEV_CMD=(pnpm --parallel --filter @openwork/den --filter @different-ai/openwork-web dev)
+DEV_CMD=(pnpm --parallel --filter @openwork-ee/den-controller --filter @openwork-ee/den-web dev)
 
 # Local-dev defaults — match the MySQL container in docker-compose.web-local.yml.
 # These are only used when not already set in the environment or .env.
@@ -58,7 +58,7 @@ docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down -v >/dev/null 2>&1 || 
 docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d --wait mysql
 
 echo "Running Den migrations..."
-pnpm --filter @openwork/den db:migrate
+pnpm --filter @openwork-ee/den-controller db:migrate
 
 WEB_CORS_ORIGINS="$(detect_web_origins)"
 echo "Allowing Better Auth origins: $WEB_CORS_ORIGINS"

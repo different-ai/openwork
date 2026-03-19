@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenWork",
+  "version": "0.11.170",
+  "identifier": "com.differentai.openwork",
+  "build": {
+    "beforeDevCommand": "node ./scripts/tauri-before-dev.mjs",
+    "beforeBuildCommand": "pnpm -C ../.. --filter @openwork/desktop run prepare:sidecar && pnpm -w build:ui",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../../app/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OpenWork",
+        "width": 1180,
+        "height": 820,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "entitlements": "./entitlements.plist"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "sidecars/opencode",
+      "sidecars/openwork-server",
+      "sidecars/opencode-router",
+      "sidecars/openwork-orchestrator",
+      "sidecars/chrome-devtools-mcp",
+      "sidecars/versions.json"
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "openwork"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUwNDdCNTAwMTcxNUUxQTQKUldTazRSVVhBTFZIVUpNRi9OQnNRaElZY1NUWUQxS1ZJOTFUeUdPd2d6ZnFmMW5QV2xJQ1hXTTkK",
+      "endpoints": [
+        "https://github.com/different-ai/openwork/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

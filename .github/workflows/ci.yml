@@ -34,7 +34,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build web
-        run: pnpm --filter @different-ai/openwork-web build
+        run: pnpm --filter @openwork-ee/den-web build
 
   build-den:
     name: Build Den service
@@ -58,7 +58,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build den service
-        run: pnpm --filter @openwork/den build
+        run: pnpm --filter @openwork-ee/den-controller build
 
   build-orchestrator-binary:
     name: Build openwork orchestrator binary
@@ -94,5 +94,5 @@ jobs:
 
       - name: Validate compiled binary
         run: |
-          ./packages/orchestrator/dist/bin/openwork --version
-          ./packages/orchestrator/dist/bin/openwork --help >/dev/null
+          ./apps/orchestrator/dist/bin/openwork --version
+          ./apps/orchestrator/dist/bin/openwork --help >/dev/null

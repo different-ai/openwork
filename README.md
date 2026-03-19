@@ -41,7 +41,7 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
 - **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
   - install: `npm install -g openwork-orchestrator`
   - run: `openwork start --workspace /path/to/workspace --approval auto`
-  - docs: [packages/orchestrator/README.md](./packages/orchestrator/README.md)
+  - docs: [apps/orchestrator/README.md](./apps/orchestrator/README.md)
 
 ## Quick start
 
@@ -110,7 +110,7 @@ pnpm install --frozen-lockfile
 
 which bun
 bun --version
-pnpm --filter @different-ai/openwork exec tauri --version
+pnpm --filter @openwork/desktop exec tauri --version
 ```
 
 ### Install
@@ -119,7 +119,7 @@ pnpm --filter @different-ai/openwork exec tauri --version
 pnpm install
 ```
 
-OpenWork now lives in `packages/app` (UI) and `packages/desktop` (desktop shell).
+OpenWork now lives in `apps/app` (UI) and `apps/desktop` (desktop shell).
 
 ### Run (Desktop)
 
@@ -165,7 +165,7 @@ This lets you run agentic workflows, send prompts, and see progress entirely on 
 The folder picker uses the Tauri dialog plugin.
 Capability permissions are defined in:
 
-- `packages/desktop/src-tauri/capabilities/default.json`
+- `apps/desktop/src-tauri/capabilities/default.json`
 
 ## OpenPackage Notes
 
@@ -229,7 +229,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
 - Use `.github/pull_request_template.md` when opening PRs and include exact commands, outcomes, manual verification steps, and evidence.
 - If CI fails, classify failures in the PR body as either code-related regressions or external/environment/auth blockers.
-- Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
+- Add new PRDs to `apps/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
 Community docs:
 

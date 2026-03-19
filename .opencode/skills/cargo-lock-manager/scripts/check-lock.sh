@@ -4,7 +4,7 @@
 
 set -e
 
-CARGO_TOML="${1:-packages/desktop/src-tauri/Cargo.toml}"
+CARGO_TOML="${1:-apps/desktop/src-tauri/Cargo.toml}"
 
 echo "🔍 Checking Cargo.lock status for: $CARGO_TOML"
 

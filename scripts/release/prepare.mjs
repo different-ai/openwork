@@ -72,7 +72,7 @@ if (!dryRun) {
 }
 
 // Read the new version
-const appPkg = JSON.parse(readFileSync(resolve(root, "packages/app/package.json"), "utf8"));
+const appPkg = JSON.parse(readFileSync(resolve(root, "apps/app/package.json"), "utf8"));
 const version = appPkg.version;
 success(`Version is now ${version}`);
 

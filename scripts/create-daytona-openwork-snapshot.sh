@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DOCKERFILE="$ROOT_DIR/services/den-worker-runtime/Dockerfile.daytona-snapshot"
+DOCKERFILE="$ROOT_DIR/ee/apps/den-worker-runtime/Dockerfile.daytona-snapshot"
 DAYTONA_ENV_FILE="${DAYTONA_ENV_FILE:-$ROOT_DIR/.env.daytona}"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -29,8 +29,8 @@ SNAPSHOT_MEMORY="${DAYTONA_SNAPSHOT_MEMORY:-2}"
 SNAPSHOT_DISK="${DAYTONA_SNAPSHOT_DISK:-8}"
 LOCAL_IMAGE_TAG="${DAYTONA_LOCAL_IMAGE_TAG:-openwork-daytona-snapshot:${SNAPSHOT_NAME//[^a-zA-Z0-9_.-]/-}}"
 
-OPENWORK_ORCHESTRATOR_VERSION="${OPENWORK_ORCHESTRATOR_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.version));' "$ROOT_DIR/packages/orchestrator/package.json")}"
-OPENCODE_VERSION="${OPENCODE_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.opencodeVersion));' "$ROOT_DIR/packages/orchestrator/package.json")}"
+OPENWORK_ORCHESTRATOR_VERSION="${OPENWORK_ORCHESTRATOR_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.version));' "$ROOT_DIR/apps/orchestrator/package.json")}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.opencodeVersion));' "$ROOT_DIR/apps/orchestrator/package.json")}"
 
 echo "Building local image $LOCAL_IMAGE_TAG" >&2
 echo "- openwork-orchestrator@$OPENWORK_ORCHESTRATOR_VERSION" >&2

@@ -324,8 +324,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            packages/desktop/src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+            apps/desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -405,7 +405,7 @@ jobs:
           }
 
           async function main() {
-            const pkg = JSON.parse(fs.readFileSync('./packages/desktop/package.json', 'utf8'));
+            const pkg = JSON.parse(fs.readFileSync('./apps/desktop/package.json', 'utf8'));
             const configuredRaw = (process.env.OPENCODE_VERSION || pkg.opencodeVersion || '').toString().trim();
             if (configuredRaw && configuredRaw.toLowerCase() !== 'latest') {
               const normalized = configuredRaw.startsWith('v') ? configuredRaw.slice(1) : configuredRaw;
@@ -495,9 +495,9 @@ jobs:
             target_name="${target_name}.exe"
           fi
 
-          mkdir -p packages/desktop/src-tauri/sidecars
-          cp "$bin_path" "packages/desktop/src-tauri/sidecars/${target_name}"
-          chmod 755 "packages/desktop/src-tauri/sidecars/${target_name}"
+          mkdir -p apps/desktop/src-tauri/sidecars
+          cp "$bin_path" "apps/desktop/src-tauri/sidecars/${target_name}"
+          chmod 755 "apps/desktop/src-tauri/sidecars/${target_name}"
 
       - name: Write notary API key
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
@@ -538,7 +538,7 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
           prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
-          projectPath: packages/desktop
+          projectPath: apps/desktop
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3
@@ -567,7 +567,7 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
           prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
-          projectPath: packages/desktop
+          projectPath: apps/desktop
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3
@@ -612,7 +612,7 @@ jobs:
 
           if [ ! -f "$manifest_path" ]; then
             echo "ERROR: versions.json missing from app bundle: $manifest_path" >&2
-            echo "Hint: ensure packages/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json" >&2
+            echo "Hint: ensure apps/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json" >&2
             exit 1
           fi
 
@@ -701,7 +701,7 @@ jobs:
         id: sidecar-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('packages/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('packages/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('apps/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
 
       - name: Resolve SOURCE_DATE_EPOCH
         id: source-date
@@ -753,7 +753,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          gh release upload "$tag" packages/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$tag" apps/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
 
   publish-npm:
     name: Publish npm packages
@@ -810,7 +810,7 @@ jobs:
         id: package-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('packages/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('packages/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('apps/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
 
       - name: Check npm versions
         id: npm-versions
@@ -876,7 +876,7 @@ jobs:
 
       - name: Publish openwork-server
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
-        run: pnpm --filter openwork-server publish --access public --no-git-checks
+        run: pnpm --filter @openwork/server publish --access public --no-git-checks
 
       - name: Publish opencode-router
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_opencodeRouter == 'true'
@@ -895,7 +895,7 @@ jobs:
             exit 1
           fi
           pnpm --filter openwork-orchestrator build:bin:all
-          node packages/orchestrator/scripts/publish-npm.mjs
+          node apps/orchestrator/scripts/publish-npm.mjs
 
   aur-publish:
     name: Publish AUR

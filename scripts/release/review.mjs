@@ -16,13 +16,13 @@ const readCargoVersion = (path) => {
   return match ? match[1] : null;
 };
 
-const appPkg = readJson(resolve(root, "packages", "app", "package.json"));
-const desktopPkg = readJson(resolve(root, "packages", "desktop", "package.json"));
-const orchestratorPkg = readJson(resolve(root, "packages", "orchestrator", "package.json"));
-const serverPkg = readJson(resolve(root, "packages", "server", "package.json"));
-const opencodeRouterPkg = readJson(resolve(root, "packages", "opencode-router", "package.json"));
-const tauriConfig = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json"));
-const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
+const appPkg = readJson(resolve(root, "apps", "app", "package.json"));
+const desktopPkg = readJson(resolve(root, "apps", "desktop", "package.json"));
+const orchestratorPkg = readJson(resolve(root, "apps", "orchestrator", "package.json"));
+const serverPkg = readJson(resolve(root, "apps", "server", "package.json"));
+const opencodeRouterPkg = readJson(resolve(root, "apps", "opencode-router", "package.json"));
+const tauriConfig = readJson(resolve(root, "apps", "desktop", "src-tauri", "tauri.conf.json"));
+const cargoVersion = readCargoVersion(resolve(root, "apps", "desktop", "src-tauri", "Cargo.toml"));
 
 const versions = {
   app: appPkg.version ?? null,
@@ -37,7 +37,7 @@ const versions = {
     orchestrator: orchestratorPkg.opencodeVersion ?? null,
   },
   opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
-  orchestratorOpenworkServerRange: orchestratorPkg.dependencies?.["openwork-server"] ?? null,
+  orchestratorOpenworkServerRange: orchestratorPkg.dependencies?.["@openwork/server"] ?? null,
 };
 
 const checks = [];
@@ -96,7 +96,7 @@ if (versions.opencode.desktop || versions.opencode.orchestrator) {
   );
 } else {
   addWarning(
-    "OpenCode version is not pinned (packages/desktop + packages/orchestrator). Sidecar bundling will default to the latest OpenCode release at build time.",
+    "OpenCode version is not pinned (apps/desktop + apps/orchestrator). Sidecar bundling will default to the latest OpenCode release at build time.",
   );
 }
 
@@ -114,14 +114,7 @@ if (!openworkServerRange) {
   );
 }
 
-const sidecarManifestPath = resolve(
-  root,
-  "packages",
-  "orchestrator",
-  "dist",
-  "sidecars",
-  "openwork-orchestrator-sidecars.json",
-);
+const sidecarManifestPath = resolve(root, "apps", "orchestrator", "dist", "sidecars", "openwork-orchestrator-sidecars.json");
 if (existsSync(sidecarManifestPath)) {
   const manifest = readJson(sidecarManifestPath);
   addCheck(

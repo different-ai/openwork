@@ -24,14 +24,14 @@ const readCargoVersion = (path) => {
   return match ? match[1] : null;
 };
 
-const appVersion = readJson(resolve(root, "packages", "app", "package.json")).version ?? null;
-const desktopVersion = readJson(resolve(root, "packages", "desktop", "package.json")).version ?? null;
+const appVersion = readJson(resolve(root, "apps", "app", "package.json")).version ?? null;
+const desktopVersion = readJson(resolve(root, "apps", "desktop", "package.json")).version ?? null;
 const orchestratorVersion =
-  readJson(resolve(root, "packages", "orchestrator", "package.json")).version ?? null;
-const serverVersion = readJson(resolve(root, "packages", "server", "package.json")).version ?? null;
-const opencodeRouterVersion = readJson(resolve(root, "packages", "opencode-router", "package.json")).version ?? null;
-const tauriVersion = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json")).version ?? null;
-const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
+  readJson(resolve(root, "apps", "orchestrator", "package.json")).version ?? null;
+const serverVersion = readJson(resolve(root, "apps", "server", "package.json")).version ?? null;
+const opencodeRouterVersion = readJson(resolve(root, "apps", "opencode-router", "package.json")).version ?? null;
+const tauriVersion = readJson(resolve(root, "apps", "desktop", "src-tauri", "tauri.conf.json")).version ?? null;
+const cargoVersion = readCargoVersion(resolve(root, "apps", "desktop", "src-tauri", "Cargo.toml"));
 
 const mismatches = [];
 const check = (label, actual) => {

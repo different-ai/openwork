@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # Keep this in sync with packages/orchestrator/package.json if you want a pinned release.
+        # Keep this in sync with apps/orchestrator/package.json if you want a pinned release.
         OPENWORK_ORCHESTRATOR_VERSION: 0.11.22
     ports:
       - "8787:8787"

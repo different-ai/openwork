@@ -3,7 +3,7 @@
 
 set -e
 
-CARGO_TOML="${1:-packages/desktop/src-tauri/Cargo.toml}"
+CARGO_TOML="${1:-apps/desktop/src-tauri/Cargo.toml}"
 WORKDIR=$(dirname "$CARGO_TOML")
 
 echo "📦 Updating Cargo.lock in: $WORKDIR"

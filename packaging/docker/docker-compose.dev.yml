@@ -66,8 +66,8 @@ services:
         # --- Use source entrypoints for the dev stack ---
         # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
         # issues from bun --compile inside Docker on macOS.
-        export OPENWORK_SERVER_BIN="/app/packages/server/src/cli.ts"
-        export OPENCODE_ROUTER_BIN="/app/packages/opencode-router/src/cli.ts"
+        export OPENWORK_SERVER_BIN="/app/apps/server/src/cli.ts"
+        export OPENCODE_ROUTER_BIN="/app/apps/opencode-router/src/cli.ts"
 
         # --- Resolve tokens ---
         if [ -z "$$OPENWORK_TOKEN" ]; then
@@ -169,7 +169,7 @@ services:
         export HOST="0.0.0.0"
         export PORT="5173"
 
-        exec pnpm --filter @different-ai/openwork-ui exec vite \
+        exec pnpm --filter @openwork/app exec vite \
           --host 0.0.0.0 \
           --port 5173 \
           --strictPort
@@ -196,7 +196,7 @@ services:
         mkdir -p /app/tmp/share-service-blobs
 
         echo "[share] Building Next app..."
-        pnpm --dir services/openwork-share build
+        pnpm --dir apps/share build
 
         echo ""
         echo "============================================"
@@ -205,7 +205,7 @@ services:
         echo "============================================"
         echo ""
 
-        exec pnpm --dir services/openwork-share exec next start --hostname 0.0.0.0 --port 3000
+        exec pnpm --dir apps/share exec next start --hostname 0.0.0.0 --port 3000
     ports:
       - "${SHARE_PORT:-3006}:3000"
     healthcheck:
