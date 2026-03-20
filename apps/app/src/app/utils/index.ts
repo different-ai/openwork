@@ -620,39 +620,6 @@ export function classifyTool(toolName: string): "read" | "edit" | "write" | "sea
   return "tool";
 }
 
-export function formatToolLabel(toolName: string): string {
-  const lower = toolName.toLowerCase();
-  const labels: Record<string, string> = {
-    bash: "Shell",
-    read: "Read",
-    list: "List",
-    list_files: "List",
-    glob: "Glob",
-    grep: "Grep",
-    webfetch: "Fetch",
-    websearch: "Search",
-    codesearch: "Code Search",
-    task: "Task",
-    skill: "Skill",
-    edit: "Edit",
-    write: "Write",
-    apply_patch: "Patch",
-    todowrite: "Todos",
-    todoread: "Todos",
-    question: "Question",
-  };
-
-  if (labels[lower]) return labels[lower];
-
-  const fallback = normalizeStepText(toolName).replace(/[_-]+/g, " ");
-  if (!fallback) return "Tool";
-  return fallback
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 /** Extract a clean filename from a file path */
 function extractFilename(filePath: string): string {
   const parts = filePath.replace(/\\/g, "/").split("/");
@@ -949,19 +916,16 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
     const state = record.state ?? {};
-    const title = formatToolLabel(toolName);
+    const title = buildToolTitle(state, toolName);
     const category = classifyTool(toolName);
     const status = state.status ? String(state.status) : undefined;
-    const heading = buildToolTitle(state, toolName);
-    const extra = buildToolDetail(state, toolName);
-    const normalizedHeading = normalizeStepText(heading).toLowerCase();
+    const detail = buildToolDetail(state, toolName);
     const normalizedTitle = normalizeStepText(title).toLowerCase();
-    const detail = normalizedHeading && normalizedHeading !== normalizedTitle ? heading : extra;
     const finalDetail = detail && normalizeStepText(detail).toLowerCase() !== normalizedTitle ? detail : undefined;
-
+    
     // Detect skill trigger
     if (category === "skill") {
-      const skillName = state.metadata?.name || heading.replace(/^(Loaded skill:\s*|Load skill\s+)/i, "");
+      const skillName = state.metadata?.name || title.replace(/^(Loaded skill:\s*|Load skill\s+)/i, "");
       return { title, isSkill: true, skillName, detail: finalDetail, toolCategory: category, status };
     }
     
