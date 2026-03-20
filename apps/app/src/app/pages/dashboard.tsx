@@ -594,7 +594,7 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   const renderRightSidebar = (expanded: boolean, mobile = false) => (
-    <div class={`flex h-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
+    <div class={`flex h-full w-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
       <div class={`flex items-center pb-3 ${expanded ? "justify-end" : "justify-center"}`}>
         <button
           type="button"
