@@ -112,7 +112,6 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
-import ArtifactsPanel from "../components/session/artifacts-panel";
 import FlyoutItem from "../components/flyout-item";
 import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
 import QuestionModal from "../components/question-modal";
@@ -4049,16 +4048,6 @@ export default function SessionView(props: SessionViewProps) {
             />
           </div>
 
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <ArtifactsPanel
-              id={mobile ? "mobile-sidebar-artifacts" : "sidebar-artifacts"}
-              files={touchedFiles()}
-              workspaceRoot={props.activeWorkspaceRoot}
-              onRevealArtifact={revealArtifact}
-              onOpenInObsidian={openArtifactInObsidian}
-              obsidianAvailable={obsidianAvailable()}
-            />
-          </div>
         </Show>
       </div>
     </div>
