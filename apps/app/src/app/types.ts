@@ -171,7 +171,7 @@ export type ResetOpenworkMode = "onboarding" | "all";
 
 export type WorkspaceBlueprintStarterKind = "prompt" | "session" | "action";
 
-export type WorkspaceBlueprintStarterAction = "connect-anthropic";
+export type WorkspaceBlueprintStarterAction = "connect-openai";
 
 export type WorkspaceBlueprintStarter = {
   id?: string | null;
