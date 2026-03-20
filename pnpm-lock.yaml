@@ -258,6 +258,94 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  apps/story-book:
+    dependencies:
+      '@codemirror/commands':
+        specifier: ^6.8.0
+        version: 6.10.2
+      '@codemirror/lang-markdown':
+        specifier: ^6.3.3
+        version: 6.5.0
+      '@codemirror/language':
+        specifier: ^6.11.0
+        version: 6.12.1
+      '@codemirror/state':
+        specifier: ^6.5.2
+        version: 6.5.4
+      '@codemirror/view':
+        specifier: ^6.38.0
+        version: 6.39.14
+      '@opencode-ai/sdk':
+        specifier: ^1.1.31
+        version: 1.1.39
+      '@radix-ui/colors':
+        specifier: ^3.0.0
+        version: 3.0.0
+      '@solid-primitives/event-bus':
+        specifier: ^1.1.2
+        version: 1.1.2(solid-js@1.9.9)
+      '@solid-primitives/storage':
+        specifier: ^4.3.3
+        version: 4.3.3(solid-js@1.9.9)
+      '@solidjs/router':
+        specifier: ^0.15.4
+        version: 0.15.4(patch_hash=1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770)(solid-js@1.9.9)
+      '@tanstack/solid-virtual':
+        specifier: ^3.13.19
+        version: 3.13.19(solid-js@1.9.9)
+      '@tauri-apps/api':
+        specifier: ^2.0.0
+        version: 2.10.1
+      '@tauri-apps/plugin-deep-link':
+        specifier: ^2.4.7
+        version: 2.4.7
+      '@tauri-apps/plugin-dialog':
+        specifier: ~2.6.0
+        version: 2.6.0
+      '@tauri-apps/plugin-http':
+        specifier: ~2.5.6
+        version: 2.5.6
+      '@tauri-apps/plugin-opener':
+        specifier: ^2.5.3
+        version: 2.5.3
+      '@tauri-apps/plugin-process':
+        specifier: ~2.3.1
+        version: 2.3.1
+      '@tauri-apps/plugin-updater':
+        specifier: ~2.9.0
+        version: 2.9.0
+      fuzzysort:
+        specifier: ^3.1.0
+        version: 3.1.0
+      jsonc-parser:
+        specifier: ^3.2.1
+        version: 3.3.1
+      lucide-solid:
+        specifier: ^0.562.0
+        version: 0.562.0(solid-js@1.9.9)
+      marked:
+        specifier: ^17.0.1
+        version: 17.0.1
+      solid-js:
+        specifier: ^1.9.0
+        version: 1.9.9
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.1.18
+        version: 4.1.18(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
+      tailwindcss:
+        specifier: ^4.1.18
+        version: 4.1.18
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^6.0.1
+        version: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+      vite-plugin-solid:
+        specifier: ^2.11.0
+        version: 2.11.10(solid-js@1.9.9)(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
+
   ee/apps/den-controller:
     dependencies:
       '@daytonaio/sdk':
