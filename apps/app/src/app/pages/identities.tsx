@@ -431,7 +431,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       }
 
       const [healthRes, tgRes, slackRes, telegramInfo] = await Promise.all([
-        client.opencodeRouterHealth(),
+        client.getOpenCodeRouterHealth(id),
         client.getOpenCodeRouterTelegramIdentities(id),
         client.getOpenCodeRouterSlackIdentities(id),
         client.getOpenCodeRouterTelegram(id).catch(() => null),

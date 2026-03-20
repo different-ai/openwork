@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -72,6 +72,14 @@ async function runCli(args, dataDir) {
   return trimmed ? JSON.parse(trimmed) : null;
 }
 
+async function canonicalPath(input) {
+  try {
+    return await realpath(input);
+  } catch {
+    return resolve(input);
+  }
+}
+
 const root = await mkdtemp(join(tmpdir(), "openwork-orchestrator-router-"));
 const dataDir = join(root, "data");
 const workspaceA = join(root, "ws-a");
@@ -121,8 +129,8 @@ try {
   const pathA = await runCli(["workspace", "path", idA, "--json"], dataDir);
   const pathB = await runCli(["workspace", "path", idB, "--json"], dataDir);
 
-  assert.equal(pathA.path.directory, workspaceA);
-  assert.equal(pathB.path.directory, workspaceB);
+  assert.equal(await canonicalPath(pathA.path.directory), await canonicalPath(workspaceA));
+  assert.equal(await canonicalPath(pathB.path.directory), await canonicalPath(workspaceB));
 
   const status2 = await runCli(["daemon", "status", "--json"], dataDir);
   const pid2 = status2.opencode.pid;
@@ -132,7 +140,7 @@ try {
   assert.equal(disposed.disposed, true);
 
   const pathA2 = await runCli(["workspace", "path", idA, "--json"], dataDir);
-  assert.equal(pathA2.path.directory, workspaceA);
+  assert.equal(await canonicalPath(pathA2.path.directory), await canonicalPath(workspaceA));
 
   await runCli(["daemon", "stop", "--json"], dataDir);
   await Promise.race([once(daemon, "exit"), new Promise((resolve) => setTimeout(resolve, 3000))]);

@@ -1195,6 +1195,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     opencodeRouterHealth: () =>
       requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(baseUrl, "/opencode-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
+    getOpenCodeRouterHealth: (workspaceId: string, options?: { healthPort?: number | null }) => {
+      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
+      return requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/health${query}`,
+        { token, hostToken, timeoutMs: timeouts.opencodeRouter },
+      );
+    },
     opencodeRouterBindings: (filters?: { channel?: string; identityId?: string }) => {
       const search = new URLSearchParams();
       if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());

@@ -6933,10 +6933,10 @@ async function runStart(args: ParsedArgs) {
       opencodeDirectory: resolvedWorkspace,
       opencodeUsername,
       opencodePassword,
-      opencodeRouterHealthPort: opencodeRouterChild
+      opencodeRouterHealthPort: opencodeRouterEnabled
         ? opencodeRouterHealthPort
         : undefined,
-      opencodeRouterDataDir: opencodeRouterChild
+      opencodeRouterDataDir: opencodeRouterEnabled
         ? (opencodeRouterDataDir ?? undefined)
         : undefined,
       logger,
@@ -7854,10 +7854,10 @@ async function runStart(args: ParsedArgs) {
         opencodeDirectory: resolvedWorkspace,
         opencodeUsername,
         opencodePassword,
-        opencodeRouterHealthPort: opencodeRouterReady
+        opencodeRouterHealthPort: opencodeRouterEnabled
           ? opencodeRouterHealthPort
           : undefined,
-        opencodeRouterDataDir: opencodeRouterReady
+        opencodeRouterDataDir: opencodeRouterEnabled
           ? (opencodeRouterDataDir ?? undefined)
           : undefined,
         logger,

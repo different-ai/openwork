@@ -1046,6 +1046,7 @@ export default function SettingsView(props: SettingsViewProps) {
     },
     services: {
       engine: {
+        scope: props.startupPreference === "server" ? "local-desktop" : "local-host",
         status: engineStatusLabel(),
         baseUrl: props.engineInfo?.baseUrl ?? null,
         pid: props.engineInfo?.pid ?? null,
@@ -1053,12 +1054,14 @@ export default function SettingsView(props: SettingsViewProps) {
         stderr: engineStderr(),
       },
       orchestrator: {
+        scope: props.startupPreference === "server" ? "local-desktop" : "local-host",
         status: orchestratorStatusLabel(),
         dataDir: props.orchestratorStatus?.dataDir ?? null,
         activeWorkspace: props.orchestratorStatus?.activeId ?? null,
         sidecar: orchestratorSidecarSummary(),
       },
       openworkServer: {
+        scope: props.startupPreference === "server" ? "connected-worker" : "local-host",
         status: openworkStatusLabel(),
         baseUrl:
           (props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl) ||
@@ -1068,6 +1071,11 @@ export default function SettingsView(props: SettingsViewProps) {
         stderr: openworkStderr(),
       },
       opencodeRouter: {
+        scope: props.startupPreference === "server" ? "local-desktop" : "local-host",
+        note:
+          props.startupPreference === "server"
+            ? "Local desktop router state. Remote worker router state is inferred through the connected OpenWork server."
+            : null,
         status: opencodeRouterStatusLabel(),
         healthPort: props.opencodeRouterInfo?.healthPort ?? null,
         pid: props.opencodeRouterInfo?.pid ?? null,

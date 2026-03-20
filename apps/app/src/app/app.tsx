@@ -3900,7 +3900,7 @@ export default function App() {
         const items = Array.isArray(response.items) ? response.items : [];
         const activeMatch = response.activeId ? items.find((item) => item.id === response.activeId) : null;
         const match = root ? items.find((item) => normalizeDirectoryPath(item.path) === root) : activeMatch ?? items[0];
-        setDevtoolsWorkspaceId(activeMatch?.id ?? match?.id ?? null);
+        setDevtoolsWorkspaceId(match?.id ?? activeMatch?.id ?? null);
       } catch {
         if (active) setDevtoolsWorkspaceId(null);
       }
@@ -4010,7 +4010,6 @@ export default function App() {
       (resolvedOpenworkCapabilities()?.config?.write ?? false),
   );
   const devtoolsCapabilities = createMemo(() => openworkServerCapabilities());
-  const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? openworkServerWorkspaceId());
 
   function updateOpenworkServerSettings(next: OpenworkServerSettings) {
     const stored = writeOpenworkServerSettings(next);
@@ -7098,7 +7097,7 @@ export default function App() {
       openworkServerHostInfo: openworkServerHostInfo(),
       openworkServerCapabilities: devtoolsCapabilities(),
       openworkServerDiagnostics: openworkServerDiagnostics(),
-      openworkServerWorkspaceId: resolvedDevtoolsWorkspaceId(),
+      openworkServerWorkspaceId: openworkServerWorkspaceId(),
       activeWorkspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
       openworkAuditEntries: openworkAuditEntries(),
       openworkAuditStatus: openworkAuditStatus(),

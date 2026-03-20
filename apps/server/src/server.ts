@@ -1584,6 +1584,38 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ updatedAt: Date.now() });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/opencode-router/health", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    await resolveWorkspace(config, ctx.params.id);
+
+    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
+    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
+    const requestHost = ctx.url.hostname;
+    const apply = await tryFetchOpenCodeRouterHealth("GET", "/health", {
+      port,
+      requestHost,
+      timeoutMs: 2_000,
+    });
+
+    if (apply.applied && apply.body && typeof apply.body === "object") {
+      return jsonResponse(apply.body, apply.status ?? 200);
+    }
+
+    if (apply.applied) {
+      throw new ApiError(502, "opencodeRouter_invalid_health", "OpenCodeRouter returned an invalid health response", {
+        port,
+        host: apply.host ?? null,
+        hosts: apply.hosts,
+      });
+    }
+
+    throw new ApiError(apply.status ?? 503, "opencodeRouter_unreachable", apply.error ?? "OpenCodeRouter health unavailable", {
+      port,
+      host: apply.host ?? null,
+      hosts: apply.hosts,
+    });
+  });
+
   addRoute(routes, "POST", "/workspace/:id/opencode-router/telegram-token", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
