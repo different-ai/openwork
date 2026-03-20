@@ -141,7 +141,7 @@ All repo `dev` entrypoints now opt into the same dev-mode isolation so local tes
 
 ```bash
 sudo pacman -S --needed webkit2gtk-4.1
-yay -s opencode # Releases version
+curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")" --no-modify-path
 ```
 
 ## Architecture (high-level)

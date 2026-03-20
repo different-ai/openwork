@@ -1,7 +1,6 @@
 {
   "name": "openwork-orchestrator",
   "version": "0.11.175",
-  "opencodeVersion": "1.2.26",
   "description": "OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
   "private": true,
   "type": "module",

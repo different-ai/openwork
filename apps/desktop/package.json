@@ -2,7 +2,6 @@
   "name": "@openwork/desktop",
   "private": true,
   "version": "0.11.175",
-  "opencodeVersion": "1.2.26",
   "opencodeRouterVersion": "0.11.175",
   "type": "module",
   "scripts": {

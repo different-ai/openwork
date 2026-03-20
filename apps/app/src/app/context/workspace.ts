@@ -2556,11 +2556,11 @@ export function createWorkspaceStore(options: {
         setEngineDoctorResult(result);
         setEngineDoctorCheckedAt(Date.now());
 
-      if (!result.found) {
-        options.setError(
-          options.isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with OpenWork, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
-            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+        if (!result.found) {
+          options.setError(
+            options.isWindowsPlatform()
+            ? "OpenCode CLI not found. Install the OpenWork-pinned OpenCode version for Windows or bundle opencode.exe with OpenWork, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
+            : "OpenCode CLI not found. Install the OpenWork-pinned OpenCode version, then retry.",
         );
         return false;
       }
@@ -2571,7 +2571,7 @@ export function createWorkspaceStore(options: {
           .join("\n\n");
         const suffix = serveDetails ? `\n\nServe output:\n${serveDetails}` : "";
         options.setError(
-          `OpenCode CLI is installed, but \`opencode serve\` is unavailable. Update OpenCode and retry.${suffix}`
+          `OpenCode CLI is installed, but \`opencode serve\` is unavailable. Update to the OpenWork-pinned OpenCode version and retry.${suffix}`
         );
         return false;
       }

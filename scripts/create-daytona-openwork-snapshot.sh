@@ -35,7 +35,7 @@ SNAPSHOT_DISK="${DAYTONA_SNAPSHOT_DISK:-8}"
 LOCAL_IMAGE_TAG="${DAYTONA_LOCAL_IMAGE_TAG:-openwork-daytona-snapshot:${SNAPSHOT_NAME//[^a-zA-Z0-9_.-]/-}}"
 
 OPENWORK_ORCHESTRATOR_VERSION="${OPENWORK_ORCHESTRATOR_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.version));' "$ROOT_DIR/apps/orchestrator/package.json")}"
-OPENCODE_VERSION="${OPENCODE_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.opencodeVersion));' "$ROOT_DIR/apps/orchestrator/package.json")}"
+OPENCODE_VERSION="$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));' "$ROOT_DIR/constants.json")"
 
 echo "Building local image $LOCAL_IMAGE_TAG" >&2
 echo "- openwork-orchestrator@$OPENWORK_ORCHESTRATOR_VERSION" >&2

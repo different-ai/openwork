@@ -49,7 +49,7 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
 - `RENDER_WORKER_REGION` Render region for worker services
-- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers; the worker build uses its `opencodeVersion` metadata to bundle a matching `opencode` binary into the Render deploy
+- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers; the worker build reads the pinned OpenCode version from `constants.json` shipped with that package and bundles the matching `opencode` binary into the Render deploy
 - `RENDER_WORKER_NAME_PREFIX` service name prefix
 - `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `openwork.studio` -> `<worker-id>.openwork.studio`)
 - `RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` max time to wait for vanity URL health before falling back to Render URL
@@ -125,7 +125,7 @@ Useful optional overrides:
 - `DAYTONA_SNAPSHOT_MEMORY`
 - `DAYTONA_SNAPSHOT_DISK`
 - `OPENWORK_ORCHESTRATOR_VERSION`
-- `OPENCODE_VERSION`
+- OpenCode is pinned by `constants.json`
 
 After the snapshot is pushed, set it in `.env.daytona`:
 

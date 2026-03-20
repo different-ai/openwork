@@ -21,6 +21,11 @@ const desktopPkg = readJson(resolve(root, "apps", "desktop", "package.json"));
 const orchestratorPkg = readJson(
   resolve(root, "apps", "orchestrator", "package.json"),
 );
+const pinnedOpencodeVersion = String(
+  readJson(resolve(root, "constants.json")).opencodeVersion ?? "",
+)
+  .trim()
+  .replace(/^v/, "");
 const serverPkg = readJson(resolve(root, "apps", "server", "package.json"));
 const opencodeRouterPkg = readJson(
   resolve(root, "apps", "opencode-router", "package.json"),
@@ -40,10 +45,7 @@ const versions = {
   server: serverPkg.version ?? null,
   orchestrator: orchestratorPkg.version ?? null,
   opencodeRouter: opencodeRouterPkg.version ?? null,
-  opencode: {
-    desktop: desktopPkg.opencodeVersion ?? null,
-    orchestrator: orchestratorPkg.opencodeVersion ?? null,
-  },
+  opencode: pinnedOpencodeVersion || null,
   opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
   orchestratorOpenworkServerRange:
     orchestratorPkg.dependencies?.["openwork-server"] ?? null,
@@ -101,17 +103,15 @@ addCheck(
     versions.opencodeRouter === versions.opencodeRouterVersionPinned,
   `${versions.opencodeRouterVersionPinned ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
-if (versions.opencode.desktop || versions.opencode.orchestrator) {
+if (versions.opencode) {
   addCheck(
-    "OpenCode version matches (desktop/orchestrator)",
-    versions.opencode.desktop &&
-      versions.opencode.orchestrator &&
-      versions.opencode.desktop === versions.opencode.orchestrator,
-    `${versions.opencode.desktop ?? "?"} vs ${versions.opencode.orchestrator ?? "?"}`,
+    "OpenCode version pin exists",
+    Boolean(versions.opencode),
+    String(versions.opencode),
   );
 } else {
   addWarning(
-    "OpenCode version is not pinned (apps/desktop + apps/orchestrator). Sidecar bundling will default to the latest OpenCode release at build time.",
+    "OpenCode version is not pinned in constants.json.",
   );
 }
 

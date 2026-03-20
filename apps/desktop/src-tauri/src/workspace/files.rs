@@ -57,7 +57,7 @@ Skills add new capabilities. Plugins add advanced features like scheduling or br
 OpenWork is a GUI for OpenCode. Everything that works in OpenCode works here.
 
 Most reliable setup today:
-1) Install OpenCode from opencode.ai
+1) Install the OpenWork-pinned OpenCode version
 2) Configure providers there (models and API keys)
 3) Come back to OpenWork and start a session
 

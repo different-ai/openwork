@@ -850,7 +850,7 @@ export default {
   "app.migration.desktop_required": "マイグレーション修復にはデスクトップアプリが必要です。",
   "app.migration.local_only": "マイグレーション修復はローカルワーカーでのみ利用可能です。",
   "app.migration.workspace_required": "マイグレーション修復の前にローカルワーカーフォルダを選択してください。",
-  "app.migration.unsupported": "このOpenCodeバイナリは `opencode db migrate` をサポートしていません。OpenCodeを>=1.2.6にアップデートするか、バンドルされたエンジンに切り替えてください。",
+  "app.migration.unsupported": "このOpenCodeバイナリは `opencode db migrate` をサポートしていません。OpenWorkで固定しているOpenCodeバージョンへ更新するか、バンドルされたエンジンに切り替えてください。",
   "app.migration.failed": "OpenCodeのマイグレーションに失敗しました。",
   "app.migration.restart_failed": "マイグレーションは完了しましたが、OpenWorkがローカルエンジンを再起動できませんでした。",
   "app.migration.success": "マイグレーションが修復されました。ローカル起動を再試行しました。",

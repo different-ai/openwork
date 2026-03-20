@@ -127,6 +127,7 @@ type OpenCodeRouterHealthSnapshot = {
 const FALLBACK_VERSION = "0.1.0";
 
 declare const __OPENWORK_ORCHESTRATOR_VERSION__: string | undefined;
+declare const __OPENWORK_PINNED_OPENCODE_VERSION__: string | undefined;
 const DEFAULT_OPENWORK_PORT = 8787;
 const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
@@ -960,19 +961,31 @@ async function resolveCliVersion(): Promise<string> {
   return FALLBACK_VERSION;
 }
 
-async function readPackageField(field: string): Promise<string | undefined> {
+async function readPinnedOpencodeVersion(): Promise<string | undefined> {
+  if (
+    typeof __OPENWORK_PINNED_OPENCODE_VERSION__ === "string" &&
+    __OPENWORK_PINNED_OPENCODE_VERSION__.trim()
+  ) {
+    return __OPENWORK_PINNED_OPENCODE_VERSION__.trim();
+  }
+
   const candidates = [
-    join(dirname(process.execPath), "..", "package.json"),
-    join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+    join(dirname(process.execPath), "..", "constants.json"),
+    join(dirname(fileURLToPath(import.meta.url)), "..", "constants.json"),
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "constants.json"),
   ];
 
   for (const candidate of candidates) {
     if (await fileExists(candidate)) {
       try {
         const raw = await readFile(candidate, "utf8");
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        const value = parsed[field];
-        if (typeof value === "string" && value.trim()) return value.trim();
+        const parsed = JSON.parse(raw) as { opencodeVersion?: unknown };
+        const value =
+          typeof parsed.opencodeVersion === "string"
+            ? parsed.opencodeVersion.trim()
+            : "";
+        if (!value) continue;
+        return value.startsWith("v") ? value.slice(1) : value;
       } catch {
         // ignore
       }
@@ -1416,7 +1429,6 @@ const remoteManifestCache = new Map<
   Promise<RemoteSidecarManifest | null>
 >();
 
-let latestOpencodeVersionTask: Promise<string | undefined> | null = null;
 let cachedExtraPathEntries: string[] | null = null;
 
 function isDirectory(path: string): boolean {
@@ -1713,37 +1725,6 @@ async function fetchRemoteManifest(
   return task;
 }
 
-async function resolveLatestOpencodeVersion(): Promise<string | undefined> {
-  if (latestOpencodeVersionTask) return latestOpencodeVersionTask;
-  latestOpencodeVersionTask = (async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-    try {
-      const response = await fetch(
-        "https://api.github.com/repos/anomalyco/opencode/releases/latest",
-        {
-          headers: {
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-          },
-          signal: controller.signal,
-        },
-      );
-      if (!response.ok) return undefined;
-      const data = (await response.json()) as { tag_name?: unknown };
-      const tag = typeof data.tag_name === "string" ? data.tag_name.trim() : "";
-      if (!tag) return undefined;
-      const normalized = tag.startsWith("v") ? tag.slice(1) : tag;
-      return normalized || undefined;
-    } catch {
-      return undefined;
-    } finally {
-      clearTimeout(timeout);
-    }
-  })();
-  return latestOpencodeVersionTask;
-}
-
 function resolveAssetUrl(
   baseUrl: string,
   asset?: string,
@@ -1792,12 +1773,16 @@ async function ensureExecutable(path: string): Promise<void> {
 async function downloadSidecarBinary(options: {
   name: SidecarName;
   sidecar: SidecarConfig;
+  expectedVersion?: string;
 }): Promise<ResolvedBinary | null> {
   if (!options.sidecar.target) return null;
   const manifest = await fetchRemoteManifest(options.sidecar.manifestUrl);
   if (!manifest) return null;
   const entry = manifest.entries[options.name];
   if (!entry) return null;
+  if (options.expectedVersion && entry.version !== options.expectedVersion) {
+    return null;
+  }
   const targetInfo = entry.targets[options.sidecar.target];
   if (!targetInfo) return null;
 
@@ -2054,8 +2039,10 @@ async function resolveExpectedVersion(
   manifest: VersionManifest | null,
   name: SidecarName,
 ): Promise<string | undefined> {
-  const manifestVersion = manifest?.entries[name]?.version;
-  if (manifestVersion) return manifestVersion;
+  if (name !== "opencode") {
+    const manifestVersion = manifest?.entries[name]?.version;
+    if (manifestVersion) return manifestVersion;
+  }
 
   try {
     const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -2073,16 +2060,8 @@ async function resolveExpectedVersion(
       if (localVersion) return localVersion;
     }
     if (name === "opencode") {
-      const envVersion = process.env.OPENCODE_VERSION?.trim();
-      if (envVersion && envVersion.toLowerCase() !== "latest") {
-        return envVersion.startsWith("v") ? envVersion.slice(1) : envVersion;
-      }
-      const pkgVersion = await readPackageField("opencodeVersion");
-      if (pkgVersion && pkgVersion.toLowerCase() !== "latest") {
-        return pkgVersion.startsWith("v") ? pkgVersion.slice(1) : pkgVersion;
-      }
-      const latest = await resolveLatestOpencodeVersion();
-      if (latest) return latest;
+      const pinnedVersion = await readPinnedOpencodeVersion();
+      if (pinnedVersion) return pinnedVersion;
     }
   } catch {
     // ignore
@@ -2450,6 +2429,7 @@ async function resolveOpencodeBin(options: {
     const downloaded = await downloadSidecarBinary({
       name: "opencode",
       sidecar: options.sidecar,
+      expectedVersion,
     });
     if (downloaded) return downloaded;
     const opencodeDownloaded = await resolveOpencodeDownload(
@@ -2460,7 +2440,7 @@ async function resolveOpencodeBin(options: {
       return { bin: opencodeDownloaded, source: "downloaded", expectedVersion };
     }
     throw new Error(
-      "opencode download failed. Check sidecar manifest/network access, or set OPENCODE_VERSION to pin a version.",
+      "opencode download failed. Check sidecar manifest/network access, or update constants.json.",
     );
   }
 
@@ -2480,6 +2460,7 @@ async function resolveOpencodeBin(options: {
   const downloaded = await downloadSidecarBinary({
     name: "opencode",
     sidecar: options.sidecar,
+    expectedVersion,
   });
   if (downloaded) return downloaded;
 
