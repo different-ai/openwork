@@ -390,7 +390,7 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Worker";
+    "Workspace";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
       ? workspace.sandboxBackend === "docker" ||
@@ -857,14 +857,14 @@ export default function DashboardView(props: DashboardViewProps) {
     const ws = shareWorkspace();
     if (!ws) return null;
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
-      return "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.";
+      return "Engine runtime is set to Direct. Switching local workspaces can restart the host and disconnect clients. The token may change after a restart.";
     }
     return null;
   });
 
   const shareServiceDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Select a worker first.";
+    if (!ws) return "Select a workspace first.";
     if (ws.workspaceType === "remote" && ws.remoteType !== "openwork") {
       return "Share service links are available for OpenWork workers.";
     }
@@ -893,7 +893,7 @@ export default function DashboardView(props: DashboardViewProps) {
   }> => {
     const ws = shareWorkspace();
     if (!ws) {
-      throw new Error("Select a worker first.");
+      throw new Error("Select a workspace first.");
     }
 
     if (ws.workspaceType !== "remote") {
@@ -918,7 +918,7 @@ export default function DashboardView(props: DashboardViewProps) {
       }
 
       if (!workspaceId) {
-        throw new Error("Could not resolve this worker on the local OpenWork host.");
+        throw new Error("Could not resolve this workspace on the local OpenWork host.");
       }
 
       return { client, workspaceId, workspace: ws };
@@ -958,7 +958,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (!workspaceId) {
-      throw new Error("Could not resolve this worker on the OpenWork host.");
+      throw new Error("Could not resolve this workspace on the OpenWork host.");
     }
 
     return { client, workspaceId, workspace: ws };
@@ -1156,13 +1156,13 @@ export default function DashboardView(props: DashboardViewProps) {
     <div class="h-[100dvh] min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] p-3 md:p-4 text-dls-text font-sans">
       <div class="flex h-full w-full gap-3 md:gap-4">
       <aside
-        class="relative hidden md:flex shrink-0 flex-col rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5"
+        class="relative hidden md:flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5"
         style={{
           width: `${leftSidebarWidth()}px`,
           "min-width": `${leftSidebarWidth()}px`,
         }}
       >
-        <div class="flex-1 overflow-y-auto">
+        <div class="shrink-0">
           <Show when={showUpdatePill()}>
             <button
               type="button"
@@ -1190,6 +1190,8 @@ export default function DashboardView(props: DashboardViewProps) {
               </Show>
             </button>
           </Show>
+        </div>
+        <div class="min-h-0 flex-1">
           <WorkspaceSessionList
             workspaceSessionGroups={props.workspaceSessionGroups}
             activeWorkspaceId={props.activeWorkspaceId}
@@ -1254,7 +1256,9 @@ export default function DashboardView(props: DashboardViewProps) {
               </button>
             </Show>
             <span class="shrink-0 rounded-md bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">
-              {props.activeWorkspaceDisplay.workspaceType === "remote" ? "Remote worker" : "Worker"}
+              {props.activeWorkspaceDisplay.workspaceType === "remote"
+                ? "Remote workspace"
+                : "Workspace"}
             </span>
             <h1 class="truncate text-[15px] font-semibold text-dls-text">{title()}</h1>
             <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">

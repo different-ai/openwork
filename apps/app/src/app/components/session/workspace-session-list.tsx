@@ -113,7 +113,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.openworkWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
-  "Worker";
+  "Workspace";
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
@@ -127,7 +127,7 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
 const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 
 const workspaceSwatchColor = (seed: string) => {
-  const value = seed.trim() || "worker";
+  const value = seed.trim() || "workspace";
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
     hash = (hash << 5) - hash + value.charCodeAt(index);
@@ -140,7 +140,7 @@ export default function WorkspaceSessionList(props: Props) {
   const revealLabel = isWindowsPlatform()
     ? "Reveal in Explorer"
     : "Reveal in Finder";
-  const newWorkerDesktopOnly = getOpenWorkDeployment() === "web";
+  const newWorkspaceDesktopOnly = getOpenWorkDeployment() === "web";
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<
     Set<string>
   >(new Set());
@@ -372,8 +372,9 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   return (
-    <>
-      <div class="mb-3 space-y-3">
+    <div class="flex min-h-0 flex-1 flex-col">
+      <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div class="space-y-3 pb-3">
         <For each={props.workspaceSessionGroups}>
           {(group) => {
             const workspace = () => group.workspace;
@@ -485,7 +486,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 : workspace().id,
                             );
                           }}
-                          aria-label="Worker options"
+                          aria-label="Workspace options"
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -710,31 +711,35 @@ export default function WorkspaceSessionList(props: Props) {
             );
           }}
         </For>
+        </div>
       </div>
 
-      <div class="relative" ref={(el) => (addWorkspaceMenuRef = el)}>
+      <div
+        class="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3"
+        ref={(el) => (addWorkspaceMenuRef = el)}
+      >
         <button
           type="button"
           class="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"
           onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
         >
           <Plus size={14} />
-          Add a worker
+          Add workspace
         </button>
 
         <Show when={addWorkspaceMenuOpen()}>
-          <div class="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]">
+          <div class="absolute left-0 right-0 bottom-full z-20 mb-2 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]">
             <button
               type="button"
               class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs transition-colors ${
-                newWorkerDesktopOnly
+                newWorkspaceDesktopOnly
                   ? "cursor-not-allowed text-gray-9 opacity-70"
                   : "text-gray-11 hover:bg-gray-2 hover:text-gray-12"
               }`}
-              disabled={newWorkerDesktopOnly}
+              disabled={newWorkspaceDesktopOnly}
               title={
-                newWorkerDesktopOnly
-                  ? "Create local workers in the desktop app."
+                newWorkspaceDesktopOnly
+                  ? "Create local workspaces in the desktop app."
                   : undefined
               }
               onClick={() => {
@@ -743,8 +748,8 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              <span class="flex-1 text-left">New worker</span>
-              <Show when={newWorkerDesktopOnly}>
+              <span class="flex-1 text-left">New workspace</span>
+              <Show when={newWorkspaceDesktopOnly}>
                 <DesktopOnlyBadge />
               </Show>
             </button>
@@ -757,7 +762,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              Connect remote
+              Connect remote workspace
             </button>
             <button
               type="button"
@@ -774,6 +779,6 @@ export default function WorkspaceSessionList(props: Props) {
           </div>
         </Show>
       </div>
-    </>
+    </div>
   );
 }
