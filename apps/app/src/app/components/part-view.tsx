@@ -789,6 +789,27 @@ export default function PartView(props: Props) {
     return typeof error === "string" ? error : null;
   };
 
+  const isInvalidToolError = () => {
+    const error = toolError()?.toLowerCase() ?? "";
+    if (!error) return false;
+    return (
+      error.includes("invalid tool") ||
+      error.includes("model tried to call") ||
+      error.includes("unavailable tool") ||
+      error.includes("unknown tool") ||
+      error.includes("tool not found")
+    );
+  };
+
+  const invalidToolNextStepHint = () => {
+    if (!isInvalidToolError()) return "";
+    const lower = toolName().toLowerCase();
+    if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
+      return "Chrome MCP is not ready yet. Open the MCP tab, connect `Control Chrome`, then retry.";
+    }
+    return "Try again, or switch to an agent/prompt that only uses available tools in this worker.";
+  };
+
   const toolInput = () => toolState()?.input;
 
   const diagnostics = () => {
@@ -1085,6 +1106,11 @@ export default function PartView(props: Props) {
             <Show when={toolError()}>
               <div class="rounded-lg bg-red-1/40 p-2 text-xs text-red-12">
                 {toolError()}
+                <Show when={invalidToolNextStepHint()}>
+                  <div class="mt-2 text-[11px] leading-relaxed text-red-11/90">
+                    {invalidToolNextStepHint()}
+                  </div>
+                </Show>
               </div>
             </Show>
 
