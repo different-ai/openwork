@@ -92,6 +92,7 @@ export type DashboardViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthPreferredProviderId: string | null;
+  providerAuthWorkerType: "local" | "remote";
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
     preferredProviderId?: string;
@@ -1622,6 +1623,7 @@ export default function DashboardView(props: DashboardViewProps) {
           submitting={providerAuthActionBusy()}
           error={props.providerAuthError}
           preferredProviderId={props.providerAuthPreferredProviderId}
+          workerType={props.providerAuthWorkerType}
           providers={props.providers}
           connectedProviderIds={props.providerConnectedIds}
           authMethods={props.providerAuthMethods}

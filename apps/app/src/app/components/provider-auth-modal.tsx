@@ -2,7 +2,6 @@ import type { ProviderAuthAuthorization } from "@opencode-ai/sdk/v2/client";
 import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { isTauriRuntime } from "../utils";
 import { compareProviders } from "../utils/providers";
 
@@ -29,6 +28,7 @@ export type ProviderOAuthStartResult = {
 
 type ProviderOAuthSession = ProviderOAuthStartResult & {
   providerId: string;
+  methodLabel: string;
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -45,6 +45,7 @@ export type ProviderAuthModalProps = {
   submitting: boolean;
   error: string | null;
   preferredProviderId?: string | null;
+  workerType?: "local" | "remote";
   providers: ProviderListItem[];
   connectedProviderIds: string[];
   authMethods: Record<string, ProviderAuthMethod[]>;
@@ -60,7 +61,8 @@ export type ProviderAuthModalProps = {
 };
 
 export default function ProviderAuthModal(props: ProviderAuthModalProps) {
-  const openworkDeployment = getOpenWorkDeployment();
+  const workerType = createMemo(() => (props.workerType === "remote" ? "remote" : "local"));
+  const isRemoteWorker = createMemo(() => workerType() === "remote");
 
   const formatProviderName = (id: string, fallback?: string) => {
     const named = fallback?.trim();
@@ -86,6 +88,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       .join(" ");
   };
 
+  const isOpenAiHeadlessMethod = (method: ProviderAuthMethod) => {
+    const label = method.label.toLowerCase();
+    return method.type === "oauth" && (label.includes("headless") || label.includes("device"));
+  };
+
+  const isOpenAiProvider = (id: string, fallbackName?: string) => {
+    const normalizedId = id.trim().toLowerCase();
+    const normalizedName = fallbackName?.trim().toLowerCase() ?? "";
+    return normalizedId === "openai" || normalizedName === "openai";
+  };
+
   const entries = createMemo<ProviderAuthEntry[]>(() => {
     const methods = props.authMethods ?? {};
     const connected = new Set(props.connectedProviderIds ?? []);
@@ -95,9 +108,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       .map((id): ProviderAuthEntry => {
         const provider = providers.find((item) => item.id === id);
         const entryMethods = (methods[id] ?? []).filter((method) => {
-          if (id !== "openai") return true;
-          if (openworkDeployment !== "web") return true;
-          return method.type !== "oauth";
+          if (!isOpenAiProvider(id, provider?.name)) return true;
+          if (method.type !== "oauth") return true;
+          if (isRemoteWorker()) return isOpenAiHeadlessMethod(method);
+          return !isOpenAiHeadlessMethod(method);
         });
         return {
           id,
@@ -126,10 +140,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [localError, setLocalError] = createSignal<string | null>(null);
   const [pollingBusy, setPollingBusy] = createSignal(false);
   const [oauthAutoBusy, setOauthAutoBusy] = createSignal(false);
+  const [oauthCodeCopied, setOauthCodeCopied] = createSignal(false);
+  const [oauthBrowserOpened, setOauthBrowserOpened] = createSignal(false);
   const [autoOpenedPreferredProviderId, setAutoOpenedPreferredProviderId] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
   let providerPoll: number | null = null;
   let oauthAutoPoll: number | null = null;
+  let oauthCodeCopiedReset: number | null = null;
 
   const selectedEntry = createMemo(() =>
     entries().find((entry) => entry.id === selectedProviderId()) ?? null,
@@ -148,6 +165,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   });
 
   const oauthInstructions = createMemo(() => oauthSession()?.authorization.instructions?.trim() ?? "");
+  const isOpenAiHeadlessSession = createMemo(() => {
+    const session = oauthSession();
+    if (!session) return false;
+    return session.providerId === "openai" && session.methodLabel.toLowerCase().includes("headless");
+  });
 
   const oauthDisplayCode = createMemo(() => {
     const instructions = oauthInstructions();
@@ -161,6 +183,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   });
 
   const resetState = () => {
+    if (oauthCodeCopiedReset !== null && typeof window !== "undefined") {
+      window.clearTimeout(oauthCodeCopiedReset);
+      oauthCodeCopiedReset = null;
+    }
     setView("list");
     setSelectedProviderId(null);
     setApiKeyInput("");
@@ -169,6 +195,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setSearchQuery("");
     setActiveEntryIndex(0);
     setLocalError(null);
+    setOauthCodeCopied(false);
+    setOauthBrowserOpened(false);
   };
 
   createEffect(() => {
@@ -232,6 +260,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (providerPoll !== null) {
       window.clearInterval(providerPoll);
       providerPoll = null;
+    }
+    if (oauthCodeCopiedReset !== null) {
+      window.clearTimeout(oauthCodeCopiedReset);
+      oauthCodeCopiedReset = null;
     }
   });
 
@@ -300,9 +332,30 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (isTauriRuntime()) {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl(url);
+      setOauthBrowserOpened(true);
       return;
     }
     window.open(url, "_blank", "noopener,noreferrer");
+    setOauthBrowserOpened(true);
+  };
+
+  const copyOauthDisplayCode = async () => {
+    const code = oauthDisplayCode().trim();
+    if (!code) return;
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setLocalError("Clipboard is unavailable in this environment.");
+      return;
+    }
+    await navigator.clipboard.writeText(code);
+    setOauthCodeCopied(true);
+    if (typeof window === "undefined") return;
+    if (oauthCodeCopiedReset !== null) {
+      window.clearTimeout(oauthCodeCopiedReset);
+    }
+    oauthCodeCopiedReset = window.setTimeout(() => {
+      setOauthCodeCopied(false);
+      oauthCodeCopiedReset = null;
+    }, 2000);
   };
 
   const submitOauth = async (providerId: string, methodIndex: number, code?: string) => {
@@ -356,19 +409,30 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setOauthCodeInput("");
     setOauthSession(null);
+    setOauthCodeCopied(false);
+    setOauthBrowserOpened(false);
     try {
       const started = await props.onSelect(entry.id, methodIndex);
+      const selectedMethod = entry.methods.find((method) => method.methodIndex === methodIndex);
+      if (!selectedMethod) {
+        throw new Error(`Selected auth method is unavailable for ${entry.name}.`);
+      }
       const nextSession: ProviderOAuthSession = {
         providerId: entry.id,
         methodIndex: started.methodIndex,
+        methodLabel: selectedMethod.label,
         authorization: started.authorization,
       };
       setOauthSession(nextSession);
-      await openOauthUrl(started.authorization.url);
 
       if (started.authorization.method === "code") {
+        await openOauthUrl(started.authorization.url);
         setView("oauth-code");
         return;
+      }
+
+      if (!isOpenAiHeadlessMethod(selectedMethod)) {
+        await openOauthUrl(started.authorization.url);
       }
 
       setView("oauth-auto");
@@ -451,6 +515,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       }
       setOauthSession(null);
       setOauthCodeInput("");
+      setOauthCodeCopied(false);
+      setOauthBrowserOpened(false);
       setLocalError(null);
       return;
     }
@@ -512,8 +578,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const methodDescription = (entry: ProviderAuthEntry, method: ProviderAuthMethod) => {
     const label = methodLabel(method).toLowerCase();
-    if (entry.id === "openai" && label.includes("headless")) {
-      return "Use OpenAI's device flow when the local browser callback is unreliable.";
+    if (isOpenAiProvider(entry.id, entry.name) && (label.includes("headless") || label.includes("device"))) {
+      return isRemoteWorker()
+        ? "Use OpenAI's device flow for remote workers, where the browser callback may not resolve on your local machine."
+        : "Use OpenAI's device flow when the local browser callback is unreliable.";
     }
     if (method.type === "oauth") {
       return "Continue in the browser and let OpenWork finish the connection automatically.";
@@ -792,9 +860,31 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         Back
                       </Button>
                     </div>
-                    <div class="text-xs text-gray-9">Sign in in the browser tab we just opened. We will complete the connection automatically.</div>
+                    <Show
+                      when={isOpenAiHeadlessSession()}
+                      fallback={
+                        <div class="text-xs text-gray-9">Sign in in the browser tab we just opened. We will complete the connection automatically.</div>
+                      }
+                    >
+                      <div class="space-y-2 text-xs text-gray-9">
+                        <div>You&apos;ll need to sign in to your OpenAI account and provide the code below.</div>
+                        <div>
+                          The first time you do this you&apos;ll need to enable Device auth in your account settings.
+                        </div>
+                        <div>ChatGPT &gt; Account Settings &gt; Security &gt; Enable device code authorization</div>
+                        <div>When you&apos;re ready, copy the code below, and click &quot;Open Browser&quot;.</div>
+                      </div>
+                    </Show>
                     <Show when={oauthDisplayCode()}>
-                      <TextInput label="Confirmation code" value={oauthDisplayCode()} readOnly class="font-mono" />
+                      <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-3 flex items-center gap-3">
+                        <div class="flex-1 min-w-0">
+                          <div class="text-[10px] uppercase tracking-wide text-gray-8">Confirmation code</div>
+                          <div class="text-sm text-gray-12 font-mono break-all">{oauthDisplayCode()}</div>
+                        </div>
+                        <Button variant="ghost" class="text-xs shrink-0" onClick={() => void copyOauthDisplayCode()}>
+                          {oauthCodeCopied() ? "Copied" : "Copy"}
+                        </Button>
+                      </div>
                     </Show>
                     <div class="flex items-center gap-2 text-xs text-gray-9">
                       <Loader2 size={14} class={props.submitting || pollingBusy() || oauthAutoBusy() ? "animate-spin" : ""} />
@@ -809,7 +899,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         }}
                         disabled={actionDisabled()}
                       >
-                        Open browser again
+                        {isOpenAiHeadlessSession()
+                          ? oauthBrowserOpened()
+                            ? "Reopen Browser"
+                            : "Open Browser"
+                          : "Open browser again"}
                       </Button>
                       <div class="text-[11px] text-gray-9 text-right">This window will close once the provider is connected.</div>
                     </div>

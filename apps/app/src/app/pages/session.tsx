@@ -272,6 +272,7 @@ export type SessionViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthPreferredProviderId: string | null;
+  providerAuthWorkerType: "local" | "remote";
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
@@ -5062,6 +5063,7 @@ export default function SessionView(props: SessionViewProps) {
         submitting={providerAuthActionBusy()}
         error={props.providerAuthError}
         preferredProviderId={props.providerAuthPreferredProviderId}
+        workerType={props.providerAuthWorkerType}
         providers={props.providers}
         connectedProviderIds={props.providerConnectedIds}
         authMethods={props.providerAuthMethods}

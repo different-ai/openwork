@@ -2268,6 +2268,7 @@ export default function App() {
   const buildProviderAuthMethods = (
     methods: Record<string, ProviderAuthMethod[]>,
     availableProviders: ProviderListItem[],
+    workerType: "local" | "remote",
   ) => {
     const merged = Object.fromEntries(
       Object.entries(methods ?? {}).map(([id, providerMethods]) => [
@@ -2286,16 +2287,33 @@ export default function App() {
       if (existing.some((method) => method.type === "api")) continue;
       merged[id] = [...existing, { type: "api", label: "API key" }];
     }
+    for (const [id, providerMethods] of Object.entries(merged)) {
+      const provider = availableProviders.find((item) => item.id === id);
+      const normalizedId = id.trim().toLowerCase();
+      const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
+      const isOpenAiProvider = normalizedId === "openai" || normalizedName === "openai";
+      if (!isOpenAiProvider) continue;
+      merged[id] = providerMethods.filter((method) => {
+        if (method.type !== "oauth") return true;
+        const label = method.label.toLowerCase();
+        const isHeadless = label.includes("headless") || label.includes("device");
+        return workerType === "remote" ? isHeadless : !isHeadless;
+      });
+    }
     return merged;
   };
 
-  const loadProviderAuthMethods = async () => {
+  const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
     }
     const methods = unwrap(await c.provider.auth());
-    return buildProviderAuthMethods(methods as Record<string, ProviderAuthMethod[]>, providers());
+    return buildProviderAuthMethods(
+      methods as Record<string, ProviderAuthMethod[]>,
+      providers(),
+      workerType,
+    );
   };
 
   async function startProviderAuth(
@@ -2309,9 +2327,10 @@ export default function App() {
     }
     try {
       const cachedMethods = providerAuthMethods();
+      const workerType = activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
       const authMethods = Object.keys(cachedMethods).length
         ? cachedMethods
-        : await loadProviderAuthMethods();
+        : await loadProviderAuthMethods(workerType);
       const providerIds = Object.keys(authMethods).sort();
       if (!providerIds.length) {
         throw new Error("No providers available");
@@ -2558,12 +2577,13 @@ export default function App() {
     returnFocusTarget?: PromptFocusReturnTarget;
     preferredProviderId?: string;
   }) {
+    const workerType = activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
     setProviderAuthReturnFocusTarget(options?.returnFocusTarget ?? "none");
     setProviderAuthPreferredProviderId(options?.preferredProviderId?.trim() || null);
     setProviderAuthBusy(true);
     setProviderAuthError(null);
     try {
-      const methods = await loadProviderAuthMethods();
+      const methods = await loadProviderAuthMethods(workerType);
       setProviderAuthMethods(methods);
       setProviderAuthModalOpen(true);
     } catch (error) {
@@ -7029,6 +7049,7 @@ export default function App() {
   const dashboardProps = () => {
     const workspaceType = activeWorkspaceDisplay().workspaceType;
     const isRemoteWorkspace = workspaceType === "remote";
+    const providerAuthWorkerType: "local" | "remote" = isRemoteWorkspace ? "remote" : "local";
     const openworkStatus = openworkServerStatus();
     const canUseDesktopTools = isTauriRuntime() && !isRemoteWorkspace;
     const canInstallSkillCreator = isRemoteWorkspace
@@ -7069,6 +7090,7 @@ export default function App() {
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
       providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
+      providerAuthWorkerType,
       openProviderAuthModal,
       disconnectProvider,
       closeProviderAuthModal,
@@ -7336,6 +7358,9 @@ export default function App() {
   };
 
   const sessionProps = () => ({
+    providerAuthWorkerType: (activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local") as
+      | "remote"
+      | "local",
     selectedSessionId: activeSessionId(),
     setView,
     tab: tab(),
