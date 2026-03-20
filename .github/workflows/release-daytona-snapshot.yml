@@ -144,5 +144,9 @@ jobs:
             exit 1
           fi
 
+          export DAYTONA_CONFIG_DIR="$RUNNER_TEMP/daytona"
+          mkdir -p "$DAYTONA_CONFIG_DIR"
+          daytona login --api-key "$DAYTONA_API_KEY"
+
           echo "Publishing Daytona snapshot: ${DAYTONA_SNAPSHOT_NAME}"
           ./scripts/create-daytona-openwork-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
