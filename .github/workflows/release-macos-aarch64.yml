@@ -913,8 +913,13 @@ jobs:
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot
-    needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.publish_daytona_snapshot == 'true'
+    needs: [resolve-release, verify-release, publish-npm]
+    if: |
+      always() &&
+      needs.resolve-release.result == 'success' &&
+      needs.verify-release.result == 'success' &&
+      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
+      needs.resolve-release.outputs.publish_daytona_snapshot == 'true'
     uses: ./.github/workflows/release-daytona-snapshot.yml
     with:
       tag: ${{ needs.resolve-release.outputs.release_tag }}

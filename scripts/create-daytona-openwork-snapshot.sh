@@ -50,6 +50,58 @@ if [ -n "$SNAPSHOT_REGION" ]; then
   args+=(--region "$SNAPSHOT_REGION")
 fi
 
+EXISTING_SNAPSHOT_ID="$({
+  daytona snapshot list --format json | node -e '
+const fs = require("fs");
+
+const target = process.argv[1];
+const raw = fs.readFileSync(0, "utf8").trim();
+
+if (!raw || !target) {
+  process.exit(0);
+}
+
+let data;
+try {
+  data = JSON.parse(raw);
+} catch (error) {
+  console.error(`Failed to parse Daytona snapshot list JSON: ${error.message}`);
+  process.exit(1);
+}
+
+const stack = [data];
+while (stack.length > 0) {
+  const value = stack.pop();
+  if (!value || typeof value !== "object") {
+    continue;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      stack.push(item);
+    }
+    continue;
+  }
+
+  const name = typeof value.name === "string" ? value.name : "";
+  const id = typeof value.id === "string" ? value.id : "";
+  if (name === target) {
+    process.stdout.write(id || name);
+    process.exit(0);
+  }
+
+  for (const child of Object.values(value)) {
+    stack.push(child);
+  }
+}
+' "$SNAPSHOT_NAME";
+} )"
+
+if [ -n "$EXISTING_SNAPSHOT_ID" ]; then
+  echo "Deleting existing Daytona snapshot $SNAPSHOT_NAME" >&2
+  daytona snapshot delete "$EXISTING_SNAPSHOT_ID"
+fi
+
 echo "Pushing Daytona snapshot $SNAPSHOT_NAME" >&2
 daytona "${args[@]}"
 
