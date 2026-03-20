@@ -22,6 +22,11 @@ if [ -f "$DAYTONA_ENV_FILE" ]; then
   set +a
 fi
 
+if [ -n "${DAYTONA_API_KEY:-}" ]; then
+  echo "Authenticating Daytona CLI" >&2
+  daytona login --api-key "$DAYTONA_API_KEY" >/dev/null
+fi
+
 SNAPSHOT_NAME="${1:-${DAYTONA_SNAPSHOT_NAME:-openwork-runtime}}"
 SNAPSHOT_REGION="${DAYTONA_SNAPSHOT_REGION:-${DAYTONA_TARGET:-}}"
 SNAPSHOT_CPU="${DAYTONA_SNAPSHOT_CPU:-1}"
