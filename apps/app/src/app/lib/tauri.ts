@@ -300,20 +300,6 @@ export type WorkspaceOpenworkConfig = {
     preset?: string | null;
   } | null;
   authorizedRoots: string[];
-  blueprint?: {
-    emptyState?: {
-      title?: string | null;
-      body?: string | null;
-      starters?: {
-        id?: string | null;
-        kind?: "prompt" | "session" | "action" | null;
-        title?: string | null;
-        description?: string | null;
-        prompt?: string | null;
-        action?: "connect-anthropic" | null;
-      }[] | null;
-    } | null;
-  } | null;
   reload?: {
     auto?: boolean;
     resume?: boolean;

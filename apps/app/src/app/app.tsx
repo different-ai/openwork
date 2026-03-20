@@ -72,6 +72,10 @@ import {
   mapConfigProvidersToList,
   providerPriorityRank,
 } from "./utils/providers";
+import {
+  buildDefaultWorkspaceBlueprint,
+  normalizeWorkspaceOpenworkConfig,
+} from "./lib/workspace-blueprints";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
@@ -105,6 +109,7 @@ import type {
   OpencodeConnectStatus,
   ScheduledJob,
   WorkspacePreset,
+  WorkspaceOpenworkConfig,
 } from "./types";
 import {
   clearStartupPreference,
@@ -935,6 +940,8 @@ export default function App() {
   const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
+  const [activeWorkspaceServerConfig, setActiveWorkspaceServerConfig] =
+    createSignal<WorkspaceOpenworkConfig | null>(null);
 
   const openworkServerBaseUrl = createMemo(() => {
     const pref = startupPreference();
@@ -4924,6 +4931,9 @@ export default function App() {
 
   const activeAuthorizedDirs = createMemo(() => workspaceStore.authorizedDirs());
   const activeWorkspaceDisplay = createMemo(() => workspaceStore.activeWorkspaceDisplay());
+  const resolvedActiveWorkspaceConfig = createMemo(
+    () => activeWorkspaceServerConfig() ?? workspaceStore.workspaceConfig(),
+  );
   const activePermissionMemo = createMemo(() => activePermission());
   const migrationRepairUnavailableReason = createMemo<string | null>(() => {
     if (workspaceStore.canRepairOpencodeMigration()) return null;
@@ -4955,6 +4965,57 @@ export default function App() {
     authorizedFolders: false,
   });
   const [autoConnectAttempted, setAutoConnectAttempted] = createSignal(false);
+
+  createEffect(() => {
+    const workspace = activeWorkspaceDisplay();
+    const openworkClient = openworkServerClient();
+    const workspaceId = openworkServerWorkspaceId();
+    const capabilities = resolvedOpenworkCapabilities();
+    const canReadConfig =
+      openworkServerStatus() === "connected" &&
+      Boolean(openworkClient && workspaceId && capabilities?.config?.read);
+
+    if (!canReadConfig || !openworkClient || !workspaceId) {
+      setActiveWorkspaceServerConfig(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadWorkspaceConfig = async () => {
+      try {
+        const config = await openworkClient.getConfig(workspaceId);
+        if (cancelled) return;
+
+        const normalized = normalizeWorkspaceOpenworkConfig(
+          config.openwork,
+          workspace.preset,
+        );
+
+        if (!normalized.blueprint) {
+          setActiveWorkspaceServerConfig({
+            ...normalized,
+            blueprint: buildDefaultWorkspaceBlueprint(
+              normalized.workspace?.preset ?? workspace.preset ?? "starter",
+            ),
+          });
+          return;
+        }
+
+        setActiveWorkspaceServerConfig(normalized);
+      } catch {
+        if (!cancelled) {
+          setActiveWorkspaceServerConfig(null);
+        }
+      }
+    };
+
+    void loadWorkspaceConfig();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
 
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
   const [launchUpdateCheckTriggered, setLaunchUpdateCheckTriggered] = createSignal(false);
@@ -7022,7 +7083,7 @@ export default function App() {
     toggleSettings: () => toggleSettingsView("general"),
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
     activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-    activeWorkspaceConfig: workspaceStore.workspaceConfig(),
+    activeWorkspaceConfig: resolvedActiveWorkspaceConfig(),
     workspaces: workspaceStore.workspaces(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),

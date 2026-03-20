@@ -30,6 +30,23 @@ Auto-detection can exist as a convenience, but should be tiered and explainable:
 
 The readiness check should be a clear, single command (e.g. `docker info`) and the UI should show the exact error output when it fails.
 
+## Filesystem mutation policy
+
+OpenWork should route filesystem mutations through the OpenWork server whenever possible.
+
+Why:
+
+- the server is the one place that can apply the same behavior for both local and remote workspaces
+- server-routed writes keep permission checks, approvals, audit trails, and reload events consistent
+- Tauri-only filesystem mutations only work in desktop host mode and break parity with remote execution
+
+Guidelines:
+
+- Any UI feature that changes workspace files or config should call an OpenWork server endpoint first.
+- Local Tauri filesystem commands are a host-mode fallback, not the primary product surface.
+- If a feature cannot yet write through the OpenWork server, treat that as an architecture gap and close it before depending on direct local writes.
+- Reads can fall back locally when necessary, but writes should be designed around the OpenWork server path.
+
 ## opencode primitives
 how to pick the right extension abstraction for 
 @opencode
