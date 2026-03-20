@@ -1,26 +1,18 @@
-const LOCAL_UI_KEY = "openwork.global.dat:local.ui";
-const LOCAL_PREFS_KEY = "openwork.global.dat:local.preferences";
+/* @refresh reload */
+import { render } from "solid-js/web";
 
-try {
-  if (!window.localStorage.getItem(LOCAL_UI_KEY)) {
-    window.localStorage.setItem(
-      LOCAL_UI_KEY,
-      JSON.stringify({ view: "dashboard", tab: "settings" }),
-    );
-  }
+import "../../app/src/app/index.css";
+import { bootstrapTheme } from "../../app/src/app/theme";
+import { initLocale } from "../../app/src/i18n";
+import StoryBookApp from "./story-book";
 
-  if (!window.localStorage.getItem(LOCAL_PREFS_KEY)) {
-    window.localStorage.setItem(
-      LOCAL_PREFS_KEY,
-      JSON.stringify({
-        showThinking: false,
-        modelVariant: null,
-        defaultModel: null,
-      }),
-    );
-  }
-} catch {
-  // ignore storage errors in the wrapper app
+bootstrapTheme();
+initLocale();
+
+const root = document.getElementById("root");
+
+if (!root) {
+  throw new Error("Root element not found");
 }
 
-void import("../../app/src/index");
+render(() => <StoryBookApp />, root);
