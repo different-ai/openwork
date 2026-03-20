@@ -7,7 +7,6 @@ import {
   on,
   onCleanup,
   onMount,
-  type JSX,
 } from "solid-js";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
@@ -72,7 +71,6 @@ import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal, {
-  type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
@@ -112,10 +110,9 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
-import ArtifactsPanel from "../components/session/artifacts-panel";
 import FlyoutItem from "../components/flyout-item";
-import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
 import QuestionModal from "../components/question-modal";
+import ArtifactsPanel from "../components/session/artifacts-panel";
 import InboxPanel from "../components/session/inbox-panel";
 
 export type SessionViewProps = {
@@ -222,9 +219,7 @@ export type SessionViewProps = {
   prompt: string;
   setPrompt: (value: string) => void;
   selectedSessionModelLabel: string;
-  openSessionModelPicker: (options?: {
-    returnFocusTarget?: "none" | "composer";
-  }) => void;
+  openSessionModelPicker: () => void;
   modelVariantLabel: string;
   modelVariant: string | null;
   setModelVariant: (value: string) => void;
@@ -247,7 +242,7 @@ export type SessionViewProps = {
   error: string | null;
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
-  startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
+  startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
     providerId: string,
     methodIndex: number,
@@ -258,16 +253,15 @@ export type SessionViewProps = {
     apiKey: string,
   ) => Promise<string | void>;
   refreshProviders: () => Promise<unknown>;
-  openProviderAuthModal: (options?: {
-    returnFocusTarget?: "none" | "composer";
-    preferredProviderId?: string;
-  }) => Promise<void>;
-  closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
+  openProviderAuthModal: () => Promise<void>;
+  closeProviderAuthModal: () => void;
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
   providerAuthError: string | null;
-  providerAuthMethods: Record<string, ProviderAuthMethod[]>;
-  providerAuthPreferredProviderId: string | null;
+  providerAuthMethods: Record<
+    string,
+    { type: "oauth" | "api"; label: string }[]
+  >;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
@@ -368,8 +362,6 @@ export default function SessionView(props: SessionViewProps) {
   const [renameSessionId, setRenameSessionId] = createSignal<string | null>(null);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
-  const [renameReturnFocusToComposer, setRenameReturnFocusToComposer] =
-    createSignal(false);
 
   const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
   const [deleteSessionId, setDeleteSessionId] = createSignal<string | null>(null);
@@ -405,7 +397,6 @@ export default function SessionView(props: SessionViewProps) {
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
   const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
-  const [mobileRightSidebarOpen, setMobileRightSidebarOpen] = createSignal(false);
 
   // In Session view the right sidebar is navigation-only; never pre-highlight a
   // dashboard tab here so first-run feels chat-first rather than Automations-first.
@@ -2609,11 +2600,6 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
-  const closeCommandPaletteAndFocusComposer = () => {
-    closeCommandPalette();
-    focusComposer();
-  };
-
   const openCommandPalette = (mode: CommandPaletteMode = "root") => {
     setCommandPaletteMode(mode);
     setCommandPaletteQuery("");
@@ -2847,35 +2833,21 @@ export default function SessionView(props: SessionViewProps) {
     return next !== sessionTitleForId(renameSessionId()).trim();
   });
 
-  const finishRenameModal = (
-    restoreComposerFocus = renameReturnFocusToComposer(),
-  ) => {
-    setRenameModalOpen(false);
-    setRenameSessionId(null);
-    setRenameReturnFocusToComposer(false);
-    if (restoreComposerFocus) {
-      focusComposer();
-    }
-  };
-
-  const openRenameModal = (options?: { returnFocusToComposer?: boolean }) => {
+  const openRenameModal = () => {
     const sessionId = props.selectedSessionId;
     if (!sessionId) {
       setToastMessage("No session selected");
-      if (options?.returnFocusToComposer) {
-        focusComposer();
-      }
       return;
     }
     setRenameSessionId(sessionId);
     setRenameTitle(sessionTitleForId(sessionId));
-    setRenameReturnFocusToComposer(options?.returnFocusToComposer === true);
     setRenameModalOpen(true);
   };
 
   const closeRenameModal = () => {
     if (renameBusy()) return;
-    finishRenameModal();
+    setRenameModalOpen(false);
+    setRenameSessionId(null);
   };
 
   const submitRename = async () => {
@@ -2886,7 +2858,8 @@ export default function SessionView(props: SessionViewProps) {
     setRenameBusy(true);
     try {
       await props.renameSession(sessionId, next);
-      finishRenameModal();
+      setRenameModalOpen(false);
+      setRenameSessionId(null);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
@@ -2972,14 +2945,13 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleProviderAuthSelect = async (
     providerId: string,
-    methodIndex?: number,
   ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
       throw new Error("Provider auth is already in progress.");
     }
     setProviderAuthActionBusy(true);
     try {
-      return await props.startProviderAuth(providerId, methodIndex);
+      return await props.startProviderAuth(providerId);
     } finally {
       setProviderAuthActionBusy(false);
     }
@@ -3648,7 +3620,7 @@ export default function SessionView(props: SessionViewProps) {
         meta: "Rename",
         action: () => {
           closeCommandPalette();
-          openRenameModal({ returnFocusToComposer: true });
+          openRenameModal();
         },
       },
       {
@@ -3670,7 +3642,7 @@ export default function SessionView(props: SessionViewProps) {
         meta: "Open",
         action: () => {
           closeCommandPalette();
-          props.openSessionModelPicker({ returnFocusTarget: "composer" });
+          props.openSessionModelPicker();
         },
       },
       {
@@ -3680,16 +3652,13 @@ export default function SessionView(props: SessionViewProps) {
         meta: "Open",
         action: () => {
           closeCommandPalette();
-          void props
-            .openProviderAuthModal({ returnFocusTarget: "composer" })
-            .catch((error) => {
-              const message =
-                error instanceof Error
-                  ? error.message
-                  : "Failed to load providers";
-              setToastMessage(message);
-              focusComposer();
-            });
+          void props.openProviderAuthModal().catch((error) => {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Failed to load providers";
+            setToastMessage(message);
+          });
         },
       },
       {
@@ -3756,7 +3725,7 @@ export default function SessionView(props: SessionViewProps) {
       meta: activeVariant === option.value ? "Current" : undefined,
       action: () => {
         props.setModelVariant(option.value);
-        closeCommandPaletteAndFocusComposer();
+        closeCommandPalette();
         setToastMessage(`Thinking set to ${option.label}.`);
       },
     }));
@@ -3909,159 +3878,41 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
-  const openProviderAuth = (preferredProviderId?: string) => {
-    void props.openProviderAuthModal({ preferredProviderId }).catch((error) => {
+  const openProviderAuth = () => {
+    void props.openProviderAuthModal().catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
       setToastMessage(message);
     });
   };
 
-  const openNewSessionProviderCta = () => {
-    openProviderAuth("anthropic");
-  };
-
-  const hasAnthropicProviderConnected = createMemo(() =>
-    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "anthropic")
+  const hasOpenAIProviderConnected = createMemo(() =>
+    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
   );
-  const showNewSessionProviderCta = createMemo(() => !hasAnthropicProviderConnected());
+
   const rightSidebarNavButton = (
     label: string,
     icon: any,
     active: boolean,
     onClick: () => void,
-    options?: {
-      disabled?: boolean;
-      badge?: JSX.Element;
-      disabledTitle?: string;
-      expanded?: boolean;
-      onSelect?: () => void;
-    },
-  ) => {
-    const expanded = options?.expanded ?? rightSidebarExpanded();
-    return (
-      <button
-        type="button"
-        disabled={options?.disabled}
-        class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
-          options?.disabled
-            ? "cursor-not-allowed border-transparent text-gray-8 opacity-70"
-            : active
-              ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-              : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
-        } ${
-          expanded
-            ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
-            : "flex h-12 items-center justify-center rounded-[16px] px-0"
-        }`}
-        onClick={() => {
-          onClick();
-          options?.onSelect?.();
-        }}
-        title={options?.disabled ? options.disabledTitle ?? label : label}
-        aria-label={options?.disabled ? `${label}. ${options.disabledTitle ?? "Desktop only."}` : label}
-      >
-        {icon}
-        <Show when={expanded}>
-          <span class="flex min-w-0 flex-1 items-center gap-2">
-            <span class="truncate">{label}</span>
-            {options?.badge}
-          </span>
-        </Show>
-      </button>
-    );
-  };
-
-  const renderRightSidebar = (expanded: boolean, mobile = false) => (
-    <div class={`flex h-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
-      <div class={`flex items-center pb-3 ${expanded ? "justify-end" : "justify-center"}`}>
-        <button
-          type="button"
-          class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
-          onClick={mobile ? () => setMobileRightSidebarOpen(false) : toggleRightSidebar}
-          title={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-          aria-label={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          <Show when={mobile} fallback={<Show when={expanded} fallback={<ChevronLeft size={18} />}><ChevronRight size={18} /></Show>}>
-            <X size={18} />
-          </Show>
-        </button>
-      </div>
-      <div class={`flex-1 overflow-y-auto ${expanded ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
-        <div class="space-y-1 mb-2">
-          {rightSidebarNavButton(
-            "Automations",
-            <History size={18} />,
-            showRightSidebarSelection() && props.tab === "scheduled",
-            () => {
-              props.setTab("scheduled");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          {rightSidebarNavButton(
-            "Skills",
-            <Zap size={18} />,
-            showRightSidebarSelection() && props.tab === "skills",
-            () => {
-              props.setTab("skills");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          {rightSidebarNavButton(
-            "Extensions",
-            <Box size={18} />,
-            showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins"),
-            () => {
-              props.setTab("mcp");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          {rightSidebarNavButton(
-            "Messaging",
-            <MessageCircle size={18} />,
-            showRightSidebarSelection() && props.tab === "identities",
-            () => {
-              props.setTab("identities");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          <Show when={props.developerMode}>
-            {rightSidebarNavButton(
-              "Advanced",
-              <SlidersHorizontal size={18} />,
-              showRightSidebarSelection() && props.tab === "config",
-              openConfig,
-              mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-            )}
-          </Show>
-        </div>
-
-        <Show when={expanded}>
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <InboxPanel
-              id={mobile ? "mobile-sidebar-inbox" : "sidebar-inbox"}
-              client={props.openworkServerClient}
-              workspaceId={props.openworkServerWorkspaceId}
-              onToast={(message) => setToastMessage(message)}
-            />
-          </div>
-
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <ArtifactsPanel
-              id={mobile ? "mobile-sidebar-artifacts" : "sidebar-artifacts"}
-              files={touchedFiles()}
-              workspaceRoot={props.activeWorkspaceRoot}
-              onRevealArtifact={revealArtifact}
-              onOpenInObsidian={openArtifactInObsidian}
-              obsidianAvailable={obsidianAvailable()}
-            />
-          </div>
-        </Show>
-      </div>
-    </div>
+  ) => (
+    <button
+      type="button"
+      class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
+        active
+          ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
+          : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
+      } ${
+        rightSidebarExpanded()
+          ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
+          : "flex h-12 items-center justify-center rounded-[16px] px-0"
+      }`}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      {icon}
+      <Show when={rightSidebarExpanded()}>{label}</Show>
+    </button>
   );
 
   return (
@@ -4289,16 +4140,7 @@ export default function SessionView(props: SessionViewProps) {
               <div class="hidden h-4 w-px bg-dls-border sm:block" />
               <button
                 type="button"
-                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
-                onClick={() => setMobileRightSidebarOpen(true)}
-                title="Open sidebar"
-                aria-label="Open sidebar"
-              >
-                <Menu size={16} />
-              </button>
-              <button
-                type="button"
-                class="hidden h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60 md:flex"
+                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={compactSessionHistory}
                 disabled={!canCompactSession() || historyActionBusy() !== null}
                 title="Compact session context"
@@ -4539,17 +4381,17 @@ export default function SessionView(props: SessionViewProps) {
                         </p>
                       </div>
                       <div class="grid gap-3 max-w-lg mx-auto text-left">
-                        <Show when={showNewSessionProviderCta()}>
+                        <Show when={!hasOpenAIProviderConnected()}>
                           <button
                             type="button"
                             class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                            onClick={openNewSessionProviderCta}
+                            onClick={openProviderAuth}
                           >
                             <div class="text-sm font-semibold text-dls-text">
-                              Connect Claude
+                              Connect ChatGPT
                             </div>
                             <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                              Add your Anthropic provider so Claude models are ready in new sessions.
+                              Add your OpenAI provider so ChatGPT-style models are ready in new sessions.
                             </div>
                           </button>
                         </Show>
@@ -4622,18 +4464,18 @@ export default function SessionView(props: SessionViewProps) {
                         <div class="flex justify-start pl-2">
                           <div class="w-full max-w-[68ch]">
                             <div
-                              class={`ml-3 mt-3 flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
+                              class={`flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
                               role="status"
                               aria-live="polite"
                             >
                               <span
-                                class={`truncate ${
-                                  runPhase() === "thinking" ||
-                                  runPhase() === "responding"
-                                    ? "animate-pulse"
-                                    : ""
+                                class={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                                  runPhase() === "error"
+                                    ? "bg-red-9"
+                                    : "bg-gray-8 animate-pulse"
                                 }`}
-                              >
+                              />
+                              <span class="truncate">
                                 {thinkingStatus() || runLabel()}
                               </span>
                               <Show when={props.developerMode}>
@@ -4769,7 +4611,7 @@ export default function SessionView(props: SessionViewProps) {
               onStop={cancelRun}
               onDraftChange={handleDraftChange}
               selectedModelLabel={props.selectedSessionModelLabel || "Model"}
-              onModelClick={() => props.openSessionModelPicker()}
+              onModelClick={props.openSessionModelPicker}
               modelVariantLabel={props.modelVariantLabel}
               modelVariant={props.modelVariant}
               onModelVariantChange={props.setModelVariant}
@@ -4848,21 +4690,108 @@ export default function SessionView(props: SessionViewProps) {
         </main>
 
         <aside
-          class="hidden shrink-0 md:flex"
+          class="flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 transition-[width] duration-200"
           style={{
             width: `${rightSidebarWidth()}px`,
             "min-width": `${rightSidebarWidth()}px`,
           }}
         >
-          {renderRightSidebar(rightSidebarExpanded())}
-        </aside>
+          <div
+            class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}
+          >
+            <button
+              type="button"
+              class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
+              onClick={toggleRightSidebar}
+              title={
+                rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"
+              }
+              aria-label={
+                rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"
+              }
+            >
+              <Show
+                when={rightSidebarExpanded()}
+                fallback={<ChevronLeft size={18} />}
+              >
+                <ChevronRight size={18} />
+              </Show>
+            </button>
+          </div>
+          <div
+            class={`flex-1 overflow-y-auto ${rightSidebarExpanded() ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}
+          >
+            <div class="space-y-1 mb-2">
+              {rightSidebarNavButton(
+                "Automations",
+                <History size={18} />,
+                showRightSidebarSelection() && props.tab === "scheduled",
+                () => {
+                  props.setTab("scheduled");
+                  props.setView("dashboard");
+                },
+              )}
+              {rightSidebarNavButton(
+                "Skills",
+                <Zap size={18} />,
+                showRightSidebarSelection() && props.tab === "skills",
+                () => {
+                  props.setTab("skills");
+                  props.setView("dashboard");
+                },
+              )}
+              {rightSidebarNavButton(
+                "Extensions",
+                <Box size={18} />,
+                showRightSidebarSelection() &&
+                  (props.tab === "mcp" || props.tab === "plugins"),
+                () => {
+                  props.setTab("mcp");
+                  props.setView("dashboard");
+                },
+              )}
+              {rightSidebarNavButton(
+                "Messaging",
+                <MessageCircle size={18} />,
+                showRightSidebarSelection() && props.tab === "identities",
+                () => {
+                  props.setTab("identities");
+                  props.setView("dashboard");
+                },
+              )}
+              <Show when={props.developerMode}>
+                {rightSidebarNavButton(
+                  "Advanced",
+                  <SlidersHorizontal size={18} />,
+                  showRightSidebarSelection() && props.tab === "config",
+                  openConfig,
+                )}
+              </Show>
+            </div>
 
-        <MobileSidebarDrawer
-          open={mobileRightSidebarOpen()}
-          onClose={() => setMobileRightSidebarOpen(false)}
-        >
-          {renderRightSidebar(true, true)}
-        </MobileSidebarDrawer>
+            <Show when={rightSidebarExpanded()}>
+              <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+                <InboxPanel
+                  id="sidebar-inbox"
+                  client={props.openworkServerClient}
+                  workspaceId={props.openworkServerWorkspaceId}
+                  onToast={(message) => setToastMessage(message)}
+                />
+              </div>
+
+              <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+                <ArtifactsPanel
+                  id="sidebar-artifacts"
+                  files={touchedFiles()}
+                  workspaceRoot={props.activeWorkspaceRoot}
+                  onRevealArtifact={revealArtifact}
+                  onOpenInObsidian={openArtifactInObsidian}
+                  obsidianAvailable={obsidianAvailable()}
+                />
+              </div>
+            </Show>
+          </div>
+        </aside>
       </div>
 
       <Show when={commandPaletteOpen()}>
@@ -4974,7 +4903,6 @@ export default function SessionView(props: SessionViewProps) {
         loading={props.providerAuthBusy}
         submitting={providerAuthActionBusy()}
         error={props.providerAuthError}
-        preferredProviderId={props.providerAuthPreferredProviderId}
         providers={props.providers}
         connectedProviderIds={props.providerConnectedIds}
         authMethods={props.providerAuthMethods}
@@ -4982,7 +4910,7 @@ export default function SessionView(props: SessionViewProps) {
         onSubmitApiKey={handleProviderAuthApiKey}
         onSubmitOAuth={handleProviderAuthOAuth}
         onRefreshProviders={props.refreshProviders}
-        onClose={() => props.closeProviderAuthModal()}
+        onClose={props.closeProviderAuthModal}
       />
 
       <RenameSessionModal
