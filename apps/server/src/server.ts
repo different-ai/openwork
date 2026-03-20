@@ -11,7 +11,7 @@ import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { ApiError, formatError } from "./errors.js";
-import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
+import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
@@ -1537,7 +1537,31 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     });
 
     if (opencode) {
-      await updateJsoncTopLevel(opencodeConfigPath(workspace.path), opencode);
+      const configPath = opencodeConfigPath(workspace.path);
+      const nextOpencode = ensurePlainObject(opencode);
+      const { permission, ...topLevelUpdates } = nextOpencode;
+
+      if (Object.keys(topLevelUpdates).length) {
+        await updateJsoncTopLevel(configPath, topLevelUpdates);
+      }
+
+      const permissionUpdate = ensurePlainObject(permission);
+      if (Object.prototype.hasOwnProperty.call(permissionUpdate, "external_directory")) {
+        const existingOpencode = await readOpencodeConfig(workspace.path);
+        const existingPermission = ensurePlainObject(existingOpencode.permission);
+        const nextExternalDirectory = permissionUpdate.external_directory;
+        const existingPermissionKeys = Object.keys(existingPermission);
+        const removePermissionParent =
+          typeof nextExternalDirectory === "undefined" &&
+          (existingPermissionKeys.length === 0 ||
+            (existingPermissionKeys.length === 1 && Object.prototype.hasOwnProperty.call(existingPermission, "external_directory")));
+
+        if (removePermissionParent) {
+          await updateJsoncPath(configPath, ["permission"], undefined);
+        } else {
+          await updateJsoncPath(configPath, ["permission", "external_directory"], nextExternalDirectory);
+        }
+      }
     }
     if (openwork) {
       await writeOpenworkConfig(workspace.path, openwork, true);

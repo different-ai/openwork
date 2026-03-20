@@ -128,6 +128,7 @@ export type DashboardViewProps = {
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerWorkspaceId: string | null;
+  activeWorkspaceType: "local" | "remote";
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
@@ -324,6 +325,19 @@ export type DashboardViewProps = {
   cleanupOpenworkDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
+  authorizedFolders: string[];
+  authorizedFolderDraft: string;
+  setAuthorizedFolderDraft: (value: string) => void;
+  authorizedFoldersLoading: boolean;
+  authorizedFoldersSaving: boolean;
+  authorizedFoldersError: string | null;
+  authorizedFoldersStatus: string | null;
+  authorizedFoldersAvailable: boolean;
+  authorizedFoldersEditable: boolean;
+  authorizedFoldersHint: string | null;
+  addAuthorizedFolder: () => Promise<void>;
+  pickAuthorizedFolder: () => Promise<void>;
+  removeAuthorizedFolder: (folder: string) => Promise<void>;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   notionStatus: "disconnected" | "connecting" | "connected" | "error";
   notionStatusDetail: string | null;
@@ -1448,7 +1462,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
 
             <Match when={props.tab === "settings"}>
-                <SettingsView
+              <SettingsView
                   startupPreference={props.startupPreference}
                   baseUrl={props.baseUrl}
                   headerStatus={props.headerStatus}
@@ -1470,6 +1484,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerDiagnostics={props.openworkServerDiagnostics}
                   openworkServerWorkspaceId={props.openworkServerWorkspaceId}
                   activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  activeWorkspaceType={props.activeWorkspaceType}
                   openworkAuditEntries={props.openworkAuditEntries}
                   openworkAuditStatus={props.openworkAuditStatus}
                   openworkAuditError={props.openworkAuditError}
@@ -1536,6 +1551,19 @@ export default function DashboardView(props: DashboardViewProps) {
                   cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
                   dockerCleanupBusy={props.dockerCleanupBusy}
                   dockerCleanupResult={props.dockerCleanupResult}
+                  authorizedFolders={props.authorizedFolders}
+                  authorizedFolderDraft={props.authorizedFolderDraft}
+                  setAuthorizedFolderDraft={props.setAuthorizedFolderDraft}
+                  authorizedFoldersLoading={props.authorizedFoldersLoading}
+                  authorizedFoldersSaving={props.authorizedFoldersSaving}
+                  authorizedFoldersError={props.authorizedFoldersError}
+                  authorizedFoldersStatus={props.authorizedFoldersStatus}
+                  authorizedFoldersAvailable={props.authorizedFoldersAvailable}
+                  authorizedFoldersEditable={props.authorizedFoldersEditable}
+                  authorizedFoldersHint={props.authorizedFoldersHint}
+                  addAuthorizedFolder={props.addAuthorizedFolder}
+                  pickAuthorizedFolder={props.pickAuthorizedFolder}
+                  removeAuthorizedFolder={props.removeAuthorizedFolder}
                   resetAppConfigDefaults={props.resetAppConfigDefaults}
                   notionStatus={props.notionStatus}
                   notionStatusDetail={props.notionStatusDetail}
@@ -1544,7 +1572,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   connectNotion={props.connectNotion}
                   openDebugDeepLink={props.openDebugDeepLink}
                   connectRemoteWorkspace={props.connectRemoteWorkspace}
-                />
+              />
 
             </Match>
           </Switch>

@@ -18,6 +18,7 @@ import {
 
 import Button from "../components/button";
 import DenSettingsPanel from "../components/den-settings-panel";
+import TextInput from "../components/text-input";
 import { usePlatform } from "../context/platform";
 import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
@@ -97,6 +98,7 @@ export type SettingsViewProps = {
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerWorkspaceId: string | null;
   activeWorkspaceRoot: string;
+  activeWorkspaceType: "local" | "remote";
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
@@ -171,6 +173,19 @@ export type SettingsViewProps = {
   cleanupOpenworkDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
+  authorizedFolders: string[];
+  authorizedFolderDraft: string;
+  setAuthorizedFolderDraft: (value: string) => void;
+  authorizedFoldersLoading: boolean;
+  authorizedFoldersSaving: boolean;
+  authorizedFoldersError: string | null;
+  authorizedFoldersStatus: string | null;
+  authorizedFoldersAvailable: boolean;
+  authorizedFoldersEditable: boolean;
+  authorizedFoldersHint: string | null;
+  addAuthorizedFolder: () => Promise<void>;
+  pickAuthorizedFolder: () => Promise<void>;
+  removeAuthorizedFolder: (folder: string) => Promise<void>;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   notionStatus: "disconnected" | "connecting" | "connected" | "error";
   notionStatusDetail: string | null;
@@ -225,6 +240,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
   const engineCustomBinPathLabel = () =>
     props.engineCustomBinPath.trim() || "No binary selected.";
+  const canPickAuthorizedFolder = createMemo(
+    () => isTauriRuntime() && props.authorizedFoldersEditable && props.activeWorkspaceType === "local",
+  );
 
   const openExternalLink = (url: string) => {
     const resolved = url.trim();
@@ -1385,9 +1403,9 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </div>
 
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Appearance</div>
+              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+                <div>
+                  <div class="text-sm font-medium text-gray-12">Appearance</div>
                 <div class="text-xs text-gray-9">
                   Match the system or force light/dark mode.
                 </div>
@@ -1451,12 +1469,152 @@ export default function SettingsView(props: SettingsViewProps) {
                 </div>
               </div>
 
-              <div class="text-xs text-gray-8">
-                System mode follows your OS preference automatically.
+                <div class="text-xs text-gray-8">
+                  System mode follows your OS preference automatically.
+                </div>
               </div>
-            </div>
 
-            <div class="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
+              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+                <div>
+                  <div class="text-sm font-medium text-gray-12">
+                    Authorized folders
+                  </div>
+                  <div class="text-xs text-gray-9">
+                    Manage `permission.external_directory` for the active workspace through the OpenWork server.
+                  </div>
+                </div>
+
+                <Show
+                  when={props.authorizedFoldersAvailable}
+                  fallback={
+                    <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 text-xs text-gray-10">
+                      {props.authorizedFoldersHint ??
+                        "Connect to a writable OpenWork server workspace to edit authorized folders."}
+                    </div>
+                  }
+                >
+                  <div class="space-y-4">
+                    <div class="text-[11px] text-gray-8">
+                      Enter a server-side folder path manually for remote-safe editing. Desktop folder picking is a convenience for local workspaces only.
+                    </div>
+                    <Show when={props.authorizedFoldersHint}>
+                      {(hint) => (
+                        <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2 text-xs text-gray-10">
+                          {hint()}
+                        </div>
+                      )}
+                    </Show>
+
+                    <form
+                      class="space-y-3"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void props.addAuthorizedFolder();
+                      }}
+                    >
+                      <TextInput
+                        value={props.authorizedFolderDraft}
+                        onInput={(event) =>
+                          props.setAuthorizedFolderDraft(event.currentTarget.value)
+                        }
+                        placeholder={
+                          props.activeWorkspaceType === "remote"
+                            ? "/workspace/shared"
+                            : props.activeWorkspaceRoot || "/Users/example/shared"
+                        }
+                        disabled={
+                          props.authorizedFoldersLoading ||
+                          props.authorizedFoldersSaving ||
+                          !props.authorizedFoldersEditable
+                        }
+                        label="Folder path"
+                        hint="Saved as an allow rule in opencode.json/opencode.jsonc."
+                      />
+
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="submit"
+                          variant="secondary"
+                          class="text-xs h-8 py-0 px-3"
+                          disabled={
+                            props.authorizedFoldersLoading ||
+                            props.authorizedFoldersSaving ||
+                            !props.authorizedFoldersEditable ||
+                            !props.authorizedFolderDraft.trim()
+                          }
+                        >
+                          {props.authorizedFoldersSaving ? "Saving..." : "Add folder"}
+                        </Button>
+                        <Show when={canPickAuthorizedFolder()}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            class="text-xs h-8 py-0 px-3"
+                            onClick={() => void props.pickAuthorizedFolder()}
+                            disabled={
+                              props.authorizedFoldersLoading ||
+                              props.authorizedFoldersSaving ||
+                              !props.authorizedFoldersEditable
+                            }
+                          >
+                            <FolderOpen size={13} class="mr-1.5" />
+                            Choose folder
+                          </Button>
+                        </Show>
+                      </div>
+                    </form>
+
+                    <Show when={props.authorizedFoldersStatus}>
+                      {(status) => (
+                        <div class="text-xs text-gray-10">{status()}</div>
+                      )}
+                    </Show>
+                    <Show when={props.authorizedFoldersError}>
+                      {(error) => (
+                        <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                          {error()}
+                        </div>
+                      )}
+                    </Show>
+
+                    <Show
+                      when={props.authorizedFolders.length > 0}
+                      fallback={
+                        <div class="rounded-xl border border-dashed border-gray-6/60 bg-gray-1/30 px-3 py-4 text-xs text-gray-9">
+                          No extra folders are authorized yet.
+                        </div>
+                      }
+                    >
+                      <div class="space-y-2">
+                        <For each={props.authorizedFolders}>
+                          {(folder) => (
+                            <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2">
+                              <div class="min-w-0 text-xs text-gray-12 font-mono break-all">
+                                {folder}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                class="h-8 w-8 shrink-0 p-0 text-gray-9 hover:text-red-11"
+                                onClick={() => void props.removeAuthorizedFolder(folder)}
+                                disabled={
+                                  props.authorizedFoldersLoading ||
+                                  props.authorizedFoldersSaving ||
+                                  !props.authorizedFoldersEditable
+                                }
+                                aria-label={`Remove ${folder}`}
+                              >
+                                <X size={14} />
+                              </Button>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
+
+              <div class="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
               <div class="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-6/20 blur-2xl" />
               <div class="pointer-events-none absolute -bottom-12 left-6 h-24 w-24 rounded-full bg-cyan-6/20 blur-2xl" />
 

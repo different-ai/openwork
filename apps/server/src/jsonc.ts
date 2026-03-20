@@ -45,6 +45,24 @@ export async function updateJsoncTopLevel(path: string, updates: Record<string, 
   await writeFile(path, content.endsWith("\n") ? content : content + "\n", "utf8");
 }
 
+export async function updateJsoncPath(path: string, jsonPath: (string | number)[], value: unknown): Promise<void> {
+  const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
+  const hasFile = await exists(path);
+  if (!hasFile) {
+    await ensureDir(dirname(path));
+    let content = "{}\n";
+    const edits = modify(content, jsonPath, value, { formattingOptions });
+    content = applyEdits(content, edits);
+    await writeFile(path, content.endsWith("\n") ? content : content + "\n", "utf8");
+    return;
+  }
+
+  let content = await readFile(path, "utf8");
+  const edits = modify(content, jsonPath, value, { formattingOptions });
+  content = applyEdits(content, edits);
+  await writeFile(path, content.endsWith("\n") ? content : content + "\n", "utf8");
+}
+
 export async function writeJsoncFile(path: string, value: unknown): Promise<void> {
   await ensureDir(dirname(path));
   const content = JSON.stringify(value, null, 2) + "\n";

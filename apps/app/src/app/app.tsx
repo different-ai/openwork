@@ -166,6 +166,7 @@ import {
   openworkServerInfo,
   orchestratorStatus,
   opencodeRouterInfo,
+  pickDirectory,
   setWindowDecorations,
   type OrchestratorStatus,
   type OpenworkServerInfo,
@@ -2830,6 +2831,76 @@ export default function App() {
       return content;
     }
   };
+
+  const ensureRecord = (value: unknown): Record<string, unknown> => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return value as Record<string, unknown>;
+  };
+
+  const normalizeAuthorizedFolderPath = (input: string | null | undefined) => {
+    const trimmed = (input ?? "").trim();
+    if (!trimmed) return "";
+    const withoutWildcard = trimmed.replace(/[\\/]\*+$/, "");
+    return normalizeDirectoryQueryPath(withoutWildcard);
+  };
+
+  const authorizedFolderToExternalDirectoryKey = (folder: string) => {
+    const normalized = normalizeAuthorizedFolderPath(folder);
+    if (!normalized) return "";
+    return normalized === "/" ? "/*" : `${normalized}/*`;
+  };
+
+  const externalDirectoryKeyToAuthorizedFolder = (key: string, value: unknown) => {
+    if (value !== "allow") return null;
+    const trimmed = key.trim();
+    if (!trimmed) return null;
+    if (trimmed === "/*") return "/";
+    if (!trimmed.endsWith("/*")) return null;
+    return normalizeAuthorizedFolderPath(trimmed.slice(0, -2));
+  };
+
+  const readAuthorizedFoldersFromConfig = (opencodeConfig: Record<string, unknown>) => {
+    const permission = ensureRecord(opencodeConfig.permission);
+    const externalDirectory = ensureRecord(permission.external_directory);
+    const folders: string[] = [];
+    const hiddenEntries: Record<string, unknown> = {};
+    const seen = new Set<string>();
+
+    for (const [key, value] of Object.entries(externalDirectory)) {
+      const folder = externalDirectoryKeyToAuthorizedFolder(key, value);
+      if (!folder) {
+        hiddenEntries[key] = value;
+        continue;
+      }
+      if (seen.has(folder)) continue;
+      seen.add(folder);
+      folders.push(folder);
+    }
+
+    return { folders, hiddenEntries };
+  };
+
+  const buildAuthorizedFoldersStatus = (preservedCount: number, action?: string) => {
+    const preservedLabel =
+      preservedCount > 0
+        ? `Preserving ${preservedCount} non-folder permission ${preservedCount === 1 ? "entry" : "entries"}.`
+        : null;
+    if (action && preservedLabel) return `${action} ${preservedLabel}`;
+    return action ?? preservedLabel;
+  };
+
+  const mergeAuthorizedFoldersIntoExternalDirectory = (
+    folders: string[],
+    hiddenEntries: Record<string, unknown>,
+  ): Record<string, unknown> | undefined => {
+    const next: Record<string, unknown> = { ...hiddenEntries };
+    for (const folder of folders) {
+      const key = authorizedFolderToExternalDirectoryKey(folder);
+      if (!key) continue;
+      next[key] = "allow";
+    }
+    return Object.keys(next).length ? next : undefined;
+  };
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
   const [modelPickerTarget, setModelPickerTarget] = createSignal<
     "session" | "default"
@@ -2843,6 +2914,13 @@ export default function App() {
   const [autoCompactContext, setAutoCompactContext] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
+  const [authorizedFolders, setAuthorizedFolders] = createSignal<string[]>([]);
+  const [authorizedFolderDraft, setAuthorizedFolderDraft] = createSignal("");
+  const [, setAuthorizedFolderHiddenEntries] = createSignal<Record<string, unknown>>({});
+  const [authorizedFoldersLoading, setAuthorizedFoldersLoading] = createSignal(false);
+  const [authorizedFoldersSaving, setAuthorizedFoldersSaving] = createSignal(false);
+  const [authorizedFoldersStatus, setAuthorizedFoldersStatus] = createSignal<string | null>(null);
+  const [authorizedFoldersError, setAuthorizedFoldersError] = createSignal<string | null>(null);
 
   const MODEL_VARIANT_OPTIONS = [
     { value: "none", label: "None" },
@@ -3911,6 +3989,18 @@ export default function App() {
       openworkServerReady() &&
       openworkServerWorkspaceReady() &&
       (resolvedOpenworkCapabilities()?.plugins?.write ?? false),
+  );
+  const openworkServerCanReadConfig = createMemo(
+    () =>
+      openworkServerReady() &&
+      openworkServerWorkspaceReady() &&
+      (resolvedOpenworkCapabilities()?.config?.read ?? false),
+  );
+  const openworkServerCanWriteConfig = createMemo(
+    () =>
+      openworkServerReady() &&
+      openworkServerWorkspaceReady() &&
+      (resolvedOpenworkCapabilities()?.config?.write ?? false),
   );
   const devtoolsCapabilities = createMemo(() => openworkServerCapabilities());
   const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? openworkServerWorkspaceId());
@@ -6205,6 +6295,156 @@ export default function App() {
   });
 
   createEffect(() => {
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const canReadConfig = openworkServerCanReadConfig();
+
+    if (!openworkClient || !openworkWorkspaceId || !canReadConfig) {
+      setAuthorizedFolders([]);
+      setAuthorizedFolderDraft("");
+      setAuthorizedFolderHiddenEntries({});
+      setAuthorizedFoldersLoading(false);
+      setAuthorizedFoldersStatus(null);
+      setAuthorizedFoldersError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAuthorizedFolderDraft("");
+    setAuthorizedFoldersLoading(true);
+    setAuthorizedFoldersError(null);
+    setAuthorizedFoldersStatus(null);
+
+    const loadAuthorizedFolders = async () => {
+      try {
+        const config = await openworkClient.getConfig(openworkWorkspaceId);
+        if (cancelled) return;
+        const next = readAuthorizedFoldersFromConfig(ensureRecord(config.opencode));
+        setAuthorizedFolders(next.folders);
+        setAuthorizedFolderHiddenEntries(next.hiddenEntries);
+        setAuthorizedFoldersStatus(
+          buildAuthorizedFoldersStatus(Object.keys(next.hiddenEntries).length),
+        );
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setAuthorizedFolders([]);
+        setAuthorizedFolderHiddenEntries({});
+        setAuthorizedFoldersError(message);
+      } finally {
+        if (!cancelled) {
+          setAuthorizedFoldersLoading(false);
+        }
+      }
+    };
+
+    void loadAuthorizedFolders();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  const persistAuthorizedFolders = async (nextFolders: string[]) => {
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    if (!openworkClient || !openworkWorkspaceId || !openworkServerCanWriteConfig()) {
+      setAuthorizedFoldersError(
+        "A writable OpenWork server workspace is required to update authorized folders.",
+      );
+      return false;
+    }
+
+    setAuthorizedFoldersSaving(true);
+    setAuthorizedFoldersError(null);
+    setAuthorizedFoldersStatus("Saving authorized folders...");
+
+    try {
+      const currentConfig = await openworkClient.getConfig(openworkWorkspaceId);
+      const currentAuthorizedFolders = readAuthorizedFoldersFromConfig(
+        ensureRecord(currentConfig.opencode),
+      );
+      const nextExternalDirectory = mergeAuthorizedFoldersIntoExternalDirectory(
+        nextFolders,
+        currentAuthorizedFolders.hiddenEntries,
+      );
+
+      await openworkClient.patchConfig(openworkWorkspaceId, {
+        opencode: {
+          permission: {
+            external_directory: nextExternalDirectory,
+          },
+        },
+      });
+      setAuthorizedFolders(nextFolders);
+      setAuthorizedFolderHiddenEntries(currentAuthorizedFolders.hiddenEntries);
+      setAuthorizedFoldersStatus(
+        buildAuthorizedFoldersStatus(
+          Object.keys(currentAuthorizedFolders.hiddenEntries).length,
+          "Authorized folders updated.",
+        ),
+      );
+      markReloadRequired("config", {
+        type: "config",
+        name: "opencode.json",
+        action: "updated",
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setAuthorizedFoldersError(message);
+      setAuthorizedFoldersStatus(null);
+      return false;
+    } finally {
+      setAuthorizedFoldersSaving(false);
+    }
+  };
+
+  const addAuthorizedFolder = async () => {
+    const normalized = normalizeAuthorizedFolderPath(authorizedFolderDraft());
+    if (!normalized) return;
+    if (authorizedFolders().includes(normalized)) {
+      setAuthorizedFolderDraft("");
+      setAuthorizedFoldersStatus("Folder is already authorized.");
+      setAuthorizedFoldersError(null);
+      return;
+    }
+
+    const ok = await persistAuthorizedFolders([...authorizedFolders(), normalized]);
+    if (ok) {
+      setAuthorizedFolderDraft("");
+    }
+  };
+
+  const removeAuthorizedFolder = async (folder: string) => {
+    const nextFolders = authorizedFolders().filter((entry) => entry !== folder);
+    await persistAuthorizedFolders(nextFolders);
+  };
+
+  const pickAuthorizedFolder = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
+      const folder = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+      const normalized = normalizeAuthorizedFolderPath(folder);
+      if (!normalized) return;
+      setAuthorizedFolderDraft(normalized);
+      if (authorizedFolders().includes(normalized)) {
+        setAuthorizedFoldersStatus("Folder is already authorized.");
+        setAuthorizedFoldersError(null);
+        return;
+      }
+      const ok = await persistAuthorizedFolders([...authorizedFolders(), normalized]);
+      if (ok) {
+        setAuthorizedFolderDraft("");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setAuthorizedFoldersError(message);
+    }
+  };
+
+  createEffect(() => {
     if (typeof window === "undefined") return;
     const workspaceId = workspaceStore.activeWorkspaceId();
     if (!workspaceId) return;
@@ -6798,6 +7038,7 @@ export default function App() {
       openworkServerCapabilities: devtoolsCapabilities(),
       openworkServerDiagnostics: openworkServerDiagnostics(),
       openworkServerWorkspaceId: resolvedDevtoolsWorkspaceId(),
+      activeWorkspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
       openworkAuditEntries: openworkAuditEntries(),
       openworkAuditStatus: openworkAuditStatus(),
       openworkAuditError: openworkAuditError(),
@@ -6964,6 +7205,27 @@ export default function App() {
       cleanupOpenworkDockerContainers,
       dockerCleanupBusy: dockerCleanupBusy(),
       dockerCleanupResult: dockerCleanupResult(),
+      authorizedFolders: authorizedFolders(),
+      authorizedFolderDraft: authorizedFolderDraft(),
+      setAuthorizedFolderDraft,
+      authorizedFoldersLoading: authorizedFoldersLoading(),
+      authorizedFoldersSaving: authorizedFoldersSaving(),
+      authorizedFoldersError: authorizedFoldersError(),
+      authorizedFoldersStatus: authorizedFoldersStatus(),
+      authorizedFoldersAvailable: openworkServerCanReadConfig(),
+      authorizedFoldersEditable: openworkServerCanWriteConfig(),
+      authorizedFoldersHint: !openworkServerReady()
+        ? "OpenWork server is disconnected."
+        : !openworkServerWorkspaceReady()
+          ? "No active server workspace is selected."
+          : !openworkServerCanReadConfig()
+            ? "OpenWork server config access is unavailable for this workspace."
+            : !openworkServerCanWriteConfig()
+              ? "OpenWork server is connected read-only for workspace config."
+              : null,
+      addAuthorizedFolder,
+      pickAuthorizedFolder,
+      removeAuthorizedFolder,
       resetAppConfigDefaults,
       notionStatus: notionStatus(),
       notionStatusDetail: notionStatusDetail(),
