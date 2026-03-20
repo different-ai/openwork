@@ -678,10 +678,12 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build sidecar artifacts
+      - name: Build orchestrator release artifacts
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: pnpm --filter openwork-orchestrator build:sidecars
+        run: |
+          pnpm --filter openwork-orchestrator build:bin:all
+          pnpm --filter openwork-orchestrator build:sidecars
 
       - name: Release review (strict)
         env:
@@ -702,12 +704,12 @@ jobs:
             --notes "$notes" \
             --latest=false
 
-      - name: Upload sidecar assets
+      - name: Upload orchestrator release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          gh release upload "$tag" apps/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$tag" apps/orchestrator/dist/bin/* apps/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
 
   publish-npm:
     name: Publish npm packages

@@ -117,7 +117,7 @@ writeJson(join(meta, "package.json"), {
     "openwork-orchestrator": "./bin/openwork",
   },
   scripts: {
-    postinstall: "bun ./postinstall.mjs || node ./postinstall.mjs",
+    postinstall: "node ./postinstall.mjs",
   },
   optionalDependencies,
   files: ["bin", "postinstall.mjs", "constants.json"],
