@@ -443,12 +443,12 @@ export default function WorkspaceSessionList(props: Props) {
                           ),
                         }}
                       />
-                      <div class="min-w-0 flex items-baseline gap-3">
+                      <div class="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
                         <div class="min-w-0 flex-1 truncate text-[14px] font-normal text-dls-text">
                           {workspaceLabel(workspace())}
                         </div>
                         <div
-                          class={`shrink-0 whitespace-nowrap text-[12px] ${statusTone()}`}
+                          class={`ml-auto whitespace-nowrap text-[12px] ${statusTone()}`}
                         >
                           {statusLabel()}
                         </div>
