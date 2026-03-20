@@ -1,3 +1,18 @@
+FROM node:22-bookworm-slim AS openwork-builder
+
+WORKDIR /src
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl git unzip \
+  && npm install -g bun \
+  && corepack enable \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+RUN pnpm install --frozen-lockfile --filter openwork-orchestrator... \
+  && pnpm --filter openwork-orchestrator build:bin
+
 FROM node:22-bookworm-slim
 
 ARG OPENWORK_ORCHESTRATOR_VERSION=0.11.151
@@ -8,7 +23,8 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl tar unzip \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g "openwork-orchestrator@${OPENWORK_ORCHESTRATOR_VERSION}"
+COPY --from=openwork-builder /src/apps/orchestrator/dist/bin/openwork /usr/local/bin/openwork
+COPY --from=openwork-builder /src/constants.json /usr/local/constants.json
 
 RUN set -eux; \
   test -n "$OPENCODE_VERSION"; \
@@ -30,6 +46,7 @@ RUN set -eux; \
   install -m 0755 "$binary" /usr/local/bin/opencode; \
   rm -rf "$tmpdir"
 
-RUN openwork --version && opencode --version
+RUN test "$(openwork --version)" = "$OPENWORK_ORCHESTRATOR_VERSION" \
+  && opencode --version
 
 CMD ["sleep", "infinity"]
