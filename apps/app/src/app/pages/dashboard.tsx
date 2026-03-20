@@ -619,7 +619,7 @@ export default function DashboardView(props: DashboardViewProps) {
           </Show>
         </div>
 
-        <Show when={expanded}>
+        <Show when={expanded && props.activeWorkspaceDisplay.workspaceType === "remote"}>
           <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
             <InboxPanel
               id={mobile ? "dashboard-mobile-sidebar-inbox" : "dashboard-sidebar-inbox"}

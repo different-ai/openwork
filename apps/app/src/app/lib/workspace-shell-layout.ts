@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 const LEFT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.left-width.v1";
-const RIGHT_SIDEBAR_EXPANDED_KEY = "openwork.workspace-shell.right-expanded.v2";
+const RIGHT_SIDEBAR_EXPANDED_KEY = "openwork.workspace-shell.right-expanded.v3";
 
 export const DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH = 260;
 export const MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH = 220;
@@ -61,7 +61,7 @@ export function createWorkspaceShellLayout(options: WorkspaceShellLayoutOptions)
 
   const readRightSidebarExpanded = () => {
     const raw = readStorage(RIGHT_SIDEBAR_EXPANDED_KEY);
-    if (raw == null) return true;
+    if (raw == null) return false;
     return raw === "1";
   };
 

@@ -3533,7 +3533,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!client || !workspaceId) {
       if (notify) {
         setToastMessage(
-          "Connect to the OpenWork server to upload inbox files.",
+          "Connect to the OpenWork server to upload files to the shared folder.",
         );
       }
       return [];
@@ -3543,7 +3543,7 @@ export default function SessionView(props: SessionViewProps) {
     const label =
       files.length === 1 ? (files[0]?.name ?? "file") : `${files.length} files`;
     if (notify) {
-      setToastMessage(`Uploading ${label} to inbox...`);
+      setToastMessage(`Uploading ${label} to the shared folder...`);
     }
 
     try {
@@ -3559,14 +3559,18 @@ export default function SessionView(props: SessionViewProps) {
           .filter(Boolean)
           .join(", ");
         setToastMessage(
-          summary ? `Uploaded to inbox: ${summary}` : "Uploaded to inbox.",
+          summary
+            ? `Uploaded to the shared folder: ${summary}`
+            : "Uploaded to the shared folder.",
         );
       }
       return uploaded;
     } catch (error) {
       if (notify) {
         const message =
-          error instanceof Error ? error.message : "Inbox upload failed";
+          error instanceof Error
+            ? error.message
+            : "Shared folder upload failed";
         setToastMessage(message);
       }
       return [];
@@ -4038,7 +4042,7 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
         </div>
 
-        <Show when={expanded}>
+        <Show when={expanded && props.activeWorkspaceDisplay.workspaceType === "remote"}>
           <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
             <InboxPanel
               id={mobile ? "mobile-sidebar-inbox" : "sidebar-inbox"}
@@ -4047,7 +4051,19 @@ export default function SessionView(props: SessionViewProps) {
               onToast={(message) => setToastMessage(message)}
             />
           </div>
+        </Show>
 
+        <Show when={expanded}>
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+            <ArtifactsPanel
+              id={mobile ? "mobile-sidebar-artifacts" : "sidebar-artifacts"}
+              files={touchedFiles()}
+              workspaceRoot={props.activeWorkspaceRoot}
+              onRevealArtifact={revealArtifact}
+              onOpenInObsidian={openArtifactInObsidian}
+              obsidianAvailable={obsidianAvailable()}
+            />
+          </div>
         </Show>
       </div>
     </div>

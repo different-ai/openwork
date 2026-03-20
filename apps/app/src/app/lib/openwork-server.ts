@@ -1645,7 +1645,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         } catch {
           // ignore
         }
-        throw new OpenworkServerError(result.status, "request_failed", message || "Inbox upload failed");
+        throw new OpenworkServerError(
+          result.status,
+          "request_failed",
+          message || "Shared folder upload failed",
+        );
       }
 
       const body = result.text.trim();

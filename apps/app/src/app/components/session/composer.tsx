@@ -1253,13 +1253,15 @@ export default function Composer(props: ComposerProps) {
           emitDraftChange();
           props.onToast(
             links.length === 1
-              ? `Uploaded ${links[0].name} to inbox and inserted a link.`
-              : `Uploaded ${links.length} files to inbox and inserted links.`,
+              ? `Uploaded ${links[0].name} to the shared folder and inserted a link.`
+              : `Uploaded ${links.length} files to the shared folder and inserted links.`,
           );
           return;
         }
       }
-      props.onToast("Couldn't upload to inbox. Inserted local links instead.");
+      props.onToast(
+        "Couldn't upload to the shared folder. Inserted local links instead.",
+      );
     }
 
     const text = formatLinks(fallbackLinks());
@@ -1305,8 +1307,8 @@ export default function Composer(props: ComposerProps) {
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
         props.onToast(
-          "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Inbox in the sidebar.",
-        );
+            "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Shared folder in the sidebar.",
+          );
         setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
       }
     }
@@ -1756,7 +1758,7 @@ export default function Composer(props: ComposerProps) {
                         class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] text-gray-11 hover:bg-gray-3"
                         onClick={() => inboxFileInputRef?.click()}
                       >
-                        Upload to inbox
+                        Upload to shared folder
                       </button>
                     </Show>
                   </div>
@@ -1765,10 +1767,6 @@ export default function Composer(props: ComposerProps) {
 
               <div class="flex flex-col gap-2">
                 <div class="flex-1 min-w-0">
-                  <div class="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-9">
-                    {props.isRemoteWorkspace ? "Remote workspace" : "Local workspace"}
-                  </div>
-
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                     <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
