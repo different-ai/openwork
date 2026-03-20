@@ -486,6 +486,9 @@ export default function Composer(props: ComposerProps) {
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
   const [showInboxUploadAction, setShowInboxUploadAction] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
+  const compactModelLabel = createMemo(() =>
+    props.selectedModelLabel.length > 20 ? `${props.selectedModelLabel.slice(0, 20)}...` : props.selectedModelLabel,
+  );
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
 
@@ -1919,7 +1922,8 @@ export default function Composer(props: ComposerProps) {
                           onClick={props.onModelClick}
                           disabled={props.busy}
                         >
-                          <span>{props.selectedModelLabel}</span>
+                          <span class="md:hidden">{compactModelLabel()}</span>
+                          <span class="hidden md:inline">{props.selectedModelLabel}</span>
                           <ChevronDown size={14} class="shrink-0" />
                         </button>
                         <div class="relative hidden md:block" ref={(el) => (variantPickerRef = el)}>
