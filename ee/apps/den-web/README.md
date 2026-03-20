@@ -38,7 +38,6 @@ Frontend for `app.openwork.software`.
 - `NEXT_PUBLIC_POSTHOG_HOST` (client): PostHog ingest host or same-origin proxy path.
   - default: `/ow`
   - set it to `https://us.i.posthog.com` to bypass the local proxy
-- `LOOPS_API_KEY` (server-only): Loops API key for signup contact capture.
 
 ## Deploy on Vercel
 

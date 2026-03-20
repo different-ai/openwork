@@ -138,13 +138,6 @@ type PosthogClient = {
   reset?: () => void;
 };
 
-type DenSignupTrackPayload = {
-  email: string;
-  name: string | null;
-  userId: string;
-  authMethod: AuthMethod;
-};
-
 declare global {
   interface Window {
     posthog?: PosthogClient;
@@ -213,25 +206,6 @@ export function resetPosthogUser() {
 
   try {
     window.posthog?.reset?.();
-  } catch {
-    // Ignore analytics delivery failures.
-  }
-}
-
-export async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    await fetch("/api/loops/den-signup", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload),
-      keepalive: true
-    });
   } catch {
     // Ignore analytics delivery failures.
   }

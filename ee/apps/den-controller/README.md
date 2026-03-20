@@ -35,6 +35,7 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
 - `GOOGLE_CLIENT_SECRET` optional OAuth app client secret for Google sign-in
+- `LOOPS_API_KEY` optional Loops API key used to sync newly created Den users into Loops
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
 - `PROVISIONER_MODE` `stub`, `render`, or `daytona`

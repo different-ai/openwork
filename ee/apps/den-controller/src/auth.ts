@@ -4,6 +4,7 @@ import { db } from "./db/index.js"
 import * as schema from "./db/schema.js"
 import { createDenTypeId, normalizeDenTypeId } from "./db/typeid.js"
 import { env } from "./env.js"
+import { syncDenSignupContact } from "./loops.js"
 import { ensureDefaultOrg } from "./orgs.js"
 
 const socialProviders = {
@@ -60,7 +61,14 @@ export const auth = betterAuth({
       create: {
         after: async (user) => {
           const name = user.name ?? user.email ?? "Personal"
-          await ensureDefaultOrg(normalizeDenTypeId("user", user.id), name)
+          const userId = normalizeDenTypeId("user", user.id)
+          await Promise.all([
+            ensureDefaultOrg(userId, name),
+            syncDenSignupContact({
+              email: user.email,
+              name: user.name,
+            }),
+          ])
         },
       },
     },

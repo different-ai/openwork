@@ -14,6 +14,7 @@ const schema = z.object({
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  LOOPS_API_KEY: z.string().optional(),
   PORT: z.string().optional(),
   WORKER_PROXY_PORT: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
@@ -155,6 +156,9 @@ export const env = {
   google: {
     clientId: parsed.GOOGLE_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GOOGLE_CLIENT_SECRET?.trim() || undefined,
+  },
+  loops: {
+    apiKey: optionalString(parsed.LOOPS_API_KEY),
   },
   port: Number(parsed.PORT ?? "8788"),
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),

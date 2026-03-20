@@ -50,7 +50,6 @@ import {
   requestJson,
   resetPosthogUser,
   resolveOpenworkWorkspaceUrl,
-  trackDenSignupInLoops,
   trackPosthogEvent
 } from "../_lib/den-flow";
 
@@ -883,12 +882,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
         if (authMode === "sign-up") {
           trackPosthogEvent("den_signup_completed", analyticsPayload);
-          void trackDenSignupInLoops({
-            email: authenticatedUser.email,
-            name: authenticatedUser.name,
-            userId: authenticatedUser.id,
-            authMethod: "email"
-          });
         } else {
           trackPosthogEvent("den_signin_completed", analyticsPayload);
         }
@@ -1559,12 +1552,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       mode: "sign-up",
       method: pendingSocialSignup,
       email_domain: getEmailDomain(user.email)
-    });
-    void trackDenSignupInLoops({
-      email: user.email,
-      name: user.name,
-      userId: user.id,
-      authMethod: pendingSocialSignup
     });
     void beginSignupOnboarding(user, pendingSocialSignup);
   }, [user?.id]);
