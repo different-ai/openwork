@@ -130,7 +130,7 @@ Useful optional overrides:
 After the snapshot is pushed, set it in `.env.daytona`:
 
 ```env
-DAYTONA_SNAPSHOT=openwork-runtime
+DAYTONA_SNAPSHOT=openwork-0.11.174
 ```
 
 Then start Den in Daytona mode:
@@ -146,9 +146,10 @@ If you do not set `DAYTONA_SNAPSHOT`, Den falls back to `DAYTONA_SANDBOX_IMAGE`.
 GitHub workflow `.github/workflows/release-daytona-snapshot.yml` builds and pushes a new Daytona snapshot whenever a GitHub release is published.
 
 - Trigger: `release.published` (or manual `workflow_dispatch`)
-- Snapshot naming: `DAYTONA_SNAPSHOT` repo variable if set, otherwise `openwork-runtime-<tag-without-v>`
+- Snapshot naming: `snapshot_name` input if provided, otherwise `${DAYTONA_SNAPSHOT_NAME_BASE:-openwork}-<tag-without-v>`
 - Required secret: `DAYTONA_API_KEY`
 - Optional repo vars: `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT_REGION`, `DAYTONA_SNAPSHOT_NAME_BASE`
+- After the snapshot publish succeeds, the workflow calls `.github/workflows/deploy-den.yml` to set Render's `DAYTONA_SNAPSHOT` env var and trigger a Den controller deploy.
 
 ## Auth setup (Better Auth)
 
@@ -186,7 +187,7 @@ pnpm db:migrate:sql
 
 ## CI deployment (dev == prod)
 
-The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
+The workflow `.github/workflows/deploy-den.yml` updates Render env vars and triggers a deploy for the Den controller service. It can be run manually with a snapshot name, and release automation calls it after successful Daytona snapshot publishing.
 
 Required GitHub Actions secrets:
 

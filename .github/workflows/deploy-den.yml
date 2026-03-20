@@ -1,0 +1,99 @@
+name: Deploy Den
+
+on:
+  workflow_call:
+    inputs:
+      daytona_snapshot:
+        description: "Daytona snapshot name to promote into Render"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      daytona_snapshot:
+        description: "Daytona snapshot name to promote into Render"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-den-${{ inputs.daytona_snapshot }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-den:
+    name: Update Render Daytona Snapshot
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      RENDER_API_BASE: https://api.render.com/v1
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
+      DAYTONA_SNAPSHOT: ${{ inputs.daytona_snapshot }}
+    steps:
+      - name: Validate required configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DAYTONA_SNAPSHOT:-}" ]; then
+            echo "daytona_snapshot input is required" >&2
+            exit 1
+          fi
+
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "Missing required secret: RENDER_API_KEY" >&2
+            exit 1
+          fi
+
+          if [ -z "${RENDER_SERVICE_ID:-}" ]; then
+            echo "Missing required secret: RENDER_DEN_CONTROL_PLANE_SERVICE_ID" >&2
+            exit 1
+          fi
+
+      - name: Update DAYTONA_SNAPSHOT on Render
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          payload="$(python3 -c 'import json, sys; print(json.dumps({"value": sys.argv[1]}))' "$DAYTONA_SNAPSHOT")"
+          response_file="$(mktemp)"
+          status_code="$(curl -sS -o "$response_file" -w "%{http_code}" \
+            -X PUT "${RENDER_API_BASE}/services/${RENDER_SERVICE_ID}/env-vars/DAYTONA_SNAPSHOT" \
+            -H "Accept: application/json" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data "$payload")"
+
+          if [ "$status_code" -lt 200 ] || [ "$status_code" -ge 300 ]; then
+            echo "Failed to update Render DAYTONA_SNAPSHOT (HTTP $status_code)" >&2
+            python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text(errors="replace"))' "$response_file"
+            exit 1
+          fi
+
+          echo "Render DAYTONA_SNAPSHOT set to ${DAYTONA_SNAPSHOT}"
+
+      - name: Trigger Render deploy
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response_file="$(mktemp)"
+          status_code="$(curl -sS -o "$response_file" -w "%{http_code}" \
+            -X POST "${RENDER_API_BASE}/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Accept: application/json" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data '{}')"
+
+          if [ "$status_code" -lt 200 ] || [ "$status_code" -ge 300 ]; then
+            echo "Failed to trigger Render deploy (HTTP $status_code)" >&2
+            python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text(errors="replace"))' "$response_file"
+            exit 1
+          fi
+
+          deploy_id="$(python3 -c 'import json, sys; from pathlib import Path; text = Path(sys.argv[1]).read_text(errors="replace").strip(); data = json.loads(text) if text else {}; print(data.get("id", "") if isinstance(data, dict) else "")' "$response_file")"
+
+          echo "deploy_id=${deploy_id}" >> "$GITHUB_OUTPUT"
+          echo "Triggered Render deploy ${deploy_id:-<unknown>} for snapshot ${DAYTONA_SNAPSHOT}"
