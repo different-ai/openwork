@@ -2883,6 +2883,7 @@ export function createWorkspaceStore(options: {
       version: existing?.version ?? 1,
       workspace: existing?.workspace ?? null,
       authorizedRoots: nextRoots,
+      blueprint: existing?.blueprint ?? null,
       reload: existing?.reload ?? null,
     };
 
@@ -2901,6 +2902,7 @@ export function createWorkspaceStore(options: {
       version: existing?.version ?? 1,
       workspace: existing?.workspace ?? null,
       authorizedRoots: Array.isArray(existing?.authorizedRoots) ? existing!.authorizedRoots : authorizedDirs(),
+      blueprint: existing?.blueprint ?? null,
       reload: {
         auto: Boolean(next.auto),
         resume: Boolean(next.resume),

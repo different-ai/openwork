@@ -169,6 +169,29 @@ export type WorkspaceConnectionState = {
 
 export type ResetOpenworkMode = "onboarding" | "all";
 
+export type WorkspaceBlueprintStarterKind = "prompt" | "session" | "action";
+
+export type WorkspaceBlueprintStarterAction = "connect-anthropic";
+
+export type WorkspaceBlueprintStarter = {
+  id?: string | null;
+  kind?: WorkspaceBlueprintStarterKind | null;
+  title?: string | null;
+  description?: string | null;
+  prompt?: string | null;
+  action?: WorkspaceBlueprintStarterAction | null;
+};
+
+export type WorkspaceBlueprintEmptyState = {
+  title?: string | null;
+  body?: string | null;
+  starters?: WorkspaceBlueprintStarter[] | null;
+};
+
+export type WorkspaceBlueprint = {
+  emptyState?: WorkspaceBlueprintEmptyState | null;
+};
+
 export type WorkspaceOpenworkConfig = {
   version: number;
   workspace?: {
@@ -177,6 +200,7 @@ export type WorkspaceOpenworkConfig = {
     preset?: string | null;
   } | null;
   authorizedRoots: string[];
+  blueprint?: WorkspaceBlueprint | null;
   reload?: {
     auto?: boolean;
     resume?: boolean;

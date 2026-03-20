@@ -8,6 +8,8 @@ pub struct WorkspaceOpenworkConfig {
     #[serde(default, alias = "authorizedRoots")]
     pub authorized_roots: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blueprint: Option<WorkspaceBlueprint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reload: Option<WorkspaceOpenworkReload>,
 }
 
@@ -17,9 +19,45 @@ impl Default for WorkspaceOpenworkConfig {
             version: 1,
             workspace: None,
             authorized_roots: Vec::new(),
+            blueprint: None,
             reload: None,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBlueprint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub empty_state: Option<WorkspaceBlueprintEmptyState>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBlueprintEmptyState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starters: Option<Vec<WorkspaceBlueprintStarter>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBlueprintStarter {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -56,9 +94,96 @@ impl WorkspaceOpenworkConfig {
                 preset: Some(preset.to_string()),
             }),
             authorized_roots: vec![workspace_path.to_string()],
+            blueprint: default_workspace_blueprint(preset),
             reload: None,
         }
     }
+}
+
+fn default_workspace_blueprint(preset: &str) -> Option<WorkspaceBlueprint> {
+    let normalized = preset.trim().to_lowercase();
+
+    let empty_state = match normalized.as_str() {
+        "automation" => WorkspaceBlueprintEmptyState {
+            title: Some("What do you want to automate?".to_string()),
+            body: Some(
+                "Start from a reusable workflow or type your own task below.".to_string(),
+            ),
+            starters: Some(vec![
+                WorkspaceBlueprintStarter {
+                    id: Some("automation-command".to_string()),
+                    kind: Some("prompt".to_string()),
+                    title: Some("Create a reusable command".to_string()),
+                    description: Some(
+                        "Turn a repeated workflow into a slash command for this worker."
+                            .to_string(),
+                    ),
+                    prompt: Some("Help me create a reusable /command for this workspace. Ask what workflow I want to automate, then draft the command.".to_string()),
+                    action: None,
+                },
+                WorkspaceBlueprintStarter {
+                    id: Some("automation-blueprint".to_string()),
+                    kind: Some("session".to_string()),
+                    title: Some("Plan an automation blueprint".to_string()),
+                    description: Some(
+                        "Design a repeatable workflow with skills, commands, and handoff steps."
+                            .to_string(),
+                    ),
+                    prompt: Some("Help me design a reusable automation blueprint for this workspace. Ask what should be standardized, then propose the workflow.".to_string()),
+                    action: None,
+                },
+            ]),
+        },
+        "minimal" => WorkspaceBlueprintEmptyState {
+            title: Some("Start with a task".to_string()),
+            body: Some(
+                "Ask a question about this workspace or use a starter prompt.".to_string(),
+            ),
+            starters: Some(vec![WorkspaceBlueprintStarter {
+                id: Some("minimal-explore".to_string()),
+                kind: Some("prompt".to_string()),
+                title: Some("Explore this workspace".to_string()),
+                description: Some(
+                    "Summarize the files and suggest the best first task to tackle."
+                        .to_string(),
+                ),
+                prompt: Some("Summarize this workspace, point out the most important files, and suggest the best first task.".to_string()),
+                action: None,
+            }]),
+        },
+        _ => WorkspaceBlueprintEmptyState {
+            title: Some("What do you want to do?".to_string()),
+            body: Some("Pick a starting point or just type below.".to_string()),
+            starters: Some(vec![
+                WorkspaceBlueprintStarter {
+                    id: Some("starter-connect-anthropic".to_string()),
+                    kind: Some("action".to_string()),
+                    title: Some("Connect Claude".to_string()),
+                    description: Some(
+                        "Add your Anthropic provider so Claude models are ready in new sessions."
+                            .to_string(),
+                    ),
+                    prompt: None,
+                    action: Some("connect-anthropic".to_string()),
+                },
+                WorkspaceBlueprintStarter {
+                    id: Some("starter-browser".to_string()),
+                    kind: Some("session".to_string()),
+                    title: Some("Automate your browser".to_string()),
+                    description: Some(
+                        "Set up browser actions and run reliable web tasks from OpenWork."
+                            .to_string(),
+                    ),
+                    prompt: Some("Try Chrome DevTools MCP now. If it is unavailable, explain how to connect Control Chrome in OpenWork and ask me to retry.".to_string()),
+                    action: None,
+                },
+            ]),
+        },
+    };
+
+    Some(WorkspaceBlueprint {
+        empty_state: Some(empty_state),
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

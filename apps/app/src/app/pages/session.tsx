@@ -25,8 +25,10 @@ import type {
   SkillCard,
   TodoItem,
   View,
+  WorkspaceBlueprintStarter,
   WorkspaceConnectionState,
   WorkspaceDisplay,
+  WorkspaceOpenworkConfig,
   WorkspaceSessionGroup,
 } from "../types";
 
@@ -126,6 +128,7 @@ export type SessionViewProps = {
   toggleSettings: () => void;
   activeWorkspaceDisplay: WorkspaceDisplay;
   activeWorkspaceRoot: string;
+  activeWorkspaceConfig: WorkspaceOpenworkConfig | null;
   workspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
   connectingWorkspaceId: string | null;
@@ -315,6 +318,96 @@ type SkillsSetBundleV1 = {
     name?: string;
   };
 };
+
+type ResolvedEmptyStateStarter = {
+  id: string;
+  kind: "prompt" | "session" | "action";
+  title: string;
+  description?: string;
+  prompt?: string;
+  action?: "connect-anthropic";
+};
+
+const DEFAULT_EMPTY_STATE_COPY = {
+  title: "What do you want to do?",
+  body: "Pick a starting point or just type below.",
+};
+
+function defaultBlueprintStartersForPreset(
+  preset: string,
+): WorkspaceBlueprintStarter[] {
+  switch (preset.trim().toLowerCase()) {
+    case "automation":
+      return [
+        {
+          id: "automation-command",
+          kind: "prompt",
+          title: "Create a reusable command",
+          description:
+            "Turn a repeated workflow into a slash command for this worker.",
+          prompt:
+            "Help me create a reusable /command for this workspace. Ask what workflow I want to automate, then draft the command.",
+        },
+        {
+          id: "automation-blueprint",
+          kind: "session",
+          title: "Plan an automation blueprint",
+          description:
+            "Design a repeatable workflow with skills, commands, and handoff steps.",
+          prompt:
+            "Help me design a reusable automation blueprint for this workspace. Ask what should be standardized, then propose the workflow.",
+        },
+      ];
+    case "minimal":
+      return [
+        {
+          id: "minimal-explore",
+          kind: "prompt",
+          title: "Explore this workspace",
+          description:
+            "Summarize the files and suggest the best first task to tackle.",
+          prompt:
+            "Summarize this workspace, point out the most important files, and suggest the best first task.",
+        },
+      ];
+    default:
+      return [
+        {
+          id: "starter-connect-anthropic",
+          kind: "action",
+          title: "Connect Claude",
+          description:
+            "Add your Anthropic provider so Claude models are ready in new sessions.",
+          action: "connect-anthropic",
+        },
+        {
+          id: "starter-browser",
+          kind: "session",
+          title: "Automate your browser",
+          description:
+            "Set up browser actions and run reliable web tasks from OpenWork.",
+          prompt: BROWSER_AUTOMATION_QUICKSTART_PROMPT,
+        },
+      ];
+  }
+}
+
+function defaultBlueprintCopyForPreset(preset: string) {
+  switch (preset.trim().toLowerCase()) {
+    case "automation":
+      return {
+        title: "What do you want to automate?",
+        body: "Start from a reusable workflow or type your own task below.",
+      };
+    case "minimal":
+      return {
+        title: "Start with a task",
+        body: "Ask a question about this workspace or use a starter prompt.",
+      };
+    default:
+      return DEFAULT_EMPTY_STATE_COPY;
+  }
+}
 
 const BROWSER_AUTOMATION_QUICKSTART_PROMPT = (() => {
   const parsed = parseTemplateFrontmatter(browserSetupTemplate);
@@ -3504,19 +3597,6 @@ export default function SessionView(props: SessionViewProps) {
     props.sendPromptAsync(draft).catch(() => undefined);
   };
 
-  const handleBrowserAutomationQuickstart = () => {
-    const text =
-      BROWSER_AUTOMATION_QUICKSTART_PROMPT ||
-      "Try Chrome DevTools MCP now. If it is unavailable, explain how to connect Control Chrome in OpenWork and ask me to retry.";
-    handleSendPrompt({
-      mode: "prompt",
-      text,
-      resolvedText: text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
-  };
-
   const isSandboxWorkspace = createMemo(() =>
     Boolean(
       (props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim(),
@@ -3923,6 +4003,98 @@ export default function SessionView(props: SessionViewProps) {
     (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "anthropic")
   );
   const showNewSessionProviderCta = createMemo(() => !hasAnthropicProviderConnected());
+  const emptyStatePreset = createMemo(
+    () =>
+      props.activeWorkspaceConfig?.workspace?.preset?.trim() ||
+      props.activeWorkspaceDisplay.preset ||
+      "starter",
+  );
+  const blueprintEmptyState = createMemo(
+    () => props.activeWorkspaceConfig?.blueprint?.emptyState ?? null,
+  );
+  const emptyStateTitle = createMemo(() => {
+    const configured = blueprintEmptyState()?.title?.trim();
+    if (configured) return configured;
+    return defaultBlueprintCopyForPreset(emptyStatePreset()).title;
+  });
+  const emptyStateBody = createMemo(() => {
+    const configured = blueprintEmptyState()?.body?.trim();
+    if (configured) return configured;
+    return defaultBlueprintCopyForPreset(emptyStatePreset()).body;
+  });
+  const emptyStateStarters = createMemo<ResolvedEmptyStateStarter[]>(() => {
+    const configured = blueprintEmptyState()?.starters;
+    const source =
+      Array.isArray(configured)
+        ? configured
+        : defaultBlueprintStartersForPreset(emptyStatePreset());
+
+    const resolved: ResolvedEmptyStateStarter[] = [];
+
+    for (const [index, starter] of source.entries()) {
+      const title = starter.title?.trim();
+      const description = starter.description?.trim() || undefined;
+      const prompt = starter.prompt?.trim() || undefined;
+      const action = starter.action ?? undefined;
+      const kind = starter.kind ?? (action ? "action" : "prompt");
+
+      if (!title) continue;
+      if (kind === "action") {
+        if (!action) continue;
+        if (action === "connect-anthropic" && !showNewSessionProviderCta()) {
+          continue;
+        }
+        resolved.push({
+          id: starter.id?.trim() || `starter-${index}`,
+          kind: "action",
+          title,
+          description,
+          action,
+        });
+        continue;
+      }
+
+      if (!prompt) continue;
+      resolved.push({
+        id: starter.id?.trim() || `starter-${index}`,
+        kind: kind === "session" ? "session" : "prompt",
+        title,
+        description,
+        prompt,
+      });
+    }
+
+    return resolved;
+  });
+  const applyStarterPrompt = (text: string) => {
+    props.setPrompt(text);
+    focusComposer();
+  };
+  const runStarterPrompt = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    handleSendPrompt({
+      mode: "prompt",
+      text: trimmed,
+      resolvedText: trimmed,
+      parts: [{ type: "text", text: trimmed }],
+      attachments: [],
+    });
+  };
+  const handleEmptyStateStarter = (starter: ResolvedEmptyStateStarter) => {
+    if (starter.kind === "action") {
+      if (starter.action === "connect-anthropic") {
+        openNewSessionProviderCta();
+      }
+      return;
+    }
+    if (!starter.prompt) return;
+    if (starter.kind === "session") {
+      runStarterPrompt(starter.prompt);
+      return;
+    }
+    applyStarterPrompt(starter.prompt);
+  };
   const rightSidebarNavButton = (
     label: string,
     icon: any,
@@ -4523,43 +4695,34 @@ export default function SessionView(props: SessionViewProps) {
                       </div>
                       <div class="space-y-2">
                         <h3 class="text-xl font-medium">
-                          What do you want to do?
+                          {emptyStateTitle()}
                         </h3>
                         <p class="text-dls-secondary text-sm max-w-sm mx-auto">
-                          Pick a starting point or just type below.
+                          {emptyStateBody()}
                         </p>
                       </div>
-                      <div class="grid gap-3 max-w-lg mx-auto text-left">
-                        <Show when={showNewSessionProviderCta()}>
-                          <button
-                            type="button"
-                            class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                            onClick={openNewSessionProviderCta}
-                          >
-                            <div class="text-sm font-semibold text-dls-text">
-                              Connect Claude
-                            </div>
-                            <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                              Add your Anthropic provider so Claude models are ready in new sessions.
-                            </div>
-                          </button>
-                        </Show>
-                        <button
-                          type="button"
-                          class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                          onClick={() => {
-                            void handleBrowserAutomationQuickstart();
-                          }}
-                        >
-                          <div class="text-sm font-semibold text-dls-text">
-                            Automate your browser
-                          </div>
-                          <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                            Set up browser actions and run reliable web tasks
-                            from OpenWork.
-                          </div>
-                        </button>
-                      </div>
+                      <Show when={emptyStateStarters().length > 0}>
+                        <div class="grid gap-3 max-w-lg mx-auto text-left">
+                          <For each={emptyStateStarters()}>
+                            {(starter) => (
+                              <button
+                                type="button"
+                                class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
+                                onClick={() => handleEmptyStateStarter(starter)}
+                              >
+                                <div class="text-sm font-semibold text-dls-text">
+                                  {starter.title}
+                                </div>
+                                <Show when={starter.description}>
+                                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                                    {starter.description}
+                                  </div>
+                                </Show>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
                     </div>
                   </Show>
 
