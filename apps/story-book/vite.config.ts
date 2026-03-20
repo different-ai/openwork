@@ -24,6 +24,7 @@ if (shortHostname && shortHostname !== hostname) {
 }
 
 export default defineConfig({
+  publicDir: "../app/public",
   plugins: [tailwindcss(), solid()],
   server: {
     port: devPort,
