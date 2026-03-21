@@ -4326,64 +4326,85 @@ export default function SessionView(props: SessionViewProps) {
                 aria-label="Quick actions"
               >
                 <Menu size={15} />
-                <span>Menu</span>
+                <span>Quick actions</span>
                 <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">
                   ⌘K
                 </span>
               </button>
-              <button
-                type="button"
-                class={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
-                  searchOpen()
-                    ? "bg-gray-2 text-dls-text"
-                    : "text-gray-10 hover:bg-gray-2/70 hover:text-dls-text"
-                }`}
-                onClick={() => {
-                  if (searchOpen()) {
-                    closeSearch();
-                    return;
-                  }
-                  openSearch();
-                }}
-                title="Search conversation (Ctrl/Cmd+F)"
-                aria-label="Search conversation"
-              >
-                <Search size={16} />
-              </button>
-              <div class="hidden h-4 w-px bg-dls-border sm:block" />
-              <button
-                type="button"
-                class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={undoLastMessage}
-                disabled={!canUndoLastMessage() || historyActionBusy() !== null}
-                title="Undo last message"
-                aria-label="Undo last message"
-              >
-                <Show
-                  when={historyActionBusy() === "undo"}
-                  fallback={<Undo2 size={16} />}
+              <Show when={searchOpen() || props.messages.length > 0}>
+                <button
+                  type="button"
+                  class={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
+                    searchOpen()
+                      ? "bg-gray-2 text-dls-text"
+                      : "text-gray-10 hover:bg-gray-2/70 hover:text-dls-text"
+                  }`}
+                  onClick={() => {
+                    if (searchOpen()) {
+                      closeSearch();
+                      return;
+                    }
+                    openSearch();
+                  }}
+                  title="Search conversation (Ctrl/Cmd+F)"
+                  aria-label="Search conversation"
                 >
-                  <Loader2 size={16} class="animate-spin" />
-                </Show>
-                <span class="hidden lg:inline">Revert</span>
-              </button>
-              <button
-                type="button"
-                class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={redoLastMessage}
-                disabled={!canRedoLastMessage() || historyActionBusy() !== null}
-                title="Redo last reverted message"
-                aria-label="Redo last reverted message"
+                  <Search size={16} />
+                </button>
+              </Show>
+              <Show
+                when={
+                  searchOpen() ||
+                  props.messages.length > 0 ||
+                  canUndoLastMessage() ||
+                  canRedoLastMessage() ||
+                  historyActionBusy() === "undo" ||
+                  historyActionBusy() === "redo" ||
+                  historyActionBusy() === "compact" ||
+                  canCompactSession()
+                }
               >
-                <Show
-                  when={historyActionBusy() === "redo"}
-                  fallback={<Redo2 size={16} />}
+                <div class="hidden h-4 w-px bg-dls-border sm:block" />
+              </Show>
+              <Show when={canUndoLastMessage() || historyActionBusy() === "undo"}>
+                <button
+                  type="button"
+                  class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={undoLastMessage}
+                  disabled={!canUndoLastMessage() || historyActionBusy() !== null}
+                  title="Undo last message"
+                  aria-label="Undo last message"
                 >
-                  <Loader2 size={16} class="animate-spin" />
-                </Show>
-                <span class="hidden lg:inline">Redo</span>
-              </button>
-              <div class="hidden h-4 w-px bg-dls-border sm:block" />
+                  <Show
+                    when={historyActionBusy() === "undo"}
+                    fallback={<Undo2 size={16} />}
+                  >
+                    <Loader2 size={16} class="animate-spin" />
+                  </Show>
+                  <span class="hidden lg:inline">Revert</span>
+                </button>
+              </Show>
+              <Show when={canRedoLastMessage() || historyActionBusy() === "redo"}>
+                <button
+                  type="button"
+                  class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={redoLastMessage}
+                  disabled={!canRedoLastMessage() || historyActionBusy() !== null}
+                  title="Redo last reverted message"
+                  aria-label="Redo last reverted message"
+                >
+                  <Show
+                    when={historyActionBusy() === "redo"}
+                    fallback={<Redo2 size={16} />}
+                  >
+                    <Loader2 size={16} class="animate-spin" />
+                  </Show>
+                  <span class="hidden lg:inline">Redo</span>
+                </button>
+              </Show>
+              <Show when={canCompactSession() || historyActionBusy() === "compact"}>
+                <div class="hidden h-4 w-px bg-dls-border sm:block" />
+              </Show>
               <button
                 type="button"
                 class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
@@ -4393,21 +4414,23 @@ export default function SessionView(props: SessionViewProps) {
               >
                 <Menu size={16} />
               </button>
-              <button
-                type="button"
-                class="hidden h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60 md:flex"
-                onClick={compactSessionHistory}
-                disabled={!canCompactSession() || historyActionBusy() !== null}
-                title="Compact session context"
-                aria-label="Compact session context"
-              >
-                <Show
-                  when={historyActionBusy() === "compact"}
-                  fallback={<Maximize2 size={16} />}
+              <Show when={canCompactSession() || historyActionBusy() === "compact"}>
+                <button
+                  type="button"
+                  class="hidden h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60 md:flex"
+                  onClick={compactSessionHistory}
+                  disabled={!canCompactSession() || historyActionBusy() !== null}
+                  title="Compact session context"
+                  aria-label="Compact session context"
                 >
-                  <Loader2 size={16} class="animate-spin" />
-                </Show>
-              </button>
+                  <Show
+                    when={historyActionBusy() === "compact"}
+                    fallback={<Maximize2 size={16} />}
+                  >
+                    <Loader2 size={16} class="animate-spin" />
+                  </Show>
+                </button>
+              </Show>
             </div>
           </header>
 

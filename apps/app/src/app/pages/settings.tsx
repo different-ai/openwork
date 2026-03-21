@@ -81,6 +81,7 @@ export type SettingsViewProps = {
   clientConnected: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  onClose: () => void;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
@@ -1269,6 +1270,24 @@ export default function SettingsView(props: SettingsViewProps) {
 
   return (
     <section class="space-y-6">
+      <div class="flex items-start justify-between gap-4 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-4 py-3">
+        <div>
+          <div class="text-lg font-semibold text-gray-12">Settings</div>
+          <div class="text-sm text-gray-10">
+            Manage app defaults, workspace access, and connection details.
+          </div>
+        </div>
+        <Button
+          variant="ghost"
+          class="!p-2 rounded-full"
+          onClick={props.onClose}
+          title="Close settings"
+          aria-label="Close settings"
+        >
+          <X size={16} />
+        </Button>
+      </div>
+
       <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
         <div class="flex flex-wrap gap-2">
           <For each={availableTabs()}>

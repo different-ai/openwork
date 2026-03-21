@@ -72,8 +72,8 @@ import {
   Loader2,
   Menu,
   MessageCircle,
-  MoreHorizontal,
   Plus,
+  Settings2,
   SlidersHorizontal,
   X,
   Zap,
@@ -1301,22 +1301,23 @@ export default function DashboardView(props: DashboardViewProps) {
               type="button"
               class="hidden items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:flex"
               onClick={toggleRightSidebar}
-              title="Menu"
-              aria-label="Menu"
+              title="Quick actions"
+              aria-label="Quick actions"
             >
               <Menu size={15} />
-              <span>Menu</span>
+              <span>Quick actions</span>
               <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">⌘K</span>
             </button>
             <div class="hidden h-4 w-px bg-dls-border md:block" />
             <button
               type="button"
-              class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+              class="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
               onClick={props.toggleSettings}
-              title="More"
-              aria-label="More"
+              title="Settings"
+              aria-label="Settings"
             >
-              <MoreHorizontal size={16} />
+              <Settings2 size={15} />
+              <span class="hidden md:inline">Settings</span>
             </button>
           </div>
         </header>
@@ -1469,6 +1470,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
             <Match when={props.tab === "settings"}>
               <SettingsView
+                  onClose={props.toggleSettings}
                   startupPreference={props.startupPreference}
                   baseUrl={props.baseUrl}
                   headerStatus={props.headerStatus}
