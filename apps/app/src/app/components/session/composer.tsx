@@ -450,6 +450,7 @@ export default function Composer(props: ComposerProps) {
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let inboxFileInputRef: HTMLInputElement | undefined;
+  let dragDepth = 0;
   let variantPickerRef: HTMLDivElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
@@ -484,6 +485,7 @@ export default function Composer(props: ComposerProps) {
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
+  const [dragActive, setDragActive] = createSignal(false);
   const [showInboxUploadAction, setShowInboxUploadAction] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
   const compactModelLabel = createMemo(() =>
@@ -491,6 +493,11 @@ export default function Composer(props: ComposerProps) {
   );
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
+
+  const hasFilePayload = (transfer: DataTransfer | null | undefined) => {
+    if (!transfer) return false;
+    return Array.from(transfer.types || []).includes("Files");
+  };
 
   onCleanup(() => {
     for (const url of objectUrls) {
@@ -1344,8 +1351,26 @@ export default function Composer(props: ComposerProps) {
   const handleDrop = (event: DragEvent) => {
     if (!event.dataTransfer) return;
     event.preventDefault();
+    dragDepth = 0;
+    setDragActive(false);
     const files = Array.from(event.dataTransfer.files || []);
     if (files.length) void addAttachments(files);
+  };
+
+  const handleDragEnter = (event: DragEvent) => {
+    if (!hasFilePayload(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth += 1;
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (event: DragEvent) => {
+    if (!hasFilePayload(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      setDragActive(false);
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -1586,12 +1611,24 @@ export default function Composer(props: ComposerProps) {
         <div
           class={`bg-dls-surface border border-dls-border rounded-[24px] overflow-visible transition-all relative group/input ${mentionOpen() || slashOpen() ? "rounded-t-[18px] border-t-transparent" : "shadow-[var(--dls-shell-shadow)]"
             }`}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onDragOver={(event: DragEvent) => {
-            if (attachmentsDisabled()) return;
+            if (attachmentsDisabled() || !hasFilePayload(event.dataTransfer)) return;
             event.preventDefault();
+            setDragActive(true);
           }}
         >
+          <Show when={dragActive() && !attachmentsDisabled()}>
+            <div class="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[20px] border border-dashed border-dls-accent/50 bg-dls-accent/8">
+              <div class="rounded-2xl border border-dls-accent/20 bg-dls-surface/95 px-4 py-3 text-center shadow-[var(--dls-card-shadow)]">
+                <div class="text-sm font-medium text-dls-text">Drop files to attach them to this conversation</div>
+                <div class="mt-1 text-xs text-dls-secondary">Shared folder stays separate for workspace-wide sharing.</div>
+              </div>
+            </div>
+          </Show>
+
           <Show when={mentionOpen()}>
             <div class="absolute bottom-full left-[-1px] right-[-1px] z-30">
               <div class="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
@@ -1714,7 +1751,11 @@ export default function Composer(props: ComposerProps) {
             </Show>
 
             <Show when={attachments().length}>
-              <div class="mb-3 flex flex-wrap gap-2">
+              <div class="mb-3 space-y-2">
+                <div class="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-9">
+                  Attached to this conversation
+                </div>
+                <div class="flex flex-wrap gap-2">
                 <For each={attachments()}>
                   {(attachment: ComposerAttachment) => (
                     <div class="flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-2 px-3 py-2 text-xs text-gray-10">
@@ -1747,6 +1788,7 @@ export default function Composer(props: ComposerProps) {
                     </div>
                   )}
                 </For>
+                </div>
               </div>
             </Show>
 
@@ -1828,9 +1870,9 @@ export default function Composer(props: ComposerProps) {
                           title={
                             attachmentsDisabled()
                               ? props.attachmentsDisabledReason ?? "Attachments are unavailable."
-                              : "Attach files"
-                          }
-                        >
+                              : "Attach files to this conversation"
+                           }
+                         >
                           <Paperclip size={16} />
                         </button>
 
