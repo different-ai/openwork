@@ -2830,9 +2830,13 @@ export default function SessionView(props: SessionViewProps) {
 
   function sessionTitleForId(id: string | null | undefined) {
     if (!id) return "";
+    const workspaceName = props.activeWorkspaceDisplay.name?.trim() ?? "";
+    const fallbackTitle = workspaceName
+      ? `${workspaceName} new session`
+      : DEFAULT_SESSION_TITLE;
     for (const group of props.workspaceSessionGroups) {
       const match = group.sessions.find((session) => session.id === id);
-      if (match) return getDisplaySessionTitle(match.title, DEFAULT_SESSION_TITLE);
+      if (match) return getDisplaySessionTitle(match.title, fallbackTitle);
     }
     return "";
   }
@@ -2840,6 +2844,10 @@ export default function SessionView(props: SessionViewProps) {
     const id = props.selectedSessionId;
     if (!id) return "";
     return sessionTitleForId(id);
+  });
+  const workspaceSessionFallbackTitle = createMemo(() => {
+    const workspaceName = props.activeWorkspaceDisplay.name?.trim() ?? "";
+    return workspaceName ? `${workspaceName} new session` : DEFAULT_SESSION_TITLE;
   });
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
   const showWorkspaceSetupEmptyState = createMemo(
@@ -4281,17 +4289,20 @@ export default function SessionView(props: SessionViewProps) {
                 </button>
               </Show>
 
-              <span class="shrink-0 rounded-md bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">
-                {showWorkspaceSetupEmptyState()
-                  ? "Workspace"
-                  : props.activeWorkspaceDisplay.workspaceType === "remote"
-                    ? "Remote workspace"
-                    : "Workspace"}
-              </span>
+              <Show
+                when={
+                  showWorkspaceSetupEmptyState() ||
+                  props.activeWorkspaceDisplay.workspaceType === "remote"
+                }
+              >
+                <span class="shrink-0 rounded-md bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">
+                  {showWorkspaceSetupEmptyState() ? "Workspace" : "Remote"}
+                </span>
+              </Show>
               <h1 class="truncate text-[15px] font-semibold text-dls-text">
                 {showWorkspaceSetupEmptyState()
                   ? "Create or connect a workspace"
-                  : selectedSessionTitle() || DEFAULT_SESSION_TITLE}
+                  : selectedSessionTitle() || workspaceSessionFallbackTitle()}
               </h1>
               <Show when={props.developerMode}>
                 <span class="hidden text-[12px] text-dls-secondary lg:inline">
@@ -4916,7 +4927,7 @@ export default function SessionView(props: SessionViewProps) {
               showRunIndicator()
                 ? `${props.activeWorkspaceDisplay.name} is running`
                 : props.selectedSessionId
-                  ? `${selectedSessionTitle() || DEFAULT_SESSION_TITLE} is ready`
+                  ? `${selectedSessionTitle() || workspaceSessionFallbackTitle()} is ready`
                   : "Open a session or create a task"
             }
             statusDotClass={

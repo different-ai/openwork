@@ -152,6 +152,17 @@ export default function CreateWorkspaceModal(props: {
       </div>
 
           <div class={`p-6 flex-1 overflow-y-auto space-y-8 transition-opacity duration-300 ${provisioning() ? "opacity-40 pointer-events-none" : "opacity-100"}`}>
+            <div class="rounded-2xl border border-sky-7/30 bg-sky-3/20 px-4 py-4 text-sm text-gray-11">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-sky-11">
+                {translate("dashboard.workspace_explainer_title")}
+              </div>
+              <div class="mt-2 space-y-2 leading-6">
+                <p>{translate("dashboard.workspace_explainer_folder")}</p>
+                <p>{translate("dashboard.workspace_explainer_access")}</p>
+                <p class="text-gray-10">{translate("dashboard.workspace_explainer_config")}</p>
+              </div>
+            </div>
+
             <div class="space-y-4">
               <div class="flex items-center gap-3 text-sm font-medium text-gray-12">
                 <div class="w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs">
