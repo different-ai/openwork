@@ -88,6 +88,20 @@ export default function PluginsView(props: PluginsViewProps) {
         </div>
 
         <div class="flex flex-col gap-1 text-xs text-gray-10">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${
+              props.pluginScope === "project"
+                ? "border-emerald-7/35 bg-emerald-3/20 text-emerald-11"
+                : "border-blue-7/35 bg-blue-3/20 text-blue-11"
+            }`}>
+              {props.pluginScope === "project" ? "Workspace" : "Global"}
+            </span>
+            <span>
+              {props.pluginScope === "project"
+                ? "Saved in this workspace's opencode.json."
+                : "Available across local workspaces on this device."}
+            </span>
+          </div>
           <div>Config</div>
           <div class="text-gray-7 font-mono truncate">{props.pluginConfigPath ?? "Not loaded yet"}</div>
           <Show when={props.accessHint}>

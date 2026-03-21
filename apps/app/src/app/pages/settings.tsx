@@ -204,6 +204,45 @@ export type SettingsViewProps = {
   }) => Promise<boolean>;
 };
 
+type SettingScopeKind = "global" | "workspace" | "inherited";
+
+const settingScopeBadgeClass = (kind: SettingScopeKind) => {
+  switch (kind) {
+    case "global":
+      return "border-blue-7/35 bg-blue-3/20 text-blue-11";
+    case "workspace":
+      return "border-emerald-7/35 bg-emerald-3/20 text-emerald-11";
+    case "inherited":
+      return "border-amber-7/35 bg-amber-3/20 text-amber-11";
+  }
+};
+
+const settingScopeLabel = (kind: SettingScopeKind) => {
+  switch (kind) {
+    case "global":
+      return "Global";
+    case "workspace":
+      return "Workspace";
+    case "inherited":
+      return "Inherited";
+  }
+};
+
+function SettingScopeBadge(props: { kind: SettingScopeKind; detail?: string }) {
+  return (
+    <div class="flex flex-wrap items-center gap-2 text-[11px]">
+      <span
+        class={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${settingScopeBadgeClass(props.kind)}`}
+      >
+        {settingScopeLabel(props.kind)}
+      </span>
+      <Show when={props.detail}>
+        <span class="text-gray-9">{props.detail}</span>
+      </Show>
+    </div>
+  );
+}
+
 const DISCORD_INVITE_URL = "https://discord.gg/VEhNQXxYMB";
 const BUG_REPORT_URL =
   "https://github.com/different-ai/openwork/issues/new?template=bug.yml";
@@ -1269,6 +1308,18 @@ export default function SettingsView(props: SettingsViewProps) {
 
   return (
     <section class="space-y-6">
+      <div class="rounded-2xl border border-gray-6/40 bg-gray-1/40 px-4 py-3">
+        <div class="text-sm font-medium text-gray-12">Where settings come from</div>
+        <div class="mt-1 text-xs text-gray-9">
+          OpenWork mixes device-wide defaults, workspace-specific files, and inherited OpenCode values. These labels show which layer you are editing.
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <SettingScopeBadge kind="global" detail="Applies across this device." />
+          <SettingScopeBadge kind="workspace" detail="Saved for the current workspace." />
+          <SettingScopeBadge kind="inherited" detail="Shown here, but sourced from another layer." />
+        </div>
+      </div>
+
       <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
         <div class="flex flex-wrap gap-2">
           <For each={availableTabs()}>
@@ -1332,6 +1383,9 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                   <div class="text-xs text-gray-9 mt-1">
                     Connect services for models and tools.
+                  </div>
+                  <div class="mt-2">
+                    <SettingScopeBadge kind="global" detail="Stored by OpenCode for every local workspace on this device." />
                   </div>
                 </div>
                 <div
@@ -1417,6 +1471,9 @@ export default function SettingsView(props: SettingsViewProps) {
                 <div class="text-xs text-gray-9">
                   Match the system or force light/dark mode.
                 </div>
+                <div class="mt-2">
+                  <SettingScopeBadge kind="global" detail="Applies across the whole app." />
+                </div>
               </div>
 
               <div class="flex flex-wrap gap-2">
@@ -1489,6 +1546,9 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                   <div class="text-xs text-gray-9">
                     Manage `permission.external_directory` for the active workspace through the OpenWork server.
+                  </div>
+                  <div class="mt-2">
+                    <SettingScopeBadge kind="workspace" detail="Saved for the active workspace only." />
                   </div>
                 </div>
 
@@ -1686,12 +1746,15 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "model"}>
           <div class="space-y-6">
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Model</div>
-                <div class="text-xs text-gray-10">
-                  Defaults + thinking controls for runs.
+                <div>
+                  <div class="text-sm font-medium text-gray-12">Model</div>
+                  <div class="text-xs text-gray-10">
+                    Defaults + thinking controls for runs.
+                  </div>
+                  <div class="mt-2">
+                    <SettingScopeBadge kind="inherited" detail="Composer sessions inherit these defaults unless you override them per chat." />
+                  </div>
                 </div>
-              </div>
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">

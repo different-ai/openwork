@@ -652,6 +652,21 @@ export default function McpView(props: McpViewProps) {
               </button>
             </div>
 
+            <div class="flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
+              <span class={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${
+                configScope() === "project"
+                  ? "border-emerald-7/35 bg-emerald-3/20 text-emerald-11"
+                  : "border-blue-7/35 bg-blue-3/20 text-blue-11"
+              }`}>
+                {configScope() === "project" ? "Workspace" : "Global"}
+              </span>
+              <span>
+                {configScope() === "project"
+                  ? "Saved for this workspace only."
+                  : "Shared across your local OpenCode setup."}
+              </span>
+            </div>
+
             {/* Config path */}
             <div class="flex flex-col gap-1 text-xs">
               <div class="text-dls-secondary">{tr("mcp.config_file")}</div>
