@@ -16,6 +16,7 @@ import {
 
 import Button from "../../app/src/app/components/button";
 import DenSettingsPanel from "../../app/src/app/components/den-settings-panel";
+import ModelPickerModal from "../../app/src/app/components/model-picker-modal";
 import ShareWorkspaceModal from "../../app/src/app/components/share-workspace-modal";
 import StatusBar from "../../app/src/app/components/status-bar";
 import Composer from "../../app/src/app/components/session/composer";
@@ -23,6 +24,7 @@ import InboxPanel from "../../app/src/app/components/session/inbox-panel";
 import MessageList from "../../app/src/app/components/session/message-list";
 import WorkspaceSessionList from "../../app/src/app/components/session/workspace-session-list";
 import { createWorkspaceShellLayout } from "../../app/src/app/lib/workspace-shell-layout";
+import { getModelBehaviorSummary, sanitizeModelBehaviorValue } from "../../app/src/app/lib/model-behavior";
 import {
   applyThemeMode,
   getInitialThemeMode,
@@ -34,6 +36,9 @@ import type {
   ComposerDraft,
   McpStatusMap,
   MessageWithParts,
+  ModelOption,
+  ModelRef,
+  ProviderListItem,
   SlashCommandOption,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
@@ -41,15 +46,7 @@ import type {
 import { sessionMessages, storyWorkspaces } from "./mock-data";
 
 type RightRailNav = "automations" | "skills" | "extensions" | "messaging" | "advanced";
-type CommandPaletteMode = "root" | "sessions" | "thinking";
-
-const COMMAND_PALETTE_THINKING_OPTIONS = [
-  { value: "none", label: "None", detail: "Fastest responses" },
-  { value: "low", label: "Low", detail: "Light reasoning" },
-  { value: "medium", label: "Medium", detail: "Balanced depth" },
-  { value: "high", label: "High", detail: "Deeper reasoning" },
-  { value: "xhigh", label: "X-High", detail: "Maximum effort" },
-] as const;
+type CommandPaletteMode = "root" | "sessions";
 
 type CommandPaletteItem = {
   id: string;
@@ -161,6 +158,63 @@ const commandOptions: SlashCommandOption[] = [
   { id: "test-flow", name: "test-flow", description: "Run shell flow checks", source: "skill" },
 ];
 
+const storyModels: Array<{
+  ref: ModelRef;
+  title: string;
+  description: string;
+  isConnected: boolean;
+  model: ProviderListItem["models"][string];
+}> = [
+  {
+    ref: { providerID: "anthropic", modelID: "claude-sonnet-4-5-20250929" },
+    title: "Claude Sonnet 4.5",
+    description: "Anthropic",
+    isConnected: true,
+    model: {
+      id: "claude-sonnet-4-5-20250929",
+      name: "Claude Sonnet 4.5",
+      reasoning: true,
+      variants: { high: {}, max: {} },
+    } as unknown as ProviderListItem["models"][string],
+  },
+  {
+    ref: { providerID: "openai", modelID: "gpt-5" },
+    title: "GPT-5",
+    description: "OpenAI",
+    isConnected: true,
+    model: {
+      id: "gpt-5",
+      name: "GPT-5",
+      reasoning: true,
+      variants: { none: {}, minimal: {}, low: {}, medium: {}, high: {}, xhigh: {} },
+    } as unknown as ProviderListItem["models"][string],
+  },
+  {
+    ref: { providerID: "deepseek", modelID: "deepseek-r1" },
+    title: "DeepSeek R1",
+    description: "DeepSeek",
+    isConnected: true,
+    model: {
+      id: "deepseek-r1",
+      name: "DeepSeek R1",
+      reasoning: true,
+      variants: {},
+    } as unknown as ProviderListItem["models"][string],
+  },
+  {
+    ref: { providerID: "openrouter", modelID: "grok-4" },
+    title: "Grok 4",
+    description: "OpenRouter",
+    isConnected: false,
+    model: {
+      id: "grok-4",
+      name: "Grok 4",
+      reasoning: false,
+      variants: {},
+    } as unknown as ProviderListItem["models"][string],
+  },
+];
+
 const mockShareFields = [
   {
     label: "Worker URL",
@@ -230,7 +284,11 @@ export default function StoryBookApp() {
   );
   const [composerToast, setComposerToast] = createSignal<string | null>(null);
   const [selectedAgent, setSelectedAgent] = createSignal<string | null>(null);
-  const [modelVariant, setModelVariant] = createSignal("medium");
+  const [selectedModel, setSelectedModel] = createSignal<ModelRef>(storyModels[0].ref);
+  const [modelVariant, setModelVariant] = createSignal<string | null>("medium");
+  const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
+  const [modelPickerTarget, setModelPickerTarget] = createSignal<"default" | "session">("session");
+  const [modelPickerQuery, setModelPickerQuery] = createSignal("");
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
   const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
@@ -297,6 +355,77 @@ export default function StoryBookApp() {
   });
 
   const agentLabel = createMemo(() => (selectedAgent() ? `@${selectedAgent()}` : "Auto"));
+
+  const selectedStoryModel = createMemo(
+    () => storyModels.find((entry) => entry.ref.providerID === selectedModel().providerID && entry.ref.modelID === selectedModel().modelID)
+      ?? storyModels[0],
+  );
+
+  const selectedBehavior = createMemo(() =>
+    getModelBehaviorSummary(
+      selectedStoryModel().ref.providerID,
+      selectedStoryModel().model,
+      modelVariant(),
+    ),
+  );
+
+  const selectedModelLabel = createMemo(() => selectedStoryModel().title);
+
+  const storyModelOptions = createMemo<ModelOption[]>(() =>
+    storyModels.map((entry) => {
+      const behavior = getModelBehaviorSummary(entry.ref.providerID, entry.model, modelVariant());
+      return {
+        providerID: entry.ref.providerID,
+        modelID: entry.ref.modelID,
+        title: entry.title,
+        description: entry.description,
+        footer: entry.ref.providerID === selectedModel().providerID && entry.ref.modelID === selectedModel().modelID
+          ? "Current model"
+          : undefined,
+        behaviorTitle: behavior.title,
+        behaviorLabel: behavior.label,
+        behaviorDescription: behavior.description,
+        behaviorValue: sanitizeModelBehaviorValue(entry.ref.providerID, entry.model, modelVariant()),
+        behaviorOptions: behavior.options,
+        isFree: false,
+        isConnected: entry.isConnected,
+      };
+    }),
+  );
+
+  const filteredStoryModelOptions = createMemo(() => {
+    const query = modelPickerQuery().trim().toLowerCase();
+    if (!query) return storyModelOptions();
+    return storyModelOptions().filter((option) =>
+      [
+        option.title,
+        option.description ?? "",
+        option.footer ?? "",
+        option.behaviorTitle,
+        option.behaviorLabel,
+        option.behaviorDescription,
+        `${option.providerID}/${option.modelID}`,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  });
+
+  const openModelPicker = (target: "default" | "session" = "session") => {
+    setModelPickerTarget(target);
+    setModelPickerQuery("");
+    setModelPickerOpen(true);
+  };
+
+  const applyStoryModelSelection = (next: ModelRef) => {
+    const entry = storyModels.find((item) => item.ref.providerID === next.providerID && item.ref.modelID === next.modelID);
+    setSelectedModel(next);
+    if (entry) {
+      setModelVariant(sanitizeModelBehaviorValue(next.providerID, entry.model, modelVariant()) ?? null);
+    }
+    setModelPickerOpen(false);
+  };
 
   const handleDraftChange = (draft: ComposerDraft) => {
     setComposerPrompt(draft.text);
@@ -460,11 +589,11 @@ export default function StoryBookApp() {
       {
         id: "model",
         title: "Change model",
-        detail: "Current: Claude Sonnet 4",
+        detail: `${selectedModelLabel()} · ${selectedBehavior().label}`,
         meta: "Open",
         action: () => {
           closeCommandPalette();
-          setComposerToast("Story-book: model picker is mocked in this shell.");
+          openModelPicker("session");
         },
       },
       {
@@ -498,20 +627,6 @@ export default function StoryBookApp() {
           openMockShareModal(activeWorkspaceId());
         },
       },
-      {
-        id: "thinking",
-        title: "Change thinking",
-        detail: `Current: ${
-          COMMAND_PALETTE_THINKING_OPTIONS.find((option) => option.value === modelVariant())?.label ?? "Medium"
-        }`,
-        meta: "Adjust",
-        action: () => {
-          setCommandPaletteMode("thinking");
-          setCommandPaletteQuery("");
-          setCommandPaletteActiveIndex(0);
-          focusCommandPaletteInput();
-        },
-      },
     ];
 
     const query = commandPaletteQuery().trim().toLowerCase();
@@ -538,43 +653,21 @@ export default function StoryBookApp() {
     }));
   });
 
-  const commandPaletteThinkingItems = createMemo<CommandPaletteItem[]>(() => {
-    const activeVariant = (modelVariant() || "none").trim().toLowerCase();
-    const query = commandPaletteQuery().trim().toLowerCase();
-    return COMMAND_PALETTE_THINKING_OPTIONS.filter((option) => {
-      if (!query) return true;
-      return `${option.label} ${option.detail}`.toLowerCase().includes(query);
-    }).map((option) => ({
-      id: `thinking:${option.value}`,
-      title: option.label,
-      detail: option.detail,
-      meta: activeVariant === option.value ? "Current" : undefined,
-      action: () => {
-        setModelVariant(option.value);
-        closeCommandPalette();
-        setComposerToast(`Thinking set to ${option.label}.`);
-      },
-    }));
-  });
-
   const commandPaletteItems = createMemo<CommandPaletteItem[]>(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return commandPaletteSessionItems();
-    if (mode === "thinking") return commandPaletteThinkingItems();
     return commandPaletteRootItems();
   });
 
   const commandPaletteTitle = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return "Search sessions";
-    if (mode === "thinking") return "Change thinking";
     return "Quick actions";
   });
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return "Find by session title or workspace";
-    if (mode === "thinking") return "Filter thinking options";
     return "Search actions";
   });
 
@@ -744,6 +837,7 @@ export default function StoryBookApp() {
         >
           <div class="min-h-0 flex-1">
             <WorkspaceSessionList
+              developerMode
               workspaceSessionGroups={workspaceSessionGroups}
               activeWorkspaceId={activeWorkspaceId()}
               selectedSessionId={selectedSessionId()}
@@ -766,9 +860,9 @@ export default function StoryBookApp() {
               }}
               onOpenRenameSession={() => undefined}
               onOpenDeleteSession={() => undefined}
-                onOpenRenameWorkspace={() => undefined}
-                onShareWorkspace={(workspaceId) => openMockShareModal(workspaceId)}
-                onRevealWorkspace={() => undefined}
+              onOpenRenameWorkspace={() => undefined}
+              onShareWorkspace={(workspaceId) => openMockShareModal(workspaceId)}
+              onRevealWorkspace={() => undefined}
               onRecoverWorkspace={() => true}
               onTestWorkspaceConnection={() => true}
               onEditWorkspaceConnection={() => undefined}
@@ -801,7 +895,7 @@ export default function StoryBookApp() {
               <button
                 type="button"
                 class="hidden items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text sm:flex"
-                onClick={openCommandPalette}
+                onClick={() => openCommandPalette()}
                 title="Open command palette"
                 aria-label="Open command palette"
               >
@@ -866,6 +960,30 @@ export default function StoryBookApp() {
                   }
                 >
                   <div class="space-y-4">
+                    <div class="rounded-[20px] border border-dls-border bg-dls-surface p-4 shadow-[var(--dls-card-shadow)] space-y-3">
+                      <div>
+                        <div class="text-sm font-medium text-dls-text">Model preferences</div>
+                        <div class="text-xs text-dls-secondary mt-1">
+                          This preview mirrors the default model and reasoning controls from the app picker.
+                        </div>
+                      </div>
+                      <div class="rounded-2xl border border-dls-border bg-dls-sidebar px-4 py-3 flex items-center justify-between gap-3">
+                        <div class="min-w-0">
+                          <div class="text-sm text-dls-text truncate">{selectedModelLabel()}</div>
+                          <div class="text-xs text-dls-secondary truncate">
+                            {selectedModel().providerID}/{selectedModel().modelID}
+                          </div>
+                        </div>
+                        <Button variant="outline" onClick={() => openModelPicker("default")}>
+                          Open picker
+                        </Button>
+                      </div>
+                      <div class="rounded-2xl border border-dls-border bg-dls-sidebar px-4 py-3">
+                        <div class="text-sm text-dls-text">{selectedBehavior().title}</div>
+                        <div class="mt-1 text-xs font-medium text-dls-text">{selectedBehavior().label}</div>
+                        <div class="mt-1 text-xs text-dls-secondary">{selectedBehavior().description}</div>
+                      </div>
+                    </div>
                     <div class="rounded-[20px] border border-dls-border bg-dls-sidebar p-4 text-sm text-dls-secondary">
                       This is the real `DenSettingsPanel` from the app mounted inside story-book.
                     </div>
@@ -888,11 +1006,11 @@ export default function StoryBookApp() {
               onSend={handleSend}
               onStop={() => undefined}
               onDraftChange={handleDraftChange}
-              selectedModelLabel="Claude Sonnet 4"
-              onModelClick={() => undefined}
-              modelVariantLabel="Reasoning"
-              modelVariant="medium"
-              onModelVariantChange={() => undefined}
+              selectedModelLabel={selectedModelLabel()}
+              onModelClick={() => openModelPicker("session")}
+              modelVariantLabel={`${selectedBehavior().title} · ${selectedBehavior().label}`}
+              modelVariant={modelVariant()}
+              onModelVariantChange={(value) => setModelVariant(value)}
               agentLabel={agentLabel()}
               selectedAgent={selectedAgent()}
               agentPickerOpen={agentPickerOpen()}
@@ -1073,6 +1191,29 @@ export default function StoryBookApp() {
         onExportConfig={() => setComposerToast("Story-book: export config is mocked in this shell.")}
         exportDisabledReason={null}
         onOpenBots={() => setComposerToast("Story-book: bots sharing flow is mocked in this shell.")}
+      />
+
+      <ModelPickerModal
+        open={modelPickerOpen()}
+        options={storyModelOptions()}
+        filteredOptions={filteredStoryModelOptions()}
+        query={modelPickerQuery()}
+        setQuery={setModelPickerQuery}
+        target={modelPickerTarget()}
+        current={selectedModel()}
+        onSelect={applyStoryModelSelection}
+        onBehaviorChange={(model, value) => {
+          if (model.providerID !== selectedModel().providerID || model.modelID !== selectedModel().modelID) return;
+          const entry = storyModels.find((item) => item.ref.providerID === model.providerID && item.ref.modelID === model.modelID);
+          if (!entry) return;
+          setModelVariant(sanitizeModelBehaviorValue(model.providerID, entry.model, value) ?? null);
+        }}
+        onOpenSettings={() => {
+          setModelPickerOpen(false);
+          if (!rightSidebarExpanded()) toggleRightSidebar();
+          setRightRailNav("advanced");
+        }}
+        onClose={() => setModelPickerOpen(false)}
       />
     </div>
   );

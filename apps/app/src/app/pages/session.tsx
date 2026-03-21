@@ -326,15 +326,7 @@ const STREAM_RENDER_BATCH_MS = 48;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
 
-type CommandPaletteMode = "root" | "sessions" | "thinking";
-
-const COMMAND_PALETTE_THINKING_OPTIONS = [
-  { value: "none", label: "None", detail: "Fastest responses" },
-  { value: "low", label: "Low", detail: "Light reasoning" },
-  { value: "medium", label: "Medium", detail: "Balanced depth" },
-  { value: "high", label: "High", detail: "Deeper reasoning" },
-  { value: "xhigh", label: "X-High", detail: "Maximum effort" },
-] as const;
+type CommandPaletteMode = "root" | "sessions";
 
 export default function SessionView(props: SessionViewProps) {
   const platform = usePlatform();
@@ -2461,11 +2453,6 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
-  const closeCommandPaletteAndFocusComposer = () => {
-    closeCommandPalette();
-    focusComposer();
-  };
-
   const openCommandPalette = (mode: CommandPaletteMode = "root") => {
     setCommandPaletteMode(mode);
     setCommandPaletteQuery("");
@@ -3483,7 +3470,7 @@ export default function SessionView(props: SessionViewProps) {
       {
         id: "model",
         title: "Change model",
-        detail: `Current: ${props.selectedSessionModelLabel || "Model"}`,
+        detail: `${props.selectedSessionModelLabel || "Model"} · ${props.modelVariantLabel}`,
         meta: "Open",
         action: () => {
           closeCommandPalette();
@@ -3507,18 +3494,6 @@ export default function SessionView(props: SessionViewProps) {
               setToastMessage(message);
               focusComposer();
             });
-        },
-      },
-      {
-        id: "thinking",
-        title: "Change thinking",
-        detail: `Current: ${props.modelVariantLabel}`,
-        meta: "Adjust",
-        action: () => {
-          setCommandPaletteMode("thinking");
-          setCommandPaletteQuery("");
-          setCommandPaletteActiveIndex(0);
-          focusCommandPaletteInput();
         },
       },
     ];
@@ -3555,48 +3530,21 @@ export default function SessionView(props: SessionViewProps) {
     }));
   });
 
-  const commandPaletteThinkingItems = createMemo<CommandPaletteItem[]>(() => {
-    const normalizedRaw = (props.modelVariant ?? "none").trim().toLowerCase();
-    const activeVariant =
-      normalizedRaw === "balanced" || normalizedRaw === "balance"
-        ? "none"
-        : normalizedRaw;
-    const query = commandPaletteQuery().trim().toLowerCase();
-
-    return COMMAND_PALETTE_THINKING_OPTIONS.filter((option) => {
-      if (!query) return true;
-      return `${option.label} ${option.detail}`.toLowerCase().includes(query);
-    }).map((option) => ({
-      id: `thinking:${option.value}`,
-      title: option.label,
-      detail: option.detail,
-      meta: activeVariant === option.value ? "Current" : undefined,
-      action: () => {
-        props.setModelVariant(option.value);
-        closeCommandPaletteAndFocusComposer();
-        setToastMessage(`Thinking set to ${option.label}.`);
-      },
-    }));
-  });
-
   const commandPaletteItems = createMemo<CommandPaletteItem[]>(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return commandPaletteSessionItems();
-    if (mode === "thinking") return commandPaletteThinkingItems();
     return commandPaletteRootItems();
   });
 
   const commandPaletteTitle = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return "Search sessions";
-    if (mode === "thinking") return "Change thinking";
     return "Quick actions";
   });
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return "Find by session title or workspace";
-    if (mode === "thinking") return "Filter thinking options";
     return "Search actions";
   });
 

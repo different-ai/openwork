@@ -328,12 +328,23 @@ export type ModelRef = {
   modelID: string;
 };
 
+export type ModelBehaviorOption = {
+  value: string | null;
+  label: string;
+  description: string;
+};
+
 export type ModelOption = {
   providerID: string;
   modelID: string;
   title: string;
   description?: string;
   footer?: string;
+  behaviorTitle: string;
+  behaviorLabel: string;
+  behaviorDescription: string;
+  behaviorValue: string | null;
+  behaviorOptions?: ModelBehaviorOption[];
   disabled?: boolean;
   isFree: boolean;
   isConnected: boolean;

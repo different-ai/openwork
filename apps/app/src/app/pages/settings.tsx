@@ -1822,7 +1822,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <div>
                 <div class="text-sm font-medium text-gray-12">Model</div>
                 <div class="text-xs text-gray-10">
-                  Defaults + thinking controls for runs.
+                  Pick the default chat model and review how it reasons.
                 </div>
               </div>
 
@@ -1847,9 +1847,9 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Thinking</div>
+                  <div class="text-sm text-gray-12">Show model reasoning</div>
                   <div class="text-xs text-gray-7">
-                    Show thinking parts (Developer mode only).
+                    Expand reasoning traces in the UI when a model exposes them.
                   </div>
                 </div>
                 <Button
@@ -1883,8 +1883,11 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Model variant</div>
-                  <div class="text-xs text-gray-7 font-mono truncate">
+                  <div class="text-sm text-gray-12">Model behavior</div>
+                  <div class="text-xs text-gray-7 truncate">
+                    Open the default model picker to choose reasoning profiles when they are available.
+                  </div>
+                  <div class="mt-1 text-xs text-gray-8 font-medium truncate">
                     {props.modelVariantLabel}
                   </div>
                 </div>
@@ -1894,7 +1897,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   onClick={props.editModelVariant}
                   disabled={props.busy}
                 >
-                  Edit
+                  Configure
                 </Button>
               </div>
             </div>

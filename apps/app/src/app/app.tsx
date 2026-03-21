@@ -148,6 +148,12 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { createSessionStore } from "./context/session";
+import {
+  formatGenericBehaviorLabel,
+  getModelBehaviorSummary,
+  normalizeModelBehaviorValue,
+  sanitizeModelBehaviorValue,
+} from "./lib/model-behavior";
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -1784,7 +1790,7 @@ export default function App() {
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
       const parts = await buildPromptParts(resolvedDraft);
-      const selectedVariant = modelVariant() ?? undefined;
+      const selectedVariant = sanitizeModelVariantForRef(model, modelVariant()) ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = reasoningEffort
@@ -1917,7 +1923,7 @@ export default function App() {
       sessionID,
       messageCount: visible.length,
       model: modelLabel,
-      variant: modelVariant() ?? null,
+      variant: sanitizeModelVariantForRef(model, modelVariant()) ?? null,
     });
 
     try {
@@ -2948,47 +2954,14 @@ export default function App() {
   const [authorizedFoldersStatus, setAuthorizedFoldersStatus] = createSignal<string | null>(null);
   const [authorizedFoldersError, setAuthorizedFoldersError] = createSignal<string | null>(null);
 
-  const MODEL_VARIANT_OPTIONS = [
-    { value: "none", label: "None" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "xhigh", label: "X-High" },
-  ];
-
-  const normalizeModelVariant = (value: string | null) => {
-    if (!value) return null;
-    const trimmed = value.trim().toLowerCase();
-    if (trimmed === "balance" || trimmed === "balanced") return "none";
-    const match = MODEL_VARIANT_OPTIONS.find((option) => option.value === trimmed);
-    return match ? match.value : null;
-  };
-
   const resolveCodexReasoningEffort = (modelID: string, variant: string | null) => {
     if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
-    const normalized = normalizeModelVariant(variant);
+    const normalized = normalizeModelBehaviorValue(variant);
     if (!normalized || normalized === "none") return undefined;
-    if (normalized === "xhigh") return "high";
+    if (normalized === "minimal") return "low";
+    if (normalized === "xhigh" || normalized === "max") return "high";
+    if (!["low", "medium", "high"].includes(normalized)) return undefined;
     return normalized;
-  };
-
-  const formatModelVariantLabel = (value: string | null) => {
-    const normalized = normalizeModelVariant(value) ?? "none";
-    return MODEL_VARIANT_OPTIONS.find((option) => option.value === normalized)?.label ?? "None";
-  };
-
-  const handleEditModelVariant = () => {
-    const next = window.prompt(
-      "Model variant (none, low, medium, high, xhigh)",
-      normalizeModelVariant(modelVariant()) ?? "none"
-    );
-    if (next == null) return;
-    const normalized = normalizeModelVariant(next);
-    if (!normalized) {
-      window.alert("Variant must be one of: none, low, medium, high, xhigh.");
-      return;
-    }
-    setModelVariant(normalized);
   };
 
   const workspaceStore = createWorkspaceStore({
@@ -5196,6 +5169,30 @@ export default function App() {
     formatModelLabel(selectedSessionModel(), providers())
   );
 
+  const findProviderModel = (ref: ModelRef) => {
+    const provider = providers().find((entry) => entry.id === ref.providerID);
+    return provider?.models?.[ref.modelID] ?? null;
+  };
+
+  const sanitizeModelVariantForRef = (ref: ModelRef, value: string | null) => {
+    const modelInfo = findProviderModel(ref);
+    if (!modelInfo) return normalizeModelBehaviorValue(value);
+    return sanitizeModelBehaviorValue(ref.providerID, modelInfo, value);
+  };
+
+  const getModelBehaviorCopy = (ref: ModelRef, value: string | null) => {
+    const modelInfo = findProviderModel(ref);
+    if (!modelInfo) {
+      return {
+        title: "Model behavior",
+        label: formatGenericBehaviorLabel(value),
+        description: "Choose the model first to see provider-specific behavior controls.",
+        options: [],
+      };
+    }
+    return getModelBehaviorSummary(ref.providerID, modelInfo, value);
+  };
+
   const modelPickerCurrent = createMemo(() =>
     modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel()
   );
@@ -5206,6 +5203,7 @@ export default function App() {
     const currentDefault = defaultModel();
 
     if (!allProviders.length) {
+      const behavior = getModelBehaviorCopy(DEFAULT_MODEL, modelVariant());
       return [
         {
           providerID: DEFAULT_MODEL.providerID,
@@ -5213,6 +5211,11 @@ export default function App() {
           title: DEFAULT_MODEL.modelID,
           description: DEFAULT_MODEL.providerID,
           footer: t("settings.model_fallback", currentLocale()),
+          behaviorTitle: behavior.title,
+          behaviorLabel: behavior.label,
+          behaviorDescription: behavior.description,
+          behaviorValue: normalizeModelBehaviorValue(modelVariant()),
+          behaviorOptions: behavior.options,
           isFree: true,
           isConnected: false,
         },
@@ -5241,6 +5244,8 @@ export default function App() {
         const isFree = model.cost?.input === 0 && model.cost?.output === 0;
         const isDefault =
           provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
+        const behavior = getModelBehaviorSummary(provider.id, model, modelVariant());
+        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, modelVariant());
         const footerBits: string[] = [];
         if (defaultModelID === model.id || isDefault) {
           footerBits.push(t("settings.model_default", currentLocale()));
@@ -5255,6 +5260,11 @@ export default function App() {
           footer: footerBits.length
             ? footerBits.slice(0, 2).join(" · ")
             : undefined,
+          behaviorTitle: behavior.title,
+          behaviorLabel: behavior.label,
+          behaviorDescription: behavior.description,
+          behaviorValue,
+          behaviorOptions: behavior.options,
           disabled: !isConnected,
           isFree,
           isConnected,
@@ -5284,6 +5294,9 @@ export default function App() {
         opt.title,
         opt.description ?? "",
         opt.footer ?? "",
+        opt.behaviorTitle,
+        opt.behaviorLabel,
+        opt.behaviorDescription,
         `${opt.providerID}/${opt.modelID}`,
         opt.isConnected ? "connected" : "disconnected",
         opt.isFree ? "free" : "paid",
@@ -5323,6 +5336,9 @@ export default function App() {
 
   function applyModelSelection(next: ModelRef) {
     const restorePromptFocus = modelPickerTarget() === "session";
+    const nextVariant = sanitizeModelVariantForRef(next, modelVariant());
+    setModelVariant(nextVariant);
+
     if (modelPickerTarget() === "default") {
       setDefaultModelExplicit(true);
       setDefaultModel(next);
@@ -6240,10 +6256,7 @@ export default function App() {
 
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
-          const normalized = normalizeModelVariant(storedVariant);
-          if (normalized) {
-            setModelVariant(normalized);
-          }
+          setModelVariant(normalizeModelBehaviorValue(storedVariant));
         }
 
         const storedUpdateAutoCheck = window.localStorage.getItem(
@@ -7228,8 +7241,8 @@ export default function App() {
       toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
-      modelVariantLabel: formatModelVariantLabel(modelVariant()),
-      editModelVariant: handleEditModelVariant,
+      modelVariantLabel: getModelBehaviorCopy(defaultModel(), modelVariant()).label,
+      editModelVariant: openDefaultModelPicker,
       updateAutoCheck: updateAutoCheck(),
       toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
       updateAutoDownload: updateAutoDownload(),
@@ -7400,7 +7413,7 @@ export default function App() {
     installUpdateAndRestart,
     selectedSessionModelLabel: selectedSessionModelLabel(),
     openSessionModelPicker: openSessionModelPicker,
-    modelVariantLabel: formatModelVariantLabel(modelVariant()),
+    modelVariantLabel: getModelBehaviorCopy(selectedSessionModel(), modelVariant()).label,
     modelVariant: modelVariant(),
     setModelVariant: (value: string) => setModelVariant(value),
     activePlugins: sidebarPluginList(),
@@ -7650,6 +7663,10 @@ export default function App() {
         target={modelPickerTarget()}
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
+        onBehaviorChange={(model, value) => {
+          if (!modelEquals(modelPickerCurrent(), model)) return;
+          setModelVariant(sanitizeModelVariantForRef(model, value));
+        }}
         onOpenSettings={openSettingsFromModelPicker}
         onClose={closeModelPicker}
       />
