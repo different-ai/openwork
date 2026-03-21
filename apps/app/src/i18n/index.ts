@@ -3,18 +3,19 @@ import en from "./locales/en";
 import ja from "./locales/ja";
 import zh from "./locales/zh";
 import vi from "./locales/vi";
+import ptBR from "./locales/pt-BR";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi, "pt-BR"];
 
 /**
  * Language options for UI - single source of truth
@@ -24,6 +25,7 @@ export const LANGUAGE_OPTIONS = [
   { value: "ja" as Language, label: "日本語", nativeName: "日本語" },
   { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
   { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
+  { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
 ] as const;
 
 /**
@@ -34,6 +36,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   ja,
   zh,
   vi,
+    "pt-BR": ptBR,
 };
 
 /**
@@ -89,6 +92,7 @@ export const setLocale = (newLocale: Language) => {
  */
 export const t = (key: string, localeOverride?: Language): string => {
   const loc = localeOverride ?? locale();
+1
 
   // Try target language first
   if (TRANSLATIONS[loc]?.[key]) {
