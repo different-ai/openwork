@@ -351,6 +351,7 @@ export default function SessionView(props: SessionViewProps) {
   let pendingScrollBehavior: ScrollBehavior = "auto";
   let lastAutoScrollAt = 0;
   let lastKnownScrollTop = 0;
+  let userScrolledAwayAt = 0;
   let streamRenderBatchTimer: number | undefined;
   let streamRenderBatchQueuedAt = 0;
   let streamRenderBatchReschedules = 0;
@@ -2292,6 +2293,9 @@ export default function SessionView(props: SessionViewProps) {
     runProgressSignature();
     if (initialAnchorPending()) return;
     if (!isViewingLatest()) return;
+    // Suppress auto-scroll for 800ms after user scrolled away to prevent fighting manual scroll
+    const timeSinceUserScroll = Date.now() - userScrolledAwayAt;
+    if (timeSinceUserScroll < 800) return;
     scheduleScrollToLatest("auto");
   });
 
@@ -4224,10 +4228,14 @@ export default function SessionView(props: SessionViewProps) {
                   const bottomGap =
                     container.scrollHeight -
                     (container.scrollTop + container.clientHeight);
-                  if (bottomGap <= 96) {
+                  // Use a small threshold (24px) to only pin when truly at bottom
+                  // This prevents auto-scroll from fighting manual scroll during streaming
+                  if (bottomGap <= 24) {
                     setIsViewingLatest(true);
                   } else if (container.scrollTop < lastKnownScrollTop - 1) {
+                    // User scrolled up - respect their intent
                     setIsViewingLatest(false);
+                    userScrolledAwayAt = Date.now();
                   }
                   lastKnownScrollTop = container.scrollTop;
                   refreshTopClippedMessage();
