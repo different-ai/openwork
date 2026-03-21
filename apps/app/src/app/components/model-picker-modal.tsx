@@ -302,7 +302,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={enabledOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Enabled Providers
+                    Available now
                   </div>
                   <For each={enabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
                 </section>
@@ -311,7 +311,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={otherOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Other Providers
+                    Connect more models
                   </div>
                   <For each={otherOptions()}>
                     {(provider) => renderProviderLink(provider, provider.index)}

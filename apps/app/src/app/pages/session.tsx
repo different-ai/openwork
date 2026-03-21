@@ -455,7 +455,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const agentLabel = createMemo(
-    () => props.selectedSessionAgent ?? "Default agent",
+    () => props.selectedSessionAgent ?? "General purpose",
   );
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
