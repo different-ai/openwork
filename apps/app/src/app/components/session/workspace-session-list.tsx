@@ -67,6 +67,12 @@ const COLLAPSED_SESSIONS_PREVIEW = 1;
 
 type SessionListItem = WorkspaceSessionGroup["sessions"][number];
 type FlattenedSessionRow = { session: SessionListItem; depth: number };
+type SessionTreeState = {
+  childrenByParent: Map<string, SessionListItem[]>;
+  ancestorIdsBySessionId: Map<string, string[]>;
+  descendantCountBySessionId: Map<string, number>;
+  activeIds: Set<string>;
+};
 
 const normalizeSessionParentID = (session: SessionListItem) => {
   const parentID = session.parentID?.trim();
@@ -81,19 +87,60 @@ const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
   });
 };
 
-const flattenSessionRows = (
+const buildSessionTreeState = (
   sessions: WorkspaceSessionGroup["sessions"],
-  rootLimit: number,
-) => {
+  sessionStatusById: Record<string, string> | undefined,
+): SessionTreeState => {
   const childrenByParent = new Map<string, SessionListItem[]>();
+  const ancestorIdsBySessionId = new Map<string, string[]>();
+  const descendantCountBySessionId = new Map<string, number>();
+  const activeIds = new Set<string>();
+  const sessionIds = new Set(sessions.map((session) => session.id));
+
   sessions.forEach((session) => {
     const parentID = normalizeSessionParentID(session);
-    if (!parentID) return;
+    if (!parentID || !sessionIds.has(parentID)) return;
     const siblings = childrenByParent.get(parentID) ?? [];
     siblings.push(session);
     childrenByParent.set(parentID, siblings);
   });
 
+  const walk = (session: SessionListItem, ancestors: string[]) => {
+    ancestorIdsBySessionId.set(session.id, ancestors);
+    const children = childrenByParent.get(session.id) ?? [];
+    let descendantCount = 0;
+    let subtreeActive = (sessionStatusById?.[session.id] ?? "idle") !== "idle";
+
+    children.forEach((child) => {
+      const childState = walk(child, [...ancestors, session.id]);
+      descendantCount += 1 + childState.descendantCount;
+      subtreeActive = subtreeActive || childState.subtreeActive;
+    });
+
+    descendantCountBySessionId.set(session.id, descendantCount);
+    if (subtreeActive) activeIds.add(session.id);
+    return { descendantCount, subtreeActive };
+  };
+
+  getRootSessions(sessions).forEach((session) => {
+    walk(session, []);
+  });
+
+  return {
+    childrenByParent,
+    ancestorIdsBySessionId,
+    descendantCountBySessionId,
+    activeIds,
+  };
+};
+
+const flattenSessionRows = (
+  sessions: WorkspaceSessionGroup["sessions"],
+  rootLimit: number,
+  tree: SessionTreeState,
+  expandedSessionIds: Set<string>,
+  forcedExpandedSessionIds: Set<string>,
+) => {
   const roots = getRootSessions(sessions).slice(0, rootLimit);
   const rows: FlattenedSessionRow[] = [];
   const visited = new Set<string>();
@@ -102,7 +149,11 @@ const flattenSessionRows = (
     if (visited.has(session.id)) return;
     visited.add(session.id);
     rows.push({ session, depth });
-    const children = childrenByParent.get(session.id) ?? [];
+    const children = tree.childrenByParent.get(session.id) ?? [];
+    if (!children.length) return;
+    const expanded =
+      expandedSessionIds.has(session.id) || forcedExpandedSessionIds.has(session.id);
+    if (!expanded) return;
     children.forEach((child) => walk(child, depth + 1));
   };
 
@@ -153,6 +204,9 @@ export default function WorkspaceSessionList(props: Props) {
   );
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
+  const [expandedSessionIds, setExpandedSessionIds] = createSignal<Set<string>>(
+    new Set(),
+  );
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
@@ -204,7 +258,30 @@ export default function WorkspaceSessionList(props: Props) {
   const previewSessions = (
     workspaceId: string,
     sessions: WorkspaceSessionGroup["sessions"],
-  ) => flattenSessionRows(sessions, previewCount(workspaceId));
+    tree: SessionTreeState,
+    forcedExpandedSessionIds: Set<string>,
+  ) =>
+    flattenSessionRows(
+      sessions,
+      previewCount(workspaceId),
+      tree,
+      expandedSessionIds(),
+      forcedExpandedSessionIds,
+    );
+
+  const toggleSessionExpanded = (sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) return;
+    setExpandedSessionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   const showMoreSessions = (workspaceId: string, totalRoots: number) => {
     expandWorkspace(workspaceId);
@@ -263,14 +340,25 @@ export default function WorkspaceSessionList(props: Props) {
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
   });
 
-  const renderSessionRow = (workspaceId: string, row: FlattenedSessionRow) => {
+  const renderSessionRow = (
+    workspaceId: string,
+    row: FlattenedSessionRow,
+    tree: SessionTreeState,
+    forcedExpandedSessionIds: Set<string>,
+  ) => {
     const session = () => row.session;
     const depth = () => row.depth;
     const isSelected = () => props.selectedSessionId === session().id;
     const displayTitle = () =>
       getDisplaySessionTitle(session().title, DEFAULT_SESSION_TITLE);
-    const isSessionActive = () =>
-      (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const hasChildren = () =>
+      (tree.descendantCountBySessionId.get(session().id) ?? 0) > 0;
+    const hiddenChildCount = () =>
+      tree.descendantCountBySessionId.get(session().id) ?? 0;
+    const isExpanded = () =>
+      expandedSessionIds().has(session().id) ||
+      forcedExpandedSessionIds.has(session().id);
+    const isSessionActive = () => tree.activeIds.has(session().id);
     const canManageSession = () =>
       Boolean(
         props.showSessionActions &&
@@ -288,7 +376,7 @@ export default function WorkspaceSessionList(props: Props) {
         <div
           role="button"
           tabIndex={0}
-          class={`group flex min-h-10 w-full items-center justify-between rounded-[15px] border px-3 py-2.5 transition-[background-color,border-color,box-shadow] ${
+          class={`group flex min-h-9 w-full items-center justify-between rounded-[15px] border px-3 py-2 transition-[background-color,border-color,box-shadow] ${
             isSelected()
               ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
               : "border-transparent text-gray-11 hover:bg-gray-2/60"
@@ -303,8 +391,28 @@ export default function WorkspaceSessionList(props: Props) {
           }}
         >
           <div class="mr-2.5 flex min-w-0 flex-1 items-center gap-2">
-            <Show when={depth() > 0}>
-              <span class="h-[1px] w-3 shrink-0 rounded-full bg-dls-border" />
+            <Show
+              when={hasChildren()}
+              fallback={
+                <Show when={depth() > 0}>
+                  <span class="h-[1px] w-3 shrink-0 rounded-full bg-dls-border" />
+                </Show>
+              }
+            >
+              <button
+                type="button"
+                class="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                aria-label={isExpanded() ? "Hide child sessions" : "Show child sessions"}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleSessionExpanded(session().id);
+                }}
+              >
+                <Show when={isExpanded()} fallback={<ChevronRight size={13} />}>
+                  <ChevronDown size={13} />
+                </Show>
+              </button>
             </Show>
             <Show when={isSessionActive()}>
               <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
@@ -315,6 +423,11 @@ export default function WorkspaceSessionList(props: Props) {
             >
               {displayTitle()}
             </span>
+            <Show when={hasChildren() && !isExpanded()}>
+              <span class="shrink-0 rounded-full bg-gray-3 px-1.5 py-0.5 text-[10px] text-gray-10">
+                +{hiddenChildCount()}
+              </span>
+            </Show>
           </div>
 
           <div class="ml-auto flex shrink-0 items-center gap-1">
@@ -381,9 +494,18 @@ export default function WorkspaceSessionList(props: Props) {
   return (
     <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <div class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pr-1">
-        <div class="space-y-3 pb-3">
+        <div class="space-y-2 pb-3">
         <For each={props.workspaceSessionGroups}>
           {(group) => {
+            const tree = buildSessionTreeState(
+              group.sessions,
+              props.sessionStatusById,
+            );
+            const forcedExpandedSessionIds = new Set(
+              props.selectedSessionId
+                ? tree.ancestorIdsBySessionId.get(props.selectedSessionId) ?? []
+                : [],
+            );
             const workspace = () => group.workspace;
             const isConnecting = () =>
               props.connectingWorkspaceId === workspace().id;
@@ -624,9 +746,20 @@ export default function WorkspaceSessionList(props: Props) {
                     fallback={
                       <Show when={group.sessions.length > 0}>
                         <For
-                          each={previewSessions(workspace().id, group.sessions)}
+                          each={previewSessions(
+                            workspace().id,
+                            group.sessions,
+                            tree,
+                            forcedExpandedSessionIds,
+                          )}
                         >
-                          {(row) => renderSessionRow(workspace().id, row)}
+                          {(row) =>
+                            renderSessionRow(
+                              workspace().id,
+                              row,
+                              tree,
+                              forcedExpandedSessionIds,
+                            )}
                         </For>
                       </Show>
                     }
@@ -658,9 +791,17 @@ export default function WorkspaceSessionList(props: Props) {
                             each={previewSessions(
                               workspace().id,
                               group.sessions,
+                              tree,
+                              forcedExpandedSessionIds,
                             )}
                           >
-                            {(row) => renderSessionRow(workspace().id, row)}
+                            {(row) =>
+                              renderSessionRow(
+                                workspace().id,
+                                row,
+                                tree,
+                                forcedExpandedSessionIds,
+                              )}
                           </For>
 
                           <Show

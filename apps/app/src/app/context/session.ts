@@ -711,11 +711,7 @@ export function createSessionStore(options: {
     }
     const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
     rememberSession(next);
-    setStore("sessions", (current) => {
-      const tracked = current.some((session) => session.id === next.id);
-      if (next.parentID && !tracked) return current;
-      return upsertSession(current, next);
-    });
+    setStore("sessions", (current) => upsertSession(current, next));
   }
 
   async function refreshPendingPermissions() {
@@ -774,6 +770,7 @@ export function createSessionStore(options: {
         const nextSession = unwrap(info);
         const nextMessages = unwrap(msgs);
         rememberSession(nextSession);
+        setStore("sessions", (current) => upsertSession(current, nextSession));
         setMessagesForSession(id, nextMessages);
         setMessageLimitBySession((prev) => ({ ...prev, [id]: INITIAL_SESSION_MESSAGE_LIMIT }));
         setMessageCompleteBySession((prev) => ({ ...prev, [id]: nextMessages.length < INITIAL_SESSION_MESSAGE_LIMIT }));
@@ -1138,11 +1135,7 @@ export function createSessionStore(options: {
         if (record.info && typeof record.info === "object") {
           const info = record.info as Session;
           rememberSession(info);
-          setStore("sessions", (current) => {
-            const tracked = current.some((session) => session.id === info.id);
-            if (info.parentID && !tracked) return current;
-            return upsertSession(current, info);
-          });
+          setStore("sessions", (current) => upsertSession(current, info));
         }
       }
     }
@@ -1194,11 +1187,7 @@ export function createSessionStore(options: {
             try {
               const latest = unwrap(await c.session.get({ sessionID }));
               rememberSession(latest);
-              setStore("sessions", (current) => {
-                const tracked = current.some((session) => session.id === latest.id);
-                if (latest.parentID && !tracked) return current;
-                return upsertSession(current, latest);
-              });
+              setStore("sessions", (current) => upsertSession(current, latest));
             } catch {
               // ignore
             }
