@@ -30,6 +30,11 @@ Auto-detection can exist as a convenience, but should be tiered and explainable:
 
 The readiness check should be a clear, single command (e.g. `docker info`) and the UI should show the exact error output when it fails.
 
+## Minimal use of Tauri
+We move most of the functionality to the openwork server which interfaces mostly with FS and proxies to opencode.
+
+
+
 ## Filesystem mutation policy
 
 OpenWork should route filesystem mutations through the OpenWork server whenever possible.
@@ -46,6 +51,36 @@ Guidelines:
 - Local Tauri filesystem commands are a host-mode fallback, not the primary product surface.
 - If a feature cannot yet write through the OpenWork server, treat that as an architecture gap and close it before depending on direct local writes.
 - Reads can fall back locally when necessary, but writes should be designed around the OpenWork server path.
+
+## Agent authority map
+
+When OpenWork is edited from `openwork-enterprise`, architecture and runtime behavior should be sourced from this document.
+
+| Entry point | Role | Architecture authority |
+| --- | --- | --- |
+| `openwork-enterprise/AGENTS.md` | OpenWork Factory multi-repo orchestration | Defers OpenWork runtime flow, server-vs-shell ownership, and filesystem mutation behavior to `_repos/openwork/ARCHITECTURE.md`. |
+| `openwork-enterprise/.opencode/agents/openwork-surgeon.md` | Surgical fix agent for `_repos/openwork` | Uses `_repos/openwork/ARCHITECTURE.md` as the runtime and architecture source of truth before changing product behavior. |
+| `_repos/openwork/AGENTS.md` | Product vocabulary, audience, and repo-local development guidance | Refers to `ARCHITECTURE.md` for runtime flow, server ownership, and architectural boundaries. |
+| Skills / commands / agents that mutate workspace state | Capability layer on top of the product runtime | Should assume the OpenWork server path is canonical for workspace creation, config writes, `.opencode/` mutation, and reload signaling. |
+
+### Agent access to server-owned behavior
+
+Agents, skills, and commands should model the following as OpenWork server behavior first:
+
+- workspace creation and initialization
+- writes to `.opencode/`, `opencode.json`, and `opencode.jsonc`
+- OpenWork workspace config writes (`.opencode/openwork.json`)
+- reload event generation after config or capability changes
+- other filesystem-backed capability changes that must work across desktop host mode and remote clients
+
+Tauri or other native shell behavior remains the fallback or shell boundary for:
+
+- file and folder picking
+- reveal/open-in-OS affordances
+- updater and window management
+- host-side process supervision and native runtime bootstrapping
+
+If an agent needs one of the server-owned behaviors above and only a Tauri path exists, treat that as an architecture gap to close rather than a parallel capability surface to preserve.
 
 ## opencode primitives
 how to pick the right extension abstraction for 
