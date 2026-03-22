@@ -55,10 +55,6 @@ use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
-#[cfg(not(target_os = "macos"))]
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-#[cfg(not(target_os = "macos"))]
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
 
@@ -126,48 +122,6 @@ fn hide_main_window(app_handle: &AppHandle) {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn setup_tray(_app: &mut tauri::App) -> tauri::Result<()> {
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let show_item = MenuItemBuilder::with_id("tray-show", "Show OpenWork").build(app)?;
-    let quit_item = MenuItemBuilder::with_id("tray-quit", "Quit OpenWork").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&show_item, &quit_item])
-        .build()?;
-
-    let mut tray = TrayIconBuilder::with_id("main-tray")
-        .menu(&menu)
-        .tooltip("OpenWork")
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "tray-show" => show_main_window(app),
-            "tray-quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main_window(tray.app_handle());
-            }
-        });
-
-    if let Some(icon) = app.default_window_icon().cloned() {
-        tray = tray.icon(icon);
-    }
-
-    let tray = tray.build(app)?;
-    app.manage(tray);
-    Ok(())
-}
-
 fn stop_managed_services(app_handle: &tauri::AppHandle) {
     if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
         EngineManager::stop_locked(&mut engine);
@@ -201,9 +155,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
 
     let app = builder
-        .setup(|app| {
+        .setup(|_| {
             set_dev_app_name();
-            setup_tray(app)?;
             Ok(())
         })
         .manage(EngineManager::default())
@@ -280,6 +233,7 @@ pub fn run() {
     // orchestrator/opencode/openwork-server processes and stale ports.
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
+        #[cfg(target_os = "macos")]
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::CloseRequested { api, .. },
