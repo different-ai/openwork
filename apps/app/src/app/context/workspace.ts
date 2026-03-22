@@ -28,6 +28,7 @@ import {
   OpenworkServerError,
   type OpenworkServerClient,
   type OpenworkServerSettings,
+  type OpenworkServerStatus,
   type OpenworkWorkspaceInfo,
 } from "../lib/openwork-server";
 import { downloadDir, homeDir } from "@tauri-apps/api/path";
@@ -145,6 +146,8 @@ export function createWorkspaceStore(options: {
   openworkServerSettings: () => OpenworkServerSettings;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   openworkServerClient?: () => OpenworkServerClient | null;
+  openworkServerStatus?: () => OpenworkServerStatus;
+  openworkServerWorkspaceId?: () => string | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -326,6 +329,21 @@ export function createWorkspaceStore(options: {
 
   const syncActiveWorkspaceId = (id: string) => {
     setActiveWorkspaceId(id);
+  };
+
+  const applyServerLocalWorkspaces = (nextLocals: WorkspaceInfo[], nextActiveId: string | null | undefined) => {
+    const remotes = workspaces().filter((workspace) => workspace.workspaceType === "remote");
+    const merged = [...nextLocals, ...remotes];
+    setWorkspaces(merged);
+
+    const currentActiveId = activeWorkspaceId();
+    const fallbackActiveId = merged.some((workspace) => workspace.id === currentActiveId)
+      ? currentActiveId
+      : merged[0]?.id ?? "";
+    const resolvedActiveId = nextActiveId?.trim() || fallbackActiveId;
+    if (resolvedActiveId) {
+      syncActiveWorkspaceId(resolvedActiveId);
+    }
   };
 
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
@@ -554,18 +572,55 @@ export function createWorkspaceStore(options: {
     return resolved;
   };
 
-  const activateOpenworkHostWorkspace = async (workspacePath: string) => {
+  const resolveConnectedOpenworkServer = () => {
     const client = options.openworkServerClient?.();
-    if (!client) return;
+    if (!client) return null;
+    if (options.openworkServerStatus?.() !== "connected") return null;
+    return client;
+  };
+
+  const resolveActiveOpenworkWorkspace = () => {
+    const client = resolveConnectedOpenworkServer();
+    const workspaceId = options.openworkServerWorkspaceId?.()?.trim() ?? "";
+    if (!client || !workspaceId) return null;
+    return { client, workspaceId };
+  };
+
+  const findOpenworkWorkspaceByPath = async (workspacePath: string) => {
+    const client = resolveConnectedOpenworkServer();
     const targetPath = normalizeDirectoryPath(workspacePath);
-    if (!targetPath) return;
+    if (!client || !targetPath) return null;
+
+    const response = await client.listWorkspaces();
+    const items = Array.isArray(response.items) ? response.items : [];
+    const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+    if (!match?.id) return null;
+    return { client, workspaceId: match.id, response };
+  };
+
+  const loadWorkspaceConfigFromOpenworkServer = async (workspacePath: string): Promise<WorkspaceOpenworkConfig | null> => {
+    const resolved = await findOpenworkWorkspaceByPath(workspacePath);
+    if (!resolved) return null;
+    if (resolved.response.activeId !== resolved.workspaceId) {
+      await resolved.client.activateWorkspace(resolved.workspaceId);
+    }
+    const config = await resolved.client.getConfig(resolved.workspaceId);
+    return (config.openwork as WorkspaceOpenworkConfig | null | undefined) ?? null;
+  };
+
+  const persistWorkspaceConfigToOpenworkServer = async (config: WorkspaceOpenworkConfig): Promise<boolean> => {
+    const active = resolveActiveOpenworkWorkspace();
+    if (!active) return false;
+    await active.client.patchConfig(active.workspaceId, { openwork: config as Record<string, unknown> });
+    return true;
+  };
+
+  const activateOpenworkHostWorkspace = async (workspacePath: string) => {
+    const resolved = await findOpenworkWorkspaceByPath(workspacePath);
+    if (!resolved) return;
     try {
-      const response = await client.listWorkspaces();
-      const items = Array.isArray(response.items) ? response.items : [];
-      const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
-      if (!match?.id) return;
-      if (response.activeId === match.id) return;
-      await client.activateWorkspace(match.id);
+      if (resolved.response.activeId === resolved.workspaceId) return;
+      await resolved.client.activateWorkspace(resolved.workspaceId);
     } catch {
       // ignore
     }
@@ -994,7 +1049,8 @@ export function createWorkspaceStore(options: {
       } else {
         setWorkspaceConfigLoaded(false);
         try {
-          const cfg = await workspaceOpenworkRead({ workspacePath: next.path });
+          const cfg = await loadWorkspaceConfigFromOpenworkServer(next.path)
+            ?? await workspaceOpenworkRead({ workspacePath: next.path });
           setWorkspaceConfig(cfg);
           setWorkspaceConfigLoaded(true);
 
@@ -1012,6 +1068,9 @@ export function createWorkspaceStore(options: {
       }
 
       try {
+        if (!isRemote) {
+          await activateOpenworkHostWorkspace(next.path);
+        }
         await workspaceSetActive(id);
       } catch {
         // ignore
@@ -1489,9 +1548,20 @@ export function createWorkspaceStore(options: {
       }
 
       const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
-      const ws = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
-      setWorkspaces(ws.workspaces);
-      syncActiveWorkspaceId(ws.activeId);
+      const openworkServer = resolveConnectedOpenworkServer();
+      const ws = openworkServer
+        ? await openworkServer.createLocalWorkspace({ folderPath: resolvedFolder, name, preset })
+        : await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+
+      if (openworkServer && isTauriRuntime()) {
+        try {
+          await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+        } catch {
+          // keep the server result as the source of truth for this run
+        }
+      }
+
+      applyServerLocalWorkspaces(ws.workspaces, ws.activeId);
       if (ws.activeId) {
         updateWorkspaceConnectionState(ws.activeId, { status: "connected", message: null });
       }
@@ -1605,18 +1675,39 @@ export function createWorkspaceStore(options: {
       pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
 
       // Ensure the workspace folder has baseline OpenWork/OpenCode files.
-      const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
-      setWorkspaces(created.workspaces);
-      syncActiveWorkspaceId(created.activeId);
+      const openworkServer = resolveConnectedOpenworkServer();
+      const created = openworkServer
+        ? await openworkServer.createLocalWorkspace({ folderPath: resolvedFolder, name, preset })
+        : await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+      if (openworkServer && isTauriRuntime()) {
+        try {
+          await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+        } catch {
+          // ignore desktop mirror failures here
+        }
+      }
+      applyServerLocalWorkspaces(created.workspaces, created.activeId);
       setSandboxStep("workspace", { status: "done", detail: null });
 
       // Remove the local workspace entry to avoid duplicate Local+Remote rows.
       const localId = created.activeId;
       if (localId) {
         pushSandboxCreateLog("Removing local worker row (will re-add as remote sandbox)...");
-        const forgotten = await workspaceForget(localId);
-        setWorkspaces(forgotten.workspaces);
-        syncActiveWorkspaceId(forgotten.activeId);
+        const activeLocalWorkspace = openworkServer ? await findOpenworkWorkspaceByPath(resolvedFolder) : null;
+        const forgotten = await (activeLocalWorkspace
+          ? (() => activeLocalWorkspace.client.deleteWorkspace(activeLocalWorkspace.workspaceId).then((response) => ({
+              activeId: response.activeId ?? "",
+              workspaces: response.workspaces ?? response.items,
+            })))()
+          : workspaceForget(localId));
+        if (activeLocalWorkspace && isTauriRuntime()) {
+          try {
+            await workspaceForget(localId);
+          } catch {
+            // ignore desktop mirror failures here
+          }
+        }
+        applyServerLocalWorkspaces(forgotten.workspaces, forgotten.activeId);
       }
 
       setSandboxStep("sandbox", { status: "active", detail: null });
@@ -2130,15 +2221,38 @@ export function createWorkspaceStore(options: {
 
     const id = workspaceId.trim();
     if (!id) return;
+    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
 
     console.log("[workspace] forget", { id });
 
     try {
       const previousActive = activeWorkspaceId();
-      const ws = await workspaceForget(id);
-      setWorkspaces(ws.workspaces);
+      const openworkWorkspace = workspace?.workspaceType === "local" ? await findOpenworkWorkspaceByPath(workspace.path) : null;
+      const ws = openworkWorkspace
+        ? await openworkWorkspace.client.deleteWorkspace(openworkWorkspace.workspaceId).then((response) => ({
+            activeId: response.activeId ?? "",
+            workspaces: response.workspaces ?? response.items,
+          }))
+        : await workspaceForget(id);
+
+      if (openworkWorkspace && isTauriRuntime()) {
+        try {
+          await workspaceForget(id);
+        } catch {
+          // ignore desktop mirror failures here
+        }
+      }
+
+      if (openworkWorkspace) {
+        applyServerLocalWorkspaces(ws.workspaces, ws.activeId);
+      } else {
+        setWorkspaces(ws.workspaces);
+      }
       clearWorkspaceConnectionState(id);
-      syncActiveWorkspaceId(ws.activeId);
+
+      if (!openworkWorkspace) {
+        syncActiveWorkspaceId(ws.activeId);
+      }
 
       const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
       if (active) {
@@ -2661,6 +2775,32 @@ export function createWorkspaceStore(options: {
     const nextDisplayName = displayName?.trim() || null;
     options.setError(null);
 
+    const openworkWorkspace = workspace.workspaceType === "local"
+      ? await findOpenworkWorkspaceByPath(workspace.path)
+      : null;
+
+    if (openworkWorkspace) {
+      try {
+        const ws = await openworkWorkspace.client.updateWorkspaceDisplayName(openworkWorkspace.workspaceId, nextDisplayName);
+        if (isTauriRuntime()) {
+          try {
+            await workspaceUpdateDisplayName({ workspaceId: id, displayName: nextDisplayName });
+          } catch {
+            // ignore desktop mirror failures here
+          }
+        }
+        applyServerLocalWorkspaces(ws.workspaces, ws.activeId);
+        if (ws.activeId) {
+          updateWorkspaceConnectionState(ws.activeId, { status: "connected", message: null });
+        }
+        return true;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        options.setError(addOpencodeCacheHint(message));
+        return false;
+      }
+    }
+
     if (isTauriRuntime()) {
       try {
         const ws = await workspaceUpdateDisplayName({ workspaceId: id, displayName: nextDisplayName });
@@ -2912,7 +3052,10 @@ export function createWorkspaceStore(options: {
       reload: existing?.reload ?? null,
     };
 
-    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    const persistedViaServer = await persistWorkspaceConfigToOpenworkServer(cfg).catch(() => false);
+    if (!persistedViaServer) {
+      await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    }
     setWorkspaceConfig(cfg);
   }
 
@@ -2933,7 +3076,10 @@ export function createWorkspaceStore(options: {
       },
     };
 
-    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    const persistedViaServer = await persistWorkspaceConfigToOpenworkServer(cfg).catch(() => false);
+    if (!persistedViaServer) {
+      await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    }
     setWorkspaceConfig(cfg);
   }
 

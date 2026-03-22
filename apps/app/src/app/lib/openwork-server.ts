@@ -1,6 +1,6 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
-import type { ScheduledJob } from "./tauri";
+import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./tauri";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -88,13 +88,7 @@ export type OpenworkServerSettings = {
   token?: string;
 };
 
-export type OpenworkWorkspaceInfo = {
-  id: string;
-  name: string;
-  path: string;
-  workspaceType: "local" | "remote";
-  baseUrl?: string;
-  directory?: string;
+export type OpenworkWorkspaceInfo = WorkspaceInfo & {
   opencode?: {
     baseUrl?: string;
     directory?: string;
@@ -105,6 +99,7 @@ export type OpenworkWorkspaceInfo = {
 
 export type OpenworkWorkspaceList = {
   items: OpenworkWorkspaceInfo[];
+  workspaces?: WorkspaceInfo[];
   activeId?: string | null;
 };
 
@@ -1216,6 +1211,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     opencodeRouterSlackIdentities: () =>
       requestJsonRaw<OpenworkOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/opencode-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
+      requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload,
+        timeoutMs: timeouts.activateWorkspace,
+      }),
+    updateWorkspaceDisplayName: (workspaceId: string, displayName: string | null) =>
+      requestJson<WorkspaceList>(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/display-name`, {
+        token,
+        hostToken,
+        method: "PATCH",
+        body: { displayName },
+        timeoutMs: timeouts.activateWorkspace,
+      }),
     activateWorkspace: (workspaceId: string) =>
       requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo }>(
         baseUrl,
@@ -1223,7 +1234,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
       ),
     deleteWorkspace: (workspaceId: string) =>
-      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[] }>(
+      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[]; workspaces?: WorkspaceInfo[] }>(
         baseUrl,
         `/workspaces/${encodeURIComponent(workspaceId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
@@ -1473,6 +1484,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "PATCH",
         body: payload,
+      }),
+    readOpencodeConfigFile: (workspaceId: string, scope: "project" | "global" = "project") => {
+      const query = `?scope=${scope}`;
+      return requestJson<OpencodeConfigFile>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-config${query}`, {
+        token,
+        hostToken,
+      });
+    },
+    writeOpencodeConfigFile: (workspaceId: string, scope: "project" | "global", content: string) =>
+      requestJson<ExecResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-config`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: { scope, content },
       }),
     listReloadEvents: (workspaceId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${options.since}` : "";

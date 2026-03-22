@@ -3023,6 +3023,8 @@ export default function App() {
     openworkServerSettings,
     updateOpenworkServerSettings,
     openworkServerClient,
+    openworkServerStatus,
+    openworkServerWorkspaceId,
     onEngineStable: () => {},
     engineRuntime,
     developerMode,
@@ -3518,7 +3520,7 @@ export default function App() {
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
           const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
-          setOpenworkServerWorkspaceId(match?.id ?? response.activeId ?? null);
+          setOpenworkServerWorkspaceId(match?.id ?? null);
         } catch {
           if (!cancelled) setOpenworkServerWorkspaceId(null);
         }
@@ -3608,7 +3610,7 @@ export default function App() {
   };
 
   const findSharedBundleImportWorkspaceId = (
-    items: Array<{ id: string; path?: string; directory?: string; opencode?: { directory?: string } }>,
+    items: Array<{ id: string; path?: string | null; directory?: string | null; opencode?: { directory?: string | null } }>,
     target?: SharedBundleImportTarget,
   ) => {
     const explicitId = target?.workspaceId?.trim() ?? "";
@@ -4903,8 +4905,6 @@ export default function App() {
 
   // Scheduler helpers - must be defined after workspaceStore
   const resolveOpenworkScheduler = () => {
-    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
-    if (!isRemoteWorkspace) return null;
     const client = openworkServerClient();
     const workspaceId = openworkServerWorkspaceId();
     if (openworkServerStatus() !== "connected" || !client || !workspaceId) return null;
@@ -4912,7 +4912,7 @@ export default function App() {
   };
 
   const scheduledJobsSource = createMemo<"local" | "remote">(() => {
-    return workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
+    return resolveOpenworkScheduler() ? "remote" : "local";
   });
 
   const scheduledJobsSourceReady = createMemo(() => {
@@ -5619,6 +5619,25 @@ export default function App() {
       setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
     }
   }
+
+  const readMcpConfigFile = async (scope: "project" | "global") => {
+    const projectDir = workspaceProjectDir().trim();
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      resolvedOpenworkCapabilities()?.config?.read;
+
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+      return openworkClient.readOpencodeConfigFile(openworkWorkspaceId, scope);
+    }
+    if (!isTauriRuntime()) {
+      return null;
+    }
+    return readOpencodeConfig(scope, projectDir);
+  };
 
   async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
     const startedAt = perfNow();
@@ -7391,6 +7410,7 @@ export default function App() {
       mcpConnectingName: mcpConnectingName(),
       selectedMcp: selectedMcp(),
       setSelectedMcp,
+      readConfigFile: readMcpConfigFile,
       quickConnect: MCP_QUICK_CONNECT,
       connectMcp,
       authorizeMcp,
