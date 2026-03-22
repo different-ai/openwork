@@ -49,7 +49,9 @@ const env = {
   ...windowsBuildEnv,
   OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE || "1",
   OPENWORK_DATA_DIR:
-    process.env.OPENWORK_DATA_DIR || `${homedir()}${process.platform === "win32" ? "\\" : "/"}.openwork${process.platform === "win32" ? "\\" : "/"}openwork-orchestrator-dev`,
+    process.env.OPENWORK_DATA_DIR ||
+    `${homedir()}${process.platform === "win32" ? "\\" : "/"}.openwork${process.platform === "win32" ? "\\" : "/"}openwork-orchestrator-dev`,
+  OPENWORK_USE_COREPACK_PNPM: "1",
   PORT: String(resolvedPort),
   ...(tauriTarget
     ? {
