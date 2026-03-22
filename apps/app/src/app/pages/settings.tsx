@@ -1521,7 +1521,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     </div>
                   }
                 >
-                  <div class="flex flex-col overflow-hidden rounded-xl border border-gray-5/60 bg-white/50 shadow-sm dark:bg-gray-1/50">
+                  <div class="flex flex-col overflow-hidden rounded-xl border border-gray-5/60 bg-gray-1/50 shadow-sm">
                     <Show when={props.authorizedFoldersHint}>
                       {(hint) => (
                         <div class="bg-gray-2/60 px-3 py-2 text-[11px] text-gray-10 border-b border-gray-5/40">
@@ -1603,7 +1603,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     >
                       <div class="relative flex-1">
                         <input
-                          class="w-full rounded-lg border border-gray-5/60 bg-white px-3 py-1.5 text-xs text-gray-12 placeholder:text-gray-8 focus:outline-none focus:ring-2 focus:ring-blue-7/30 dark:bg-gray-2 disabled:opacity-50"
+                          class="w-full rounded-lg border border-gray-5/60 bg-gray-1 px-3 py-1.5 text-xs text-gray-12 placeholder:text-gray-8 focus:outline-none focus:ring-2 focus:ring-blue-7/30 disabled:opacity-50"
                           value={props.authorizedFolderDraft}
                           onInput={(event) =>
                             props.setAuthorizedFolderDraft(event.currentTarget.value)
@@ -1624,7 +1624,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         <Button
                           type="button"
                           variant="outline"
-                          class="h-8 px-3 text-xs bg-white dark:bg-gray-2"
+                          class="h-8 px-3 text-xs bg-gray-1 hover:bg-gray-2"
                           onClick={() => void props.pickAuthorizedFolder()}
                           disabled={
                             props.authorizedFoldersLoading ||
@@ -1639,7 +1639,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <Button
                         type="submit"
                         variant="primary"
-                        class="h-8 px-3 text-xs bg-gray-12 text-gray-1 hover:bg-gray-11 dark:bg-gray-3 dark:text-gray-12 dark:hover:bg-gray-4 border border-transparent dark:border-gray-5"
+                        class="h-8 px-3 text-xs bg-gray-3 text-gray-12 hover:bg-gray-4 border border-gray-5/60"
                         disabled={
                           props.authorizedFoldersLoading ||
                           props.authorizedFoldersSaving ||
