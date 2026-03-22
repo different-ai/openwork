@@ -46,8 +46,8 @@ export default function CreateRemoteWorkspaceModal(props: {
     if (submitting()) return false;
     return openworkHostUrl().trim().length > 0;
   });
-  const fieldLabelClass = "px-0.5 text-[0.67rem] font-bold uppercase tracking-[0.11em] text-dls-secondary";
-  const fieldHintClass = "px-0.5 text-[0.72rem] leading-5 text-dls-secondary";
+  const fieldLabelClass = "px-0.5 text-[13px] font-medium text-dls-text";
+  const fieldHintClass = "px-0.5 text-[12px] leading-5 text-dls-secondary";
   const fieldInputClass =
     "w-full rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-sm text-dls-text outline-none transition placeholder:text-dls-secondary focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.12)]";
 
@@ -93,28 +93,23 @@ export default function CreateRemoteWorkspaceModal(props: {
                 <Globe size={18} />
               </div>
               <div class="min-w-0">
-                <div class="text-[15px] font-semibold text-dls-text">{translate("dashboard.remote_workspace_title")}</div>
-                <div class="mt-1 text-sm leading-6 text-dls-secondary">{translate("dashboard.remote_workspace_hint")}</div>
+                <div class="text-[16px] font-semibold text-dls-text">Connect in a minute.</div>
+                <div class="mt-1 text-sm leading-6 text-dls-secondary">Paste your server URL, add a token if needed, and save it as a workspace.</div>
               </div>
             </div>
             <div class="mt-4 grid gap-2">
               <div class="flex items-start gap-3 text-[13px] leading-6 text-dls-secondary">
                 <span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
-                Use the server URL shared by your OpenWork server.
+                Use the URL shared by your OpenWork server.
               </div>
               <div class="flex items-start gap-3 text-[13px] leading-6 text-dls-secondary">
                 <span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
-                Add a collaborator or owner token when the server requires authenticated access.
+                Add a collaborator or owner token when the server asks for one.
               </div>
             </div>
           </div>
 
           <div class="grid gap-4 rounded-[24px] border border-dls-border bg-dls-surface p-5">
-            <div class="grid gap-1">
-              <div class="text-[0.67rem] font-bold uppercase tracking-[0.11em] text-dls-secondary">Required</div>
-              <div class="text-sm text-dls-secondary">Add the connection details your remote OpenWork server gave you.</div>
-            </div>
-
             <label class="grid gap-2">
               <span class={fieldLabelClass}>{translate("dashboard.openwork_host_label")}</span>
               <input
@@ -151,38 +146,33 @@ export default function CreateRemoteWorkspaceModal(props: {
               </div>
               <span class={fieldHintClass}>{translate("dashboard.openwork_host_token_hint")}</span>
             </label>
-          </div>
 
-          <div class="grid gap-4 rounded-[24px] border border-dls-border bg-dls-sidebar p-5">
-            <div class="grid gap-1">
-              <div class="text-[0.67rem] font-bold uppercase tracking-[0.11em] text-dls-secondary">Optional</div>
-              <div class="text-sm text-dls-secondary">Tune how this remote workspace appears once it is saved locally.</div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="grid gap-2">
+                <span class={fieldLabelClass}>{translate("dashboard.remote_directory_label")}</span>
+                <input
+                  type="text"
+                  value={directory()}
+                  onInput={(event) => setDirectory(event.currentTarget.value)}
+                  placeholder={translate("dashboard.remote_directory_placeholder")}
+                  disabled={submitting()}
+                  class={fieldInputClass}
+                />
+                <span class={fieldHintClass}>{translate("dashboard.remote_directory_hint")}</span>
+              </label>
+
+              <label class="grid gap-2">
+                <span class={fieldLabelClass}>{translate("dashboard.remote_display_name_label")}</span>
+                <input
+                  type="text"
+                  value={displayName()}
+                  onInput={(event) => setDisplayName(event.currentTarget.value)}
+                  placeholder={translate("dashboard.remote_display_name_placeholder")}
+                  disabled={submitting()}
+                  class={fieldInputClass}
+                />
+              </label>
             </div>
-
-            <label class="grid gap-2">
-              <span class={fieldLabelClass}>{translate("dashboard.remote_directory_label")}</span>
-              <input
-                type="text"
-                value={directory()}
-                onInput={(event) => setDirectory(event.currentTarget.value)}
-                placeholder={translate("dashboard.remote_directory_placeholder")}
-                disabled={submitting()}
-                class={fieldInputClass}
-              />
-              <span class={fieldHintClass}>{translate("dashboard.remote_directory_hint")}</span>
-            </label>
-
-            <label class="grid gap-2">
-              <span class={fieldLabelClass}>{translate("dashboard.remote_display_name_label")}</span>
-              <input
-                type="text"
-                value={displayName()}
-                onInput={(event) => setDisplayName(event.currentTarget.value)}
-                placeholder={translate("dashboard.remote_display_name_placeholder")}
-                disabled={submitting()}
-                class={fieldInputClass}
-              />
-            </label>
           </div>
         </div>
       </div>
