@@ -27,6 +27,7 @@ import {
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import { abortSessionSafe } from "../lib/opencode-session";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 
@@ -67,9 +68,13 @@ const sortSessionsByActivity = (list: Session[]) =>
 
 const SYNTHETIC_CONTINUE_CONTROL_PATTERN =
   /^\s*continue if you have next steps,\s*or stop and ask for clarification if you are unsure how to proceed\.?\s*$/i;
+const SYNTHETIC_TASK_SUMMARY_CONTROL_PATTERN =
+  /^\s*summarize the task tool output above and continue with your task\.?\s*$/i;
 const COMPACTION_DIAGNOSTIC_WINDOW_MS = 60_000;
 const COMPACTION_LOOP_WARN_THRESHOLD = 3;
 const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
+const SYNTHETIC_TASK_SUMMARY_LOOP_ABORT_THRESHOLD = 5;
+const SYNTHETIC_CONTROL_LOOP_ABORT_MIN_INTERVAL_MS = 30_000;
 const INITIAL_SESSION_MESSAGE_LIMIT = 140;
 const SESSION_MESSAGE_LOAD_CHUNK = 120;
 
@@ -201,7 +206,9 @@ export function createSessionStore(options: {
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
+  const syntheticTaskSummaryEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
+  const syntheticLoopLastAbortAtByKey = new Map<string, number>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -423,6 +430,16 @@ export function createSessionStore(options: {
     return SYNTHETIC_CONTINUE_CONTROL_PATTERN.test(text);
   };
 
+  const isSyntheticTaskSummaryControlPart = (part: Part) => {
+    if (part.type !== "text") return false;
+    const record = part as Part & { text?: unknown; synthetic?: unknown; ignored?: unknown };
+    if (record.synthetic !== true) return false;
+    if (record.ignored === true) return false;
+    const text = typeof record.text === "string" ? record.text.trim() : "";
+    if (!text) return false;
+    return SYNTHETIC_TASK_SUMMARY_CONTROL_PATTERN.test(text);
+  };
+
   const recordSyntheticContinueDiagnostic = (part: Part) => {
     if (!isSyntheticContinueControlPart(part)) return;
     const sessionID = part.sessionID;
@@ -459,6 +476,25 @@ export function createSessionStore(options: {
     });
   };
 
+  const recordSyntheticTaskSummaryDiagnostic = (part: Part) => {
+    if (!isSyntheticTaskSummaryControlPart(part)) return;
+    const sessionID = part.sessionID;
+    const now = Date.now();
+    const windowStart = now - COMPACTION_DIAGNOSTIC_WINDOW_MS;
+    const previous = syntheticTaskSummaryEventTimesBySession.get(sessionID) ?? [];
+    const next = previous.filter((timestamp) => timestamp >= windowStart);
+    next.push(now);
+    syntheticTaskSummaryEventTimesBySession.set(sessionID, next);
+
+    recordPerfLog(sessionDebugEnabled(), "session.task", "synthetic-task-summary-control", {
+      sessionID,
+      messageID: part.messageID,
+      partID: part.id,
+      countPerMinute: next.length,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
+  };
+
   const addError = (error: unknown, fallback = "Unknown error") => {
     const message = error instanceof Error ? error.message : fallback;
     if (!message) return;
@@ -486,6 +522,66 @@ export function createSessionStore(options: {
         afterMessageID,
         time: Date.now(),
       });
+    });
+  };
+
+  const maybeAbortSyntheticControlLoop = (part: Part) => {
+    const sessionID = part.sessionID;
+    if (!sessionID) return;
+
+    const kind = isSyntheticTaskSummaryControlPart(part)
+      ? "task-summary"
+      : isSyntheticContinueControlPart(part)
+        ? "compaction-continue"
+        : null;
+    if (!kind) return;
+
+    const events =
+      kind === "task-summary"
+        ? syntheticTaskSummaryEventTimesBySession.get(sessionID) ?? []
+        : syntheticContinueEventTimesBySession.get(sessionID) ?? [];
+    const threshold =
+      kind === "task-summary"
+        ? SYNTHETIC_TASK_SUMMARY_LOOP_ABORT_THRESHOLD
+        : COMPACTION_LOOP_WARN_THRESHOLD;
+    if (events.length < threshold) return;
+
+    const key = `${kind}:${sessionID}`;
+    const now = Date.now();
+    const lastAbortAt = syntheticLoopLastAbortAtByKey.get(key) ?? 0;
+    if (now - lastAbortAt < SYNTHETIC_CONTROL_LOOP_ABORT_MIN_INTERVAL_MS) return;
+    syntheticLoopLastAbortAtByKey.set(key, now);
+
+    const message =
+      kind === "task-summary"
+        ? "OpenWork stopped this run after detecting a likely synthetic task-summary loop. The engine kept asking itself to summarize task output and continue, which can repeat Goal/Instructions/Discoveries summaries without making progress."
+        : "OpenWork stopped this run after detecting a likely auto-compaction continuation loop. The engine kept injecting synthetic continue prompts after compaction, which can burn tokens without advancing the task.";
+
+    sessionWarn("session.synthetic-loop.abort", {
+      sessionID,
+      kind,
+      countPerMinute: events.length,
+    });
+    recordPerfLog(sessionDebugEnabled(), "session.loop", "abort-suspected-synthetic-loop", {
+      sessionID,
+      kind,
+      countPerMinute: events.length,
+      threshold,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
+
+    const c = options.client();
+    if (!c) {
+      appendSessionErrorTurn(sessionID, message);
+      options.setError(message);
+      setStore("sessionStatus", sessionID, "idle");
+      return;
+    }
+
+    void abortSessionSafe(c, sessionID).finally(() => {
+      appendSessionErrorTurn(sessionID, message);
+      options.setError(message);
+      setStore("sessionStatus", sessionID, "idle");
     });
   };
 
@@ -1146,7 +1242,10 @@ export function createSessionStore(options: {
         const info = record.info as Session | undefined;
         if (info?.id) {
           syntheticContinueEventTimesBySession.delete(info.id);
+          syntheticTaskSummaryEventTimesBySession.delete(info.id);
           syntheticContinueLoopLastWarnAtBySession.delete(info.id);
+          syntheticLoopLastAbortAtByKey.delete(`task-summary:${info.id}`);
+          syntheticLoopLastAbortAtByKey.delete(`compaction-continue:${info.id}`);
           setStore(
             produce((draft: StoreState) => {
               delete draft.sessionInfoById[info.id];
@@ -1307,6 +1406,8 @@ export function createSessionStore(options: {
             store.parts[part.messageID]?.find((item) => item.id === part.id) ??
             part;
           recordSyntheticContinueDiagnostic(resolvedPart);
+          recordSyntheticTaskSummaryDiagnostic(resolvedPart);
+          maybeAbortSyntheticControlLoop(resolvedPart);
           const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
           if (sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
             const textLength =
