@@ -7412,6 +7412,7 @@ export default function App() {
     anyActiveRuns: anyActiveRuns(),
     installUpdateAndRestart,
     selectedSessionModelLabel: selectedSessionModelLabel(),
+    selectedProviderID: selectedSessionModel().providerID,
     openSessionModelPicker: openSessionModelPicker,
     modelVariantLabel: getModelBehaviorCopy(selectedSessionModel(), modelVariant()).label,
     modelVariant: modelVariant(),

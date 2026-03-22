@@ -8,6 +8,14 @@
 
 ## Story-book proof
 
+### Composer preview
+
+![Composer model button](./screenshots/model-behavior-composer-story-book.png)
+
+Verified:
+- The active model and its reasoning profile are clearly displayed right above the input.
+- Added provider icons (OpenAI, Anthropic, or 2-letter fallbacks) for quick visual scanning.
+
 ### Settings preview
 
 ![Model behavior settings card](./screenshots/model-behavior-settings-story-book.png)

@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
+import ProviderIcon from "../provider-icon";
 import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
@@ -29,6 +30,7 @@ type ComposerProps = {
   onSend: (draft: ComposerDraft) => void;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
+  selectedProviderID: string;
   selectedModelLabel: string;
   onModelClick: () => void;
   modelVariantLabel: string;
@@ -1892,19 +1894,19 @@ export default function Composer(props: ComposerProps) {
 
                         <button
                           type="button"
-
                           class="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
                           onClick={props.onModelClick}
                           disabled={props.busy}
                         >
-                          <span class="md:hidden">{compactModelLabel()}</span>
-                          <span class="hidden min-w-0 md:flex md:flex-col md:items-start">
+                          <ProviderIcon providerId={props.selectedProviderID} size={16} class="text-gray-11" />
+                          <span class="md:hidden truncate ml-0.5">{compactModelLabel()}</span>
+                          <span class="hidden min-w-0 md:flex md:flex-col md:items-start ml-0.5">
                             <span class="truncate leading-tight">{props.selectedModelLabel}</span>
                             <span class="truncate text-[11px] font-normal text-gray-9 leading-tight">
                               {props.modelVariantLabel}
                             </span>
                           </span>
-                          <ChevronDown size={14} class="shrink-0" />
+                          <ChevronDown size={14} class="shrink-0 ml-0.5" />
                         </button>
                       </div>
                       <div class="ml-auto flex shrink-0 items-center gap-3 text-gray-10">

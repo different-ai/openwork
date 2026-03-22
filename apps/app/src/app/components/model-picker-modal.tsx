@@ -4,6 +4,7 @@ import { CheckCircle2, Circle, Search, X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import Button from "./button";
+import ProviderIcon from "./provider-icon";
 import { modelEquals } from "../utils";
 import type { ModelOption, ModelRef } from "../types";
 
@@ -199,10 +200,14 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
           });
         }}
       >
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <div class="text-sm font-medium text-gray-12 flex items-center gap-2">
+        <div class="flex items-start gap-3">
+          <ProviderIcon providerId={opt.providerID} size={18} class="mt-0.5 text-gray-12" />
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-gray-12 flex items-center justify-between gap-2">
               <span class="truncate">{opt.title}</span>
+              <Show when={active()} fallback={<Circle size={14} class="text-gray-10" />}>
+                <CheckCircle2 size={14} class="text-green-11" />
+              </Show>
             </div>
             <div class="mt-1 flex items-center gap-3 text-xs text-gray-10">
               <span class="truncate">{opt.description ?? opt.providerID}</span>
@@ -219,43 +224,31 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               </span>
               <span class="text-gray-10">{opt.behaviorLabel}</span>
             </div>
-            <div class="mt-1 text-[11px] text-gray-8">{opt.behaviorDescription}</div>
             <Show when={active() && (opt.behaviorOptions?.length ?? 0) > 0}>
-              <div class="mt-3 rounded-xl border border-gray-6/60 bg-gray-1/50 px-3 py-3">
-                <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-8">
-                  Behavior for this model
-                </div>
-                <div class="mt-2 flex flex-wrap gap-2">
-                  <For each={opt.behaviorOptions}>
-                    {(option) => (
-                      <button
-                        type="button"
-                        class={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
-                          opt.behaviorValue === option.value
-                            ? "border-gray-8 bg-gray-12 text-gray-1"
-                            : "border-gray-6/70 bg-gray-1/80 text-gray-11 hover:bg-gray-2"
-                        }`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          props.onBehaviorChange(
-                            { providerID: opt.providerID, modelID: opt.modelID },
-                            option.value,
-                          );
-                        }}
-                      >
-                        {option.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
+              <div class="mt-3 flex flex-wrap gap-2">
+                <For each={opt.behaviorOptions}>
+                  {(option) => (
+                    <button
+                      type="button"
+                      class={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                        opt.behaviorValue === option.value
+                          ? "border-gray-8 bg-gray-12 text-gray-1"
+                          : "border-gray-6/70 bg-gray-1/80 text-gray-11 hover:bg-gray-2"
+                      }`}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        props.onBehaviorChange(
+                          { providerID: opt.providerID, modelID: opt.modelID },
+                          option.value,
+                        );
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  )}
+                </For>
               </div>
-            </Show>
-          </div>
-
-          <div class="pt-0.5 text-gray-10">
-            <Show when={active()} fallback={<Circle size={14} />}>
-              <CheckCircle2 size={14} class="text-green-11" />
             </Show>
           </div>
         </div>
@@ -281,8 +274,9 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         props.onOpenSettings();
       }}
     >
-      <div class="flex items-center justify-between gap-3">
-        <div class="min-w-0">
+      <div class="flex items-center gap-3">
+        <ProviderIcon providerId={provider.providerID} size={18} class="text-gray-12" />
+        <div class="flex-1 min-w-0">
           <div class="text-sm font-medium text-gray-12 truncate">{provider.title}</div>
           <div class="mt-1 text-xs text-gray-10">Connect this provider to browse and save models</div>
         </div>
