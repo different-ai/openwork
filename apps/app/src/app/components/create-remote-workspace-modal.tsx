@@ -68,10 +68,10 @@ export default function CreateRemoteWorkspaceModal(props: {
   });
 
   const content = (
-    <div class="flex max-h-[90vh] w-full max-w-[600px] flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface">
+    <div class="flex max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface">
       <div class="flex items-start justify-between gap-4 border-b border-dls-border bg-dls-surface px-6 py-5">
         <div class="min-w-0">
-          <h3 class="text-[20px] font-semibold tracking-[-0.02em] text-dls-text">{title()}</h3>
+          <h3 class="text-[18px] font-semibold text-dls-text">{title()}</h3>
           <p class="mt-1 text-sm text-dls-secondary">{subtitle()}</p>
         </div>
         <Show when={showClose()}>
@@ -86,30 +86,18 @@ export default function CreateRemoteWorkspaceModal(props: {
       </div>
 
       <div class="flex-1 overflow-y-auto px-6 py-6">
-        <div class="grid gap-5">
-          <div class="rounded-[24px] border border-dls-border bg-dls-sidebar p-5">
-            <div class="flex items-start gap-4">
-              <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-surface text-dls-text">
-                <Globe size={18} />
-              </div>
-              <div class="min-w-0">
-                <div class="text-[16px] font-semibold text-dls-text">Connect in a minute.</div>
-                <div class="mt-1 text-sm leading-6 text-dls-secondary">Paste your server URL, add a token if needed, and save it as a workspace.</div>
-              </div>
+        <div class="rounded-xl border border-dls-border bg-dls-sidebar px-5 py-4">
+          <div class="mb-4 flex items-start gap-3">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-surface text-dls-text">
+              <Globe size={17} />
             </div>
-            <div class="mt-4 grid gap-2">
-              <div class="flex items-start gap-3 text-[13px] leading-6 text-dls-secondary">
-                <span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
-                Use the URL shared by your OpenWork server.
-              </div>
-              <div class="flex items-start gap-3 text-[13px] leading-6 text-dls-secondary">
-                <span class="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
-                Add a collaborator or owner token when the server asks for one.
-              </div>
+            <div class="min-w-0">
+              <div class="text-[15px] font-semibold text-dls-text">Remote server details</div>
+              <div class="mt-1 text-[13px] leading-6 text-dls-secondary">Use the URL your OpenWork server shared with you. Add a token only if the server needs one.</div>
             </div>
           </div>
 
-          <div class="grid gap-4 rounded-[24px] border border-dls-border bg-dls-surface p-5">
+          <div class="grid gap-4">
             <label class="grid gap-2">
               <span class={fieldLabelClass}>{translate("dashboard.openwork_host_label")}</span>
               <input
