@@ -2449,6 +2449,35 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  function joinNativePath(base: string, leaf: string) {
+    const trimmedBase = base.replace(/[\\/]+$/, "");
+    if (!trimmedBase) return leaf;
+    const separator = trimmedBase.includes("\\") ? "\\" : "/";
+    return `${trimmedBase}${separator}${leaf}`;
+  }
+
+  async function quickStartWorkspaceFlow() {
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return false;
+    }
+
+    try {
+      const base = (await homeDir()).replace(/[\\/]+$/, "");
+      return await createWorkspaceFlow("starter", joinNativePath(base, "OpenWork"));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+      return false;
+    }
+  }
+
+  async function createWorkspaceFromPickedFolder() {
+    const folder = await pickWorkspaceFolder();
+    if (!folder) return false;
+    return createWorkspaceFlow("minimal", folder);
+  }
+
   async function exportWorkspaceConfig(workspaceId?: string) {
     if (exportingWorkspaceConfig()) return;
     if (!isTauriRuntime()) {
@@ -3376,6 +3405,8 @@ export function createWorkspaceStore(options: {
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
+    quickStartWorkspaceFlow,
+    createWorkspaceFromPickedFolder,
     createSandboxFlow,
     createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow,
