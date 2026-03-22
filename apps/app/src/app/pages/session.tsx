@@ -4581,6 +4581,10 @@ export default function SessionView(props: SessionViewProps) {
               props.setTab("mcp");
               props.setView("dashboard");
             }}
+            onOpenMessaging={() => {
+              props.setTab("identities");
+              props.setView("dashboard");
+            }}
             onOpenAdvanced={openConfig}
             onOpenSettings={() => openSettings("general")}
             onInboxToast={(message) => setToastMessage(message)}
@@ -4614,6 +4618,10 @@ export default function SessionView(props: SessionViewProps) {
             }}
             onOpenExtensions={() => {
               props.setTab("mcp");
+              props.setView("dashboard");
+            }}
+            onOpenMessaging={() => {
+              props.setTab("identities");
               props.setView("dashboard");
             }}
             onOpenAdvanced={openConfig}

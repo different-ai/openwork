@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   History,
+  MessageCircle,
   Settings,
   SlidersHorizontal,
   X,
@@ -30,6 +31,7 @@ type Props = {
   onOpenAutomations: () => void;
   onOpenSkills: () => void;
   onOpenExtensions: () => void;
+  onOpenMessaging: () => void;
   onOpenAdvanced: () => void;
   onOpenSettings: () => void;
   onInboxToast?: (message: string) => void;
@@ -116,6 +118,12 @@ export default function WorkspaceRightSidebar(props: Props) {
             <Box size={18} />,
             showSelection() && (props.tab === "mcp" || props.tab === "plugins"),
             props.onOpenExtensions,
+          )}
+          {sidebarButton(
+            "Messaging",
+            <MessageCircle size={18} />,
+            showSelection() && props.tab === "identities",
+            props.onOpenMessaging,
           )}
           <Show when={props.developerMode}>
             {sidebarButton(

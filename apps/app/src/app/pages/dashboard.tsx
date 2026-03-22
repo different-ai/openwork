@@ -1628,6 +1628,7 @@ export default function DashboardView(props: DashboardViewProps) {
           onOpenAutomations={() => props.setTab("scheduled")}
           onOpenSkills={() => props.setTab("skills")}
           onOpenExtensions={() => props.setTab("mcp")}
+          onOpenMessaging={() => props.setTab("identities")}
           onOpenAdvanced={openConfig}
           onOpenSettings={() => openSettings("general")}
         />
@@ -1652,6 +1653,7 @@ export default function DashboardView(props: DashboardViewProps) {
           onOpenAutomations={() => props.setTab("scheduled")}
           onOpenSkills={() => props.setTab("skills")}
           onOpenExtensions={() => props.setTab("mcp")}
+          onOpenMessaging={() => props.setTab("identities")}
           onOpenAdvanced={openConfig}
           onOpenSettings={() => openSettings("general")}
         />

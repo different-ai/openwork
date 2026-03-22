@@ -9,7 +9,7 @@ import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plu
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
-import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
+import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
@@ -3948,6 +3948,9 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   const authorized = await isAuthorizedRoot(resolvedWorkspace, config.authorizedRoots);
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
+  }
+  if (!config.readOnly) {
+    await repairCommands(resolvedWorkspace);
   }
   return { ...workspace, path: resolvedWorkspace };
 }
