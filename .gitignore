@@ -51,4 +51,3 @@ vendor/opencode/
 .vercel
 .env*.local
 .claude/*
-.gstack/
