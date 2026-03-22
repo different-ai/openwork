@@ -1,5 +1,7 @@
 export type WorkspaceType = "local" | "remote";
 
+export type RemoteType = "opencode" | "openwork";
+
 export type ApprovalMode = "manual" | "auto";
 
 export type TokenScope = "owner" | "collaborator" | "viewer";
@@ -11,11 +13,22 @@ export type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine"
 export type LogFormat = "pretty" | "json";
 
 export interface WorkspaceConfig {
+  id?: string;
   path: string;
   name?: string;
+  preset?: string;
   workspaceType?: WorkspaceType;
+  remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;
+  displayName?: string;
+  openworkHostUrl?: string;
+  openworkToken?: string;
+  openworkWorkspaceId?: string;
+  openworkWorkspaceName?: string;
+  sandboxBackend?: string;
+  sandboxRunId?: string;
+  sandboxContainerName?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
 }
@@ -24,9 +37,19 @@ export interface WorkspaceInfo {
   id: string;
   name: string;
   path: string;
+  preset: string;
   workspaceType: WorkspaceType;
+  remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;
+  displayName?: string;
+  openworkHostUrl?: string;
+  openworkToken?: string;
+  openworkWorkspaceId?: string;
+  openworkWorkspaceName?: string;
+  sandboxBackend?: string;
+  sandboxRunId?: string;
+  sandboxContainerName?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   opencode?: {
@@ -35,6 +58,12 @@ export interface WorkspaceInfo {
     username?: string;
     password?: string;
   };
+}
+
+export interface OpencodeConfigFile {
+  path: string;
+  exists: boolean;
+  content: string | null;
 }
 
 export interface ApprovalConfig {
