@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const pnpmCmd = process.platform === "win32" ? "corepack.cmd" : "pnpm";
+const pnpmArgs = process.platform === "win32" ? ["pnpm"] : [];
 
 const readPort = () => {
   const value = Number.parseInt(process.env.PORT ?? "", 10);
@@ -193,7 +194,7 @@ const ensureLinuxDesktopDependencies = () => {
 };
 
 const runUiDevServer = () => {
-  const child = spawn(pnpmCmd, ["-w", "dev:ui"], {
+  const child = spawn(pnpmCmd, [...pnpmArgs, "-w", "dev:ui"], {
     stdio: "inherit",
     shell: process.platform === "win32",
     detached: process.platform !== "win32",

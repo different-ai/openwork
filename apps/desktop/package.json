@@ -5,7 +5,7 @@
   "opencodeRouterVersion": "0.11.181",
   "type": "module",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
+    "dev": "node ./scripts/dev.mjs",
     "build": "tauri build",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
