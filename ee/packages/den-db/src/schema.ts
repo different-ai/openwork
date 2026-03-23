@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm"
 import {
+  bigint,
   boolean,
+  int,
   index,
   json,
   mysqlEnum,
@@ -97,10 +99,22 @@ export const AuthVerificationTable = mysqlTable(
   (table) => [index("verification_identifier").on(table.identifier)],
 )
 
+export const RateLimitTable = mysqlTable(
+  "rate_limit",
+  {
+    id: varchar("id", { length: 255 }).notNull().primaryKey(),
+    key: varchar("key", { length: 512 }).notNull(),
+    count: int("count").notNull().default(0),
+    lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+  },
+  (table) => [uniqueIndex("rate_limit_key").on(table.key)],
+)
+
 export const user = AuthUserTable
 export const session = AuthSessionTable
 export const account = AuthAccountTable
 export const verification = AuthVerificationTable
+export const rateLimit = RateLimitTable
 
 export const DesktopHandoffGrantTable = mysqlTable(
   "desktop_handoff_grant",

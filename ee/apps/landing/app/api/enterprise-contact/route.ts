@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server";
+import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
 
 type ContactPayload = {
   fullName?: string;
   companyEmail?: string;
   message?: string;
+  website?: string;
+  startedAt?: number | string;
 };
 
 const LOOPS_CONTACTS_API_URL = "https://app.loops.so/api/v1/contacts/update";
@@ -83,27 +85,57 @@ function deriveCompanyFromEmail(email: string) {
 }
 
 export async function POST(request: Request) {
+  const originCheck = validateTrustedOrigin(request);
+  if (!originCheck.ok) {
+    return jsonResponse(request, { error: originCheck.error }, originCheck.status);
+  }
+
+  const rateLimit = rateLimitFormRequest(request, "enterprise-contact");
+  if (!rateLimit.ok) {
+    return new Response(JSON.stringify({ error: "Contact form is temporarily rate limited." }), {
+      status: 429,
+      headers: {
+        ...buildResponseHeaders(request),
+        "X-Retry-After": String(rateLimit.retryAfterSeconds),
+      },
+    });
+  }
+
+  const botProtection = await verifyFormBotProtection();
+  if (!botProtection.ok) {
+    return jsonResponse(request, { error: botProtection.error }, botProtection.status);
+  }
+
   const apiKey = process.env.LOOPS_API_KEY?.trim();
   if (!apiKey) {
-    return NextResponse.json(
+    return jsonResponse(request,
       { error: "Loops is not configured on this deployment." },
-      { status: 500 }
+      500
     );
   }
 
   let payload: ContactPayload;
   try {
-    payload = (await request.json()) as ContactPayload;
+    const raw = await request.text();
+    if (raw.length > 6000) {
+      return jsonResponse(request, { error: "Request payload is too large." }, 413);
+    }
+    payload = JSON.parse(raw) as ContactPayload;
   } catch {
-    return NextResponse.json(
+    return jsonResponse(request,
       { error: "Invalid request payload." },
-      { status: 400 }
+      400
     );
+  }
+
+  const antiSpam = validateAntiSpamFields(payload);
+  if (!antiSpam.ok) {
+    return jsonResponse(request, { error: antiSpam.error }, antiSpam.status);
   }
 
   const validated = validatePayload(payload);
   if ("error" in validated) {
-    return NextResponse.json({ error: validated.error }, { status: 400 });
+    return jsonResponse(request, { error: validated.error }, 400);
   }
 
   const { firstName, lastName } = splitName(validated.fullName);
@@ -140,7 +172,7 @@ export async function POST(request: Request) {
       // Ignore invalid error payloads from upstream and return a generic message.
     }
 
-    return NextResponse.json({ error: detail }, { status: 502 });
+    return jsonResponse(request, { error: detail }, 502);
   }
 
   const eventResponse = await fetch(LOOPS_EVENTS_API_URL, {
@@ -179,8 +211,8 @@ export async function POST(request: Request) {
       // Ignore invalid error payloads from upstream and return a generic message.
     }
 
-    return NextResponse.json({ error: detail }, { status: 502 });
+    return jsonResponse(request, { error: detail }, 502);
   }
 
-  return NextResponse.json({ ok: true });
+  return jsonResponse(request, { ok: true });
 }

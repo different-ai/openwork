@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@paper-design/shaders-react": "0.0.71",
+    "botid": "^1.5.11",
     "framer-motion": "^12.35.1",
     "lucide-react": "^0.577.0",
     "next": "14.2.5",

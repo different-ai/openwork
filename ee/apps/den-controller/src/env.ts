@@ -15,6 +15,7 @@ const schema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   LOOPS_API_KEY: z.string().optional(),
+  LOOPS_TRANSACTIONAL_ID_DEN_VERIFY_EMAIL: z.string().optional(),
   PORT: z.string().optional(),
   WORKER_PROXY_PORT: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
@@ -159,6 +160,7 @@ export const env = {
   },
   loops: {
     apiKey: optionalString(parsed.LOOPS_API_KEY),
+    transactionalIdDenVerifyEmail: optionalString(parsed.LOOPS_TRANSACTIONAL_ID_DEN_VERIFY_EMAIL),
   },
   port: Number(parsed.PORT ?? "8788"),
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),

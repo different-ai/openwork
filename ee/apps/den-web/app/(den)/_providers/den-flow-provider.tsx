@@ -62,6 +62,9 @@ type DenFlowContextValue = {
   setEmail: (value: string) => void;
   password: string;
   setPassword: (value: string) => void;
+  verificationCode: string;
+  setVerificationCode: (value: string) => void;
+  verificationRequired: boolean;
   authBusy: boolean;
   authInfo: string;
   authError: string | null;
@@ -73,6 +76,9 @@ type DenFlowContextValue = {
   desktopRedirectBusy: boolean;
   showAuthFeedback: boolean;
   submitAuth: (event: FormEvent<HTMLFormElement>) => Promise<"dashboard" | "checkout" | null>;
+  submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<"dashboard" | "checkout" | null>;
+  resendVerificationCode: () => Promise<void>;
+  cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
   signOut: () => Promise<void>;
   resolveUserLandingRoute: () => Promise<"/dashboard" | "/checkout" | null>;
@@ -154,6 +160,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [authMode, setAuthModeState] = useState<AuthMode>("sign-up");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationRequired, setVerificationRequired] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
   const [authError, setAuthError] = useState<string | null>(null);
@@ -313,8 +321,189 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   function setAuthMode(mode: AuthMode) {
     setAuthModeState(mode);
+    setVerificationRequired(false);
+    setVerificationCode("");
     setAuthInfo(getAuthInfoForMode(mode));
     setAuthError(null);
+  }
+
+  function openVerificationStep(targetEmail: string, message?: string) {
+    setVerificationRequired(true);
+    setVerificationCode("");
+    setAuthInfo(message ?? `Enter the 6-digit code we sent to ${targetEmail}.`);
+    setAuthError(null);
+  }
+
+  function cancelVerification() {
+    setVerificationRequired(false);
+    setVerificationCode("");
+    setAuthInfo(getAuthInfoForMode(authMode));
+    setAuthError(null);
+  }
+
+  async function finalizeEmailPasswordSignIn(
+    nextMode: AuthMode,
+    trimmedEmail: string,
+    payloadOverride?: unknown,
+  ): Promise<"dashboard" | "checkout" | null> {
+    let payload = payloadOverride;
+
+    if (payload === undefined) {
+      const signInBody = {
+        email: trimmedEmail,
+        password,
+      };
+
+      const signInResult = await requestJson("/api/auth/sign-in/email", {
+        method: "POST",
+        body: JSON.stringify(signInBody)
+      });
+
+      if (!signInResult.response.ok) {
+        setAuthError(getErrorMessage(signInResult.payload, `Authentication failed with ${signInResult.response.status}.`));
+        trackPosthogEvent("den_auth_failed", {
+          mode: nextMode,
+          method: "email",
+          status: signInResult.response.status
+        });
+        return null;
+      }
+
+      payload = signInResult.payload;
+    }
+
+    const token = getToken(payload);
+    if (token) {
+      setAuthToken(token);
+    }
+
+    let authenticatedUser: AuthUser | null = null;
+    const payloadUser = getUser(payload);
+    if (payloadUser) {
+      authenticatedUser = payloadUser;
+      setUser(payloadUser);
+      setAuthInfo(`Signed in as ${payloadUser.email}.`);
+      appendEvent("success", nextMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
+    } else {
+      const refreshed = await refreshSession(true);
+      if (refreshed) {
+        authenticatedUser = refreshed;
+        appendEvent("success", nextMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
+      } else {
+        setAuthInfo("Authentication succeeded, but session details are still syncing.");
+      }
+    }
+
+    if (authenticatedUser) {
+      identifyPosthogUser(authenticatedUser);
+      const analyticsPayload = {
+        mode: nextMode,
+        method: "email",
+        email_domain: getEmailDomain(authenticatedUser.email)
+      };
+
+      if (nextMode === "sign-up") {
+        trackPosthogEvent("den_signup_completed", analyticsPayload);
+      } else {
+        trackPosthogEvent("den_signin_completed", analyticsPayload);
+      }
+    }
+
+    if (desktopAuthRequested) {
+      setAuthInfo("Signed in. Returning to OpenWork...");
+      return null;
+    }
+
+    if (authenticatedUser && nextMode === "sign-up") {
+      return await beginSignupOnboarding(authenticatedUser, "email");
+    }
+
+    return "dashboard" as const;
+  }
+
+  async function resendVerificationCode() {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setAuthError("Enter your email before requesting a verification code.");
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const { response, payload } = await requestJson("/api/auth/email-otp/send-verification-otp", {
+        method: "POST",
+        body: JSON.stringify({
+          email: trimmedEmail,
+          type: "email-verification"
+        })
+      });
+
+      if (!response.ok) {
+        setAuthError(getErrorMessage(payload, `Could not resend the code (${response.status}).`));
+        return;
+      }
+
+      setAuthInfo(`We sent a fresh verification code to ${trimmedEmail}.`);
+      appendEvent("info", "Verification code resent", trimmedEmail);
+      trackPosthogEvent("den_signup_verification_sent", {
+        method: "email",
+        email_domain: getEmailDomain(trimmedEmail),
+      });
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Could not resend the verification code.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function submitVerificationCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
+    const otp = verificationCode.trim();
+    if (!trimmedEmail || !otp) {
+      setAuthError("Enter the verification code from your email.");
+      return null;
+    }
+
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const { response, payload } = await requestJson("/api/auth/email-otp/verify-email", {
+        method: "POST",
+        body: JSON.stringify({
+          email: trimmedEmail,
+          otp,
+        })
+      });
+
+      if (!response.ok) {
+        setAuthError(getErrorMessage(payload, `Verification failed with ${response.status}.`));
+        trackPosthogEvent("den_auth_failed", {
+          mode: authMode,
+          method: "email",
+          status: response.status,
+          reason: "verification_failed"
+        });
+        return null;
+      }
+
+      setVerificationRequired(false);
+      setVerificationCode("");
+      setAuthInfo(`Email verified for ${trimmedEmail}. Finishing sign-in...`);
+      appendEvent("success", "Email verified", trimmedEmail);
+      trackPosthogEvent("den_email_verified", {
+        method: "email",
+        email_domain: getEmailDomain(trimmedEmail),
+      });
+
+      return await finalizeEmailPasswordSignIn(authMode, trimmedEmail, payload);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Verification failed.");
+      return null;
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function withResolvedOpenworkCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
@@ -841,6 +1030,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
+        if (response.status === 403) {
+          openVerificationStep(trimmedEmail, `Enter the 6-digit code we sent to ${trimmedEmail} to finish verifying your email.`);
+        }
         setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
@@ -851,52 +1043,18 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
 
       const token = getToken(payload);
-      if (token) {
-        setAuthToken(token);
-      }
 
-      let authenticatedUser: AuthUser | null = null;
-      const payloadUser = getUser(payload);
-      if (payloadUser) {
-        authenticatedUser = payloadUser;
-        setUser(payloadUser);
-        setAuthInfo(`Signed in as ${payloadUser.email}.`);
-        appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
-      } else {
-        const refreshed = await refreshSession(true);
-        if (refreshed) {
-          authenticatedUser = refreshed;
-          appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
-        } else {
-          setAuthInfo("Authentication succeeded, but session details are still syncing.");
-        }
-      }
-
-      if (authenticatedUser) {
-        identifyPosthogUser(authenticatedUser);
-        const analyticsPayload = {
-          mode: authMode,
+      if (authMode === "sign-up" && !token) {
+        setUser(null);
+        openVerificationStep(trimmedEmail, `We emailed a 6-digit verification code to ${trimmedEmail}. Enter it below to finish creating your account.`);
+        appendEvent("info", "Verification code sent", trimmedEmail);
+        trackPosthogEvent("den_signup_verification_sent", {
           method: "email",
-          email_domain: getEmailDomain(authenticatedUser.email)
-        };
-
-        if (authMode === "sign-up") {
-          trackPosthogEvent("den_signup_completed", analyticsPayload);
-        } else {
-          trackPosthogEvent("den_signin_completed", analyticsPayload);
-        }
-      }
-
-      if (desktopAuthRequested) {
-        setAuthInfo("Signed in. Returning to OpenWork...");
+          email_domain: getEmailDomain(trimmedEmail),
+        });
         return null;
       }
-
-      if (authenticatedUser && authMode === "sign-up") {
-        return await beginSignupOnboarding(authenticatedUser, "email");
-      }
-
-      return "dashboard" as const;
+      return await finalizeEmailPasswordSignIn(authMode, trimmedEmail);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
@@ -1739,6 +1897,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setEmail,
     password,
     setPassword,
+    verificationCode,
+    setVerificationCode,
+    verificationRequired,
     authBusy,
     authInfo,
     authError,
@@ -1750,6 +1911,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     desktopRedirectBusy,
     showAuthFeedback,
     submitAuth,
+    submitVerificationCode,
+    resendVerificationCode,
+    cancelVerification,
     beginSocialAuth,
     signOut,
     resolveUserLandingRoute,

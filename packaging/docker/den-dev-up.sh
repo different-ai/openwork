@@ -115,6 +115,7 @@ append_origin() {
 
 DEV_ID="$(node -e "console.log(require('crypto').randomUUID().slice(0, 8))")"
 PROJECT="openwork-den-dev-$DEV_ID"
+DEN_WATCH_OTP_CODES="${DEN_WATCH_OTP_CODES:-1}"
 
 DEN_API_PORT="${DEN_API_PORT:-$(pick_port)}"
 DEN_WEB_PORT="${DEN_WEB_PORT:-$(pick_port)}"
@@ -166,6 +167,27 @@ fi
 mkdir -p "$RUNTIME_DIR"
 RUNTIME_FILE="$ROOT_DIR/tmp/.den-dev-env-$DEV_ID"
 
+start_otp_log_watch() {
+  if [ "$DEN_WATCH_OTP_CODES" != "1" ]; then
+    return
+  fi
+
+  (
+    docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs -f --since=1s den 2>&1 | while IFS= read -r line; do
+      case "$line" in
+        *"[auth] dev verification code for "*)
+          if [[ "$line" == *" | "* ]]; then
+            line="${line#* | }"
+          fi
+          printf '\n[den otp] %s\n' "$line" >&2
+          ;;
+      esac
+    done
+  ) &
+
+  OTP_LOG_PID=$!
+}
+
 cat > "$RUNTIME_FILE" <<EOF
 PROJECT=$PROJECT
 DEN_API_PORT=$DEN_API_PORT
@@ -181,6 +203,7 @@ DEN_WORKER_PROXY_PUBLIC_URL=http://$PUBLIC_HOST:$DEN_WORKER_PROXY_PORT
 DEN_MYSQL_URL=mysql://root:password@127.0.0.1:$DEN_MYSQL_PORT/openwork_den
 DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL
 COMPOSE_FILE=$COMPOSE_FILE
+DEN_WATCH_OTP_CODES=$DEN_WATCH_OTP_CODES
 EOF
 
 echo "Starting Docker Compose project: $PROJECT" >&2
@@ -190,6 +213,7 @@ echo "- DEN_WORKER_PROXY_PORT=$DEN_WORKER_PROXY_PORT" >&2
 echo "- DEN_MYSQL_PORT=$DEN_MYSQL_PORT" >&2
 echo "- DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL" >&2
 echo "- DEN_PROVISIONER_MODE=$DEN_PROVISIONER_MODE" >&2
+echo "- OTP verification codes will stream back to this terminal" >&2
 if [ "$DEN_PROVISIONER_MODE" = "daytona" ]; then
   echo "- DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}" >&2
   if [ -n "${DAYTONA_TARGET:-}" ]; then
@@ -216,6 +240,13 @@ if ! DEN_API_PORT="$DEN_API_PORT" \
   echo "Den Docker stack failed to start. Recent logs:" >&2
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --tail=200 >&2 || true
   exit 1
+fi
+
+OTP_LOG_PID=""
+start_otp_log_watch
+
+if [ -n "$OTP_LOG_PID" ]; then
+  printf 'OTP_LOG_PID=%s\n' "$OTP_LOG_PID" >> "$RUNTIME_FILE"
 fi
 
 echo "" >&2
@@ -246,6 +277,11 @@ fi
 echo "MySQL:                 mysql://root:password@127.0.0.1:$DEN_MYSQL_PORT/openwork_den" >&2
 echo "Health check:          http://localhost:$DEN_API_PORT/health" >&2
 echo "Runtime env file:      $RUNTIME_FILE" >&2
+if [ -n "$OTP_LOG_PID" ]; then
+  echo "OTP watch:             active in this terminal (PID $OTP_LOG_PID)" >&2
+  echo "Stop OTP watch only:   kill $OTP_LOG_PID" >&2
+  echo "                        export DEN_WATCH_OTP_CODES=0 to disable" >&2
+fi
 echo "" >&2
 echo "To stop this stack (keep DB data):" >&2
 echo "  docker compose -p $PROJECT -f $COMPOSE_FILE down" >&2

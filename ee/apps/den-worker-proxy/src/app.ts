@@ -1,8 +1,9 @@
 import "./load-env.js"
 import { Daytona } from "@daytonaio/sdk"
 import { Hono } from "hono"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { createDenDb, DaytonaSandboxTable } from "@openwork-ee/den-db"
+import { createHash } from "node:crypto"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { createDenDb, DaytonaSandboxTable, RateLimitTable, WorkerTokenTable } from "@openwork-ee/den-db"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "./env.js"
 
@@ -14,6 +15,9 @@ const { db } = createDenDb({
 const app = new Hono()
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
 const signedPreviewRefreshLeadMs = 5 * 60 * 1000
+const anonymousReadRateLimit = { windowMs: 60_000, max: 60 }
+const authenticatedReadRateLimit = { windowMs: 60_000, max: 240 }
+const authenticatedWriteRateLimit = { windowMs: 60_000, max: 60 }
 const publicCorsAllowMethods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 const publicCorsAllowHeaders = [
   "Authorization",
@@ -25,6 +29,9 @@ const publicCorsAllowHeaders = [
   "x-opencode-directory",
 ]
 type WorkerId = typeof DaytonaSandboxTable.$inferSelect.worker_id
+type WorkerTokenScope = typeof WorkerTokenTable.$inferSelect.scope
+
+const refreshPromises = new Map<WorkerId, Promise<string | null>>()
 
 function assertDaytonaConfig() {
   if (!env.daytona.apiKey) {
@@ -79,6 +86,132 @@ function stripProxyHeaders(input: Headers) {
   return headers
 }
 
+function hashRateLimitId(key: string) {
+  return createHash("sha256").update(key).digest("hex")
+}
+
+function readClientIp(request: Request) {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+  const realIp = request.headers.get("x-real-ip")?.trim()
+  return forwarded || realIp || "unknown"
+}
+
+function readBearerToken(request: Request) {
+  const header = request.headers.get("authorization")?.trim() ?? ""
+  if (!header.toLowerCase().startsWith("bearer ")) {
+    return null
+  }
+  const token = header.slice(7).trim()
+  return token || null
+}
+
+async function consumeRateLimit(input: {
+  key: string
+  max: number
+  windowMs: number
+}) {
+  const now = Date.now()
+  const rows = await db
+    .select({ count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
+    .from(RateLimitTable)
+    .where(eq(RateLimitTable.key, input.key))
+    .limit(1)
+
+  const current = rows[0] ?? null
+  if (!current) {
+    await db.insert(RateLimitTable).values({
+      id: hashRateLimitId(input.key),
+      key: input.key,
+      count: 1,
+      lastRequest: now,
+    })
+    return { allowed: true as const, retryAfterSeconds: 0 }
+  }
+
+  const elapsedMs = Math.max(0, now - current.lastRequest)
+  if (elapsedMs >= input.windowMs) {
+    await db
+      .update(RateLimitTable)
+      .set({ count: 1, lastRequest: now })
+      .where(eq(RateLimitTable.key, input.key))
+    return { allowed: true as const, retryAfterSeconds: 0 }
+  }
+
+  if (current.count >= input.max) {
+    return {
+      allowed: false as const,
+      retryAfterSeconds: Math.max(1, Math.ceil((input.windowMs - elapsedMs) / 1000)),
+    }
+  }
+
+  await db
+    .update(RateLimitTable)
+    .set({ count: current.count + 1, lastRequest: now })
+    .where(eq(RateLimitTable.key, input.key))
+
+  return { allowed: true as const, retryAfterSeconds: 0 }
+}
+
+async function resolveWorkerTokenScope(workerId: WorkerId, request: Request): Promise<WorkerTokenScope | "invalid" | null> {
+  const hostToken = request.headers.get("x-openwork-host-token")?.trim() || null
+  const bearerToken = readBearerToken(request)
+  const candidateTokens: Array<{ token: string; requiredScope: WorkerTokenScope | null }> = []
+  if (hostToken) {
+    candidateTokens.push({ token: hostToken, requiredScope: "host" })
+  }
+  if (bearerToken) {
+    candidateTokens.push({ token: bearerToken, requiredScope: null })
+  }
+
+  if (candidateTokens.length === 0) {
+    return null
+  }
+
+  for (const candidate of candidateTokens) {
+    const filters = [
+      eq(WorkerTokenTable.worker_id, workerId),
+      eq(WorkerTokenTable.token, candidate.token),
+      isNull(WorkerTokenTable.revoked_at),
+    ]
+    if (candidate.requiredScope) {
+      filters.push(eq(WorkerTokenTable.scope, candidate.requiredScope))
+    }
+
+    const rows = await db
+      .select({ scope: WorkerTokenTable.scope })
+      .from(WorkerTokenTable)
+      .where(and(...filters))
+      .limit(1)
+
+    if (rows[0]?.scope) {
+      return rows[0].scope
+    }
+  }
+
+  return "invalid"
+}
+
+async function enforceProxyRateLimit(input: {
+  workerId: WorkerId
+  request: Request
+  tokenScope: WorkerTokenScope | null
+}) {
+  const method = input.request.method.toUpperCase()
+  const ip = readClientIp(input.request)
+  const authState = input.tokenScope ?? "anonymous"
+  const limit = method === "GET" || method === "HEAD"
+    ? input.tokenScope
+      ? authenticatedReadRateLimit
+      : anonymousReadRateLimit
+    : authenticatedWriteRateLimit
+
+  return consumeRateLimit({
+    key: `worker-proxy:${input.workerId}:${authState}:${method}:${ip}`,
+    max: limit.max,
+    windowMs: limit.windowMs,
+  })
+}
+
 function targetUrl(baseUrl: string, requestUrl: string, workerId: WorkerId) {
   const current = new URL(requestUrl)
   const suffix = current.pathname.slice(`/${encodeURIComponent(workerId)}`.length) || "/"
@@ -101,23 +234,38 @@ async function getSignedPreviewUrl(workerId: WorkerId) {
     return record.signed_preview_url
   }
 
-  const daytona = createDaytonaClient()
-  const sandbox = await daytona.get(record.sandbox_id)
-  await sandbox.refreshData()
+  const existingRefresh = refreshPromises.get(workerId)
+  if (existingRefresh) {
+    return existingRefresh
+  }
 
-  const expiresInSeconds = normalizedSignedPreviewExpirySeconds()
-  const preview = await sandbox.getSignedPreviewUrl(env.daytona.openworkPort, expiresInSeconds)
+  const refreshPromise = (async () => {
+    const daytona = createDaytonaClient()
+    const sandbox = await daytona.get(record.sandbox_id)
+    await sandbox.refreshData()
 
-  await db
-    .update(DaytonaSandboxTable)
-    .set({
-      signed_preview_url: preview.url,
-      signed_preview_url_expires_at: signedPreviewRefreshAt(expiresInSeconds),
-      region: sandbox.target,
-    })
-    .where(eq(DaytonaSandboxTable.worker_id, workerId))
+    const expiresInSeconds = normalizedSignedPreviewExpirySeconds()
+    const preview = await sandbox.getSignedPreviewUrl(env.daytona.openworkPort, expiresInSeconds)
 
-  return preview.url
+    await db
+      .update(DaytonaSandboxTable)
+      .set({
+        signed_preview_url: preview.url,
+        signed_preview_url_expires_at: signedPreviewRefreshAt(expiresInSeconds),
+        region: sandbox.target,
+      })
+      .where(eq(DaytonaSandboxTable.worker_id, workerId))
+
+    return preview.url
+  })()
+
+  refreshPromises.set(workerId, refreshPromise)
+
+  try {
+    return await refreshPromise
+  } finally {
+    refreshPromises.delete(workerId)
+  }
 }
 
 async function proxyRequest(workerId: WorkerId, request: Request) {
@@ -208,7 +356,37 @@ app.all("*", async (c) => {
   }
 
   try {
-    return proxyRequest(normalizeDenTypeId("worker", workerId), c.req.raw)
+    const normalizedWorkerId = normalizeDenTypeId("worker", workerId)
+    const tokenScope = await resolveWorkerTokenScope(normalizedWorkerId, c.req.raw)
+    const isWriteMethod = !["GET", "HEAD", "OPTIONS"].includes(c.req.method.toUpperCase())
+
+    if (tokenScope === "invalid" || (isWriteMethod && !tokenScope)) {
+      const headers = new Headers({ "Content-Type": "application/json" })
+      noCacheHeaders(headers)
+      applyPublicCorsHeaders(headers, c.req.raw)
+      return new Response(JSON.stringify({ error: "worker_proxy_unauthorized" }), {
+        status: 401,
+        headers,
+      })
+    }
+
+    const rateLimit = await enforceProxyRateLimit({
+      workerId: normalizedWorkerId,
+      request: c.req.raw,
+      tokenScope,
+    })
+    if (!rateLimit.allowed) {
+      const headers = new Headers({ "Content-Type": "application/json" })
+      headers.set("X-Retry-After", String(rateLimit.retryAfterSeconds))
+      noCacheHeaders(headers)
+      applyPublicCorsHeaders(headers, c.req.raw)
+      return new Response(JSON.stringify({ error: "worker_proxy_rate_limited" }), {
+        status: 429,
+        headers,
+      })
+    }
+
+    return proxyRequest(normalizedWorkerId, c.req.raw)
   } catch {
     const headers = new Headers({ "Content-Type": "application/json" })
     noCacheHeaders(headers)

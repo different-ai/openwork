@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
+import { BotIdClient } from "botid/client";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -31,6 +32,11 @@ export const metadata = {
   }
 };
 
+const protectedRoutes = [
+  { path: "/api/enterprise-contact", method: "POST" as const },
+  { path: "/api/app-feedback", method: "POST" as const },
+];
+
 export default function RootLayout({
   children
 }: {
@@ -39,6 +45,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
+        <BotIdClient protect={protectedRoutes} />
         <Script
           id="posthog"
           strategy="beforeInteractive"

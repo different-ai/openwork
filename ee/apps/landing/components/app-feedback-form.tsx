@@ -29,6 +29,8 @@ export function AppFeedbackForm(props: Props) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState(INITIAL_MESSAGE);
+  const [website, setWebsite] = useState("");
+  const [startedAt, setStartedAt] = useState(() => Date.now());
   const [state, setState] = useState<SubmitState>("idle");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -54,6 +56,8 @@ export function AppFeedbackForm(props: Props) {
     setName("");
     setEmail("");
     setMessage(INITIAL_MESSAGE);
+    setWebsite("");
+    setStartedAt(Date.now());
     setState("idle");
     setErrorMessage("");
   };
@@ -94,6 +98,8 @@ export function AppFeedbackForm(props: Props) {
           name: trimmedName,
           email: trimmedEmail,
           message: trimmed,
+          website,
+          startedAt,
           context: props.prefill,
         }),
       });
@@ -158,6 +164,18 @@ export function AppFeedbackForm(props: Props) {
             </div>
           ) : (
             <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+              <div className="hidden" aria-hidden="true">
+                <label>
+                  Website
+                  <input
+                    type="text"
+                    value={website}
+                    onChange={(event) => setWebsite(event.target.value)}
+                    autoComplete="off"
+                    tabIndex={-1}
+                  />
+                </label>
+              </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">

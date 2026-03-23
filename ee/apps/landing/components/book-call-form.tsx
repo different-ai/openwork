@@ -19,6 +19,8 @@ const initialFields: FormFields = {
 
 export function BookCallForm() {
   const [fields, setFields] = useState<FormFields>(initialFields);
+  const [website, setWebsite] = useState("");
+  const [startedAt, setStartedAt] = useState(() => Date.now());
   const [state, setState] = useState<FormState>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [hydrated, setHydrated] = useState(false);
@@ -33,6 +35,8 @@ export function BookCallForm() {
 
   const reset = () => {
     setFields(initialFields);
+    setWebsite("");
+    setStartedAt(Date.now());
     setState("idle");
     setErrorMsg("");
   };
@@ -48,7 +52,11 @@ export function BookCallForm() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(fields)
+        body: JSON.stringify({
+          ...fields,
+          website,
+          startedAt
+        })
       });
 
       if (!response.ok) {
@@ -100,6 +108,17 @@ export function BookCallForm() {
         ) : (
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="grid gap-4 md:grid-cols-2">
+              <div className="hidden" aria-hidden="true">
+                <label>
+                  Website
+                  <input
+                    value={website}
+                    onChange={event => setWebsite(event.target.value)}
+                    autoComplete="off"
+                    tabIndex={-1}
+                  />
+                </label>
+              </div>
               <div>
                 <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                   Full name

@@ -3,6 +3,7 @@ import "../styles/globals.css";
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
+import { BotIdClient } from "botid/client";
 
 import { DEFAULT_PUBLIC_BASE_URL } from "../server/_lib/share-utils.ts";
 
@@ -56,10 +57,16 @@ posthog.init(${JSON.stringify(posthogKey)}, {
 });`
   : "";
 
+const protectedRoutes = [
+  { path: "/v1/package", method: "POST" as const },
+  { path: "/v1/bundles", method: "POST" as const },
+];
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <head>
+        <BotIdClient protect={protectedRoutes} />
         {posthogBootstrap ? (
           <Script id="posthog" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: posthogBootstrap }} />
         ) : null}

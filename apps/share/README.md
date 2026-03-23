@@ -66,8 +66,12 @@ The packager rejects files that appear to contain secrets in shareable config.
   - Used to construct the returned share URL.
 
 - `MAX_BYTES`
-  - Default: `5242880` (5MB)
+  - Default: `262144` (256KB)
   - Hard upload limit.
+
+- `OPENWORK_PUBLISHER_ALLOWED_ORIGINS`
+  - Optional comma-separated browser origins allowed to publish bundles.
+  - Defaults include the share origin, the hosted OpenWork app origin, and common local dev origins.
 
 - `PUBLIC_OPENWORK_APP_URL`
   - Default: `https://app.openwork.software`
@@ -99,6 +103,7 @@ Recommended project settings:
 - Build command: `next build`
 - Output directory: `.next`
 - Install command: `pnpm install --frozen-lockfile`
+- Enable Vercel BotID for the project and keep the bundle routes protected in `app/layout.tsx`.
 
 ## Tests
 

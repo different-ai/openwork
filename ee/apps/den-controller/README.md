@@ -36,6 +36,7 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
 - `GOOGLE_CLIENT_SECRET` optional OAuth app client secret for Google sign-in
 - `LOOPS_API_KEY` optional Loops API key used to sync newly created Den users into Loops
+- `LOOPS_TRANSACTIONAL_ID_DEN_VERIFY_EMAIL` optional Loops transactional template id for Den email verification codes
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
 - `PROVISIONER_MODE` `stub`, `render`, or `daytona`
@@ -84,6 +85,8 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
   - `DAYTONA_CREATE_TIMEOUT_SECONDS`, `DAYTONA_DELETE_TIMEOUT_SECONDS`, `DAYTONA_HEALTHCHECK_TIMEOUT_MS`, `DAYTONA_POLL_INTERVAL_MS` provisioning timeouts
 
 For local Daytona development, place your Daytona API credentials in `/_repos/openwork/.env.daytona` and Den will pick them up automatically, including from task worktrees.
+
+In local dev (`OPENWORK_DEV_MODE=1`), Den prints email verification codes to the server logs instead of sending them through Loops.
 
 ## Building a Daytona snapshot
 
