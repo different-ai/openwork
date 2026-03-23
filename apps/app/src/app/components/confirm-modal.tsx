@@ -11,6 +11,8 @@ export type ConfirmModalProps = {
   confirmLabel: string;
   cancelLabel: string;
   variant?: "danger" | "warning";
+  confirmButtonVariant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
+  cancelButtonVariant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -40,11 +42,11 @@ export default function ConfirmModal(props: ConfirmModalProps) {
             </div>
 
             <div class="mt-6 flex justify-end gap-2">
-              <Button variant="outline" onClick={props.onCancel}>
+              <Button variant={props.cancelButtonVariant ?? "outline"} onClick={props.onCancel}>
                 {props.cancelLabel}
               </Button>
               <Button
-                variant={variant() === "danger" ? "danger" : "primary"}
+                variant={props.confirmButtonVariant ?? (variant() === "danger" ? "danger" : "primary")}
                 onClick={props.onConfirm}
               >
                 {props.confirmLabel}

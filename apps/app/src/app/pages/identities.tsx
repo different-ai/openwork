@@ -10,6 +10,7 @@ import {
 } from "lucide-solid";
 
 import Button from "../components/button";
+import ConfirmModal from "../components/confirm-modal";
 import {
   buildOpenworkWorkspaceBaseUrl,
   OpenworkServerError,
@@ -146,6 +147,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const [telegramError, setTelegramError] = createSignal<string | null>(null);
   const [telegramBotUsername, setTelegramBotUsername] = createSignal<string | null>(null);
   const [telegramPairingCode, setTelegramPairingCode] = createSignal<string | null>(null);
+  const [publicTelegramWarningOpen, setPublicTelegramWarningOpen] = createSignal(false);
 
   const [slackBotToken, setSlackBotToken] = createSignal("");
   const [slackAppToken, setSlackAppToken] = createSignal("");
@@ -1009,7 +1011,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <button
-                        onClick={() => void upsertTelegram("public")}
+                        onClick={() => setPublicTelegramWarningOpen(true)}
                         disabled={telegramSaving() || !workspaceId() || !telegramToken().trim()}
                         class={`flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${
                           telegramSaving() || !workspaceId() || !telegramToken().trim()
@@ -1509,6 +1511,29 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         </div>
 
         </Show>
+
+        <ConfirmModal
+          open={publicTelegramWarningOpen()}
+          title="Make this bot public?"
+          message={
+            <>
+              Your bot will be accessible to the public and anyone who gets access to your bot will be able to have
+              full access to your local worker including any files or API keys that you've given it. If you create a
+              private bot, you can limit who can access it by requiring a pairing token. Are you sure you want to make
+              your bot public?
+            </>
+          }
+          confirmLabel="Yes I understand the risk"
+          cancelLabel="Cancel"
+          variant="danger"
+          confirmButtonVariant="danger"
+          cancelButtonVariant="primary"
+          onCancel={() => setPublicTelegramWarningOpen(false)}
+          onConfirm={() => {
+            setPublicTelegramWarningOpen(false);
+            void upsertTelegram("public");
+          }}
+        />
 
       </Show>
     </div>
