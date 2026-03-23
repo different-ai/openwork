@@ -15,7 +15,7 @@ export type Locale = Language;
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi, "pt-BR"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR"];
 
 /**
  * Language options for UI - single source of truth
