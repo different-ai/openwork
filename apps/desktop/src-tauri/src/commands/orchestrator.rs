@@ -851,8 +851,6 @@ pub fn orchestrator_start_detached(
             "--approval".to_string(),
             "auto".to_string(),
             "--no-opencode-auth".to_string(),
-            "--opencode-router".to_string(),
-            "true".to_string(),
             "--detach".to_string(),
             "--openwork-host".to_string(),
             "0.0.0.0".to_string(),

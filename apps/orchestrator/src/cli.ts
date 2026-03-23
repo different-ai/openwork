@@ -438,6 +438,16 @@ function readBool(
   return fallback;
 }
 
+function readOptionalBool(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  return undefined;
+}
+
 function readNumber(
   flags: Map<string, string | boolean>,
   key: string,
@@ -2618,6 +2628,148 @@ function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
   return join(homedir(), ".openwork", "openwork-orchestrator");
 }
 
+function resolveWorkspaceOpenworkConfigPath(workspaceRoot: string): string {
+  return join(workspaceRoot, ".opencode", "openwork.json");
+}
+
+function resolveOpencodeRouterConfigPath(): string {
+  const override = process.env.OPENCODE_ROUTER_CONFIG_PATH?.trim();
+  if (override) return resolve(override.replace(/^~\//, `${homedir()}/`));
+  const dataDir =
+    process.env.OPENCODE_ROUTER_DATA_DIR?.trim() ||
+    join(homedir(), ".openwork", "opencode-router");
+  const expanded = dataDir.replace(/^~\//, `${homedir()}/`);
+  return join(resolve(expanded), "opencode-router.json");
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readMessagingEnabledFromOpenworkConfig(
+  openworkConfig: Record<string, unknown>,
+): boolean | undefined {
+  const messaging = asRecord(openworkConfig.messaging);
+  return readOptionalBool(messaging.enabled);
+}
+
+function hasConfiguredMessagingServices(routerConfig: Record<string, unknown>): boolean {
+  const channels = asRecord(routerConfig.channels);
+
+  const telegram = asRecord(channels.telegram);
+  const legacyTelegramToken =
+    typeof telegram.token === "string" ? telegram.token.trim() : "";
+  if (legacyTelegramToken) return true;
+  const telegramBots = Array.isArray(telegram.bots) ? telegram.bots : [];
+  if (
+    telegramBots.some((bot) => {
+      const record = asRecord(bot);
+      return (
+        typeof record.token === "string" && record.token.trim().length > 0
+      );
+    })
+  ) {
+    return true;
+  }
+
+  const slack = asRecord(channels.slack);
+  const legacySlackBotToken =
+    typeof slack.botToken === "string" ? slack.botToken.trim() : "";
+  const legacySlackAppToken =
+    typeof slack.appToken === "string" ? slack.appToken.trim() : "";
+  if (legacySlackBotToken && legacySlackAppToken) return true;
+  const slackApps = Array.isArray(slack.apps) ? slack.apps : [];
+  if (
+    slackApps.some((app) => {
+      const record = asRecord(app);
+      const botToken =
+        typeof record.botToken === "string" ? record.botToken.trim() : "";
+      const appToken =
+        typeof record.appToken === "string" ? record.appToken.trim() : "";
+      return Boolean(botToken && appToken);
+    })
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function resolveOpencodeRouterEnabled(
+  flags: Map<string, string | boolean>,
+  workspaceRoot: string,
+  logger: Logger,
+): Promise<{
+  enabled: boolean;
+  source: "flag" | "env" | "workspace-config" | "inferred";
+}> {
+  const flagValue = flags.get("opencode-router");
+  const parsedFlag = readOptionalBool(flagValue);
+  if (parsedFlag !== undefined) {
+    return { enabled: parsedFlag, source: "flag" };
+  }
+
+  const envValue = readOptionalBool(
+    process.env.OPENWORK_OPENCODE_ROUTER,
+  );
+  if (envValue !== undefined) {
+    return { enabled: envValue, source: "env" };
+  }
+
+  const openworkConfigPath = resolveWorkspaceOpenworkConfigPath(workspaceRoot);
+  let openworkConfig: Record<string, unknown> = {};
+  try {
+    const raw = await readFile(openworkConfigPath, "utf8");
+    openworkConfig = asRecord(JSON.parse(raw));
+  } catch {
+    openworkConfig = {};
+  }
+
+  const configured = readMessagingEnabledFromOpenworkConfig(openworkConfig);
+  if (configured !== undefined) {
+    return { enabled: configured, source: "workspace-config" };
+  }
+
+  let inferredEnabled = false;
+  const routerConfigPath = resolveOpencodeRouterConfigPath();
+  try {
+    const raw = await readFile(routerConfigPath, "utf8");
+    inferredEnabled = hasConfiguredMessagingServices(asRecord(JSON.parse(raw)));
+  } catch {
+    inferredEnabled = false;
+  }
+
+  const nextOpenworkConfig: Record<string, unknown> = {
+    ...openworkConfig,
+    messaging: {
+      ...asRecord(openworkConfig.messaging),
+      enabled: inferredEnabled,
+    },
+  };
+
+  try {
+    await mkdir(dirname(openworkConfigPath), { recursive: true });
+    await writeFile(
+      openworkConfigPath,
+      `${JSON.stringify(nextOpenworkConfig, null, 2)}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    logger.warn(
+      "Failed to persist messaging enabled default",
+      {
+        path: openworkConfigPath,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "openwork-orchestrator",
+    );
+  }
+
+  return { enabled: inferredEnabled, source: "inferred" };
+}
+
 function resolveInternalDevMode(flags: Map<string, string | boolean>): boolean {
   return readBool(flags, "internal-dev-mode", false, "OPENWORK_DEV_MODE");
 }
@@ -3339,6 +3491,7 @@ function printHelp(): void {
     "  --openwork-server-bin <p> Path to openwork-server binary (requires --allow-external)",
     "  --opencode-router-bin <path>     Path to opencodeRouter binary (requires --allow-external)",
     "  --opencode-router-health-port <p> Health server port for opencodeRouter (default: random)",
+    "  --opencode-router                Enable opencodeRouter sidecar (default from workspace messaging config)",
     "  --no-opencode-router             Disable opencodeRouter sidecar",
     "  --opencode-router-required       Exit if opencodeRouter stops",
     "  --allow-external          Allow external sidecar binaries (dev only, required for custom bins)",
@@ -6677,12 +6830,20 @@ async function runStart(args: ParsedArgs) {
       }
     }
   }
-  const opencodeRouterEnabled = readBool(args.flags, "opencode-router", true);
+  const opencodeRouterMode = await resolveOpencodeRouterEnabled(
+    args.flags,
+    resolvedWorkspace,
+    logger,
+  );
+  const opencodeRouterEnabled = opencodeRouterMode.enabled;
   const opencodeRouterRequired = readBool(
     args.flags,
     "opencode-router-required",
     false,
     "OPENWORK_OPENCODE_ROUTER_REQUIRED",
+  );
+  logVerbose(
+    `opencodeRouter enabled: ${opencodeRouterEnabled ? "true" : "false"} (${opencodeRouterMode.source})`,
   );
   let openworkServerBinary = await resolveOpenworkServerBin({
     explicit: explicitOpenworkServerBin,

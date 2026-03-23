@@ -1303,6 +1303,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerClient={props.openworkServerClient}
                   openworkReconnectBusy={props.openworkReconnectBusy}
                   reconnectOpenworkServer={props.reconnectOpenworkServer}
+                  restartLocalServer={props.restartLocalServer}
                   openworkServerWorkspaceId={props.openworkServerWorkspaceId}
                   activeWorkspaceRoot={props.activeWorkspaceRoot}
                   developerMode={props.developerMode}

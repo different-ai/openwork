@@ -32,6 +32,7 @@ export type IdentitiesViewProps = {
   openworkServerClient: OpenworkServerClient | null;
   openworkReconnectBusy: boolean;
   reconnectOpenworkServer: () => Promise<boolean>;
+  restartLocalServer: () => Promise<boolean>;
   openworkServerWorkspaceId: string | null;
   activeWorkspaceRoot: string;
   developerMode: boolean;
@@ -84,6 +85,14 @@ function getTelegramUsernameFromResult(value: unknown): string | null {
   if (typeof username !== "string") return null;
   const normalized = username.trim().replace(/^@+/, "");
   return normalized || null;
+}
+
+function readMessagingEnabledFromOpenworkConfig(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const messaging = record.messaging;
+  if (!messaging || typeof messaging !== "object" || Array.isArray(messaging)) return false;
+  return (messaging as Record<string, unknown>).enabled === true;
 }
 
 /* ---- Brand channel icons ---- */
@@ -180,6 +189,16 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
   const [reconnectStatus, setReconnectStatus] = createSignal<string | null>(null);
   const [reconnectError, setReconnectError] = createSignal<string | null>(null);
+  const [messagingEnabled, setMessagingEnabled] = createSignal(false);
+  const [messagingSaving, setMessagingSaving] = createSignal(false);
+  const [messagingStatus, setMessagingStatus] = createSignal<string | null>(null);
+  const [messagingError, setMessagingError] = createSignal<string | null>(null);
+  const [messagingRiskOpen, setMessagingRiskOpen] = createSignal(false);
+  const [messagingRestartRequired, setMessagingRestartRequired] = createSignal(false);
+  const [messagingRestartPromptOpen, setMessagingRestartPromptOpen] = createSignal(false);
+  const [messagingRestartBusy, setMessagingRestartBusy] = createSignal(false);
+  const [messagingDisableConfirmOpen, setMessagingDisableConfirmOpen] = createSignal(false);
+  const [messagingRestartAction, setMessagingRestartAction] = createSignal<"enable" | "disable">("enable");
 
   const workspaceId = createMemo(() => {
     const explicitId = props.openworkServerWorkspaceId?.trim() ?? "";
@@ -415,6 +434,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setHealthError(null);
       setTelegramIdentitiesError(null);
       setSlackIdentitiesError(null);
+      setMessagingError(null);
 
       if (!id) {
         setHealth(null);
@@ -432,6 +452,26 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         return;
       }
 
+      const config = await client.getConfig(id).catch(() => null);
+      const isModuleEnabled = readMessagingEnabledFromOpenworkConfig(config?.openwork);
+      setMessagingEnabled(isModuleEnabled);
+
+      if (!isModuleEnabled) {
+        setMessagingRestartRequired(false);
+        setHealth(null);
+        setHealthError(null);
+        setTelegramIdentities([]);
+        setTelegramIdentitiesError(null);
+        setTelegramBotUsername(null);
+        setTelegramPairingCode(null);
+        setSlackIdentities([]);
+        setSlackIdentitiesError(null);
+        if (!agentDirty() && !agentSaving()) {
+          void loadAgentFile();
+        }
+        return;
+      }
+
       const [healthRes, tgRes, slackRes, telegramInfo] = await Promise.all([
         client.getOpenCodeRouterHealth(id),
         client.getOpenCodeRouterTelegramIdentities(id),
@@ -443,6 +483,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
       if (isOpenCodeRouterSnapshot(healthRes.json)) {
         setHealth(healthRes.json);
+        setMessagingRestartRequired(false);
       } else {
         setHealth(null);
         if (!healthRes.ok) {
@@ -452,6 +493,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               : `OpenCodeRouter health unavailable (${healthRes.status})`;
           setHealthError(message);
         }
+        setMessagingRestartRequired(true);
       }
 
       if (isOpenCodeRouterIdentities(tgRes)) {
@@ -484,6 +526,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setHealthError(message);
       setTelegramIdentitiesError(message);
       setSlackIdentitiesError(message);
+      if (messagingEnabled()) {
+        setMessagingRestartRequired(true);
+      }
     } finally {
       setRefreshing(false);
     }
@@ -503,6 +548,95 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setReconnectStatus("Reconnected. Refreshing worker state...");
     await refreshAll({ force: true });
     setReconnectStatus("Reconnected.");
+  };
+
+  const enableMessagingModule = async () => {
+    if (messagingSaving()) return;
+    if (!serverReady()) return;
+    const id = workspaceId();
+    if (!id) return;
+    const client = openworkServerClient();
+    if (!client) return;
+
+    setMessagingSaving(true);
+    setMessagingStatus(null);
+    setMessagingError(null);
+    try {
+      await client.patchConfig(id, {
+        openwork: {
+          messaging: {
+            enabled: true,
+          },
+        },
+      });
+      setMessagingEnabled(true);
+      setMessagingRestartRequired(true);
+      setMessagingRiskOpen(false);
+      setMessagingRestartAction("enable");
+      setMessagingRestartPromptOpen(true);
+      setMessagingStatus("Messaging enabled. Restart this worker to apply before configuring channels.");
+      await refreshAll({ force: true });
+    } catch (error) {
+      setMessagingError(formatRequestError(error));
+    } finally {
+      setMessagingSaving(false);
+    }
+  };
+
+  const disableMessagingModule = async () => {
+    if (messagingSaving()) return;
+    if (!serverReady()) return;
+    const id = workspaceId();
+    if (!id) return;
+    const client = openworkServerClient();
+    if (!client) return;
+
+    setMessagingSaving(true);
+    setMessagingStatus(null);
+    setMessagingError(null);
+    try {
+      await client.patchConfig(id, {
+        openwork: {
+          messaging: {
+            enabled: false,
+          },
+        },
+      });
+      setMessagingEnabled(false);
+      setMessagingDisableConfirmOpen(false);
+      setMessagingRestartRequired(true);
+      setMessagingRestartAction("disable");
+      setMessagingRestartPromptOpen(true);
+      setMessagingStatus("Messaging disabled. Restart this worker to stop the messaging sidecar.");
+      await refreshAll({ force: true });
+    } catch (error) {
+      setMessagingError(formatRequestError(error));
+    } finally {
+      setMessagingSaving(false);
+    }
+  };
+
+  const restartMessagingWorker = async () => {
+    if (messagingRestartBusy()) return;
+    setMessagingRestartBusy(true);
+    setMessagingError(null);
+    setMessagingStatus(null);
+    try {
+      const ok = await props.restartLocalServer();
+      if (!ok) {
+      setMessagingError("Restart failed. Please restart the worker from Settings and try again.");
+      return;
+    }
+      setMessagingRestartPromptOpen(false);
+      setMessagingRestartRequired(false);
+      setMessagingStatus("Worker restarted. Refreshing messaging status...");
+      await refreshAll({ force: true });
+      setMessagingStatus("Worker restarted.");
+    } catch (error) {
+      setMessagingError(formatRequestError(error));
+    } finally {
+      setMessagingRestartBusy(false);
+    }
   };
 
   const upsertTelegram = async (access: "public" | "private") => {
@@ -689,6 +823,16 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setSendResult(null);
     setReconnectStatus(null);
     setReconnectError(null);
+    setMessagingEnabled(false);
+    setMessagingSaving(false);
+    setMessagingStatus(null);
+    setMessagingError(null);
+    setMessagingRiskOpen(false);
+    setMessagingRestartRequired(false);
+    setMessagingRestartPromptOpen(false);
+    setMessagingRestartBusy(false);
+    setMessagingDisableConfirmOpen(false);
+    setMessagingRestartAction("enable");
     setActiveTab("general");
     setExpandedChannel("telegram");
   });
@@ -744,6 +888,12 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         <Show when={reconnectError()}>
           {(value) => <div class="mt-1 text-[11px] text-red-12">{value()}</div>}
         </Show>
+        <Show when={messagingStatus()}>
+          {(value) => <div class="mt-1 text-[11px] text-gray-9">{value()}</div>}
+        </Show>
+        <Show when={messagingError()}>
+          {(value) => <div class="mt-1 text-[11px] text-red-12">{value()}</div>}
+        </Show>
       </div>
 
       {/* ---- Not connected to server ---- */}
@@ -763,30 +913,83 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           </div>
         </Show>
 
-        <div class="flex items-center gap-2 rounded-xl border border-gray-4 bg-gray-1 p-1">
-          <button
-            class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-              activeTab() === "general"
-                ? "bg-gray-12 text-gray-1"
-                : "text-gray-10 hover:bg-gray-2"
-            }`}
-            onClick={() => setActiveTab("general")}
-          >
-            General
-          </button>
-          <button
-            class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-              activeTab() === "advanced"
-                ? "bg-gray-12 text-gray-1"
-                : "text-gray-10 hover:bg-gray-2"
-            }`}
-            onClick={() => setActiveTab("advanced")}
-          >
-            Advanced
-          </button>
-        </div>
+        <Show when={messagingEnabled()}>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div class="flex items-center gap-2 rounded-xl border border-gray-4 bg-gray-1 p-1 flex-1">
+              <button
+                class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                  activeTab() === "general"
+                    ? "bg-gray-12 text-gray-1"
+                    : "text-gray-10 hover:bg-gray-2"
+                }`}
+                onClick={() => setActiveTab("general")}
+              >
+                General
+              </button>
+              <button
+                class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                  activeTab() === "advanced"
+                    ? "bg-gray-12 text-gray-1"
+                    : "text-gray-10 hover:bg-gray-2"
+                }`}
+                onClick={() => setActiveTab("advanced")}
+              >
+                Advanced
+              </button>
+            </div>
+            <Button
+              variant="outline"
+              class="h-8 px-3 text-xs"
+              disabled={messagingSaving()}
+              onClick={() => setMessagingDisableConfirmOpen(true)}
+            >
+              Disable messaging
+            </Button>
+          </div>
+        </Show>
 
-        <Show when={activeTab() === "general"}>
+        <Show when={!messagingEnabled()}>
+          <div class="rounded-xl border border-gray-4 bg-gray-1 px-4 py-4 space-y-3">
+            <div class="text-sm font-semibold text-gray-12">Messaging is disabled by default</div>
+            <p class="text-xs text-gray-10 leading-relaxed">
+              Messaging bots can execute actions against your local worker. If exposed publicly, they may allow access
+              to files, credentials, and API keys available to this worker.
+            </p>
+            <p class="text-xs text-gray-10 leading-relaxed">
+              Enable messaging only if you understand the risk and plan to secure access (for example, private Telegram
+              pairing).
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
+                variant="primary"
+                class="h-8 px-3 text-xs"
+                disabled={messagingSaving() || !workspaceId()}
+                onClick={() => setMessagingRiskOpen(true)}
+              >
+                {messagingSaving() ? "Enabling..." : "Enable messaging"}
+              </Button>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={activeTab() === "general" && messagingEnabled()}>
+
+        <Show when={messagingRestartRequired()}>
+          <div class="rounded-xl border border-gray-4 bg-gray-1 px-4 py-3 text-xs text-gray-10 leading-relaxed">
+            Messaging is enabled in this workspace, but the messaging sidecar is not running yet. Restart this worker,
+            then return to Messaging settings to connect Telegram or Slack.
+            <div class="mt-3">
+              <Button
+                variant="primary"
+                class="h-8 px-3 text-xs"
+                disabled={messagingRestartBusy()}
+                onClick={() => void restartMessagingWorker()}
+              >
+                {messagingRestartBusy() ? "Restarting..." : "Restart worker"}
+              </Button>
+            </div>
+          </div>
+        </Show>
 
         {/* ---- Worker status card ---- */}
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-4 space-y-3.5">
@@ -1291,7 +1494,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
         </Show>
 
-        <Show when={activeTab() === "advanced"}>
+        <Show when={activeTab() === "advanced" && messagingEnabled()}>
 
         {/* ---- Message routing ---- */}
         <div>
@@ -1511,6 +1714,56 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         </div>
 
         </Show>
+
+        <ConfirmModal
+          open={messagingRiskOpen()}
+          title="Enable messaging for this worker?"
+          message="Messaging can expose this worker to remote commands. If a bot is public or compromised, it can access files, credentials, and API keys available to this worker."
+          confirmLabel={messagingSaving() ? "Enabling..." : "Enable messaging"}
+          cancelLabel="Cancel"
+          variant="danger"
+          onCancel={() => {
+            if (messagingSaving()) return;
+            setMessagingRiskOpen(false);
+          }}
+          onConfirm={() => {
+            void enableMessagingModule();
+          }}
+        />
+
+        <ConfirmModal
+          open={messagingRestartPromptOpen()}
+          title="Restart worker now?"
+          message={
+            messagingRestartAction() === "enable"
+              ? "Messaging was enabled for this workspace. Restart the worker now to start the messaging sidecar and unlock Telegram and Slack setup."
+              : "Messaging was disabled for this workspace. Restart the worker now to stop the messaging sidecar."
+          }
+          confirmLabel={messagingRestartBusy() ? "Restarting..." : "Restart worker"}
+          cancelLabel="Later"
+          onCancel={() => {
+            if (messagingRestartBusy()) return;
+            setMessagingRestartPromptOpen(false);
+          }}
+          onConfirm={() => {
+            void restartMessagingWorker();
+          }}
+        />
+
+        <ConfirmModal
+          open={messagingDisableConfirmOpen()}
+          title="Disable messaging for this worker?"
+          message="This will turn off messaging for this workspace. Telegram and Slack setup will be hidden until messaging is enabled again, and you will need to restart the worker to fully stop the messaging sidecar."
+          confirmLabel={messagingSaving() ? "Disabling..." : "Disable messaging"}
+          cancelLabel="Cancel"
+          onCancel={() => {
+            if (messagingSaving()) return;
+            setMessagingDisableConfirmOpen(false);
+          }}
+          onConfirm={() => {
+            void disableMessagingModule();
+          }}
+        />
 
         <ConfirmModal
           open={publicTelegramWarningOpen()}
