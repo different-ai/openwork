@@ -686,9 +686,24 @@ export function createSessionStore(options: {
     // string equality against the stored session.directory.
     const queryDirectory = normalizeDirectoryQueryPath(scopeRoot) || undefined;
 
+    sessionDebug("sessions:load:request", {
+      scopeRoot: scopeRoot ?? null,
+      queryDirectory: queryDirectory ?? null,
+      activeWorkspaceRoot: options.activeWorkspaceRoot?.() ?? null,
+    });
+
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
     const list = unwrap(await c.session.list({ directory: queryDirectory, roots: true }));
+    sessionDebug("sessions:load:response", {
+      count: list.length,
+      sessions: list.map((session) => ({
+        id: session.id,
+        title: session.title,
+        directory: session.directory,
+        parentID: session.parentID,
+      })),
+    });
     sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
 
     // Defensive client-side filter in case the server returns sessions spanning
@@ -697,6 +712,16 @@ export function createSessionStore(options: {
     const filtered = root
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
+    sessionDebug("sessions:load:filtered-list", {
+      root: root || null,
+      count: filtered.length,
+      sessions: filtered.map((session) => ({
+        id: session.id,
+        title: session.title,
+        directory: session.directory,
+        parentID: session.parentID,
+      })),
+    });
     sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
     rememberSessions(filtered);
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));

@@ -192,6 +192,9 @@ export function createWorkspaceStore(options: {
   const LONG_BOOT_CONNECT_REASONS = new Set(["host-start", "bootstrap-local"]);
   const INITIAL_WORKSPACE_SETUP_COMPLETE_KEY = "openwork.initialWorkspaceSetupComplete";
   const LEGACY_ONBOARDING_COMPLETE_KEY = "openwork.onboardingComplete";
+  const STARTER_BOOTSTRAP_STATE_KEY = "openwork.starterBootstrapState";
+  const STARTER_BOOTSTRAP_FOLDER_NAME = "OpenWork";
+  const STARTER_BOOTSTRAP_WORKSPACE_NAME = "starter";
   const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
     /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
     /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
@@ -320,11 +323,38 @@ export function createWorkspaceStore(options: {
     }
   };
 
+  type StarterBootstrapState = "not_started" | "in_progress" | "completed" | "failed" | "skipped";
+
+  const readStarterBootstrapState = (): StarterBootstrapState => {
+    if (typeof window === "undefined") return "not_started";
+    try {
+      const raw = window.localStorage.getItem(STARTER_BOOTSTRAP_STATE_KEY);
+      if (raw === "in_progress" || raw === "completed" || raw === "failed" || raw === "skipped") {
+        return raw;
+      }
+      return "not_started";
+    } catch {
+      return "not_started";
+    }
+  };
+
+  const persistStarterBootstrapState = (next: StarterBootstrapState) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(STARTER_BOOTSTRAP_STATE_KEY, next);
+    } catch {
+      // ignore
+    }
+  };
+
   const [projectDir, setProjectDir] = createSignal("");
   const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("");
   const [initialWorkspaceSetupComplete, setInitialWorkspaceSetupComplete] = createSignal(
     readInitialWorkspaceSetupComplete(),
+  );
+  const [starterBootstrapState, setStarterBootstrapState] = createSignal<StarterBootstrapState>(
+    readStarterBootstrapState(),
   );
 
   const syncActiveWorkspaceId = (id: string) => {
@@ -366,6 +396,11 @@ export function createWorkspaceStore(options: {
   const firstRunWorkspaceSetup = createMemo(
     () => isTauriRuntime() && !initialWorkspaceSetupComplete() && workspaces().length === 0,
   );
+  const setPersistedStarterBootstrapState = (next: StarterBootstrapState) => {
+    setStarterBootstrapState(next);
+    persistStarterBootstrapState(next);
+  };
+
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
     const ws = activeWorkspaceInfo();
     if (!ws) {
@@ -1486,6 +1521,13 @@ export function createWorkspaceStore(options: {
 
   const openEmptySession = async (scopeRoot?: string) => {
     const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
+    wsDebug("open-empty-session:start", {
+      scopeRoot: scopeRoot ?? null,
+      resolvedRoot: root || null,
+      activeWorkspaceId: activeWorkspaceId(),
+      activeWorkspace: activeWorkspaceInfo(),
+      hasClient: Boolean(options.client()),
+    });
 
     if (options.client()) {
       try {
@@ -1567,12 +1609,13 @@ export function createWorkspaceStore(options: {
       }
 
       setCreateWorkspaceOpen(false);
-      markOnboardingComplete();
 
       const opened = await activateFreshLocalWorkspace(ws.activeId ?? null, resolvedFolder);
       if (!opened) {
         return false;
       }
+
+      markOnboardingComplete();
 
       return true;
     } catch (e) {
@@ -2456,6 +2499,11 @@ export function createWorkspaceStore(options: {
     return `${trimmedBase}${separator}${leaf}`;
   }
 
+  async function resolveStarterBootstrapFolder() {
+    const base = (await homeDir()).replace(/[\\/]+$/, "");
+    return joinNativePath(joinNativePath(base, STARTER_BOOTSTRAP_FOLDER_NAME), STARTER_BOOTSTRAP_WORKSPACE_NAME);
+  }
+
   async function quickStartWorkspaceFlow() {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -2463,11 +2511,37 @@ export function createWorkspaceStore(options: {
     }
 
     try {
-      const base = (await homeDir()).replace(/[\\/]+$/, "");
-      return await createWorkspaceFlow("starter", joinNativePath(base, "OpenWork"));
+      return await createWorkspaceFlow("starter", await resolveStarterBootstrapFolder());
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+      return false;
+    }
+  }
+
+  async function autoBootstrapStarterWorkspace() {
+    if (!isTauriRuntime()) return false;
+
+    options.setStartupPreference("local");
+    options.setOnboardingStep("bootstrap");
+    setPersistedStarterBootstrapState("in_progress");
+    options.setError(null);
+
+    try {
+      const ok = await createWorkspaceFlow("starter", await resolveStarterBootstrapFolder());
+      if (!ok) {
+        setPersistedStarterBootstrapState("failed");
+        options.setOnboardingStep("local");
+        return false;
+      }
+
+      setPersistedStarterBootstrapState("completed");
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+      setPersistedStarterBootstrapState("failed");
+      options.setOnboardingStep("local");
       return false;
     }
   }
@@ -3175,7 +3249,9 @@ export function createWorkspaceStore(options: {
   async function bootstrapOnboarding() {
     const startupPref = readStartupPreference();
     const onboardingComplete = readInitialWorkspaceSetupComplete();
+    const persistedBootstrapState = readStarterBootstrapState();
     setInitialWorkspaceSetupComplete(onboardingComplete);
+    setStarterBootstrapState(persistedBootstrapState);
 
     if (isTauriRuntime()) {
       try {
@@ -3184,6 +3260,14 @@ export function createWorkspaceStore(options: {
         syncActiveWorkspaceId(ws.activeId);
       } catch {
         // ignore
+      }
+    }
+
+    if (isTauriRuntime() && persistedBootstrapState === "in_progress") {
+      if (workspaces().length > 0) {
+        setPersistedStarterBootstrapState("completed");
+      } else {
+        setPersistedStarterBootstrapState("failed");
       }
     }
 
@@ -3275,6 +3359,11 @@ export function createWorkspaceStore(options: {
     }
 
     if (firstRunWorkspaceSetup()) {
+      if (starterBootstrapState() === "not_started") {
+        await autoBootstrapStarterWorkspace();
+        return;
+      }
+
       options.setStartupPreference("local");
       options.setOnboardingStep("local");
       return;

@@ -3326,6 +3326,26 @@ export default function App() {
         ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
+      if (developerMode()) {
+        console.log("[sidebar-sync] workspace session scope", {
+          wsId,
+          status,
+          activeWorkspace,
+          activeWorkspaceRoot,
+          allSessions: allSessions.map((session) => ({
+            id: session.id,
+            title: session.title,
+            directory: session.directory,
+            parentID: session.parentID,
+          })),
+          scopedSessions: scopedSessions.map((session) => ({
+            id: session.id,
+            title: session.title,
+            directory: session.directory,
+            parentID: session.parentID,
+          })),
+        });
+      }
       const rootItems: SidebarSessionItem[] = sorted.map((s) => ({
         id: s.id,
         title: s.title,
@@ -3423,6 +3443,22 @@ export default function App() {
     }
     return dedupedWorkspaces.map((workspace) => {
       const groupSessions = sessionsById[workspace.id] ?? [];
+      if (developerMode()) {
+        console.log("[sidebar-groups] workspace group", {
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+          workspaceType: workspace.workspaceType,
+          workspacePath: workspace.path,
+          workspaceDirectory: workspace.directory,
+          sessionCount: groupSessions.length,
+          sessions: groupSessions.map((session) => ({
+            id: session.id,
+            title: session.title,
+            directory: session.directory,
+            parentID: session.parentID,
+          })),
+        });
+      }
       return {
         workspace,
         sessions: groupSessions,
@@ -7126,6 +7162,10 @@ export default function App() {
     },
     onOpenSettings: () => {
       setTab("settings");
+      setView("dashboard");
+    },
+    onOpenAdvancedSettings: () => {
+      setTab("config");
       setView("dashboard");
     },
     themeMode: themeMode(),

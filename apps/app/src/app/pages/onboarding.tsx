@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js";
 import type { OnboardingStep, StartupPreference } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
-import { CheckCircle2, ChevronDown, Circle, Globe } from "lucide-solid";
+import { CheckCircle2, ChevronDown, Circle, Globe, HardDrive } from "lucide-solid";
 
 import Button from "../components/button";
 import OnboardingWorkspaceSelector from "../components/onboarding-workspace-selector";
@@ -63,6 +63,7 @@ export type OnboardingViewProps = {
   onInstallEngine: () => void;
   onShowSearchNotes: () => void;
   onOpenSettings: () => void;
+  onOpenAdvancedSettings: () => void;
   themeMode: "light" | "dark" | "system";
   setThemeMode: (value: "light" | "dark" | "system") => void;
 };
@@ -75,7 +76,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    if (props.onboardingStep !== "connecting") {
+    if (props.onboardingStep !== "connecting" && props.onboardingStep !== "bootstrap") {
       setConnectingFallbackVisible(false);
       return;
     }
@@ -109,43 +110,62 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
   return (
     <Switch>
-      <Match when={props.onboardingStep === "connecting"}>
+      <Match when={props.onboardingStep === "connecting" || props.onboardingStep === "bootstrap"}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative overflow-hidden">
           <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-2 via-gray-1 to-gray-1 opacity-50" />
-          <div class="z-10 flex flex-col items-center gap-6">
-            <div class="relative">
-              <OpenWorkLogo size={40} />
-            </div>
-            <div class="text-center">
-              <h2 class="text-xl font-medium mb-2">
-                {props.startupPreference === "local"
-                  ? translate("onboarding.starting_host")
-                  : translate("onboarding.searching_host")}
-              </h2>
-              <p class="text-gray-10 text-sm">
-                {props.startupPreference === "local"
-                  ? translate("onboarding.getting_ready")
-                  : translate("onboarding.verifying")}
-              </p>
+          <div class="z-10 w-full max-w-lg rounded-[28px] border border-dls-border bg-dls-surface/95 p-8 shadow-[var(--dls-shell-shadow)]">
+            <div class="flex flex-col items-center gap-6 text-center">
+              <div class="flex h-16 w-16 items-center justify-center rounded-[22px] border border-dls-border bg-dls-sidebar shadow-[var(--dls-card-shadow)]">
+                <Show when={props.onboardingStep === "bootstrap"} fallback={<OpenWorkLogo size={36} />}>
+                  <HardDrive size={24} class="text-gray-11" />
+                </Show>
+              </div>
+              <div>
+                <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">
+                  {props.onboardingStep === "bootstrap" ? "First-time setup" : "Connecting"}
+                </div>
+                <h2 class="mt-3 text-2xl font-semibold tracking-tight text-gray-12">
+                  {props.onboardingStep === "bootstrap"
+                    ? "Getting your starter workspace ready"
+                    : props.startupPreference === "local"
+                      ? translate("onboarding.starting_host")
+                      : translate("onboarding.searching_host")}
+                </h2>
+                <p class="mt-2 text-sm leading-6 text-dls-secondary">
+                  {props.onboardingStep === "bootstrap"
+                    ? "We’re preparing everything so you can start in one click. This only happens the first time."
+                    : props.startupPreference === "local"
+                      ? translate("onboarding.getting_ready")
+                      : translate("onboarding.verifying")}
+                </p>
+              </div>
+
+              <div class="w-full rounded-[22px] border border-dls-border bg-dls-sidebar px-5 py-4 text-left">
+                <div class="flex items-center gap-3 text-sm font-medium text-gray-12">
+                  <div class="h-2.5 w-2.5 rounded-full bg-dls-accent animate-pulse" />
+                  {props.onboardingStep === "bootstrap" ? "Preparing your workspace" : "Waiting for your host"}
+                </div>
+                <div class="mt-2 text-xs leading-6 text-dls-secondary">
+                  {props.onboardingStep === "bootstrap"
+                    ? "Starting local services, setting up your starter folder, and opening your first session."
+                    : "Checking your local OpenWork services and reconnecting to the selected workspace."}
+                </div>
+              </div>
 
               <Show when={props.error}>
-                <div class="mt-4 rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20 text-left">
+                <div class="w-full rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20 text-left">
                   {props.error}
                 </div>
               </Show>
 
               <Show when={connectingFallbackVisible()}>
-                <div class="mt-5 flex items-center justify-center gap-2">
-                  <Button variant="secondary" onClick={props.onOpenSettings} disabled={props.busy}>
-                    {translate("onboarding.open_settings")}
+                <div class="flex flex-col items-center gap-3">
+                  <Button variant="secondary" onClick={props.onOpenAdvancedSettings} disabled={props.busy}>
+                    Having trouble?
                   </Button>
-                  <Button variant="ghost" onClick={props.onBackToWelcome} disabled={props.busy}>
-                    {translate("onboarding.back")}
-                  </Button>
+                  <div class="text-xs text-gray-10">Open Advanced settings to check local host configuration.</div>
                 </div>
-                <div class="mt-3 text-xs text-gray-10">{translate("onboarding.open_settings_hint")}</div>
               </Show>
-
             </div>
           </div>
         </div>

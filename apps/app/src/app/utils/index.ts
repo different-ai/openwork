@@ -86,6 +86,20 @@ export function isWindowsPlatform() {
   return /windows/i.test(platform) || /windows/i.test(ua);
 }
 
+export function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+
+  const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
+  const platform =
+    typeof (navigator as any).userAgentData?.platform === "string"
+      ? (navigator as any).userAgentData.platform
+      : typeof navigator.platform === "string"
+        ? navigator.platform
+        : "";
+
+  return /mac/i.test(platform) || /macintosh|mac os x/i.test(ua);
+}
+
 const STARTUP_PREF_KEY = "openwork.startupPref";
 const LEGACY_PREF_KEY = "openwork.modePref";
 const LEGACY_PREF_KEY_ALT = "openwork_mode_pref";
@@ -191,7 +205,7 @@ export function normalizeDirectoryQueryPath(input?: string | null) {
 export function normalizeDirectoryPath(input?: string | null) {
   const normalized = normalizeDirectoryQueryPath(input);
   if (!normalized) return "";
-  return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
+  return isWindowsPlatform() || isMacPlatform() ? normalized.toLowerCase() : normalized;
 }
 
 export function normalizeEvent(raw: unknown): OpencodeEvent | null {
