@@ -1589,7 +1589,7 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
+      const name = deriveWorkspaceName(resolvedFolder, preset);
       const openworkServer = resolveConnectedOpenworkServer();
       const ws = openworkServer
         ? await openworkServer.createLocalWorkspace({ folderPath: resolvedFolder, name, preset })
@@ -1712,7 +1712,7 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
+      const name = deriveWorkspaceName(resolvedFolder, preset);
 
       setSandboxStep("workspace", { status: "active", detail: name });
       pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
@@ -2497,6 +2497,14 @@ export function createWorkspaceStore(options: {
     if (!trimmedBase) return leaf;
     const separator = trimmedBase.includes("\\") ? "\\" : "/";
     return `${trimmedBase}${separator}${leaf}`;
+  }
+
+  function deriveWorkspaceName(folderPath: string, preset: WorkspacePreset) {
+    const leaf = folderPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
+    if (preset === "starter" && leaf.trim().toLowerCase() === STARTER_BOOTSTRAP_WORKSPACE_NAME) {
+      return "Starter";
+    }
+    return leaf;
   }
 
   async function resolveStarterBootstrapFolder() {
