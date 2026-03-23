@@ -24,6 +24,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
+import { homeDir } from "@tauri-apps/api/path";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
@@ -57,6 +58,7 @@ import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-lo
 import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
+  CHROME_DEVTOOLS_MCP_ID,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
   MCP_QUICK_CONNECT,
@@ -66,7 +68,12 @@ import {
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "./constants";
-import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
+import {
+  parseMcpServersFromContent,
+  removeMcpFromConfig,
+  usesChromeDevtoolsAutoConnect,
+  validateMcpServerName,
+} from "./mcp";
 import {
   compareProviders,
   mapConfigProvidersToList,
@@ -5777,9 +5784,13 @@ export default function App() {
 
     const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
+    const action = mcpServers().some((server) => server.name === slug) ? "updated" : "added";
+
     try {
       setMcpStatus(null);
       setMcpConnectingName(entry.name);
+
+      let mcpEnvironment: Record<string, string> | undefined;
 
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
@@ -5801,6 +5812,18 @@ export default function App() {
           throw new Error("Missing MCP command.");
         }
         mcpEntryConfig["command"] = entry.command;
+
+        if (slug === CHROME_DEVTOOLS_MCP_ID && usesChromeDevtoolsAutoConnect(entry.command) && isTauriRuntime()) {
+          try {
+            const hostHome = (await homeDir()).replace(/[\\/]+$/, "");
+            if (hostHome) {
+              mcpEnvironment = { HOME: hostHome };
+              mcpEntryConfig["environment"] = mcpEnvironment;
+            }
+          } catch {
+            // ignore and let the MCP use the default worker environment
+          }
+        }
       }
 
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
@@ -5853,6 +5876,7 @@ export default function App() {
             type: "local" as const,
             command: entry.command!,
             enabled: true,
+            ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
           };
 
       const status = unwrap(
@@ -5864,6 +5888,7 @@ export default function App() {
       );
 
       setMcpStatuses(status as McpStatusMap);
+      markReloadRequired("mcp", { type: "mcp", name: slug, action });
       await refreshMcpServers();
 
       if (entry.oauth) {
@@ -6039,6 +6064,7 @@ export default function App() {
         await removeMcpFromConfig(projectDir, name);
       }
 
+      markReloadRequired("mcp", { type: "mcp", name, action: "removed" });
       await refreshMcpServers();
       if (selectedMcp() === name) {
         setSelectedMcp(null);
@@ -7459,8 +7485,10 @@ export default function App() {
       logoutMcpAuth,
       removeMcp,
       refreshMcpServers,
-      showMcpReloadBanner: false,
-      mcpReloadBlocked: anyActiveRuns(),
+      showMcpReloadBanner:
+        reloadRequired() && (reloadTrigger()?.type === "mcp" || reloadTrigger()?.type === "config"),
+      mcpReloadBlocked: activeReloadBlockingSessions().length > 0,
+      reloadBlocked: activeReloadBlockingSessions().length > 0,
       reloadMcpEngine: () => reloadWorkspaceEngineAndResume(),
       language: currentLocale(),
       setLanguage: setLocale,

@@ -4,10 +4,18 @@ import type { McpServerEntry, McpStatusMap } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 import { readOpencodeConfig, type OpencodeConfigFile } from "../lib/tauri";
+import {
+  buildChromeDevtoolsCommand,
+  getMcpIdentityKey,
+  isChromeDevtoolsMcp,
+  normalizeMcpSlug,
+  usesChromeDevtoolsAutoConnect,
+} from "../mcp";
 
 import Button from "../components/button";
 import AddMcpModal from "../components/add-mcp-modal";
 import ConfirmModal from "../components/confirm-modal";
+import ControlChromeSetupModal from "../components/control-chrome-setup-modal";
 import {
   BookOpen,
   CheckCircle2,
@@ -23,6 +31,7 @@ import {
   Plug2,
   Plus,
   RefreshCw,
+  Settings,
   Settings2,
   Unplug,
   Zap,
@@ -145,6 +154,9 @@ export default function McpView(props: McpViewProps) {
   const [revealBusy, setRevealBusy] = createSignal(false);
   const [showAdvanced, setShowAdvanced] = createSignal(false);
   const [addMcpModalOpen, setAddMcpModalOpen] = createSignal(false);
+  const [controlChromeModalOpen, setControlChromeModalOpen] = createSignal(false);
+  const [controlChromeModalMode, setControlChromeModalMode] = createSignal<"connect" | "edit">("connect");
+  const [controlChromeExistingProfile, setControlChromeExistingProfile] = createSignal(false);
 
   const selectedEntry = createMemo(() =>
     props.mcpServers.find((entry) => entry.name === props.selectedMcp) ?? null,
@@ -230,16 +242,35 @@ export default function McpView(props: McpViewProps) {
     }
   };
 
-  const toSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const resolveQuickConnectMatch = (name: string) =>
+    quickConnectList().find((candidate) => {
+      const candidateKey = getMcpIdentityKey(candidate);
+      return candidateKey === name || candidate.name === name || normalizeMcpSlug(candidate.name) === name;
+    });
 
-  const quickConnectStatus = (name: string) => {
-    const slug = toSlug(name);
-    return props.mcpStatuses[slug];
+  const displayName = (name: string) => resolveQuickConnectMatch(name)?.name ?? name;
+
+  const quickConnectStatus = (entry: McpDirectoryInfo) => props.mcpStatuses[getMcpIdentityKey(entry)];
+
+  const isQuickConnectConfigured = (entry: McpDirectoryInfo) =>
+    props.mcpServers.some((server) => server.name === getMcpIdentityKey(entry));
+
+  const openControlChromeModal = (mode: "connect" | "edit", existingEntry?: McpServerEntry | null) => {
+    setControlChromeModalMode(mode);
+    setControlChromeExistingProfile(usesChromeDevtoolsAutoConnect(existingEntry?.config.command));
+    setControlChromeModalOpen(true);
   };
 
-  const isQuickConnectConnected = (name: string) => {
-    const status = quickConnectStatus(name);
-    return status?.status === "connected";
+  const saveControlChromeSettings = (useExistingProfile: boolean) => {
+    const controlChrome = quickConnectList().find((entry) => isChromeDevtoolsMcp(entry));
+    if (!controlChrome) return;
+    const existingEntry = props.mcpServers.find((entry) => isChromeDevtoolsMcp(entry.name));
+
+    props.connectMcp({
+      ...controlChrome,
+      command: buildChromeDevtoolsCommand(existingEntry?.config.command ?? controlChrome.command, useExistingProfile),
+    });
+    setControlChromeModalOpen(false);
   };
 
   const canConnect = () => !props.busy;
@@ -338,70 +369,93 @@ export default function McpView(props: McpViewProps) {
         <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
           <For each={quickConnectList()}>
             {(entry) => {
-              const connected = () => isQuickConnectConnected(entry.name);
-              const connecting = () => props.mcpConnectingName === entry.name;
-              const Icon = serviceIcon(entry.name);
+                const configured = () => isQuickConnectConfigured(entry);
+                const connecting = () => props.mcpConnectingName === entry.name;
+                const Icon = serviceIcon(entry.name);
+                const isControlChrome = () => isChromeDevtoolsMcp(entry);
 
-              return (
-                <button
-                  type="button"
-                  disabled={connected() || !canConnect() || connecting()}
-                  onClick={() => { if (!connected()) props.connectMcp(entry); }}
-                  class={`group text-left rounded-xl border p-4 transition-all ${
-                    connected()
-                      ? "border-green-6 bg-green-2"
-                      : "border-dls-border bg-dls-surface hover:bg-dls-hover hover:shadow-[0_4px_16px_rgba(17,24,39,0.06)]"
-                  }`}
-                >
-                  <div class="flex items-start gap-3">
-                    {/* Icon */}
-                    <div class={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
-                      connected() ? "bg-green-3 border-green-6" : serviceIconBg(entry.name)
-                    }`}>
-                      <Show
-                        when={!connecting()}
-                        fallback={<Loader2 size={18} class="animate-spin text-dls-secondary" />}
+                return (
+                  <div class="relative">
+                    <Show when={isControlChrome() && configured()}>
+                      <button
+                        type="button"
+                        class="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-green-6 bg-white/90 text-green-11 transition-colors hover:bg-white"
+                        aria-label={tr("mcp.control_chrome_edit")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const existingEntry = props.mcpServers.find((server) => server.name === getMcpIdentityKey(entry));
+                          openControlChromeModal("edit", existingEntry);
+                        }}
                       >
-                        <Show
-                          when={!connected()}
-                          fallback={<CheckCircle2 size={18} class="text-green-11" />}
-                        >
-                          <Icon size={18} class={serviceColor(entry.name)} />
-                        </Show>
-                      </Show>
-                    </div>
+                        <Settings size={14} />
+                      </button>
+                    </Show>
 
-                    {/* Text */}
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2">
-                        <h4 class="text-sm font-semibold text-dls-text">{entry.name}</h4>
-                        <Show when={connected()}>
-                          <span class="text-[10px] font-medium text-green-11 bg-green-3 px-1.5 py-0.5 rounded-md">
-                            {tr("mcp.connected_badge")}
-                          </span>
-                        </Show>
-                        <Show when={!connected() && quickConnectStatus(entry.name)}>
-                          {(status) => (
-                            <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${statusBadgeStyle(status().status)}`}>
-                              {friendlyStatus(status().status, locale())}
-                            </span>
-                          )}
-                        </Show>
-                      </div>
-                      <p class="text-xs text-dls-secondary mt-0.5 line-clamp-2">
-                        {entry.description}
-                      </p>
-                      <Show when={!connected() && !connecting()}>
-                        <div class="mt-2 text-[11px] font-medium text-blue-11 group-hover:text-blue-12 transition-colors">
-                          {tr("mcp.tap_to_connect")}
+                    <button
+                      type="button"
+                      disabled={configured() || !canConnect() || connecting()}
+                      onClick={() => {
+                        if (configured()) return;
+                        if (isControlChrome()) {
+                          openControlChromeModal("connect");
+                          return;
+                        }
+                        props.connectMcp(entry);
+                      }}
+                      class={`group w-full text-left rounded-xl border p-4 transition-all ${
+                        configured()
+                          ? "border-green-6 bg-green-2"
+                          : "border-dls-border bg-dls-surface hover:bg-dls-hover hover:shadow-[0_4px_16px_rgba(17,24,39,0.06)]"
+                      }`}
+                    >
+                      <div class="flex items-start gap-3">
+                        <div class={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
+                          configured() ? "bg-green-3 border-green-6" : serviceIconBg(entry.name)
+                        }`}>
+                          <Show
+                            when={!connecting()}
+                            fallback={<Loader2 size={18} class="animate-spin text-dls-secondary" />}
+                          >
+                            <Show
+                              when={!configured()}
+                              fallback={<CheckCircle2 size={18} class="text-green-11" />}
+                            >
+                              <Icon size={18} class={serviceColor(entry.name)} />
+                            </Show>
+                          </Show>
                         </div>
-                      </Show>
-                    </div>
+
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center gap-2 pr-10">
+                            <h4 class="text-sm font-semibold text-dls-text">{entry.name}</h4>
+                            <Show when={configured()}>
+                              <span class="text-[10px] font-medium text-green-11 bg-green-3 px-1.5 py-0.5 rounded-md">
+                                {tr("mcp.connected_badge")}
+                              </span>
+                            </Show>
+                            <Show when={!configured() && quickConnectStatus(entry)}>
+                              {(status) => (
+                                <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${statusBadgeStyle(status().status)}`}>
+                                  {friendlyStatus(status().status, locale())}
+                                </span>
+                              )}
+                            </Show>
+                          </div>
+                          <p class="text-xs text-dls-secondary mt-0.5 line-clamp-2">
+                            {entry.description}
+                          </p>
+                          <Show when={!configured() && !connecting()}>
+                            <div class="mt-2 text-[11px] font-medium text-blue-11 group-hover:text-blue-12 transition-colors">
+                              {tr("mcp.tap_to_connect")}
+                            </div>
+                          </Show>
+                        </div>
+                      </div>
+                    </button>
                   </div>
-                </button>
-              );
-            }}
-          </For>
+                );
+              }}
+            </For>
         </div>
       </div>
 
@@ -459,7 +513,7 @@ export default function McpView(props: McpViewProps) {
                           <Icon size={15} class={status() === "connected" ? "text-green-11" : serviceColor(entry.name)} />
                         </div>
                         <div class="min-w-0 flex-1">
-                          <div class="text-sm font-medium text-dls-text truncate">{entry.name}</div>
+                          <div class="text-sm font-medium text-dls-text truncate">{displayName(entry.name)}</div>
                         </div>
                         <div class="flex items-center gap-2 shrink-0">
                           <div class={`w-2 h-2 rounded-full ${statusDot(status())}`} />
@@ -557,7 +611,17 @@ export default function McpView(props: McpViewProps) {
                           </div>
                         </Show>
 
-                        <div class="flex justify-end pt-1">
+                        <div class="flex justify-end gap-2 pt-1">
+                          <Show when={isChromeDevtoolsMcp(entry.name)}>
+                            <Button
+                              variant="outline"
+                              class="!px-3 !py-1.5 !text-xs"
+                              onClick={() => openControlChromeModal("edit", entry)}
+                            >
+                              <Settings size={13} />
+                              {tr("mcp.control_chrome_edit")}
+                            </Button>
+                          </Show>
                           <Button
                             variant="danger"
                             class="!px-3 !py-1.5 !text-xs"
@@ -583,7 +647,7 @@ export default function McpView(props: McpViewProps) {
       <ConfirmModal
         open={logoutOpen()}
         title={tr("mcp.logout_modal_title")}
-        message={tr("mcp.logout_modal_message").replace("{server}", logoutTarget() ?? "")}
+        message={tr("mcp.logout_modal_message").replace("{server}", displayName(logoutTarget() ?? ""))}
         confirmLabel={logoutBusy() ? tr("mcp.logout_working") : tr("mcp.logout_action")}
         cancelLabel={tr("common.cancel")}
         variant="danger"
@@ -600,7 +664,7 @@ export default function McpView(props: McpViewProps) {
       <ConfirmModal
         open={removeOpen()}
         title={tr("mcp.remove_modal_title")}
-        message={tr("mcp.remove_modal_message").replace("{server}", removeTarget() ?? "")}
+        message={tr("mcp.remove_modal_message").replace("{server}", displayName(removeTarget() ?? ""))}
         confirmLabel={tr("mcp.remove_app")}
         cancelLabel={tr("common.cancel")}
         variant="danger"
@@ -717,6 +781,16 @@ export default function McpView(props: McpViewProps) {
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
         language={locale()}
+      />
+
+      <ControlChromeSetupModal
+        open={controlChromeModalOpen()}
+        busy={props.busy || props.mcpConnectingName === "Control Chrome"}
+        language={locale()}
+        mode={controlChromeModalMode()}
+        initialUseExistingProfile={controlChromeExistingProfile()}
+        onClose={() => setControlChromeModalOpen(false)}
+        onSave={(useExistingProfile) => saveControlChromeSettings(useExistingProfile)}
       />
     </section>
   );

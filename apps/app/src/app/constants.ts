@@ -33,6 +33,9 @@ export type McpDirectoryInfo = {
   oauth: boolean;
 };
 
+export const CHROME_DEVTOOLS_MCP_ID = "chrome-devtools";
+export const CHROME_DEVTOOLS_MCP_COMMAND = ["npx", "-y", "chrome-devtools-mcp@latest"] as const;
+
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   {
     name: "Notion",
@@ -70,11 +73,11 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     oauth: false,
   },
   {
-    id: "chrome-devtools",
+    id: CHROME_DEVTOOLS_MCP_ID,
     name: "Control Chrome",
     description: "Drive Chrome tabs with browser automation.",
     type: "local",
-    command: ["npx", "-y", "chrome-devtools-mcp@latest"],
+    command: [...CHROME_DEVTOOLS_MCP_COMMAND],
     oauth: false,
   },
 ];
