@@ -7,6 +7,11 @@ on:
         description: "Tag to build from (e.g., v0.11.200). Defaults to current ref."
         required: false
         type: string
+      deploy_den:
+        description: "Whether to promote the published snapshot into the Den Render service"
+        required: false
+        type: boolean
+        default: true
       snapshot_name:
         description: "Optional explicit Daytona snapshot name"
         required: false
@@ -21,6 +26,11 @@ on:
         description: "Tag to build from (e.g., v0.11.200). Defaults to release tag/current ref."
         required: false
         type: string
+      deploy_den:
+        description: "Whether to promote the published snapshot into the Den Render service"
+        required: false
+        type: boolean
+        default: true
       snapshot_name:
         description: "Optional explicit Daytona snapshot name"
         required: false
@@ -41,6 +51,10 @@ jobs:
   publish-daytona-snapshot:
     name: Build and Push Daytona Snapshot
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      snapshot_name: ${{ steps.resolve.outputs.snapshot_name }}
+      snapshot_region: ${{ steps.resolve.outputs.snapshot_region }}
     steps:
       - name: Resolve release tag and snapshot name
         id: resolve
@@ -49,7 +63,6 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_SNAPSHOT_NAME: ${{ inputs.snapshot_name }}
           INPUT_SNAPSHOT_REGION: ${{ inputs.snapshot_region }}
-          DEFAULT_SNAPSHOT_NAME: ${{ vars.DAYTONA_SNAPSHOT }}
           SNAPSHOT_NAME_BASE: ${{ vars.DAYTONA_SNAPSHOT_NAME_BASE }}
           DEFAULT_SNAPSHOT_REGION: ${{ vars.DAYTONA_SNAPSHOT_REGION }}
         run: |
@@ -67,11 +80,9 @@ jobs:
             exit 1
           fi
 
-          base_name="${SNAPSHOT_NAME_BASE:-openwork-runtime}"
+          base_name="${SNAPSHOT_NAME_BASE:-openwork}"
           if [ -n "${INPUT_SNAPSHOT_NAME:-}" ]; then
             snapshot_name="${INPUT_SNAPSHOT_NAME}"
-          elif [ -n "${DEFAULT_SNAPSHOT_NAME:-}" ]; then
-            snapshot_name="${DEFAULT_SNAPSHOT_NAME}"
           else
             snapshot_name="${base_name}-${tag#v}"
           fi
@@ -150,3 +161,12 @@ jobs:
 
           echo "Publishing Daytona snapshot: ${DAYTONA_SNAPSHOT_NAME}"
           ./scripts/create-daytona-openwork-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
+
+  deploy-den:
+    name: Promote Daytona Snapshot to Den Render Service
+    needs: [publish-daytona-snapshot]
+    if: ${{ inputs.deploy_den }}
+    uses: ./.github/workflows/deploy-den.yml
+    with:
+      daytona_snapshot: ${{ needs.publish-daytona-snapshot.outputs.snapshot_name }}
+    secrets: inherit

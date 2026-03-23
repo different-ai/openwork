@@ -4,6 +4,7 @@ import { CheckCircle2, Circle, Search, X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import Button from "./button";
+import ProviderIcon from "./provider-icon";
 import { modelEquals } from "../utils";
 import type { ModelOption, ModelRef } from "../types";
 
@@ -16,6 +17,7 @@ export type ModelPickerModalProps = {
   target: "default" | "session";
   current: ModelRef;
   onSelect: (model: ModelRef) => void;
+  onBehaviorChange: (model: ModelRef, value: string | null) => void;
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
 };
@@ -54,12 +56,17 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
     }));
   });
 
-  const renderedItems = createMemo<RenderedItem[]>(() => [
-    ...props.filteredOptions
-      .filter((opt) => opt.isConnected)
-      .map((opt) => ({ kind: "model" as const, opt })),
-    ...otherProviderLinks().map((item) => ({ kind: "provider" as const, ...item })),
-  ]);
+  const renderedItems = createMemo<RenderedItem[]>(() => {
+    const models = props.filteredOptions.filter((opt) => opt.isConnected);
+    const recommended = models.filter((opt) => opt.isRecommended);
+    const others = models.filter((opt) => !opt.isRecommended);
+
+    return [
+      ...recommended.map((opt) => ({ kind: "model" as const, opt })),
+      ...others.map((opt) => ({ kind: "model" as const, opt })),
+      ...otherProviderLinks().map((item) => ({ kind: "provider" as const, ...item })),
+    ];
+  });
 
   const activeModelIndex = createMemo(() => {
     const list = renderedItems();
@@ -73,9 +80,15 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
     );
   });
 
-  const enabledOptions = createMemo(() =>
+  const recommendedOptions = createMemo(() =>
     renderedItems().flatMap((item, index) =>
-      item.kind === "model" ? [{ opt: item.opt, index }] : [],
+      item.kind === "model" && item.opt.isRecommended ? [{ opt: item.opt, index }] : [],
+    ),
+  );
+
+  const otherEnabledOptions = createMemo(() =>
+    renderedItems().flatMap((item, index) =>
+      item.kind === "model" && !item.opt.isRecommended ? [{ opt: item.opt, index }] : [],
     ),
   );
 
@@ -177,16 +190,18 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
       });
 
     return (
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         ref={(el) => {
-          optionRefs[index] = el;
+          optionRefs[index] = el as unknown as HTMLButtonElement;
         }}
-        class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
-          index === activeIndex()
-            ? "border-gray-8 bg-gray-12/10"
-            : active()
-              ? "border-gray-6/20 bg-gray-12/5"
-              : "border-gray-6/70 bg-gray-1/40 hover:bg-gray-1/60"
+        class={`group w-full text-left rounded-xl px-3 py-2.5 transition-colors cursor-pointer ${
+          active()
+            ? "bg-gray-3 text-gray-12"
+            : index === activeIndex()
+              ? "bg-gray-2 text-gray-12"
+              : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-11"
         }`}
         onMouseEnter={() => {
           setActiveIndex(index);
@@ -197,42 +212,77 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             modelID: opt.modelID,
           });
         }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          if (event.isComposing || event.keyCode === 229) return;
+          event.preventDefault();
+          props.onSelect({
+            providerID: opt.providerID,
+            modelID: opt.modelID,
+          });
+        }}
       >
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <div class="text-sm font-medium text-gray-12 flex items-center gap-2">
+        <div class="flex items-start gap-3">
+          <ProviderIcon providerId={opt.providerID} size={16} class={`mt-[1px] shrink-0 transition-colors ${active() ? 'text-gray-12' : 'text-gray-10 group-hover:text-gray-11'}`} />
+          <div class="flex-1 min-w-0">
+            <div class={`text-[13px] flex items-center justify-between gap-2 ${active() ? 'font-medium text-gray-12' : 'text-current'}`}>
               <span class="truncate">{opt.title}</span>
             </div>
-            <div class="mt-1 flex items-center gap-3 text-xs text-gray-10">
+            <div class={`mt-0.5 flex items-center gap-3 text-[11px] ${active() ? 'text-gray-10' : 'text-gray-9 group-hover:text-gray-10'}`}>
               <span class="truncate">{opt.description ?? opt.providerID}</span>
-              <span class="ml-auto text-[11px] text-gray-7 font-mono">
+              <span class="ml-auto opacity-70 font-mono">
                 {opt.providerID}/{opt.modelID}
               </span>
             </div>
             <Show when={opt.footer}>
-              <div class="text-[11px] text-gray-7 mt-2">{opt.footer}</div>
+              <div class={`text-[11px] mt-1 ${active() ? 'text-gray-10' : 'text-gray-8 group-hover:text-gray-9'}`}>{opt.footer}</div>
             </Show>
-          </div>
-
-          <div class="pt-0.5 text-gray-10">
-            <Show when={active()} fallback={<Circle size={14} />}>
-              <CheckCircle2 size={14} class="text-green-11" />
+            <Show when={active() && (opt.behaviorOptions?.length ?? 0) > 0}>
+              <div class="mt-3 flex items-center gap-2" onKeyDown={(e) => e.stopPropagation()}>
+                <span class="text-[11px] font-medium text-gray-10 mr-1">{opt.behaviorTitle}:</span>
+                <div class="flex flex-wrap items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                  <For each={opt.behaviorOptions}>
+                    {(option) => (
+                      <button
+                        type="button"
+                        class={`text-[11px] transition-colors ${
+                          opt.behaviorValue === option.value
+                            ? "text-gray-12 font-semibold"
+                            : "text-gray-10 hover:text-gray-12"
+                        }`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          props.onBehaviorChange(
+                            { providerID: opt.providerID, modelID: opt.modelID },
+                            option.value,
+                          );
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
             </Show>
           </div>
         </div>
-      </button>
+      </div>
     );
   };
 
   const renderProviderLink = (provider: { providerID: string; title: string; matchCount: number }, index: number) => (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       ref={(el) => {
-        optionRefs[index] = el;
+        optionRefs[index] = el as unknown as HTMLButtonElement;
       }}
-      class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+      class={`group w-full text-left rounded-xl px-3 py-2.5 transition-colors cursor-pointer ${
         index === activeIndex()
-          ? "border-gray-8 bg-gray-12/10"
-          : "border-gray-6/70 bg-gray-1/40 hover:bg-gray-1/60"
+          ? "bg-gray-2 text-gray-12"
+          : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-11"
       }`}
       onMouseEnter={() => {
         setActiveIndex(index);
@@ -241,33 +291,45 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         props.onClose({ restorePromptFocus: false });
         props.onOpenSettings();
       }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if (event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        props.onClose({ restorePromptFocus: false });
+        props.onOpenSettings();
+      }}
     >
-      <div class="flex items-center justify-between gap-3">
-        <div class="min-w-0">
-          <div class="text-sm font-medium text-gray-12 truncate">{provider.title}</div>
-          <div class="mt-1 text-xs text-gray-10">Click to setup provider</div>
-        </div>
-        <div class="flex items-center gap-3 shrink-0">
-          <div class="text-[11px] text-gray-7">
-            {provider.matchCount} {provider.matchCount === 1 ? "model" : "models"}
+      <div class="flex items-start gap-3">
+        <ProviderIcon providerId={provider.providerID} size={16} class={`mt-[1px] shrink-0 transition-colors ${index === activeIndex() ? 'text-gray-12' : 'text-gray-10 group-hover:text-gray-11'}`} />
+        <div class="flex-1 min-w-0">
+          <div class={`text-[13px] flex items-center justify-between gap-2 text-current`}>
+            <span class="truncate">{provider.title}</span>
+          </div>
+          <div class={`mt-0.5 flex items-center gap-3 text-[11px] ${index === activeIndex() ? 'text-gray-10' : 'text-gray-9 group-hover:text-gray-10'}`}>
+            <span class="truncate">Connect this provider to browse and save models</span>
+            <span class="ml-auto opacity-70">
+              {provider.matchCount} {provider.matchCount === 1 ? "model" : "models"}
+            </span>
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
+        <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-[24px] shadow-[var(--dls-shell-shadow)] overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
           <div class="p-6 flex flex-col min-h-0">
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-lg font-semibold text-gray-12">
-                  {props.target === "default" ? translate("settings.default_model") : translate("settings.session_model")}
+                  {props.target === "default" ? "Default model" : "Chat model"}
                 </h3>
                 <p class="text-sm text-gray-11 mt-1">
-                  {props.target === "default" ? translate("settings.model_description_default") : translate("settings.model_description_session")}
+                  {props.target === "default"
+                    ? "Choose the default model for new chats. If a model supports reasoning profiles, configure them on its card."
+                    : "Choose the model for this chat. If a model supports reasoning profiles, configure them on its card."}
                 </p>
               </div>
               <Button
@@ -299,19 +361,28 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
 
             <div class="mt-4 space-y-4 overflow-y-auto pr-1 -mr-1 min-h-0">
-              <Show when={enabledOptions().length > 0}>
+              <Show when={recommendedOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Enabled Providers
+                    Recommended
                   </div>
-                  <For each={enabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
+                  <For each={recommendedOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
+                </section>
+              </Show>
+
+              <Show when={otherEnabledOptions().length > 0}>
+                <section class="space-y-2">
+                  <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                    Other connected models
+                  </div>
+                  <For each={otherEnabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
                 </section>
               </Show>
 
               <Show when={otherOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Other Providers
+                    More providers
                   </div>
                   <For each={otherOptions()}>
                     {(provider) => renderProviderLink(provider, provider.index)}

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
 import { createHash, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
@@ -8,16 +9,18 @@ import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plu
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
-import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
+import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
+import { startReloadWatchers } from "./reload-watcher.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { workspaceIdForPath } from "./workspaces.js";
+import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
@@ -238,8 +241,13 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
-  const routes = createRoutes(config, approvals, tokens);
   const logger = createServerLogger(config);
+  let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
+  const restartReloadWatchers = () => {
+    watcherHandle.close();
+    watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
+  };
+  const routes = createRoutes(config, approvals, tokens, restartReloadWatchers);
 
   const serverOptions: {
     hostname: string;
@@ -1184,10 +1192,7 @@ function emitReloadEvent(
   reason: ReloadReason,
   trigger?: ReloadTrigger,
 ) {
-  void reloadEvents;
-  void workspace;
-  void reason;
-  void trigger;
+  reloadEvents.recordDebounced(workspace.id, reason, trigger);
 }
 
 function buildConfigTrigger(path: string): ReloadTrigger {
@@ -1218,7 +1223,12 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   };
 }
 
-function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
+function createRoutes(
+  config: ServerConfig,
+  approvals: ApprovalService,
+  tokens: TokenService,
+  onWorkspacesChanged: () => void,
+): Route[] {
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
 
@@ -1394,7 +1404,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
     const items = config.workspaces.map(serializeWorkspace);
-    return jsonResponse({ items, activeId: active?.id ?? null });
+    return jsonResponse({ items, workspaces: items, activeId: active?.id ?? null });
   });
 
   addRoute(routes, "GET", "/tokens", "host", async () => {
@@ -1424,6 +1434,91 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "POST", "/workspaces/local", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const folderPath = typeof body.folderPath === "string" ? body.folderPath.trim() : "";
+    const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : basename(folderPath || "Workspace");
+    const preset = typeof body.preset === "string" && body.preset.trim() ? body.preset.trim() : "starter";
+
+    if (!folderPath) {
+      throw new ApiError(400, "invalid_payload", "folderPath is required");
+    }
+
+    const workspacePath = resolve(folderPath);
+    await ensureDir(workspacePath);
+    await ensureWorkspaceFiles(workspacePath, preset);
+
+    const workspace: WorkspaceInfo = {
+      id: workspaceIdForPath(workspacePath),
+      name,
+      path: workspacePath,
+      preset,
+      workspaceType: "local",
+    };
+
+    config.workspaces = [workspace, ...config.workspaces.filter((entry) => entry.id !== workspace.id)];
+    if (!config.authorizedRoots.some((root) => resolve(root) === workspacePath)) {
+      config.authorizedRoots = [...config.authorizedRoots, workspacePath];
+    }
+    const persisted = await persistServerWorkspaceState(config);
+    onWorkspacesChanged();
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "workspace.create",
+      target: workspace.path,
+      summary: `Created workspace ${name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      activeId: workspace.id,
+      workspaces: config.workspaces.map(serializeWorkspace),
+      persisted,
+    }, 201);
+  });
+
+  addRoute(routes, "PATCH", "/workspaces/:id/display-name", "host", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const nextDisplayName = typeof body.displayName === "string" && body.displayName.trim()
+      ? body.displayName.trim()
+      : undefined;
+
+    config.workspaces = config.workspaces.map((entry) =>
+      entry.id === workspace.id
+        ? {
+            ...entry,
+            displayName: nextDisplayName,
+            name: nextDisplayName ?? entry.name,
+          }
+        : entry,
+    );
+
+    const persisted = await persistServerWorkspaceState(config);
+    onWorkspacesChanged();
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "workspace.rename",
+      target: workspace.path,
+      summary: `Updated workspace display name${nextDisplayName ? ` to ${nextDisplayName}` : ""}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      activeId: config.workspaces[0]?.id ?? null,
+      workspaces: config.workspaces.map(serializeWorkspace),
+      persisted,
+    });
+  });
+
   addRoute(routes, "POST", "/workspaces/:id/activate", "host", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     config.workspaces = [
@@ -1439,19 +1534,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
-    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace) });
+    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted: false });
   });
 
   addRoute(routes, "DELETE", "/workspaces/:id", "host", async (ctx) => {
     ensureWritable(config);
 
     const workspace = await resolveWorkspace(config, ctx.params.id);
-
-    // Attempt to persist to server.json (when present) before mutating in-memory state.
-    const configPath = config.configPath?.trim() ?? "";
-    const persisted = configPath
-      ? await persistWorkspaceDeletion(configPath, workspace.id, workspace.path)
-      : false;
 
     const before = config.workspaces.length;
     config.workspaces = config.workspaces.filter((entry) => entry.id !== workspace.id);
@@ -1461,6 +1550,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       // Only remove exact matches; authorizedRoots can contain broader entries.
       config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
     }
+    const persisted = await persistServerWorkspaceState(config);
+    onWorkspacesChanged();
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -1479,6 +1570,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       persisted,
       activeId: active?.id ?? null,
       items: config.workspaces.map(serializeWorkspace),
+      workspaces: config.workspaces.map(serializeWorkspace),
     });
   });
 
@@ -1488,6 +1580,58 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const openwork = await readOpenworkConfig(workspace.path);
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
     return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/opencode-config", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const scope = normalizeOpencodeScope(ctx.url.searchParams.get("scope"));
+    const configPath = resolveOpencodeConfigFilePath(scope, workspace.path);
+    const result = await readRawOpencodeConfig(configPath);
+    return jsonResponse({ path: configPath, exists: result.exists, content: result.content });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/opencode-config", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const scope = normalizeOpencodeScope(typeof body.scope === "string" ? body.scope : null);
+    const content = typeof body.content === "string" ? body.content : null;
+    if (content === null) {
+      throw new ApiError(400, "invalid_payload", "content must be a string");
+    }
+
+    const configPath = resolveOpencodeConfigFilePath(scope, workspace.path);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: scope === "global" ? "config.global.write" : "config.write",
+      summary: `Write ${scope} OpenCode config`,
+      paths: [configPath],
+    });
+
+    await ensureDir(dirname(configPath));
+    await writeFile(configPath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: scope === "global" ? "config.global.write" : "config.write",
+      target: configPath,
+      summary: `Updated ${scope} OpenCode config`,
+      timestamp: Date.now(),
+    });
+
+    if (scope === "project") {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
+    }
+
+    return jsonResponse({
+      ok: true,
+      status: 0,
+      stdout: `Wrote ${configPath}`,
+      stderr: "",
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/audit", "client", async (ctx) => {
@@ -2492,8 +2636,10 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    void ctx;
-    return jsonResponse({ items: [], cursor: 0, workspaceId: workspace.id, disabled: true });
+    const sinceRaw = ctx.url.searchParams.get("since");
+    const since = sinceRaw ? Number(sinceRaw) : undefined;
+    const items = ctx.reloadEvents.list(workspace.id, since);
+    return jsonResponse({ items, cursor: ctx.reloadEvents.cursor(), workspaceId: workspace.id, disabled: false });
   });
 
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
@@ -3803,6 +3949,9 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   if (!authorized) {
     throw new ApiError(403, "workspace_unauthorized", "Workspace is not authorized");
   }
+  if (!config.readOnly) {
+    await repairCommands(resolvedWorkspace);
+  }
   return { ...workspace, path: resolvedWorkspace };
 }
 
@@ -3912,62 +4061,55 @@ type OpenworkServerConfigFile = Record<string, unknown> & {
   authorizedRoots?: string[];
 };
 
-async function persistWorkspaceDeletion(configPath: string, workspaceId: string, workspacePath: string): Promise<boolean> {
-  if (!configPath.trim()) return false;
+async function readServerConfigFile(configPath: string): Promise<OpenworkServerConfigFile> {
   if (!(await exists(configPath))) {
-    // If the server was started from CLI args/env, avoid implicitly creating server.json
-    // because it can change token behavior on restart.
-    return false;
+    return {};
   }
 
-  let raw = "";
   try {
-    raw = await readFile(configPath, "utf8");
-  } catch (error) {
-    throw new ApiError(500, "server_config_read_failed", "Failed to read server config", {
-      path: configPath,
-      error: String(error),
-    });
-  }
-
-  let parsed: OpenworkServerConfigFile;
-  try {
-    parsed = ensurePlainObject(JSON.parse(raw)) as OpenworkServerConfigFile;
+    const raw = await readFile(configPath, "utf8");
+    return ensurePlainObject(JSON.parse(raw)) as OpenworkServerConfigFile;
   } catch (error) {
     throw new ApiError(422, "invalid_json", "Failed to parse server config", {
       path: configPath,
       error: String(error),
     });
   }
+}
 
-  const configDir = dirname(configPath);
-  const workspacesRaw = parsed.workspaces;
-  const workspaces = Array.isArray(workspacesRaw) ? workspacesRaw : [];
+function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string, unknown> {
+  return {
+    id: workspace.id,
+    path: workspace.path,
+    name: workspace.name,
+    preset: workspace.preset,
+    workspaceType: workspace.workspaceType,
+    ...(workspace.remoteType ? { remoteType: workspace.remoteType } : {}),
+    ...(workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
+    ...(workspace.directory ? { directory: workspace.directory } : {}),
+    ...(workspace.displayName ? { displayName: workspace.displayName } : {}),
+    ...(workspace.openworkHostUrl ? { openworkHostUrl: workspace.openworkHostUrl } : {}),
+    ...(workspace.openworkToken ? { openworkToken: workspace.openworkToken } : {}),
+    ...(workspace.openworkWorkspaceId ? { openworkWorkspaceId: workspace.openworkWorkspaceId } : {}),
+    ...(workspace.openworkWorkspaceName ? { openworkWorkspaceName: workspace.openworkWorkspaceName } : {}),
+    ...(workspace.sandboxBackend ? { sandboxBackend: workspace.sandboxBackend } : {}),
+    ...(workspace.sandboxRunId ? { sandboxRunId: workspace.sandboxRunId } : {}),
+    ...(workspace.sandboxContainerName ? { sandboxContainerName: workspace.sandboxContainerName } : {}),
+    ...(workspace.opencodeUsername ? { opencodeUsername: workspace.opencodeUsername } : {}),
+    ...(workspace.opencodePassword ? { opencodePassword: workspace.opencodePassword } : {}),
+  };
+}
 
-  const nextWorkspaces = workspaces.filter((entry) => {
-    const obj = ensurePlainObject(entry);
-    const path = typeof obj.path === "string" ? obj.path.trim() : "";
-    if (!path) return true;
-    const id = workspaceIdForPath(resolve(configDir, path));
-    return id !== workspaceId;
-  });
+async function persistServerWorkspaceState(config: ServerConfig): Promise<boolean> {
+  const configPath = config.configPath?.trim() ?? "";
+  if (!configPath) return false;
+  if (!(await exists(configPath))) return false;
 
-  const rootsRaw = parsed.authorizedRoots;
-  const roots = Array.isArray(rootsRaw) ? rootsRaw : [];
-  const nextRoots = roots.filter((root) => {
-    const value = typeof root === "string" ? root.trim() : "";
-    if (!value) return false;
-    return resolve(configDir, value) !== resolve(workspacePath);
-  });
-
-  const workspacesChanged = nextWorkspaces.length !== workspaces.length;
-  const rootsChanged = nextRoots.length !== roots.length;
-  if (!workspacesChanged && !rootsChanged) return false;
-
+  const parsed = await readServerConfigFile(configPath);
   const next: OpenworkServerConfigFile = {
     ...parsed,
-    ...(workspacesChanged ? { workspaces: nextWorkspaces } : {}),
-    ...(rootsChanged ? { authorizedRoots: nextRoots } : {}),
+    workspaces: config.workspaces.map(serializeWorkspaceConfigEntry),
+    authorizedRoots: Array.from(new Set(config.authorizedRoots.map((root) => resolve(root)))),
   };
 
   await ensureDir(dirname(configPath));
@@ -3983,6 +4125,22 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
       // ignore
     }
   }
+}
+
+function normalizeOpencodeScope(value: string | null | undefined): "project" | "global" {
+  return value?.trim().toLowerCase() === "global" ? "global" : "project";
+}
+
+function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
+  if (scope === "global") {
+    const base = join(homedir(), ".config", "opencode");
+    const jsoncPath = join(base, "opencode.jsonc");
+    const jsonPath = join(base, "opencode.json");
+    if (existsSync(jsoncPath)) return jsoncPath;
+    if (existsSync(jsonPath)) return jsonPath;
+    return jsoncPath;
+  }
+  return opencodeConfigPath(workspaceRoot);
 }
 
 function normalizeOpenCodeRouterIdentityId(value: unknown): string {

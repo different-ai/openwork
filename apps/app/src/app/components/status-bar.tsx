@@ -21,6 +21,7 @@ type StatusBarProps = {
   statusDotClass?: string;
   statusPingClass?: string;
   statusPulse?: boolean;
+  showSettingsButton?: boolean;
 };
 
 export default function StatusBar(props: StatusBarProps) {
@@ -113,15 +114,17 @@ export default function StatusBar(props: StatusBarProps) {
             <MessageCircle class="h-4 w-4" />
             <span class="text-[11px] font-medium">Feedback</span>
           </button>
-          <button
-            type="button"
-            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-            onClick={props.onOpenSettings}
-            title={props.settingsOpen ? "Back to previous screen" : "Settings"}
-            aria-label={props.settingsOpen ? "Back to previous screen" : "Settings"}
-          >
-            <Settings class="h-4 w-4" />
-          </button>
+          <Show when={props.showSettingsButton !== false}>
+            <button
+              type="button"
+              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              onClick={props.onOpenSettings}
+              title={props.settingsOpen ? "Back to previous screen" : "Settings"}
+              aria-label={props.settingsOpen ? "Back to previous screen" : "Settings"}
+            >
+              <Settings class="h-4 w-4" />
+            </button>
+          </Show>
         </div>
       </div>
     </div>

@@ -17,6 +17,10 @@ if (!version) {
 const outroot = join(root, "dist", "npm")
 rmSync(outroot, { recursive: true, force: true })
 mkdirSync(outroot, { recursive: true })
+const constantsSrc = resolve(root, "..", "..", "constants.json")
+if (!existsSync(constantsSrc)) {
+  throw new Error(`Missing constants.json at ${constantsSrc}`)
+}
 
 const tag = String(process.env.NPM_TAG || "").trim()
 const dry = String(process.env.DRY_RUN || "").trim() === "1"
@@ -101,6 +105,7 @@ if (!existsSync(postinstallSrc)) {
   throw new Error(`Missing postinstall at ${postinstallSrc}`)
 }
 copyFileSync(postinstallSrc, join(meta, basename(postinstallSrc)))
+copyFileSync(constantsSrc, join(meta, "constants.json"))
 
 writeJson(join(meta, "package.json"), {
   name: "openwork-orchestrator",
@@ -112,10 +117,10 @@ writeJson(join(meta, "package.json"), {
     "openwork-orchestrator": "./bin/openwork",
   },
   scripts: {
-    postinstall: "bun ./postinstall.mjs || node ./postinstall.mjs",
+    postinstall: "node ./postinstall.mjs",
   },
   optionalDependencies,
-  files: ["bin", "postinstall.mjs"],
+  files: ["bin", "postinstall.mjs", "constants.json"],
 })
 
 published.push({ name: "openwork-orchestrator", dir: meta })

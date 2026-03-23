@@ -106,6 +106,21 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   } catch {
     // ignore
   }
+  try {
+    const constants = JSON.parse(
+      readFileSync(resolve("..", "..", "constants.json"), "utf8"),
+    ) as { opencodeVersion?: string };
+    if (
+      typeof constants.opencodeVersion === "string" &&
+      constants.opencodeVersion.trim()
+    ) {
+      define.__OPENWORK_PINNED_OPENCODE_VERSION__ = `\"${constants.opencodeVersion
+        .trim()
+        .replace(/^v/, "")}\"`;
+    }
+  } catch {
+    // ignore
+  }
 
   const resolvedTarget = target ?? defaultTarget();
   const result = await bun.build({

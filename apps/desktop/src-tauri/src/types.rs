@@ -378,7 +378,7 @@ impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
             version: WORKSPACE_STATE_VERSION,
-            active_id: "starter".to_string(),
+            active_id: String::new(),
             workspaces: Vec::new(),
         }
     }

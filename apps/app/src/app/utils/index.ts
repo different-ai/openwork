@@ -86,6 +86,20 @@ export function isWindowsPlatform() {
   return /windows/i.test(platform) || /windows/i.test(ua);
 }
 
+export function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+
+  const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
+  const platform =
+    typeof (navigator as any).userAgentData?.platform === "string"
+      ? (navigator as any).userAgentData.platform
+      : typeof navigator.platform === "string"
+        ? navigator.platform
+        : "";
+
+  return /mac/i.test(platform) || /macintosh|mac os x/i.test(ua);
+}
+
 const STARTUP_PREF_KEY = "openwork.startupPref";
 const LEGACY_PREF_KEY = "openwork.modePref";
 const LEGACY_PREF_KEY_ALT = "openwork_mode_pref";
@@ -191,7 +205,7 @@ export function normalizeDirectoryQueryPath(input?: string | null) {
 export function normalizeDirectoryPath(input?: string | null) {
   const normalized = normalizeDirectoryQueryPath(input);
   if (!normalized) return "";
-  return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
+  return isWindowsPlatform() || isMacPlatform() ? normalized.toLowerCase() : normalized;
 }
 
 export function normalizeEvent(raw: unknown): OpencodeEvent | null {
@@ -691,12 +705,12 @@ function buildToolTitle(state: any, toolName: string): string {
 
   if (lower === "read") {
     const target = file("filePath", "path", "file");
-    return target ? `Read ${target}` : "Read file";
+    return target ? `Reviewed ${target}` : "Reviewed file";
   }
 
   if (lower === "edit") {
     const target = file("filePath", "path", "file");
-    return target ? `Edit ${target}` : "Edit file";
+    return target ? `Updated ${target}` : "Updated file";
   }
 
   if (lower === "write") {
@@ -710,12 +724,12 @@ function buildToolTitle(state: any, toolName: string): string {
 
   if (lower === "list" || lower === "list_files") {
     const target = file("path");
-    return target ? `List ${target}` : "List files";
+    return target ? `Reviewed ${target}` : "Reviewed files";
   }
 
   if (lower === "grep" || lower === "glob" || lower === "search") {
     const pattern = pick("pattern", "query");
-    return pattern ? `Search ${truncateStepText(pattern, 44)}` : "Search code";
+    return pattern ? `Searched ${truncateStepText(pattern, 44)}` : "Searched code";
   }
 
   if (lower === "bash") {
@@ -732,9 +746,17 @@ function buildToolTitle(state: any, toolName: string): string {
     return "Task";
   }
 
+  if (lower === "todowrite") {
+    return "Update todo list";
+  }
+
+  if (lower === "todoread") {
+    return "Read todo list";
+  }
+
   if (lower === "webfetch") {
     const url = pick("url");
-    return url ? `Fetch ${truncateStepText(url, 44)}` : "Fetch web page";
+    return url ? `Checked ${truncateStepText(url, 44)}` : "Checked web page";
   }
 
   if (lower === "skill") {
@@ -747,7 +769,9 @@ function buildToolTitle(state: any, toolName: string): string {
     return truncateStepText(isPathLike(stateTitle) ? normalizePathToken(stateTitle) : stateTitle, 56);
   }
 
-  const fallback = normalizeStepText(toolName).replace(/[_-]+/g, " ");
+  const fallback = normalizeStepText(toolName)
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
   return fallback || "Tool";
 }
 
@@ -782,6 +806,10 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
     if (description) return truncateStepText(description, 80);
     const agent = formatAgentLabel(pick("subagent_type"));
     if (agent) return `${agent} agent`;
+  }
+
+  if (lower === "todowrite" || lower === "todoread") {
+    return undefined;
   }
 
   if (lower === "webfetch") {
@@ -960,7 +988,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
     }
 
     headline = headline.replace(/^thinking[:\s-]*/i, "").trim();
-    const title = `Thinking: ${truncateStepText(headline || "reviewing context", 96)}`;
+    const title = truncateStepText(headline || "Thinking", 96);
     return { title, detail: detail || undefined, toolCategory: "tool" };
   }
 

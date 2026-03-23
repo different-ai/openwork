@@ -47,11 +47,11 @@ export function defaultBlueprintStartersForPreset(preset: string): WorkspaceBlue
     default:
       return [
         {
-          id: "starter-connect-anthropic",
+          id: "starter-connect-openai",
           kind: "action",
-          title: "Connect Claude",
-          description: "Add your Anthropic provider so Claude models are ready in new sessions.",
-          action: "connect-anthropic",
+          title: "Connect ChatGPT",
+          description: "Add your OpenAi provider so ChatGPT models are ready in new sessions.",
+          action: "connect-openai",
         },
         {
           id: "starter-browser",

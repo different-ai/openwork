@@ -633,20 +633,6 @@ export default function SkillsView(props: SkillsViewProps) {
           <Plus size={14} />
           New skill
         </button>
-        <button
-          type="button"
-          onClick={openInstallFromLink}
-          disabled={props.busy}
-          class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border ${
-            props.busy
-              ? "border-dls-border bg-dls-hover text-dls-secondary"
-              : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
-          }`}
-          title="Install a skill from a link"
-        >
-          <Link2 size={14} />
-          Install from link
-        </button>
       </div>
 
       <Show when={props.accessHint}>

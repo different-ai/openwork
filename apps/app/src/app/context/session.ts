@@ -686,9 +686,24 @@ export function createSessionStore(options: {
     // string equality against the stored session.directory.
     const queryDirectory = normalizeDirectoryQueryPath(scopeRoot) || undefined;
 
+    sessionDebug("sessions:load:request", {
+      scopeRoot: scopeRoot ?? null,
+      queryDirectory: queryDirectory ?? null,
+      activeWorkspaceRoot: options.activeWorkspaceRoot?.() ?? null,
+    });
+
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
     const list = unwrap(await c.session.list({ directory: queryDirectory, roots: true }));
+    sessionDebug("sessions:load:response", {
+      count: list.length,
+      sessions: list.map((session) => ({
+        id: session.id,
+        title: session.title,
+        directory: session.directory,
+        parentID: session.parentID,
+      })),
+    });
     sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
 
     // Defensive client-side filter in case the server returns sessions spanning
@@ -697,6 +712,16 @@ export function createSessionStore(options: {
     const filtered = root
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
+    sessionDebug("sessions:load:filtered-list", {
+      root: root || null,
+      count: filtered.length,
+      sessions: filtered.map((session) => ({
+        id: session.id,
+        title: session.title,
+        directory: session.directory,
+        parentID: session.parentID,
+      })),
+    });
     sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
     rememberSessions(filtered);
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
@@ -711,11 +736,7 @@ export function createSessionStore(options: {
     }
     const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
     rememberSession(next);
-    setStore("sessions", (current) => {
-      const tracked = current.some((session) => session.id === next.id);
-      if (next.parentID && !tracked) return current;
-      return upsertSession(current, next);
-    });
+    setStore("sessions", (current) => upsertSession(current, next));
   }
 
   async function refreshPendingPermissions() {
@@ -774,6 +795,7 @@ export function createSessionStore(options: {
         const nextSession = unwrap(info);
         const nextMessages = unwrap(msgs);
         rememberSession(nextSession);
+        setStore("sessions", (current) => upsertSession(current, nextSession));
         setMessagesForSession(id, nextMessages);
         setMessageLimitBySession((prev) => ({ ...prev, [id]: INITIAL_SESSION_MESSAGE_LIMIT }));
         setMessageCompleteBySession((prev) => ({ ...prev, [id]: nextMessages.length < INITIAL_SESSION_MESSAGE_LIMIT }));
@@ -1138,11 +1160,7 @@ export function createSessionStore(options: {
         if (record.info && typeof record.info === "object") {
           const info = record.info as Session;
           rememberSession(info);
-          setStore("sessions", (current) => {
-            const tracked = current.some((session) => session.id === info.id);
-            if (info.parentID && !tracked) return current;
-            return upsertSession(current, info);
-          });
+          setStore("sessions", (current) => upsertSession(current, info));
         }
       }
     }
@@ -1194,11 +1212,7 @@ export function createSessionStore(options: {
             try {
               const latest = unwrap(await c.session.get({ sessionID }));
               rememberSession(latest);
-              setStore("sessions", (current) => {
-                const tracked = current.some((session) => session.id === latest.id);
-                if (latest.parentID && !tracked) return current;
-                return upsertSession(current, latest);
-              });
+              setStore("sessions", (current) => upsertSession(current, latest));
             } catch {
               // ignore
             }

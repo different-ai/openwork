@@ -10,7 +10,7 @@ export function DenShell({ children }: { children: ReactNode }) {
         <span className="absolute inset-x-0 top-0 h-[32rem] bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.75),transparent_70%)]" />
       </div>
 
-      <div className="relative z-10 flex min-h-screen min-h-dvh w-full px-3 py-3 md:px-6 md:py-6">
+      <div className="relative z-10 flex min-h-screen min-h-dvh w-full">
         {children}
       </div>
     </main>

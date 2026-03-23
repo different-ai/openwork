@@ -67,7 +67,7 @@ Expected: worker creation `202` with a healthy cloud-backed instance once provis
 
 - `.github/workflows/deploy-den.yml`
 
-It updates Render env vars and triggers a deploy for the configured service ID. Daytona is intended for local/dev worker testing unless you build a separate hosted Den deployment path for it.
+It updates Render env vars and triggers a deploy for the configured service ID. Release snapshot publishing now calls it after a successful Daytona snapshot push so Den picks up the new `DAYTONA_SNAPSHOT` value.
 
 ## Common failure modes
 

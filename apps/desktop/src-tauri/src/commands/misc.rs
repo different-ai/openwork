@@ -15,6 +15,24 @@ use crate::types::{ExecResult, WorkspaceOpenworkConfig};
 use crate::workspace::state::load_workspace_state;
 use tauri::{AppHandle, Manager, State};
 
+fn pinned_opencode_install_command() -> String {
+    let constants = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../constants.json"
+    ));
+    let parsed: serde_json::Value =
+        serde_json::from_str(constants).expect("constants.json must be valid JSON");
+    let version = parsed["opencodeVersion"]
+        .as_str()
+        .expect("constants.json must include opencodeVersion")
+        .trim()
+        .trim_start_matches('v');
+    format!(
+        "curl -fsSL https://opencode.ai/install | bash -s -- --version {} --no-modify-path",
+        version
+    )
+}
+
 #[derive(serde::Serialize)]
 pub struct CacheResetResult {
     pub removed: Vec<String>,
@@ -244,8 +262,9 @@ fn resolve_opencode_program(
 
     program.ok_or_else(|| {
         let notes_text = notes.join("\n");
+        let install_command = pinned_opencode_install_command();
         format!(
-            "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
+            "OpenCode CLI not found.\n\nInstall with:\n- {install_command}\n\nNotes:\n{notes_text}"
         )
     })
 }

@@ -851,7 +851,7 @@ export default {
   "app.migration.desktop_required": "Migration repair requires the desktop app.",
   "app.migration.local_only": "Migration repair is only available for local workers.",
   "app.migration.workspace_required": "Pick a local workspace folder before repairing migration.",
-  "app.migration.unsupported": "This OpenCode binary does not support `opencode db migrate`. Update OpenCode to >=1.2.6 or switch to bundled engine.",
+  "app.migration.unsupported": "This OpenCode binary does not support `opencode db migrate`. Update to the OpenWork-pinned OpenCode version or switch to bundled engine.",
   "app.migration.failed": "OpenCode migration failed.",
   "app.migration.restart_failed": "Migration completed, but OpenWork could not restart the local engine.",
   "app.migration.success": "Migration repaired. Local startup was retried.",

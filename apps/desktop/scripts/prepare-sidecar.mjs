@@ -33,6 +33,7 @@ const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUIL
 const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
 const packageJsonPath = resolve(__dirname, "..", "package.json");
+const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
 
 const opencodeGithubRepo = (() => {
   const raw =
@@ -49,15 +50,13 @@ const opencodeGithubRepo = (() => {
   return normalized;
 })();
 const opencodeVersion = (() => {
-  if (process.env.OPENCODE_VERSION?.trim()) return process.env.OPENCODE_VERSION.trim();
   try {
-    const raw = readFileSync(packageJsonPath, "utf8");
-    const pkg = JSON.parse(raw);
-    if (pkg.opencodeVersion) return String(pkg.opencodeVersion).trim();
+    const raw = readFileSync(constantsPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return typeof parsed.opencodeVersion === "string" ? parsed.opencodeVersion.trim() || null : null;
   } catch {
-    // ignore
+    return null;
   }
-  return null;
 })();
 
 const normalizeVersion = (value) => {
@@ -67,29 +66,6 @@ const normalizeVersion = (value) => {
   return raw.startsWith("v") ? raw.slice(1) : raw;
 };
 
-const fetchLatestOpencodeVersion = async () => {
-  // Use GitHub API (no auth required). If this fails, the caller can fall back
-  // to an explicitly configured version via OPENCODE_VERSION.
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const response = await fetch(`https://api.github.com/repos/${opencodeGithubRepo}/releases/latest`, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    const tagName = typeof data?.tag_name === "string" ? data.tag_name : "";
-    return normalizeVersion(tagName);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-};
 const opencodeAssetOverride = process.env.OPENCODE_ASSET?.trim() || null;
 const opencodeRouterVersion = (() => {
   if (process.env.OPENCODE_ROUTER_VERSION?.trim()) return process.env.OPENCODE_ROUTER_VERSION.trim();
@@ -389,22 +365,11 @@ if (!existingOpencodeVersion && opencodeCandidatePath) {
       : null;
 }
 
-// Prefer an explicitly pinned version. Otherwise, follow latest.
-const pinnedOpencodeVersion = normalizeVersion(opencodeVersion);
-let normalizedOpencodeVersion = pinnedOpencodeVersion;
-
-if (!normalizedOpencodeVersion) {
-  normalizedOpencodeVersion = await fetchLatestOpencodeVersion();
-}
-
-// If GitHub is unreachable, fall back to whatever we already have.
-if (!normalizedOpencodeVersion && existingOpencodeVersion) {
-  normalizedOpencodeVersion = normalizeVersion(existingOpencodeVersion);
-}
+const normalizedOpencodeVersion = normalizeVersion(opencodeVersion);
 
 if (!normalizedOpencodeVersion) {
   console.error(
-    "OpenCode version could not be resolved. Set OPENCODE_VERSION to pin a version, or ensure GitHub is reachable to use latest."
+    `OpenCode version could not be resolved from ${constantsPath}.`
   );
   process.exit(1);
 }

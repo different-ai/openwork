@@ -51,14 +51,18 @@ function resolveOrchestratorPackageJson() {
 }
 
 function resolveOpencodeVersion() {
-  const explicit = process.env.OPENCODE_VERSION?.trim();
-  if (explicit) {
-    return explicit;
+  const orchestratorPackageJson = resolveOrchestratorPackageJson();
+  const orchestratorRoot = resolve(orchestratorPackageJson, "..");
+  const versionPath = resolve(orchestratorRoot, "constants.json");
+  if (!existsSync(versionPath)) {
+    throw new Error(`Missing pinned constants file at ${versionPath}`);
   }
-
-  const orchestratorPkg = readJson(resolveOrchestratorPackageJson());
-  const version = String(orchestratorPkg.opencodeVersion ?? "").trim();
-  return version || null;
+  const parsed = JSON.parse(readFileSync(versionPath, "utf8"));
+  const version = String(parsed.opencodeVersion ?? "").trim().replace(/^v/, "");
+  if (!version) {
+    throw new Error(`Pinned OpenCode version is missing from ${versionPath}`);
+  }
+  return version;
 }
 
 function resolveAssetName() {
@@ -150,7 +154,7 @@ function findBinary(searchRoot) {
 }
 
 const version = resolveOpencodeVersion();
-const versionLabel = version ?? "latest";
+const versionLabel = version;
 
 if (
   existsSync(outputPath) &&
@@ -165,7 +169,10 @@ const assetName = resolveAssetName();
 const downloadUrl = process.env.OPENWORK_OPENCODE_DOWNLOAD_URL?.trim()
   || (version
     ? `https://github.com/anomalyco/opencode/releases/download/v${version}/${assetName}`
-    : `https://github.com/anomalyco/opencode/releases/latest/download/${assetName}`);
+    : null);
+if (!downloadUrl) {
+  throw new Error("Pinned OpenCode version is required to bundle the worker runtime");
+}
 const tempDir = mkdtempSync(join(tmpdir(), "den-worker-opencode-"));
 const archivePath = join(tempDir, assetName);
 const extractDir = join(tempDir, "extract");

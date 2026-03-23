@@ -702,7 +702,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   };
 
   return (
-    <div class="space-y-6 max-w-[680px]">
+    <div class="w-full space-y-6">
 
       {/* ---- Header ---- */}
       <div>

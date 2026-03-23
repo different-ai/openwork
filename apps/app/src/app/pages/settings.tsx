@@ -20,7 +20,7 @@ import Button from "../components/button";
 import DenSettingsPanel from "../components/den-settings-panel";
 import TextInput from "../components/text-input";
 import { usePlatform } from "../context/platform";
-import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
+import { buildFeedbackUrl } from "../lib/feedback";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import {
   ArrowUpRight,
@@ -29,6 +29,9 @@ import {
   Cpu,
   Download,
   FolderOpen,
+  FolderLock,
+  FolderSearch,
+  Folder,
   HardDrive,
   LifeBuoy,
   MessageCircle,
@@ -116,6 +119,8 @@ export type SettingsViewProps = {
   setEngineCustomBinPath: (value: string) => void;
   engineRuntime: "direct" | "openwork-orchestrator";
   setEngineRuntime: (value: "direct" | "openwork-orchestrator") => void;
+  opencodeEnableExa: boolean;
+  toggleOpencodeEnableExa: () => void;
   isWindows: boolean;
   defaultModelLabel: string;
   defaultModelRef: string;
@@ -756,7 +761,7 @@ export default function SettingsView(props: SettingsViewProps) {
     setOpencodeRestarting(true);
     setOpencodeRestartError(null);
     try {
-      await engineRestart();
+      await engineRestart({ opencodeEnableExa: props.opencodeEnableExa });
       await props.reconnectOpenworkServer();
     } catch (e) {
       setOpencodeRestartError(e instanceof Error ? e.message : String(e));
@@ -815,6 +820,12 @@ export default function SettingsView(props: SettingsViewProps) {
         return "Model";
       case "advanced":
         return "Advanced";
+      case "appearance":
+        return "Appearance";
+      case "updates":
+        return "Updates";
+      case "recovery":
+        return "Recovery";
       case "debug":
         return "Debug";
       default:
@@ -822,10 +833,16 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "den", "model", "advanced"];
+  const workspaceTabs = createMemo<SettingsTab[]>(() => ["general", "den", "model", "advanced"]);
+
+  const globalTabs = createMemo<SettingsTab[]>(() => {
+    const tabs: SettingsTab[] = ["appearance", "updates", "recovery"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
+  });
+
+  const availableTabs = createMemo<SettingsTab[]>(() => {
+    return [...workspaceTabs(), ...globalTabs()];
   });
 
   const activeTab = createMemo<SettingsTab>(() => {
@@ -1266,62 +1283,134 @@ export default function SettingsView(props: SettingsViewProps) {
     "inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60";
   const compactDangerActionClass =
     "inline-flex items-center gap-1.5 rounded-md border border-red-7/35 bg-red-3/25 px-3 py-1.5 text-xs font-medium text-red-11 transition-colors duration-150 hover:border-red-7/50 hover:bg-red-3/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-7/35 disabled:cursor-not-allowed disabled:opacity-60";
+  const settingsRailClass =
+    "rounded-[24px] border border-dls-border bg-dls-sidebar p-3";
+  const settingsPanelClass =
+    "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
+  const settingsPanelSoftClass =
+    "rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4";
+
+  const tabDescription = (tab: SettingsTab) => {
+    switch (tab) {
+      case "den":
+        return "Manage your OpenWork Cloud connection, hosted workers, and workspace access.";
+      case "model":
+        return "Tune the default model, runtime behavior, and assistant output settings.";
+      case "advanced":
+        return "Inspect runtime health, connection state, and developer-facing controls.";
+      case "appearance":
+        return "Adjust how OpenWork looks across desktop, system theme, and app chrome.";
+      case "updates":
+        return "Keep the app current with quiet background checks and install controls.";
+      case "recovery":
+        return "Repair migration state, reset workspace defaults, and recover local settings.";
+      case "debug":
+        return "Review runtime diagnostics, logs, and low-level debugging utilities.";
+      default:
+        return "Connect providers, authorize folders, and control the active OpenWork workspace.";
+    }
+  };
+
+  const activeTabGroup = createMemo(() =>
+    workspaceTabs().includes(activeTab()) ? "Workspace" : "Global",
+  );
 
   return (
-    <section class="space-y-6">
-      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
-        <div class="flex flex-wrap gap-2">
-          <For each={availableTabs()}>
-            {(tab) => (
-              <button
-                class={`px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${
-                  activeTab() === tab
-                    ? "bg-gray-12/10 text-white border-gray-6/30"
-                    : "text-gray-10 border-gray-6/50 hover:text-gray-12 hover:bg-gray-2/40"
-                }`}
-                onClick={() => props.setSettingsTab(tab)}
-              >
-                {tabLabel(tab)}
-              </button>
-            )}
-          </For>
-        </div>
-        <Show when={showUpdateToolbar()}>
-          <div class="flex flex-wrap items-center gap-2">
-            <div
-              class={`text-xs px-2 py-1 rounded-full border flex items-center gap-2 ${updateToolbarTone()}`}
-              title={updateToolbarTitle()}
-            >
-              <Show when={updateToolbarSpinning()}>
-                <RefreshCcw size={12} class="animate-spin" />
-              </Show>
-              <span class="tabular-nums whitespace-nowrap">
-                {updateToolbarLabel()}
-              </span>
-            </div>
-            <Show when={updateToolbarActionLabel()}>
-              <Button
-                variant="outline"
-                class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
-                onClick={handleUpdateToolbarAction}
-                disabled={updateToolbarDisabled()}
-                title={
-                  updateState() === "ready" && props.anyActiveRuns
-                    ? "Stop active runs to update"
-                    : ""
-                }
-              >
-                {updateToolbarActionLabel()}
-              </Button>
-            </Show>
+    <section class="space-y-6 md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-8 md:space-y-0">
+      <aside class="space-y-6 md:sticky md:top-4 md:self-start">
+        <div class={settingsRailClass}>
+          <div class="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-8">
+            Workspace
           </div>
-        </Show>
-      </div>
+          <div class="space-y-1">
+            <For each={workspaceTabs()}>
+              {(tab) => (
+                <button
+                  type="button"
+                  class={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-colors ${
+                    activeTab() === tab
+                      ? "bg-dls-surface text-dls-text shadow-sm"
+                      : "text-gray-10 hover:bg-dls-surface/50 hover:text-dls-text"
+                  }`}
+                  onClick={() => props.setSettingsTab(tab)}
+                >
+                  <span>{tabLabel(tab)}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
 
-      <Switch>
+        <div class={settingsRailClass}>
+          <div class="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-8">
+            Global
+          </div>
+          <div class="space-y-1">
+            <For each={globalTabs()}>
+              {(tab) => (
+                <button
+                  type="button"
+                  class={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-colors ${
+                    activeTab() === tab
+                      ? "bg-dls-surface text-dls-text shadow-sm"
+                      : "text-gray-10 hover:bg-dls-surface/50 hover:text-dls-text"
+                  }`}
+                  onClick={() => props.setSettingsTab(tab)}
+                >
+                  <span>{tabLabel(tab)}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </aside>
+
+      <div class="min-w-0 space-y-6">
+        <div class={`${settingsPanelClass} flex flex-col gap-3 md:flex-row md:items-center md:justify-between`}>
+          <div class="space-y-1">
+            <h2 class="text-lg font-semibold tracking-tight text-gray-12">
+              {tabLabel(activeTab())}
+            </h2>
+            <p class="text-sm text-gray-9">
+              {tabDescription(activeTab())}
+            </p>
+          </div>
+          <Show when={showUpdateToolbar()}>
+            <div class="mt-4 flex flex-wrap items-center gap-2 md:mt-0 md:justify-end">
+              <div
+                class={`rounded-full border px-3 py-1.5 text-xs shadow-sm flex items-center gap-2 ${updateToolbarTone()}`}
+                title={updateToolbarTitle()}
+              >
+                <Show when={updateToolbarSpinning()}>
+                  <RefreshCcw size={12} class="animate-spin" />
+                </Show>
+                <span class="tabular-nums whitespace-nowrap">
+                  {updateToolbarLabel()}
+                </span>
+              </div>
+              <Show when={updateToolbarActionLabel()}>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
+                  onClick={handleUpdateToolbarAction}
+                  disabled={updateToolbarDisabled()}
+                  title={
+                    updateState() === "ready" && props.anyActiveRuns
+                      ? "Stop active runs to update"
+                      : ""
+                  }
+                >
+                  {updateToolbarActionLabel()}
+                </Button>
+              </Show>
+            </div>
+          </Show>
+        </div>
+
+        <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+            <div class={`${settingsPanelClass} space-y-4`}>
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="flex items-center gap-2">
@@ -1358,7 +1447,7 @@ export default function SettingsView(props: SettingsViewProps) {
                 <div class="space-y-2">
                   <For each={connectedProviders()}>
                     {(provider) => (
-                      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2">
+                      <div class={`${settingsPanelSoftClass} flex flex-wrap items-center justify-between gap-3 px-3 py-2`}>
                         <div class="min-w-0">
                           <div class="text-sm font-medium text-gray-12 truncate">
                             {provider.name}
@@ -1395,7 +1484,7 @@ export default function SettingsView(props: SettingsViewProps) {
                 </div>
               </Show>
               <Show when={providerDisconnectStatus()}>
-                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2 text-xs text-gray-10">
+                <div class={`${settingsPanelSoftClass} px-3 py-2 text-xs text-gray-10`}>
                   {providerDisconnectStatus()}
                 </div>
               </Show>
@@ -1411,7 +1500,234 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </div>
 
-              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+
+              <div class={`${settingsPanelClass} space-y-4`}>
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2 text-sm font-semibold text-gray-12">
+                    <FolderLock size={16} class="text-gray-10" />
+                    Authorized folders
+                  </div>
+                  <div class="text-xs text-gray-9 leading-relaxed max-w-[65ch]">
+                    Grant this workspace access to read and edit files in directories outside of its root.
+                  </div>
+                </div>
+
+                <Show
+                  when={props.authorizedFoldersAvailable}
+                  fallback={
+                    <div class={`${settingsPanelSoftClass} px-3 py-3 text-xs text-gray-10`}>
+                      {props.authorizedFoldersHint ??
+                        "Connect to a writable OpenWork server workspace to edit authorized folders."}
+                    </div>
+                  }
+                >
+                  <div class="flex flex-col overflow-hidden rounded-xl border border-gray-5/60 bg-white/50 shadow-sm dark:bg-gray-1/50">
+                    <Show when={props.authorizedFoldersHint}>
+                      {(hint) => (
+                        <div class="bg-gray-2/60 px-3 py-2 text-[11px] text-gray-10 border-b border-gray-5/40">
+                          {hint()}
+                        </div>
+                      )}
+                    </Show>
+
+                    <Show
+                      when={props.authorizedFolders.length > 0}
+                      fallback={
+                        <div class="flex flex-col items-center justify-center p-6 text-center">
+                          <div class="flex h-10 w-10 items-center justify-center rounded-full bg-blue-3/30 text-blue-11 mb-3">
+                            <Folder size={20} />
+                          </div>
+                          <div class="text-sm font-medium text-gray-11">No external folders authorized</div>
+                          <div class="text-[11px] text-gray-9 mt-1 max-w-[40ch]">
+                            Add a folder to let this workspace read and edit files outside its root directory.
+                          </div>
+                        </div>
+                      }
+                    >
+                      <div class="flex flex-col divide-y divide-gray-5/40 max-h-[300px] overflow-y-auto">
+                        <For each={props.authorizedFolders}>
+                          {(folder) => {
+                            const folderName = folder.split(/[/\\]/).filter(Boolean).pop() || folder;
+                            return (
+                              <div class="group flex items-center justify-between px-3 py-2.5 hover:bg-gray-2/50 transition-colors">
+                                <div class="flex items-center gap-3 overflow-hidden">
+                                  <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-3/30 text-blue-11">
+                                    <Folder size={15} />
+                                  </div>
+                                  <div class="flex min-w-0 flex-col">
+                                    <span class="truncate text-sm font-medium text-gray-12">{folderName}</span>
+                                    <span class="truncate font-mono text-[10px] text-gray-8">{folder}</span>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  class="h-7 w-7 text-gray-8 hover:text-red-11 opacity-0 group-hover:opacity-100 transition-opacity p-0 shrink-0"
+                                  onClick={() => void props.removeAuthorizedFolder(folder)}
+                                  disabled={
+                                    props.authorizedFoldersLoading ||
+                                    props.authorizedFoldersSaving ||
+                                    !props.authorizedFoldersEditable
+                                  }
+                                  aria-label={`Remove ${folderName}`}
+                                >
+                                  <X size={14} />
+                                </Button>
+                              </div>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+
+                    <Show when={props.authorizedFoldersStatus}>
+                      {(status) => (
+                        <div class="bg-blue-2/30 px-3 py-2 text-[11px] text-blue-11 border-t border-gray-5/40">
+                          {status()}
+                        </div>
+                      )}
+                    </Show>
+                    <Show when={props.authorizedFoldersError}>
+                      {(error) => (
+                        <div class="bg-red-2/30 px-3 py-2 text-[11px] text-red-11 border-t border-gray-5/40">
+                          {error()}
+                        </div>
+                      )}
+                    </Show>
+
+                    <form
+                      class="flex items-center gap-2 bg-gray-2/60 border-t border-gray-5/60 p-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void props.addAuthorizedFolder();
+                      }}
+                    >
+                      <div class="relative flex-1">
+                        <input
+                          class="w-full rounded-lg border border-gray-5/60 bg-white px-3 py-1.5 text-xs text-gray-12 placeholder:text-gray-8 focus:outline-none focus:ring-2 focus:ring-blue-7/30 dark:bg-gray-2 disabled:opacity-50"
+                          value={props.authorizedFolderDraft}
+                          onInput={(event) =>
+                            props.setAuthorizedFolderDraft(event.currentTarget.value)
+                          }
+                          onPaste={(event) => {
+                            event.preventDefault();
+                          }}
+                          placeholder="Type a folder path to authorize..."
+                          disabled={
+                            props.authorizedFoldersLoading ||
+                            props.authorizedFoldersSaving ||
+                            !props.authorizedFoldersEditable
+                          }
+                        />
+                      </div>
+                      
+                      <Show when={canPickAuthorizedFolder()}>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          class="h-8 px-3 text-xs bg-white dark:bg-gray-2"
+                          onClick={() => void props.pickAuthorizedFolder()}
+                          disabled={
+                            props.authorizedFoldersLoading ||
+                            props.authorizedFoldersSaving ||
+                            !props.authorizedFoldersEditable
+                          }
+                        >
+                          <FolderSearch size={13} class="mr-1.5" /> Browse
+                        </Button>
+                      </Show>
+                      
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        class="h-8 px-3 text-xs bg-gray-12 text-gray-1 hover:bg-gray-11 dark:bg-gray-3 dark:text-gray-12 dark:hover:bg-gray-4 border border-transparent dark:border-gray-5"
+                        disabled={
+                          props.authorizedFoldersLoading ||
+                          props.authorizedFoldersSaving ||
+                          !props.authorizedFoldersEditable ||
+                          !props.authorizedFolderDraft.trim()
+                        }
+                      >
+                        {props.authorizedFoldersSaving ? "Adding..." : "Add"}
+                      </Button>
+                    </form>
+                  </div>
+                </Show>
+              </div>
+
+              <div class="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
+              <div class="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-6/20 blur-2xl" />
+              <div class="pointer-events-none absolute -bottom-12 left-6 h-24 w-24 rounded-full bg-cyan-6/20 blur-2xl" />
+
+              <div class="relative space-y-4">
+                <div class="space-y-2">
+                  <div class="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-11">
+                    <LifeBuoy size={12} />
+                    We read every message
+                  </div>
+                  <div class="text-sm font-semibold text-gray-12">
+                    Help shape OpenWork
+                  </div>
+                  <div class="max-w-[58ch] text-xs text-gray-10">
+                    Tell us what feels great and what feels rough. Feedback goes
+                    straight to the team and helps us prioritize what ships
+                    next.
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    class="h-9 rounded-xl bg-blue-10 px-4 text-xs font-semibold text-white hover:bg-blue-11"
+                    onClick={() =>
+                      openExternalLink(
+                        buildFeedbackUrl({
+                          entrypoint: "settings-feedback-card",
+                          deployment: getOpenWorkDeployment(),
+                          appVersion: props.appVersion,
+                          openworkServerVersion:
+                            props.openworkServerDiagnostics?.version ?? null,
+                          opencodeVersion:
+                            props.orchestratorStatus?.binaries?.opencode
+                              ?.actualVersion ?? null,
+                          orchestratorVersion:
+                            props.orchestratorStatus?.cliVersion ?? null,
+                          opencodeRouterVersion:
+                            props.opencodeRouterInfo?.version ?? null,
+                        }),
+                      )
+                    }
+                  >
+                    <MessageCircle size={14} />
+                    Send feedback
+                    <ArrowUpRight size={13} />
+                  </Button>
+
+                  <button
+                    type="button"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-blue-7/35 bg-gray-1/70 px-3 text-xs font-medium text-gray-11 transition-colors hover:border-blue-7/50 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-7/30"
+                    onClick={() => openExternalLink(DISCORD_INVITE_URL)}
+                  >
+                    Join Discord
+                    <ArrowUpRight size={13} />
+                  </button>
+
+                  <button
+                    type="button"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-gray-7/60 bg-gray-1/70 px-3 text-xs font-medium text-gray-10 transition-colors hover:border-gray-7/80 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-7/40"
+                    onClick={() => openExternalLink(BUG_REPORT_URL)}
+                  >
+                    Report an issue
+                    <ArrowUpRight size={13} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Match>
+
+        <Match when={activeTab() === "appearance"}>
+          <div class="space-y-6">
+              <div class={`${settingsPanelClass} space-y-4`}>
                 <div>
                   <div class="text-sm font-medium text-gray-12">Appearance</div>
                 <div class="text-xs text-gray-9">
@@ -1481,198 +1797,34 @@ export default function SettingsView(props: SettingsViewProps) {
                   System mode follows your OS preference automatically.
                 </div>
               </div>
-
-              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+            <Show when={isTauriRuntime()}>
+              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div>
-                  <div class="text-sm font-medium text-gray-12">
-                    Authorized folders
-                  </div>
-                  <div class="text-xs text-gray-9">
-                    Manage `permission.external_directory` for the active workspace through the OpenWork server.
+                  <div class="text-sm font-medium text-gray-12">Appearance</div>
+                  <div class="text-xs text-gray-10">
+                    Customize window appearance.
                   </div>
                 </div>
 
-                <Show
-                  when={props.authorizedFoldersAvailable}
-                  fallback={
-                    <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 text-xs text-gray-10">
-                      {props.authorizedFoldersHint ??
-                        "Connect to a writable OpenWork server workspace to edit authorized folders."}
+                <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12">Hide titlebar</div>
+                    <div class="text-xs text-gray-7">
+                      Hide the window titlebar. Useful for tiling window
+                      managers on Linux (Hyprland, i3, sway).
                     </div>
-                  }
-                >
-                  <div class="space-y-4">
-                    <div class="text-[11px] text-gray-8">
-                      Enter a server-side folder path manually for remote-safe editing. Desktop folder picking is a convenience for local workspaces only.
-                    </div>
-                    <Show when={props.authorizedFoldersHint}>
-                      {(hint) => (
-                        <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2 text-xs text-gray-10">
-                          {hint()}
-                        </div>
-                      )}
-                    </Show>
-
-                    <form
-                      class="space-y-3"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void props.addAuthorizedFolder();
-                      }}
-                    >
-                      <TextInput
-                        value={props.authorizedFolderDraft}
-                        onInput={(event) =>
-                          props.setAuthorizedFolderDraft(event.currentTarget.value)
-                        }
-                        placeholder={
-                          props.activeWorkspaceType === "remote"
-                            ? "/workspace/shared"
-                            : props.activeWorkspaceRoot || "/Users/example/shared"
-                        }
-                        disabled={
-                          props.authorizedFoldersLoading ||
-                          props.authorizedFoldersSaving ||
-                          !props.authorizedFoldersEditable
-                        }
-                        label="Folder path"
-                        hint="Saved as an allow rule in opencode.json/opencode.jsonc."
-                      />
-
-                      <div class="flex flex-wrap items-center gap-2">
-                        <Button
-                          type="submit"
-                          variant="secondary"
-                          class="text-xs h-8 py-0 px-3"
-                          disabled={
-                            props.authorizedFoldersLoading ||
-                            props.authorizedFoldersSaving ||
-                            !props.authorizedFoldersEditable ||
-                            !props.authorizedFolderDraft.trim()
-                          }
-                        >
-                          {props.authorizedFoldersSaving ? "Saving..." : "Add folder"}
-                        </Button>
-                        <Show when={canPickAuthorizedFolder()}>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            class="text-xs h-8 py-0 px-3"
-                            onClick={() => void props.pickAuthorizedFolder()}
-                            disabled={
-                              props.authorizedFoldersLoading ||
-                              props.authorizedFoldersSaving ||
-                              !props.authorizedFoldersEditable
-                            }
-                          >
-                            <FolderOpen size={13} class="mr-1.5" />
-                            Choose folder
-                          </Button>
-                        </Show>
-                      </div>
-                    </form>
-
-                    <Show when={props.authorizedFoldersStatus}>
-                      {(status) => (
-                        <div class="text-xs text-gray-10">{status()}</div>
-                      )}
-                    </Show>
-                    <Show when={props.authorizedFoldersError}>
-                      {(error) => (
-                        <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
-                          {error()}
-                        </div>
-                      )}
-                    </Show>
-
-                    <Show
-                      when={props.authorizedFolders.length > 0}
-                      fallback={
-                        <div class="rounded-xl border border-dashed border-gray-6/60 bg-gray-1/30 px-3 py-4 text-xs text-gray-9">
-                          No extra folders are authorized yet.
-                        </div>
-                      }
-                    >
-                      <div class="space-y-2">
-                        <For each={props.authorizedFolders}>
-                          {(folder) => (
-                            <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2">
-                              <div class="min-w-0 text-xs text-gray-12 font-mono break-all">
-                                {folder}
-                              </div>
-                              <Button
-                                variant="ghost"
-                                class="h-8 w-8 shrink-0 p-0 text-gray-9 hover:text-red-11"
-                                onClick={() => void props.removeAuthorizedFolder(folder)}
-                                disabled={
-                                  props.authorizedFoldersLoading ||
-                                  props.authorizedFoldersSaving ||
-                                  !props.authorizedFoldersEditable
-                                }
-                                aria-label={`Remove ${folder}`}
-                              >
-                                <X size={14} />
-                              </Button>
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
                   </div>
-                </Show>
-              </div>
-
-              <div class="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
-              <div class="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-6/20 blur-2xl" />
-              <div class="pointer-events-none absolute -bottom-12 left-6 h-24 w-24 rounded-full bg-cyan-6/20 blur-2xl" />
-
-              <div class="relative space-y-4">
-                <div class="space-y-2">
-                  <div class="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-11">
-                    <LifeBuoy size={12} />
-                    We read every message
-                  </div>
-                  <div class="text-sm font-semibold text-gray-12">
-                    Help shape OpenWork
-                  </div>
-                  <div class="max-w-[58ch] text-xs text-gray-10">
-                    Tell us what feels great and what feels rough. Feedback goes
-                    straight to the team and helps us prioritize what ships
-                    next.
-                  </div>
-                </div>
-
-                <div class="flex flex-wrap items-center gap-2">
                   <Button
-                    variant="secondary"
-                    class="h-9 rounded-xl bg-blue-10 px-4 text-xs font-semibold text-white hover:bg-blue-11"
-                    onClick={() => openExternalLink(FEEDBACK_EMAIL_URL)}
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={props.toggleHideTitlebar}
+                    disabled={props.busy}
                   >
-                    <MessageCircle size={14} />
-                    Send feedback
-                    <ArrowUpRight size={13} />
+                    {props.hideTitlebar ? "On" : "Off"}
                   </Button>
-
-                  <button
-                    type="button"
-                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-blue-7/35 bg-gray-1/70 px-3 text-xs font-medium text-gray-11 transition-colors hover:border-blue-7/50 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-7/30"
-                    onClick={() => openExternalLink(DISCORD_INVITE_URL)}
-                  >
-                    Join Discord
-                    <ArrowUpRight size={13} />
-                  </button>
-
-                  <button
-                    type="button"
-                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-gray-7/60 bg-gray-1/70 px-3 text-xs font-medium text-gray-10 transition-colors hover:border-gray-7/80 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-7/40"
-                    onClick={() => openExternalLink(BUG_REPORT_URL)}
-                  >
-                    Report an issue
-                    <ArrowUpRight size={13} />
-                  </button>
                 </div>
               </div>
-            </div>
+            </Show>
           </div>
         </Match>
 
@@ -1689,7 +1841,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <div>
                 <div class="text-sm font-medium text-gray-12">Model</div>
                 <div class="text-xs text-gray-10">
-                  Defaults + thinking controls for runs.
+                  Pick the default chat model and review how it reasons.
                 </div>
               </div>
 
@@ -1714,9 +1866,9 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Thinking</div>
+                  <div class="text-sm text-gray-12">Show model reasoning</div>
                   <div class="text-xs text-gray-7">
-                    Show thinking parts (Developer mode only).
+                    Expand reasoning traces in the UI when a model exposes them.
                   </div>
                 </div>
                 <Button
@@ -1750,8 +1902,11 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Model variant</div>
-                  <div class="text-xs text-gray-7 font-mono truncate">
+                  <div class="text-sm text-gray-12">Model behavior</div>
+                  <div class="text-xs text-gray-7 truncate">
+                    Open the default model picker to choose reasoning profiles when they are available.
+                  </div>
+                  <div class="mt-1 text-xs text-gray-8 font-medium truncate">
                     {props.modelVariantLabel}
                   </div>
                 </div>
@@ -1761,7 +1916,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   onClick={props.editModelVariant}
                   disabled={props.busy}
                 >
-                  Edit
+                  Configure
                 </Button>
               </div>
             </div>
@@ -1770,7 +1925,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "advanced"}>
           <div class="space-y-6">
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+            <div class={`${settingsPanelClass} space-y-4`}>
               <div>
                 <div class="text-sm font-medium text-gray-12">Runtime</div>
                 <div class="text-xs text-gray-9">
@@ -1779,7 +1934,7 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
 
               <div class="grid gap-3 sm:grid-cols-2">
-                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
                   <div class="flex items-start gap-3">
                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
                       <Cpu size={18} />
@@ -1801,7 +1956,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                 </div>
 
-                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
                   <div class="flex items-start gap-3">
                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
                       <Server size={18} />
@@ -1828,7 +1983,38 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </div>
 
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
+            <div class={`${settingsPanelClass} space-y-3`}>
+              <div>
+                <div class="text-sm font-medium text-gray-12">OpenCode</div>
+                <div class="text-xs text-gray-9">
+                  Runtime options for the local engine and orchestrator bridge.
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">Enable Exa web search</div>
+                  <div class="text-xs text-gray-7">
+                    Applies when OpenWork Orchestrator launches OpenCode. Off by
+                    default until the integration is fully rolled out.
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={props.toggleOpencodeEnableExa}
+                  disabled={props.busy}
+                >
+                  {props.opencodeEnableExa ? "On" : "Off"}
+                </Button>
+              </div>
+
+              <div class="text-[11px] text-gray-7">
+                Restart OpenCode or the orchestrator after changing this setting.
+              </div>
+            </div>
+
+            <div class={`${settingsPanelClass} space-y-3`}>
               <div class="text-sm font-medium text-gray-12">Developer mode</div>
               <div class="text-xs text-gray-9">
                 Enables debug tools, diagnostics, and the Developer tab.
@@ -1883,7 +2069,7 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Show>
 
                 <Show when={props.developerMode}>
-                  <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                  <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
                     <div class="flex items-start justify-between gap-3">
                       <div>
                           <div class="text-sm font-medium text-gray-12">
@@ -1953,7 +2139,7 @@ export default function SettingsView(props: SettingsViewProps) {
               </Show>
             </div>
 
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
+            <div class={`${settingsPanelClass} space-y-3`}>
               <div class="text-sm font-medium text-gray-12">Connection</div>
               <div class="text-xs text-gray-9">{props.headerStatus}</div>
               <div class="text-xs text-gray-8 font-mono break-all">
@@ -2035,64 +2221,14 @@ export default function SettingsView(props: SettingsViewProps) {
               </Show>
             </div>
 
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">
-                  {translate("settings.migration_recovery_label")}
-                </div>
-                <div class="text-xs text-gray-9">
-                  {translate("settings.migration_recovery_hint")}
-                </div>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={props.repairOpencodeMigration}
-                  disabled={
-                    webDeployment() ||
-                    props.busy ||
-                    props.migrationRepairBusy ||
-                    !props.migrationRepairAvailable
-                  }
-                  title={
-                    webDeployment()
-                      ? "Migration repair requires the desktop app."
-                      : (props.migrationRepairUnavailableReason ?? "")
-                  }
-                >
-                  {props.migrationRepairBusy
-                    ? translate("settings.fixing_migration")
-                    : translate("settings.fix_migration")}
-                </Button>
-              </div>
 
-              <Show when={props.migrationRepairUnavailableReason}>
-                {(reason) => (
-                  <div class="text-xs text-amber-11">{reason()}</div>
-                )}
-              </Show>
-              <Show when={props.migrationRepairBusy}>
-                <div class="text-xs text-gray-10">
-                  {translate("status.repairing_migration")}
-                </div>
-              </Show>
-              <Show when={props.migrationRepairResult}>
-                {(result) => (
-                  <div
-                    class={`rounded-xl border px-3 py-2 text-xs ${
-                      result().ok
-                        ? "border-green-7/30 bg-green-2/30 text-green-12"
-                        : "border-red-7/30 bg-red-2/30 text-red-12"
-                    }`}
-                  >
-                    {result().message}
-                  </div>
-                )}
-              </Show>
-            </div>
 
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+          </div>
+        </Match>
+
+        <Match when={activeTab() === "updates"}>
+          <div class="space-y-6">
+            <div class={`${settingsPanelClass} space-y-3`}>
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="text-sm font-medium text-gray-12">Updates</div>
@@ -2284,35 +2420,182 @@ export default function SettingsView(props: SettingsViewProps) {
                 </div>
               </Show>
             </div>
+          </div>
+        </Match>
 
-            <Show when={isTauriRuntime()}>
-              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                <div>
-                  <div class="text-sm font-medium text-gray-12">Appearance</div>
-                  <div class="text-xs text-gray-10">
-                    Customize window appearance.
-                  </div>
+        <Match when={activeTab() === "recovery"}>
+          <div class="space-y-6">
+            <div class={`${settingsPanelClass} space-y-4`}>
+              <div>
+                <div class="text-sm font-medium text-gray-12">
+                  {translate("settings.migration_recovery_label")}
                 </div>
-
-                <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                  <div class="min-w-0">
-                    <div class="text-sm text-gray-12">Hide titlebar</div>
-                    <div class="text-xs text-gray-7">
-                      Hide the window titlebar. Useful for tiling window
-                      managers on Linux (Hyprland, i3, sway).
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    class="text-xs h-8 py-0 px-3 shrink-0"
-                    onClick={props.toggleHideTitlebar}
-                    disabled={props.busy}
-                  >
-                    {props.hideTitlebar ? "On" : "Off"}
-                  </Button>
+                <div class="text-xs text-gray-9">
+                  {translate("settings.migration_recovery_hint")}
                 </div>
               </div>
-            </Show>
+              <div class="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={props.repairOpencodeMigration}
+                  disabled={
+                    webDeployment() ||
+                    props.busy ||
+                    props.migrationRepairBusy ||
+                    !props.migrationRepairAvailable
+                  }
+                  title={
+                    webDeployment()
+                      ? "Migration repair requires the desktop app."
+                      : (props.migrationRepairUnavailableReason ?? "")
+                  }
+                >
+                  {props.migrationRepairBusy
+                    ? translate("settings.fixing_migration")
+                    : translate("settings.fix_migration")}
+                </Button>
+              </div>
+
+              <Show when={props.migrationRepairUnavailableReason}>
+                {(reason) => (
+                  <div class="text-xs text-amber-11">{reason()}</div>
+                )}
+              </Show>
+              <Show when={props.migrationRepairBusy}>
+                <div class="text-xs text-gray-10">
+                  {translate("status.repairing_migration")}
+                </div>
+              </Show>
+              <Show when={props.migrationRepairResult}>
+                {(result) => (
+                  <div
+                    class={`rounded-xl border px-3 py-2 text-xs ${
+                      result().ok
+                        ? "border-green-7/30 bg-green-2/30 text-green-12"
+                        : "border-red-7/30 bg-red-2/30 text-red-12"
+                    }`}
+                  >
+                    {result().message}
+                  </div>
+                )}
+              </Show>
+            </div>
+                <div class={`${settingsPanelClass} space-y-3`}>
+                  <div class="text-sm font-medium text-gray-12">
+                    Workspace config
+                  </div>
+                  <div class="text-xs text-gray-10">
+                    Reveal or reset `.opencode/openwork.json` defaults for this
+                    app workspace.
+                  </div>
+                  <div class="text-[11px] text-gray-7 font-mono break-all">
+                    {workspaceConfigPath() || "No active local workspace."}
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 py-0 px-3"
+                      onClick={revealWorkspaceConfig}
+                      disabled={
+                        !isTauriRuntime() ||
+                        revealConfigBusy() ||
+                        !workspaceConfigPath()
+                      }
+                      title={
+                        !isTauriRuntime()
+                          ? "Reveal config requires the desktop app"
+                          : ""
+                      }
+                    >
+                      <FolderOpen size={13} class="mr-1.5" />
+                      {revealConfigBusy() ? "Opening..." : "Reveal config"}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      class="text-xs h-8 py-0 px-3"
+                      onClick={resetAppConfigDefaults}
+                      disabled={resetConfigBusy() || props.anyActiveRuns}
+                      title={
+                        props.anyActiveRuns
+                          ? "Stop active runs before resetting config"
+                          : ""
+                      }
+                    >
+                      {resetConfigBusy()
+                        ? "Resetting..."
+                        : "Reset config defaults"}
+                    </Button>
+                  </div>
+                  <Show when={configActionStatus()}>
+                    {(status) => (
+                      <div class="text-xs text-gray-10">{status()}</div>
+                    )}
+                  </Show>
+                </div>
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12">OpenCode cache</div>
+                    <div class="text-xs text-gray-7">
+                      Repairs cached data used to start the engine. Safe to run.
+                    </div>
+                    <Show when={props.cacheRepairResult}>
+                      <div class="text-xs text-gray-11 mt-2">
+                        {props.cacheRepairResult}
+                      </div>
+                    </Show>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={props.repairOpencodeCache}
+                    disabled={props.cacheRepairBusy || !isTauriRuntime()}
+                    title={
+                      isTauriRuntime()
+                        ? ""
+                        : "Cache repair requires the desktop app"
+                    }
+                  >
+                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                  </Button>
+                </div>
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12">
+                      OpenWork Docker containers
+                    </div>
+                    <div class="text-xs text-gray-7">
+                      Force-remove Docker containers launched by OpenWork
+                      (sandbox + local dev stacks).
+                    </div>
+                    <Show when={props.dockerCleanupResult}>
+                      <div class="text-xs text-gray-11 mt-2">
+                        {props.dockerCleanupResult}
+                      </div>
+                    </Show>
+                  </div>
+                  <Button
+                    variant="danger"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={props.cleanupOpenworkDockerContainers}
+                    disabled={
+                      props.dockerCleanupBusy ||
+                      props.anyActiveRuns ||
+                      !isTauriRuntime()
+                    }
+                    title={
+                      !isTauriRuntime()
+                        ? "Docker cleanup requires the desktop app"
+                        : props.anyActiveRuns
+                          ? "Stop active runs before cleanup"
+                          : ""
+                    }
+                  >
+                    {props.dockerCleanupBusy
+                      ? "Removing containers..."
+                      : "Delete containers"}
+                  </Button>
+                </div>
           </div>
         </Match>
 
@@ -2429,123 +2712,8 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                 </div>
 
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                  <div class="text-sm font-medium text-gray-12">
-                    Workspace config
-                  </div>
-                  <div class="text-xs text-gray-10">
-                    Reveal or reset `.opencode/openwork.json` defaults for this
-                    app workspace.
-                  </div>
-                  <div class="text-[11px] text-gray-7 font-mono break-all">
-                    {workspaceConfigPath() || "No active local workspace."}
-                  </div>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="outline"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={revealWorkspaceConfig}
-                      disabled={
-                        !isTauriRuntime() ||
-                        revealConfigBusy() ||
-                        !workspaceConfigPath()
-                      }
-                      title={
-                        !isTauriRuntime()
-                          ? "Reveal config requires the desktop app"
-                          : ""
-                      }
-                    >
-                      <FolderOpen size={13} class="mr-1.5" />
-                      {revealConfigBusy() ? "Opening..." : "Reveal config"}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={resetAppConfigDefaults}
-                      disabled={resetConfigBusy() || props.anyActiveRuns}
-                      title={
-                        props.anyActiveRuns
-                          ? "Stop active runs before resetting config"
-                          : ""
-                      }
-                    >
-                      {resetConfigBusy()
-                        ? "Resetting..."
-                        : "Reset config defaults"}
-                    </Button>
-                  </div>
-                  <Show when={configActionStatus()}>
-                    {(status) => (
-                      <div class="text-xs text-gray-10">{status()}</div>
-                    )}
-                  </Show>
-                </div>
 
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                  <div class="min-w-0">
-                    <div class="text-sm text-gray-12">OpenCode cache</div>
-                    <div class="text-xs text-gray-7">
-                      Repairs cached data used to start the engine. Safe to run.
-                    </div>
-                    <Show when={props.cacheRepairResult}>
-                      <div class="text-xs text-gray-11 mt-2">
-                        {props.cacheRepairResult}
-                      </div>
-                    </Show>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    class="text-xs h-8 py-0 px-3 shrink-0"
-                    onClick={props.repairOpencodeCache}
-                    disabled={props.cacheRepairBusy || !isTauriRuntime()}
-                    title={
-                      isTauriRuntime()
-                        ? ""
-                        : "Cache repair requires the desktop app"
-                    }
-                  >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
-                  </Button>
-                </div>
 
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                  <div class="min-w-0">
-                    <div class="text-sm text-gray-12">
-                      OpenWork Docker containers
-                    </div>
-                    <div class="text-xs text-gray-7">
-                      Force-remove Docker containers launched by OpenWork
-                      (sandbox + local dev stacks).
-                    </div>
-                    <Show when={props.dockerCleanupResult}>
-                      <div class="text-xs text-gray-11 mt-2">
-                        {props.dockerCleanupResult}
-                      </div>
-                    </Show>
-                  </div>
-                  <Button
-                    variant="danger"
-                    class="text-xs h-8 py-0 px-3 shrink-0"
-                    onClick={props.cleanupOpenworkDockerContainers}
-                    disabled={
-                      props.dockerCleanupBusy ||
-                      props.anyActiveRuns ||
-                      !isTauriRuntime()
-                    }
-                    title={
-                      !isTauriRuntime()
-                        ? "Docker cleanup requires the desktop app"
-                        : props.anyActiveRuns
-                          ? "Stop active runs before cleanup"
-                          : ""
-                    }
-                  >
-                    {props.dockerCleanupBusy
-                      ? "Removing containers..."
-                      : "Delete containers"}
-                  </Button>
-                </div>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                   <div class="text-sm font-medium text-gray-12">Startup</div>
@@ -3488,6 +3656,7 @@ export default function SettingsView(props: SettingsViewProps) {
           </Show>
         </Match>
       </Switch>
+      </div>
     </section>
   );
 }

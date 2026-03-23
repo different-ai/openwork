@@ -73,6 +73,7 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_port: Option<u16>,
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub opencode_enable_exa: bool,
     pub cors: Option<String>,
 }
 
@@ -280,6 +281,10 @@ pub fn spawn_orchestrator_daemon(
 
     if options.dev_mode {
         command = command.env("OPENWORK_DEV_MODE", "1");
+    }
+
+    if options.opencode_enable_exa {
+        command = command.env("OPENCODE_ENABLE_EXA", "1");
     }
 
     command

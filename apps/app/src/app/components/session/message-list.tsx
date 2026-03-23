@@ -14,14 +14,7 @@ import {
   ChevronRight,
   CircleAlert,
   Copy,
-  Eye,
   File,
-  FileEdit,
-  FolderSearch,
-  Pencil,
-  Search,
-  Sparkles,
-  Terminal,
 } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
@@ -93,31 +86,8 @@ type MessageBlock = {
 
 type MessageBlockItem = MessageBlock | StepClusterBlock;
 
-const EXPLORATION_TOOL_NAMES = new Set([
-  "read",
-  "glob",
-  "grep",
-  "search",
-  "list",
-  "list_files",
-]);
 const VIRTUALIZATION_THRESHOLD = 500;
 const VIRTUAL_OVERSCAN = 4;
-
-type ExplorationSummary = {
-  files: number;
-  searches: number;
-  lists: number;
-};
-
-function isExplorationTool(part: Part) {
-  if (part.type !== "tool") return false;
-  const tool =
-    typeof (part as any).tool === "string"
-      ? String((part as any).tool).toLowerCase()
-      : "";
-  return EXPLORATION_TOOL_NAMES.has(tool);
-}
 
 function normalizePath(path: string) {
   const normalized = path.replace(/\\/g, "/").trim().replace(/\/+/g, "/");
@@ -125,132 +95,6 @@ function normalizePath(path: string) {
   return normalized.replace(/\/+$/, "");
 }
 
-function summarizeExploration(parts: Part[]): ExplorationSummary {
-  const files = new Set<string>();
-  let fileWithoutPath = 0;
-  let searches = 0;
-  let lists = 0;
-
-  parts.forEach((part) => {
-    if (part.type !== "tool") return;
-    const tool =
-      typeof (part as any).tool === "string"
-        ? String((part as any).tool).toLowerCase()
-        : "";
-    const state = (part as any).state ?? {};
-    const input =
-      state.input && typeof state.input === "object"
-        ? (state.input as Record<string, unknown>)
-        : {};
-
-    if (tool === "read") {
-      const filePath =
-        typeof input.filePath === "string" ? normalizePath(input.filePath) : "";
-      if (filePath) {
-        files.add(filePath);
-      } else {
-        fileWithoutPath += 1;
-      }
-      return;
-    }
-
-    if (tool === "glob" || tool === "grep" || tool === "search") {
-      searches += 1;
-      return;
-    }
-
-    if (tool === "list" || tool === "list_files") {
-      lists += 1;
-    }
-  });
-
-  return {
-    files: files.size + fileWithoutPath,
-    searches,
-    lists,
-  };
-}
-
-function formatExplorationSummary(summary: ExplorationSummary) {
-  const items: string[] = [];
-  if (summary.files > 0)
-    items.push(`${summary.files} file${summary.files === 1 ? "" : "s"}`);
-  if (summary.searches > 0)
-    items.push(
-      `${summary.searches} search${summary.searches === 1 ? "" : "es"}`,
-    );
-  if (summary.lists > 0)
-    items.push(`${summary.lists} list${summary.lists === 1 ? "" : "s"}`);
-  return items.length > 0 ? items.join(" · ") : "context activity";
-}
-
-function explorationStatus(parts: Part[]) {
-  const pending = parts.some((part) => {
-    if (part.type !== "tool") return false;
-    if (!isExplorationTool(part)) return false;
-    const state = (part as any).state ?? {};
-    return state.status === "running" || state.status === "pending";
-  });
-  return pending ? "exploring" : "explored";
-}
-
-/** Icon for a given tool category */
-function ToolIcon(props: { category: string; size?: number }) {
-  const s = () => props.size ?? 12;
-  switch (props.category) {
-    case "read":
-      return <Eye size={s()} />;
-    case "edit":
-      return <Pencil size={s()} />;
-    case "write":
-      return <FileEdit size={s()} />;
-    case "search":
-      return <Search size={s()} />;
-    case "terminal":
-      return <Terminal size={s()} />;
-    case "glob":
-      return <FolderSearch size={s()} />;
-    case "task":
-      return <Sparkles size={s()} />;
-    case "skill":
-      return <Sparkles size={s()} />;
-    default:
-      return <File size={s()} />;
-  }
-}
-
-/** Status dot color */
-function statusDotClass(status?: string): string {
-  switch (status) {
-    case "completed":
-    case "done":
-      return "bg-green-9";
-    case "running":
-    case "pending":
-      return "bg-blue-9 animate-pulse";
-    case "error":
-      return "bg-red-9";
-    default:
-      return "bg-gray-8";
-  }
-}
-
-function latestStepPart(stepGroups: StepTimelineGroup[]): Part | undefined {
-  for (
-    let groupIndex = stepGroups.length - 1;
-    groupIndex >= 0;
-    groupIndex -= 1
-  ) {
-    const parts = stepGroups[groupIndex]?.parts ?? [];
-    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
-      const part = parts[partIndex];
-      if (part.type === "tool" || part.type === "reasoning") {
-        return part;
-      }
-    }
-  }
-  return undefined;
-}
 
 type TaskStepInfo = {
   isTask: boolean;
@@ -320,6 +164,34 @@ function compactText(value: string, max = 42) {
     : singleLine;
 }
 
+function cleanReasoningPreview(value: string) {
+  return value
+    .replace(/\[REDACTED\]/g, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\s+\n/g, "\n")
+    .trim();
+}
+
+function formatStructuredValue(value: unknown) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value.trim();
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function hasStructuredValue(value: unknown) {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value as Record<string, unknown>).length > 0;
+  return true;
+}
+
 function isPathLike(value: string) {
   return (
     /^(?:[A-Za-z]:[\\/]|~[\\/]|\/[\w_\-~]|\.\.?[\\/])/.test(value) ||
@@ -361,12 +233,12 @@ function toolHeadline(part: Part) {
 
   if (tool === "read") {
     const file = target("filePath", "path", "file");
-    return file ? `Read ${file}` : "Read file";
+    return file ? `Reviewed ${file}` : "Reviewed file";
   }
 
   if (tool === "edit") {
     const file = target("filePath", "path", "file");
-    return file ? `Edit ${file}` : "Edit file";
+    return file ? `Updated ${file}` : "Updated file";
   }
 
   if (tool === "write" || tool === "apply_patch") {
@@ -376,12 +248,12 @@ function toolHeadline(part: Part) {
 
   if (tool === "grep" || tool === "glob" || tool === "search") {
     const pattern = pick("pattern", "query");
-    return pattern ? `Search ${compactText(pattern, 36)}` : "Search code";
+    return pattern ? `Searched ${compactText(pattern, 36)}` : "Searched code";
   }
 
   if (tool === "list" || tool === "list_files") {
     const path = target("path");
-    return path ? `List ${path}` : "List files";
+    return path ? `Reviewed ${path}` : "Reviewed files";
   }
 
   if (tool === "task") {
@@ -391,9 +263,17 @@ function toolHeadline(part: Part) {
     return agent ? `Delegate ${agent}` : "Delegate task";
   }
 
+  if (tool === "todowrite") {
+    return "Update todo list";
+  }
+
+  if (tool === "todoread") {
+    return "Read todo list";
+  }
+
   if (tool === "webfetch") {
     const url = pick("url");
-    return url ? `Fetch ${compactText(url, 36)}` : "Fetch web page";
+    return url ? `Checked ${compactText(url, 36)}` : "Checked web page";
   }
 
   if (tool === "skill") {
@@ -401,7 +281,11 @@ function toolHeadline(part: Part) {
     return name ? `Load skill ${name}` : "Load skill";
   }
 
-  return "";
+  const fallback = tool
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return fallback ? compactText(fallback, 40) : "";
 }
 
 export default function MessageList(props: MessageListProps) {
@@ -895,59 +779,113 @@ export default function MessageList(props: MessageListProps) {
     );
   };
 
-  /** Quiet single-line timeline row */
+  /** Transcript step row */
   const StepRow = (rowProps: {
+    id: string;
     part: Part;
     isUser: boolean;
     groupMode?: StepGroupMode;
   }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
-    const headline = createMemo(() => {
-      const fromTool = toolHeadline(rowProps.part);
-      if (fromTool) return fromTool;
-      const title = summary().title?.trim() ?? "";
-      const detail = summary().detail?.trim() ?? "";
-      if (title && detail && detail.toLowerCase() !== title.toLowerCase()) {
-        return `${title} - ${detail}`;
-      }
-      return detail || title || "Updates progress";
-    });
     const task = createMemo(() => getTaskStepInfo(rowProps.part));
+    const toolState = createMemo(() => {
+      if (rowProps.part.type !== "tool") return {} as Record<string, unknown>;
+      return (((rowProps.part as any).state ?? {}) as Record<string, unknown>);
+    });
+    const toolInput = createMemo(() => {
+      const input = toolState().input;
+      return input && typeof input === "object"
+        ? (input as Record<string, unknown>)
+        : undefined;
+    });
+    const toolOutput = createMemo(() => toolState().output);
+    const expandable = createMemo(
+      () =>
+        rowProps.part.type === "tool" &&
+        (hasStructuredValue(toolInput()) ||
+          hasStructuredValue(toolOutput()) ||
+          Boolean(task().isTask && task().sessionId)),
+    );
+    const expanded = createMemo(
+      () => expandable() && isStepsExpanded(rowProps.id),
+    );
+    const headline = createMemo(() => {
+      const title = summary().title?.trim() ?? "";
+      if (title) return title;
+      const fromTool = toolHeadline(rowProps.part);
+      return fromTool || "Updates progress";
+    });
+    const reasoningText = createMemo(() => {
+      if (rowProps.part.type !== "reasoning") return "";
+      const raw = typeof (rowProps.part as any).text === "string" ? (rowProps.part as any).text : "";
+      return cleanReasoningPreview(raw);
+    });
 
     if (rowProps.part.type === "reasoning") {
       return (
-        <div class="flex items-start gap-3 text-[14px] text-gray-9">
-          <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
-          <div class="min-w-0 leading-relaxed">
-            <span>{headline()}</span>
-          </div>
+        <div class="text-[14px] leading-[1.7] text-gray-9 whitespace-pre-wrap">
+          <div class="max-w-[720px]">{reasoningText() || headline()}</div>
         </div>
       );
     }
 
     return (
-      <div class="flex items-start gap-3 text-[14px] text-gray-9">
-        <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
-        <div class="min-w-0 flex-1 leading-relaxed">
-          <span>{headline()}</span>
-          <Show when={task().isTask && task().sessionId}>
-            <SubagentThread part={rowProps.part} />
+      <div class="text-[14px] text-gray-9">
+        <button
+          type="button"
+          class="flex w-full items-start justify-between gap-2 text-left transition-colors hover:text-dls-text disabled:cursor-default"
+          aria-expanded={expandable() ? expanded() : undefined}
+          disabled={!expandable()}
+          onClick={() => {
+            if (!expandable()) return;
+            toggleSteps(rowProps.id);
+          }}
+        >
+          <div class="min-w-0 flex-1 leading-relaxed">
+            <span>{headline()}</span>
+          </div>
+          <Show when={expandable()} fallback={<span class="mt-[2px] w-[14px] shrink-0" />}>
+            <ChevronDown
+              size={14}
+              class={`mt-[2px] shrink-0 text-gray-8 transition-transform ${expanded() ? "" : "-rotate-90"}`}
+            />
           </Show>
-        </div>
+        </button>
+        <Show when={expanded()}>
+          <div class="mt-3 ml-[22px] space-y-3">
+            <Show when={hasStructuredValue(toolInput())}>
+              <div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Request</div>
+                <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolInput())}</pre>
+              </div>
+            </Show>
+            <Show when={hasStructuredValue(toolOutput())}>
+              <div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Result</div>
+                <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolOutput())}</pre>
+              </div>
+            </Show>
+            <Show when={task().isTask && task().sessionId}>
+              <SubagentThread part={rowProps.part} />
+            </Show>
+          </div>
+        </Show>
       </div>
     );
   };
 
   /** Quiet steps list */
   const StepsList = (listProps: {
+    groupId: string;
     parts: Part[];
     isUser: boolean;
     groupMode: StepGroupMode;
   }) => (
     <div class="flex flex-col gap-4">
       <For each={listProps.parts}>
-        {(part) => (
+        {(part, index) => (
           <StepRow
+            id={`${listProps.groupId}:${index()}`}
             part={part}
             isUser={listProps.isUser}
             groupMode={listProps.groupMode}
@@ -966,7 +904,6 @@ export default function MessageList(props: MessageListProps) {
     isInline?: boolean;
   }) => {
     const useInnerTimelineScroll = () => !Boolean(props.isStreaming);
-
     return (
       <div
         class={
@@ -977,18 +914,23 @@ export default function MessageList(props: MessageListProps) {
             : ""
         }
       >
-        <div
-          class={`ml-4 flex flex-col gap-4 ${!isNestedVariant() && useInnerTimelineScroll() ? "max-h-[420px] overflow-y-auto pr-1" : ""}`}
-        >
-          <For each={containerProps.stepGroups}>
-            {(group) => (
-              <StepsList
-                parts={group.parts}
-                isUser={containerProps.isUser}
-                groupMode={group.mode}
-              />
-            )}
-          </For>
+        <div>
+          <div
+            class={`${!isNestedVariant() && useInnerTimelineScroll() ? "max-h-[420px] overflow-y-auto pr-3" : ""}`}
+          >
+            <div class="flex flex-col gap-4">
+              <For each={containerProps.stepGroups}>
+                {(group) => (
+                  <StepsList
+                    groupId={group.id}
+                    parts={group.parts}
+                    isUser={containerProps.isUser}
+                    groupMode={group.mode}
+                  />
+                )}
+              </For>
+            </div>
+          </div>
         </div>
       </div>
     );

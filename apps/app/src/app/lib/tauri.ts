@@ -144,12 +144,14 @@ export async function engineStart(
     runtime?: "direct" | "openwork-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
+    opencodeEnableExa?: boolean;
   },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
     projectDir,
     preferSidecar: options?.preferSidecar ?? false,
     opencodeBinPath: options?.opencodeBinPath ?? null,
+    opencodeEnableExa: options?.opencodeEnableExa ?? null,
     runtime: options?.runtime ?? null,
     workspacePaths: options?.workspacePaths ?? null,
   });
@@ -362,8 +364,12 @@ export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
 }
 
-export async function engineRestart(): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_restart");
+export async function engineRestart(options?: {
+  opencodeEnableExa?: boolean;
+}): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_restart", {
+    opencodeEnableExa: options?.opencodeEnableExa ?? null,
+  });
 }
 
 export async function orchestratorStatus(): Promise<OrchestratorStatus> {

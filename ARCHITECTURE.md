@@ -30,6 +30,11 @@ Auto-detection can exist as a convenience, but should be tiered and explainable:
 
 The readiness check should be a clear, single command (e.g. `docker info`) and the UI should show the exact error output when it fails.
 
+## Minimal use of Tauri
+We move most of the functionality to the openwork server which interfaces mostly with FS and proxies to opencode.
+
+
+
 ## Filesystem mutation policy
 
 OpenWork should route filesystem mutations through the OpenWork server whenever possible.
@@ -46,6 +51,36 @@ Guidelines:
 - Local Tauri filesystem commands are a host-mode fallback, not the primary product surface.
 - If a feature cannot yet write through the OpenWork server, treat that as an architecture gap and close it before depending on direct local writes.
 - Reads can fall back locally when necessary, but writes should be designed around the OpenWork server path.
+
+## Agent authority map
+
+When OpenWork is edited from `openwork-enterprise`, architecture and runtime behavior should be sourced from this document.
+
+| Entry point | Role | Architecture authority |
+| --- | --- | --- |
+| `openwork-enterprise/AGENTS.md` | OpenWork Factory multi-repo orchestration | Defers OpenWork runtime flow, server-vs-shell ownership, and filesystem mutation behavior to `_repos/openwork/ARCHITECTURE.md`. |
+| `openwork-enterprise/.opencode/agents/openwork-surgeon.md` | Surgical fix agent for `_repos/openwork` | Uses `_repos/openwork/ARCHITECTURE.md` as the runtime and architecture source of truth before changing product behavior. |
+| `_repos/openwork/AGENTS.md` | Product vocabulary, audience, and repo-local development guidance | Refers to `ARCHITECTURE.md` for runtime flow, server ownership, and architectural boundaries. |
+| Skills / commands / agents that mutate workspace state | Capability layer on top of the product runtime | Should assume the OpenWork server path is canonical for workspace creation, config writes, `.opencode/` mutation, and reload signaling. |
+
+### Agent access to server-owned behavior
+
+Agents, skills, and commands should model the following as OpenWork server behavior first:
+
+- workspace creation and initialization
+- writes to `.opencode/`, `opencode.json`, and `opencode.jsonc`
+- OpenWork workspace config writes (`.opencode/openwork.json`)
+- reload event generation after config or capability changes
+- other filesystem-backed capability changes that must work across desktop host mode and remote clients
+
+Tauri or other native shell behavior remains the fallback or shell boundary for:
+
+- file and folder picking
+- reveal/open-in-OS affordances
+- updater and window management
+- host-side process supervision and native runtime bootstrapping
+
+If an agent needs one of the server-owned behaviors above and only a Tauri path exists, treat that as an architecture gap to close rather than a parallel capability surface to preserve.
 
 ## opencode primitives
 how to pick the right extension abstraction for 
@@ -89,39 +124,101 @@ These are all opencode primitives you can read the docs to find out exactly how 
 - adds a new abstraction "workspace" is a project folder and a simple .json file that includes a list of opencode primitives that map perfectly to an opencode workdir (not fully implemented)
   - openwork can open a workpace.json and decide where to populate a folder with thse settings (not implemented today
 
+## Repository/component map
+
+- `/apps/app/`: OpenWork app UI (desktop/mobile/web client experience layer).
+- `/apps/desktop/`: Tauri desktop shell that hosts the app UI and manages native process lifecycles.
+- `/apps/server/`: OpenWork server (API/control layer consumed by the app).
+- `/apps/orchestrator/`: OpenWork orchestrator CLI/daemon. In `start`/`serve` host mode it manages OpenWork server + OpenCode + `opencode-router`; in daemon mode it manages workspace activation and OpenCode lifecycle for desktop runtime.
+- `/apps/opencode-router/`: first-party messaging bridge (Slack/Telegram) and directory router.
+- `/apps/share/`: share-link publisher service for OpenWork bundle imports.
+- `/ee/apps/landing/`: OpenWork landing page surfaces.
+- `/ee/apps/den-web/`: Den web UI for sign-in, worker creation, and future user-management flows.
+- `/ee/apps/den-controller/`: Den controller API that provisions/spins up worker runtimes.
+- `/ee/apps/den-worker-proxy/`: proxy layer that keeps Daytona API keys server-side, refreshes signed worker preview URLs, and forwards worker traffic so users do not manage provider keys directly.
+- `/ee/apps/den-worker-runtime/`: worker runtime packaging (including Docker/runtime artifacts) deployed to Daytona sandboxes.
+
 ## Core Architecture
 
 OpenWork is a client experience that consumes OpenWork server surfaces.
 
-Historically, users reached OpenWork server capabilities in two ways:
+OpenWork supports two product runtime modes for users:
 
-- a running desktop OpenWork app acting as host
-- a running `openwork-orchestrator` (CLI host)
+- desktop
+- web/cloud (also usable from mobile clients)
 
-Now there is a third, first-class path: hosted OpenWork Cloud workers.
+OpenWork therefore has two runtime connection modes:
 
-OpenWork therefore has three runtime connection modes:
+### Mode A - Desktop
 
-### Mode A - Host (Desktop/Server)
-
-- OpenWork runs on a desktop/laptop and **starts** OpenCode locally.
+- OpenWork runs on a desktop/laptop and can host OpenWork server surfaces locally.
 - The OpenCode server runs on loopback (default `127.0.0.1:4096`).
 - OpenWork UI connects via the official SDK and listens to events.
+- `openwork-orchestrator` is the CLI host path for this mode.
 
-### Mode B - Client (Desktop/Mobile)
+### Mode B - Web/Cloud (can be mobile)
 
-- OpenWork runs on iOS/Android as a **remote controller**.
-- It connects to an already-running OpenCode server hosted by a trusted device.
-- Pairing uses a QR code / one-time token and a secure transport (LAN or tunneled).
-
-### Mode C - Hosted OpenWork Cloud
-
-- User signs in to hosted OpenWork web/app surfaces.
+- User signs in to hosted OpenWork web/app surfaces (including mobile browser/client access).
 - User launches a cloud worker from hosted control plane.
 - OpenWork returns remote connect credentials (`/w/ws_*` URL + access token).
 - User connects from OpenWork app using `Add a worker` -> `Connect remote`.
 
 This model keeps the user experience consistent across self-hosted and hosted paths while preserving OpenCode parity.
+
+### Mode A composition (Tauri shell + local services)
+
+- `/apps/app/` runs as the product UI; on desktop it is hosted inside `/apps/desktop/` (Tauri webview).
+- `/apps/desktop/` exposes native commands (`engine_*`, `orchestrator_*`, `openwork_server_*`, `opencodeRouter_*`) to start/stop local services and report status to the UI.
+- Runtime selection in desktop:
+  - `openwork-orchestrator` (default): Tauri launches `openwork daemon run` and uses it for workspace activation plus OpenCode lifecycle.
+  - `direct`: Tauri starts OpenCode directly.
+- In both desktop runtimes, OpenWork server (`/apps/server/`) is the API surface consumed by the UI; it is started with the resolved OpenCode base URL and proxies OpenCode and `opencode-router` routes.
+- `opencode-router` is optional in desktop host mode and is started as a local service when messaging routes are enabled.
+
+```text
+/apps/app UI
+    |
+    v
+/apps/desktop (Tauri shell)
+    |
+    +--> /apps/orchestrator (daemon or start/serve host)
+    |          |
+    |          v
+    |        OpenCode
+    |
+    +--> /apps/server (OpenWork API + proxy surface)
+    |          |
+    |          +--> OpenCode
+    |          +--> /apps/opencode-router (optional)
+    |
+    +--> /apps/opencode-router (optional local child)
+```
+
+### Mode B composition (Web/Cloud services)
+
+- `/ee/apps/den-web/` is the hosted web control surface (sign-in, worker create, upcoming user management).
+- `/ee/apps/den-controller/` is the cloud control plane API (auth/session + worker CRUD + provisioning orchestration).
+- `/ee/apps/den-worker-runtime/` defines the runtime packaging and boot path used inside cloud workers (including Docker/snapshot artifacts and `openwork serve` startup assumptions).
+- `/ee/apps/den-worker-proxy/` fronts Daytona worker preview URLs, refreshes signed links with provider credentials, and proxies traffic to the worker runtime.
+- The OpenWork app (desktop or mobile client) connects to worker OpenWork server surfaces via URL + token (`/w/ws_*` when available).
+
+```text
+/ee/apps/den-web
+    |
+    v
+/ee/apps/den-controller
+    |
+    +--> Daytona/Render provisioning
+    |        |
+    |        v
+    |      /ee/apps/den-worker-runtime -> openwork serve + OpenCode
+    |
+    +--> /ee/apps/den-worker-proxy (signed preview + proxy)
+
+OpenWork app/mobile client
+    -> Connect remote (URL + token)
+    -> worker OpenWork server surface
+```
 
 ## OpenCode Router (Messaging Bridge)
 
@@ -317,7 +414,7 @@ must be routed through a host-side service.
 
 In OpenWork, the long-term direction is:
 
-- Use the OpenWork server (`packages/server`) as the single API surface for filesystem-backed operations.
+- Use the OpenWork server (`/apps/server/`) as the single API surface for filesystem-backed operations.
 - Treat Tauri-only file operations as an implementation detail / convenience fallback, not a separate feature set.
 
 This ensures the same UI flows work on desktop, mobile, and web clients, with approvals and auditing handled centrally.

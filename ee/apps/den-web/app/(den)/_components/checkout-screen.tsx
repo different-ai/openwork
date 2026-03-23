@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatMoneyMinor, formatRecurringInterval } from "../_lib/den-flow";
+import { formatMoneyMinor } from "../_lib/den-flow";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 // For local layout testing (no deploy needed)
 // Enable with: NEXT_PUBLIC_DEN_MOCK_BILLING=1
 const MOCK_BILLING = process.env.NEXT_PUBLIC_DEN_MOCK_BILLING === "1";
 const MOCK_CHECKOUT_URL = (process.env.NEXT_PUBLIC_DEN_MOCK_CHECKOUT_URL ?? "").trim() || null;
+const TRIAL_DAYS = 14;
 
 export function CheckoutScreen({ customerSessionToken }: { customerSessionToken: string | null }) {
   const router = useRouter();
@@ -109,70 +110,112 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
   const billingPrice = billingSummary?.price ?? null;
   const showLoading = resuming || (billingBusy && !billingSummary && !MOCK_BILLING);
+  const checkoutHref = effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null;
+  const planAmountLabel = billingPrice && billingPrice.amount !== null
+    ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)}/${billingPrice.recurringInterval}`
+    : "$50.00/month";
 
   return (
-    <section className="mx-auto flex w-full max-w-[40rem] flex-col gap-6 p-4 md:p-12">
-      <div className="flex flex-col items-center text-center">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-gray-400">
-          {onboardingPending ? "Finish billing to continue onboarding" : "Billing"}
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight text-[#011627] md:text-4xl">
-          {onboardingPending ? "Unlock your Den worker." : "Manage your Den plan."}
-        </h1>
-        <p className="mt-4 max-w-[28rem] text-[16px] leading-relaxed text-gray-500">
-          {onboardingPending
-            ? "We wait for billing to confirm before resuming worker creation, so checkout returns land reliably on your dashboard."
-            : "Review plan status, generate checkout links, and manage your existing Den subscription."}
-        </p>
-      </div>
-
-      {billingError ? (
-        <div className="rounded-[18px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{billingError}</div>
-      ) : null}
-
-      {showLoading ? <p className="text-center text-sm text-slate-500">Refreshing billing state...</p> : null}
-
-      {billingSummary ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
-          <div className="flex items-center gap-3 mb-4">
-            <h3 className="text-xl font-semibold tracking-tight text-slate-900">Plan status</h3>
-          </div>
-          
-          <p className="text-2xl font-semibold text-slate-900">
-            {!billingSummary.featureGateEnabled
-              ? "Billing disabled"
-              : billingSummary.hasActivePlan
-                ? "Active plan"
-                : "Payment required"}
+    <section className="mx-auto flex w-full max-w-[74rem] flex-col gap-6 px-1 py-2 lg:px-3 lg:py-6">
+      <div className="grid gap-5 rounded-[32px] border border-slate-200/80 bg-white p-6 md:p-8">
+        <div className="grid gap-3 border-b border-[var(--dls-border)] pb-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--dls-text-secondary)]">
+            {onboardingPending ? "Finish setup" : "Den access"}
           </p>
-          <p className="mt-2 text-[15px] leading-relaxed text-gray-500">
-            {!billingSummary.featureGateEnabled
-              ? "Cloud billing gates are disabled in this environment."
-              : billingSummary.hasActivePlan
-                ? "Your account can launch cloud workers right now."
-                : "Complete checkout to unlock cloud worker launches."}
-          </p>
-          <p className="mt-4 text-sm font-semibold text-slate-900">
-            {billingPrice && billingPrice.amount !== null
-              ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)} ${formatRecurringInterval(billingPrice.recurringInterval, billingPrice.recurringIntervalCount)}`
-              : "Current plan amount is unavailable."}
-          </p>
-
-          {effectiveCheckoutUrl || (mockMode && MOCK_CHECKOUT_URL) ? (
-            <div className="mt-6 rounded-[20px] border border-amber-200 bg-amber-50 p-6">
-              <p className="text-base font-semibold text-amber-900">Checkout available</p>
-              <p className="mt-2 text-[15px] leading-relaxed text-amber-800">Open a fresh checkout session, then return here to resume automatically.</p>
-              <a
-                href={effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? "#"}
-                rel="noreferrer"
-                className="mt-4 inline-flex items-center justify-center rounded-xl bg-amber-400 px-5 py-3 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-500"
-              >
-                Continue to checkout
-              </a>
-            </div>
-          ) : null}
+          <h1 className="max-w-[12ch] text-[2.5rem] font-semibold leading-[0.95] tracking-[-0.06em] text-[var(--dls-text-primary)] md:text-[3.4rem]">
+            Choose how to run Den
+          </h1>
         </div>
-      ) : null}
+
+        {billingError ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{billingError}</div>
+        ) : null}
+
+        {showLoading ? <p className="text-sm text-[var(--dls-text-secondary)]">Refreshing access state...</p> : null}
+
+        {billingSummary ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <article className="flex flex-col gap-5 rounded-[28px] border border-slate-200 bg-white p-5 md:p-6">
+              <div className="grid gap-2">
+                <h2 className="text-[2rem] font-semibold leading-[0.98] tracking-[-0.05em] text-[var(--dls-text-primary)]">
+                  Den Cloud
+                </h2>
+                <p className="text-[14px] leading-7 text-[var(--dls-text-secondary)]">
+                  Zero setup. Run hosted workers instantly.
+                </p>
+              </div>
+
+              <div className="grid gap-3">
+                <div className="flex items-start gap-3 text-[14px] leading-6 text-[var(--dls-text-secondary)]">
+                  <span className="mt-2 block h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300"></span>
+                  {TRIAL_DAYS}-day free trial
+                </div>
+                <div className="flex items-start gap-3 text-[14px] leading-6 text-[var(--dls-text-secondary)]">
+                  <span className="mt-2 block h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300"></span>
+                  {planAmountLabel} after trial
+                </div>
+              </div>
+
+              {checkoutHref ? (
+                <div className="mt-auto pt-4">
+                  <a
+                    href={checkoutHref}
+                    rel="noreferrer"
+                    className="flex w-full items-center justify-center gap-2 rounded-full bg-[#011627] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black"
+                  >
+                    Start free trial
+                  </a>
+                </div>
+              ) : (
+                <div className="mt-auto grid gap-3 pt-4">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] leading-6 text-[var(--dls-text-secondary)]">
+                    We are still preparing your trial link.
+                  </div>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-[var(--dls-text-primary)] transition hover:bg-slate-50"
+                    onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
+                    disabled={billingBusy || billingCheckoutBusy}
+                  >
+                    Refresh trial link
+                  </button>
+                </div>
+              )}
+            </article>
+
+            <article className="flex flex-col gap-5 rounded-[28px] border border-slate-200 bg-slate-50 p-5 md:p-6">
+              <div className="grid gap-2">
+                <h2 className="text-[2rem] font-semibold leading-[0.98] tracking-[-0.05em] text-[var(--dls-text-primary)]">
+                  Desktop App
+                </h2>
+                <p className="text-[14px] leading-7 text-[var(--dls-text-secondary)]">
+                  Run locally for free.
+                </p>
+              </div>
+
+              <div className="grid gap-3">
+                <div className="flex items-start gap-3 text-[14px] leading-6 text-[var(--dls-text-secondary)]">
+                  <span className="mt-2 block h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300"></span>
+                  Keep data on your machine
+                </div>
+                <div className="flex items-start gap-3 text-[14px] leading-6 text-[var(--dls-text-secondary)]">
+                  <span className="mt-2 block h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300"></span>
+                  Add Cloud workers anytime
+                </div>
+              </div>
+
+              <div className="mt-auto pt-4">
+                <a
+                  href="/"
+                  className="flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-[var(--dls-text-primary)] transition hover:bg-slate-100"
+                >
+                  Download app
+                </a>
+              </div>
+            </article>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

@@ -8,9 +8,9 @@
     "dark": "/logo/dark.svg"
   },
   "colors": {
-    "primary": "#0F766E",
-    "light": "#14B8A6",
-    "dark": "#0F766E"
+    "primary": "#011627",
+    "light": "#334155",
+    "dark": "#011627"
   },
   "navigation": {
     "tabs": [
@@ -18,42 +18,8 @@
         "tab": "Product",
         "groups": [
           {
-            "group": "Choose a path",
-            "pages": [
-              "introduction",
-              "non-technical",
-              "technical"
-            ]
-          },
-          {
-            "group": "Run and share",
-            "pages": [
-              "quickstart",
-              "create-openwork-instance",
-              "tutorials/share-worker-invite-link",
-              "tutorials/automations-repeatable-jobs",
-              "tutorials/worker-isolation"
-            ]
-          },
-          {
-            "group": "Technical setup",
-            "pages": [
-              "openwork",
-              "cli",
-              "opencode-router",
-              "worker-runtime-upgrades"
-            ]
-          },
-          {
-            "group": "Reference",
-            "pages": [
-              "tutorials/share-workspace-url-service",
-              "orbita-layout-style"
-            ]
-          },
-          {
-            "group": "Contributing",
-            "pages": ["development"]
+            "group": "Quickstart",
+            "pages": ["quickstart"]
           }
         ]
       }

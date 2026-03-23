@@ -20,6 +20,10 @@ openwork serve --workspace /path/to/workspace
 
 `openwork` ships as a compiled binary, so Bun is not required at runtime.
 
+If npm skips the optional platform package, `postinstall` falls back to downloading the matching
+binary from the `openwork-orchestrator-v<version>` GitHub release. Override the download host with
+`OPENWORK_ORCHESTRATOR_DOWNLOAD_BASE_URL` when you need to use a mirror.
+
 `openwork` downloads and caches the `openwork-server`, `opencode-router`, and `opencode` sidecars on
 first run using a SHA-256 manifest. Use `--sidecar-dir` or `OPENWORK_SIDECAR_DIR` to control the
 cache location, and `--sidecar-base-url` / `--sidecar-manifest` to point at a custom host.

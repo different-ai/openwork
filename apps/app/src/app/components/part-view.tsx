@@ -23,6 +23,10 @@ type TextSegment =
   | { kind: "text"; value: string }
   | { kind: "link"; value: string; href: string; type: LinkType };
 
+type LinkDetectionOptions = {
+  allowFilePaths?: boolean;
+};
+
 const WEB_LINK_RE = /^(?:https?:\/\/|www\.)/i;
 const FILE_URI_RE = /^file:\/\//i;
 const URI_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -107,7 +111,10 @@ const isLikelyFilePath = (value: string) => {
   return false;
 };
 
-const parseLinkFromToken = (token: string): { href: string; type: LinkType; value: string } | null => {
+const parseLinkFromToken = (
+  token: string,
+  options: LinkDetectionOptions = {},
+): { href: string; type: LinkType; value: string } | null => {
   let start = 0;
   let end = token.length;
 
@@ -130,7 +137,7 @@ const parseLinkFromToken = (token: string): { href: string; type: LinkType; valu
     };
   }
 
-  if (isLikelyFilePath(value)) {
+  if ((options.allowFilePaths ?? true) && isLikelyFilePath(value)) {
     return {
       value,
       type: "file",
@@ -141,7 +148,7 @@ const parseLinkFromToken = (token: string): { href: string; type: LinkType; valu
   return null;
 };
 
-const splitTextTokens = (text: string): TextSegment[] => {
+const splitTextTokens = (text: string, options: LinkDetectionOptions = {}): TextSegment[] => {
   const tokens: TextSegment[] = [];
   const matches = text.matchAll(/\S+/g);
   let position = 0;
@@ -154,7 +161,7 @@ const splitTextTokens = (text: string): TextSegment[] => {
       tokens.push({ kind: "text", value: text.slice(position, index) });
     }
 
-    const link = parseLinkFromToken(token);
+    const link = parseLinkFromToken(token, options);
     if (!link) {
       tokens.push({ kind: "text", value: token });
     } else {
@@ -182,8 +189,8 @@ const splitTextTokens = (text: string): TextSegment[] => {
 const escapeHtml = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-const renderInlineTextWithLinks = (text: string) => {
-  const tokens = splitTextTokens(text);
+const renderInlineTextWithLinks = (text: string, options: LinkDetectionOptions = {}) => {
+  const tokens = splitTextTokens(text, options);
   return tokens
     .map((token) => {
       if (token.kind === "text") return escapeHtml(token.value);
@@ -421,8 +428,6 @@ function createCustomRenderer(tone: "light" | "dark") {
   };
 
   renderer.html = ({ text }) => escapeHtml(text);
-
-  renderer.text = ({ text }) => renderInlineTextWithLinks(text);
 
   renderer.code = ({ text, lang }) => {
     const language = lang || "";

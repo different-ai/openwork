@@ -24,7 +24,16 @@ export const metadata: Metadata = {
     default: "OpenWork Share",
     template: "%s - OpenWork Share"
   },
-  description: "Publish OpenWork worker packages and shareable import links."
+  description: "Publish OpenWork worker packages and shareable import links.",
+  icons: { icon: "/openwork-mark.svg" },
+  openGraph: {
+    type: "website",
+    siteName: "OpenWork Share",
+  },
+  twitter: {
+    card: "summary_large_image",
+    site: "@getopenwork",
+  },
 };
 
 const defaultPosthogKey = "phc_4YnPTlDVYPjgwKvLuNxhbHjV5kadgvd7XLzVHWnCXAI";

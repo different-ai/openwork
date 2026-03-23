@@ -1,15 +1,15 @@
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
+use sha2::{Digest, Sha256};
 use tauri::Manager;
 
-use crate::types::{WorkspaceInfo, WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION};
+use crate::types::{WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION};
 
 pub fn stable_workspace_id(path: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut hasher);
-    format!("ws-{:x}", hasher.finish())
+    let digest = Sha256::digest(path.as_bytes());
+    let hex = format!("{:x}", digest);
+    format!("ws_{}", &hex[..12])
 }
 
 pub fn openwork_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
@@ -32,8 +32,45 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
     let mut state: WorkspaceState = serde_json::from_str(&raw)
         .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
 
+    let mut changed_ids = false;
+    let old_active_id = state.active_id.clone();
+    for workspace in state.workspaces.iter_mut() {
+        let next_id = match workspace.workspace_type {
+            WorkspaceType::Local => stable_workspace_id(&workspace.path),
+            WorkspaceType::Remote => {
+                if workspace.remote_type == Some(crate::types::RemoteType::Openwork) {
+                    stable_workspace_id_for_openwork(
+                        workspace.openwork_host_url.as_deref().unwrap_or(""),
+                        workspace.openwork_workspace_id.as_deref(),
+                    )
+                } else {
+                    stable_workspace_id_for_remote(
+                        workspace.base_url.as_deref().unwrap_or(""),
+                        workspace.directory.as_deref(),
+                    )
+                }
+            }
+        };
+
+        if workspace.id != next_id {
+            if old_active_id == workspace.id {
+                state.active_id = next_id.clone();
+            }
+            workspace.id = next_id;
+            changed_ids = true;
+        }
+    }
+
     if state.version < WORKSPACE_STATE_VERSION {
         state.version = WORKSPACE_STATE_VERSION;
+    }
+
+    if changed_ids && state.active_id.is_empty() {
+        state.active_id = state
+            .workspaces
+            .first()
+            .map(|workspace| workspace.id.clone())
+            .unwrap_or_default();
     }
 
     Ok(state)
@@ -48,35 +85,6 @@ pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> R
     )
     .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     Ok(())
-}
-
-pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    let starter_dir = data_dir.join("workspaces").join("starter");
-    fs::create_dir_all(&starter_dir)
-        .map_err(|e| format!("Failed to create starter workspace: {e}"))?;
-
-    Ok(WorkspaceInfo {
-        id: stable_workspace_id(starter_dir.to_string_lossy().as_ref()),
-        name: "Starter".to_string(),
-        path: starter_dir.to_string_lossy().to_string(),
-        preset: "starter".to_string(),
-        workspace_type: WorkspaceType::Local,
-        remote_type: None,
-        base_url: None,
-        directory: None,
-        display_name: None,
-        openwork_host_url: None,
-        openwork_token: None,
-        openwork_workspace_id: None,
-        openwork_workspace_name: None,
-        sandbox_backend: None,
-        sandbox_run_id: None,
-        sandbox_container_name: None,
-    })
 }
 
 pub fn stable_workspace_id_for_remote(base_url: &str, directory: Option<&str>) -> String {

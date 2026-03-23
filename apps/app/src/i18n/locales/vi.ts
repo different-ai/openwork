@@ -829,7 +829,7 @@ export default {
   "app.migration.desktop_required": "Sửa di chuyển dữ liệu yêu cầu ứng dụng desktop.",
   "app.migration.local_only": "Sửa di chuyển dữ liệu chỉ khả dụng cho worker nội bộ.",
   "app.migration.workspace_required": "Chọn thư mục worker nội bộ trước khi sửa di chuyển dữ liệu.",
-  "app.migration.unsupported": "Bản OpenCode này không hỗ trợ `opencode db migrate`. Cập nhật lên >=1.2.6 hoặc chuyển sang engine đi kèm.",
+  "app.migration.unsupported": "Bản OpenCode này không hỗ trợ `opencode db migrate`. Hãy cập nhật lên phiên bản OpenCode được OpenWork ghim cố định hoặc chuyển sang engine đi kèm.",
   "app.migration.failed": "Di chuyển dữ liệu OpenCode thất bại.",
   "app.migration.restart_failed": "Di chuyển dữ liệu hoàn tất, nhưng OpenWork không thể khởi động lại engine nội bộ.",
   "app.migration.success": "Đã sửa di chuyển dữ liệu. Đã thử khởi động lại nội bộ.",

@@ -63,6 +63,25 @@ fn openwork_dev_mode_enabled() -> bool {
     env_truthy("OPENWORK_DEV_MODE").unwrap_or(cfg!(debug_assertions))
 }
 
+fn pinned_opencode_version() -> String {
+    let constants = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../constants.json"));
+    let parsed: serde_json::Value =
+        serde_json::from_str(constants).expect("constants.json must be valid JSON");
+    parsed["opencodeVersion"]
+        .as_str()
+        .expect("constants.json must include opencodeVersion")
+        .trim()
+        .trim_start_matches('v')
+        .to_string()
+}
+
+fn pinned_opencode_install_command() -> String {
+    format!(
+        "curl -fsSL https://opencode.ai/install | bash -s -- --version {} --no-modify-path",
+        pinned_opencode_version()
+    )
+}
+
 #[derive(Default)]
 struct OutputState {
     stdout: String,
@@ -166,6 +185,7 @@ pub fn engine_restart(
     orchestrator_manager: State<OrchestratorManager>,
     openwork_manager: State<OpenworkServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
+    opencode_enable_exa: Option<bool>,
 ) -> Result<EngineInfo, String> {
     let (project_dir, runtime) = {
         let state = manager.inner.lock().expect("engine mutex poisoned");
@@ -188,6 +208,7 @@ pub fn engine_restart(
         project_dir,
         None,
         None,
+        opencode_enable_exa,
         Some(runtime),
         Some(workspace_paths),
     )
@@ -250,7 +271,7 @@ pub fn engine_install() -> Result<ExecResult, String> {
       ok: false,
       status: -1,
       stdout: String::new(),
-      stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart OpenWork.".to_string(),
+      stderr: "Guided install is not supported on Windows yet. Install the OpenWork-pinned OpenCode version manually, then restart OpenWork.".to_string(),
     });
     }
 
@@ -263,7 +284,7 @@ pub fn engine_install() -> Result<ExecResult, String> {
 
         let output = std::process::Command::new("bash")
             .arg("-lc")
-            .arg("curl -fsSL https://opencode.ai/install | bash")
+            .arg(pinned_opencode_install_command())
             .env("OPENCODE_INSTALL_DIR", install_dir)
             .output()
             .map_err(|e| format!("Failed to run installer: {e}"))?;
@@ -288,6 +309,7 @@ pub fn engine_start(
     project_dir: String,
     prefer_sidecar: Option<bool>,
     opencode_bin_path: Option<String>,
+    opencode_enable_exa: Option<bool>,
     runtime: Option<EngineRuntime>,
     workspace_paths: Option<Vec<String>>,
 ) -> Result<EngineInfo, String> {
@@ -363,8 +385,9 @@ pub fn engine_start(
     );
     let Some(program) = program else {
         let notes_text = notes.join("\n");
+        let install_command = pinned_opencode_install_command();
         return Err(format!(
-      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
+      "OpenCode CLI not found.\n\nInstall with:\n- {install_command}\n\nNotes:\n{notes_text}"
     ));
     };
 
@@ -395,6 +418,7 @@ pub fn engine_start(
             opencode_port: Some(port),
             opencode_username: opencode_username.clone(),
             opencode_password: opencode_password.clone(),
+            opencode_enable_exa: opencode_enable_exa.unwrap_or(false),
             cors: Some("*".to_string()),
         };
 

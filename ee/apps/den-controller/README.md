@@ -49,7 +49,7 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
 - `RENDER_WORKER_REGION` Render region for worker services
-- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers; the worker build uses its `opencodeVersion` metadata to bundle a matching `opencode` binary into the Render deploy
+- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers; the worker build reads the pinned OpenCode version from `constants.json` shipped with that package and bundles the matching `opencode` binary into the Render deploy
 - `RENDER_WORKER_NAME_PREFIX` service name prefix
 - `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `openwork.studio` -> `<worker-id>.openwork.studio`)
 - `RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` max time to wait for vanity URL health before falling back to Render URL
@@ -125,12 +125,12 @@ Useful optional overrides:
 - `DAYTONA_SNAPSHOT_MEMORY`
 - `DAYTONA_SNAPSHOT_DISK`
 - `OPENWORK_ORCHESTRATOR_VERSION`
-- `OPENCODE_VERSION`
+- OpenCode is pinned by `constants.json`
 
 After the snapshot is pushed, set it in `.env.daytona`:
 
 ```env
-DAYTONA_SNAPSHOT=openwork-runtime
+DAYTONA_SNAPSHOT=openwork-0.11.174
 ```
 
 Then start Den in Daytona mode:
@@ -146,9 +146,10 @@ If you do not set `DAYTONA_SNAPSHOT`, Den falls back to `DAYTONA_SANDBOX_IMAGE`.
 GitHub workflow `.github/workflows/release-daytona-snapshot.yml` builds and pushes a new Daytona snapshot whenever a GitHub release is published.
 
 - Trigger: `release.published` (or manual `workflow_dispatch`)
-- Snapshot naming: `DAYTONA_SNAPSHOT` repo variable if set, otherwise `openwork-runtime-<tag-without-v>`
+- Snapshot naming: `snapshot_name` input if provided, otherwise `${DAYTONA_SNAPSHOT_NAME_BASE:-openwork}-<tag-without-v>`
 - Required secret: `DAYTONA_API_KEY`
 - Optional repo vars: `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT_REGION`, `DAYTONA_SNAPSHOT_NAME_BASE`
+- After the snapshot publish succeeds, the workflow calls `.github/workflows/deploy-den.yml` to set Render's `DAYTONA_SNAPSHOT` env var and trigger a Den controller deploy.
 
 ## Auth setup (Better Auth)
 
@@ -186,7 +187,7 @@ pnpm db:migrate:sql
 
 ## CI deployment (dev == prod)
 
-The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
+The workflow `.github/workflows/deploy-den.yml` updates Render env vars and triggers a deploy for the Den controller service. It can be run manually with a snapshot name, and release automation calls it after successful Daytona snapshot publishing.
 
 Required GitHub Actions secrets:
 

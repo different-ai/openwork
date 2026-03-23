@@ -48,11 +48,13 @@ export function LandingHome(props: Props) {
   const callLinkProps = externalLinkProps(props.callHref);
   const primaryCtaHref = props.isMobileVisitor
     ? "https://app.openworklabs.com"
-    : props.downloadHref;
+    : "/download";
   const primaryCtaLabel = props.isMobileVisitor
     ? "Open the app"
     : "Download for free";
-  const primaryCtaLinkProps = props.isMobileVisitor ? {} : downloadLinkProps;
+  const primaryCtaLinkProps = props.isMobileVisitor
+    ? {}
+    : externalLinkProps(primaryCtaHref);
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">

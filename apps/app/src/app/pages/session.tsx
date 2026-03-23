@@ -7,11 +7,9 @@ import {
   on,
   onCleanup,
   onMount,
-  type JSX,
 } from "solid-js";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
-  ArtifactItem,
   DashboardTab,
   ComposerDraft,
   MessageGroup,
@@ -32,38 +30,33 @@ import type {
 } from "../types";
 
 import {
-  obsidianIsAvailable,
-  openInObsidian,
   readObsidianMirrorFile,
   writeObsidianMirrorFile,
   type EngineInfo,
+  type OpenCodeRouterInfo,
   type OpenworkServerInfo,
+  type OrchestratorStatus,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { usePlatform } from "../context/platform";
-import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
+import { buildFeedbackUrl } from "../lib/feedback";
+import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 
 import {
   AlertTriangle,
-  Box,
-  ChevronLeft,
-  ChevronRight,
   Check,
   Circle,
+  FolderOpen,
   HardDrive,
-  History,
   ListTodo,
   Loader2,
   Menu,
-  MessageCircle,
-  Maximize2,
   Minimize2,
   RefreshCcw,
   Redo2,
   Search,
   Shield,
-  SlidersHorizontal,
   Undo2,
   X,
   Zap,
@@ -79,7 +72,6 @@ import ProviderAuthModal, {
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
 import {
-  buildOpenworkConnectInviteUrl,
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   OpenworkServerError,
@@ -88,6 +80,7 @@ import {
 import type {
   OpenworkFileSession,
   OpenworkServerClient,
+  OpenworkServerDiagnostics,
   OpenworkServerSettings,
   OpenworkServerStatus,
   OpenworkWorkspaceExport,
@@ -118,8 +111,7 @@ import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
 import QuestionModal from "../components/question-modal";
-import ArtifactsPanel from "../components/session/artifacts-panel";
-import InboxPanel from "../components/session/inbox-panel";
+import WorkspaceRightSidebar from "../components/workspace-right-sidebar";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -141,6 +133,8 @@ export type SessionViewProps = {
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
   openCreateWorkspace: () => void;
+  getStartedWorkspace: () => Promise<boolean>;
+  pickFolderWorkspace: () => Promise<boolean>;
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
@@ -149,10 +143,15 @@ export type SessionViewProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerClient: OpenworkServerClient | null;
+  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerWorkspaceId: string | null;
   engineInfo: EngineInfo | null;
+  engineDoctorVersion: string | null;
+  orchestratorStatus: OrchestratorStatus | null;
+  opencodeRouterInfo: OpenCodeRouterInfo | null;
+  appVersion: string | null;
   stopHost: () => void;
   headerStatus: string;
   busyHint: string | null;
@@ -201,7 +200,6 @@ export type SessionViewProps = {
   setExpandedSidebarSections: (
     updater: (current: SidebarSectionState) => SidebarSectionState,
   ) => SidebarSectionState;
-  artifacts: ArtifactItem[];
   workingFiles: string[];
   authorizedDirs: string[];
   activePlugins: string[];
@@ -231,7 +229,8 @@ export type SessionViewProps = {
   }) => void;
   modelVariantLabel: string;
   modelVariant: string | null;
-  setModelVariant: (value: string) => void;
+  modelBehaviorOptions?: { value: string | null; label: string }[];
+  setModelVariant: (value: string | null) => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
   onTryNotionPrompt: () => void;
@@ -272,6 +271,7 @@ export type SessionViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthPreferredProviderId: string | null;
+  providerAuthWorkerType: "local" | "remote";
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
@@ -327,7 +327,7 @@ type ResolvedEmptyStateStarter = {
   title: string;
   description?: string;
   prompt?: string;
-  action?: "connect-anthropic";
+  action?: "connect-openai";
 };
 
 const INITIAL_MESSAGE_WINDOW = 140;
@@ -339,15 +339,7 @@ const STREAM_RENDER_BATCH_MS = 48;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
 
-type CommandPaletteMode = "root" | "sessions" | "thinking";
-
-const COMMAND_PALETTE_THINKING_OPTIONS = [
-  { value: "none", label: "None", detail: "Fastest responses" },
-  { value: "low", label: "Low", detail: "Light reasoning" },
-  { value: "medium", label: "Medium", detail: "Balanced depth" },
-  { value: "high", label: "High", detail: "Deeper reasoning" },
-  { value: "xhigh", label: "X-High", detail: "Maximum effort" },
-] as const;
+type CommandPaletteMode = "root" | "sessions";
 
 export default function SessionView(props: SessionViewProps) {
   const platform = usePlatform();
@@ -412,7 +404,6 @@ export default function SessionView(props: SessionViewProps) {
   const [messageWindowExpanded, setMessageWindowExpanded] = createSignal(false);
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
-  const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
   const [mobileRightSidebarOpen, setMobileRightSidebarOpen] = createSignal(false);
 
   // In Session view the right sidebar is navigation-only; never pre-highlight a
@@ -429,33 +420,26 @@ export default function SessionView(props: SessionViewProps) {
   } = createWorkspaceShellLayout({ expandedRightWidth: 280 });
 
   const openFeedback = () => {
-    const resolved = FEEDBACK_EMAIL_URL.trim();
+    const resolved = buildFeedbackUrl({
+      entrypoint: "session-status-bar",
+      deployment: getOpenWorkDeployment(),
+      appVersion: props.appVersion,
+      openworkServerVersion: props.openworkServerDiagnostics?.version ?? null,
+      opencodeVersion:
+        props.orchestratorStatus?.binaries?.opencode?.actualVersion ??
+        props.engineDoctorVersion ??
+        null,
+      orchestratorVersion: props.orchestratorStatus?.cliVersion ?? null,
+      opencodeRouterVersion: props.opencodeRouterInfo?.version ?? null,
+    });
     if (!resolved) return;
     platform.openLink(resolved);
   };
 
-  createEffect(() => {
-    if (!isTauriRuntime()) {
-      setObsidianAvailable(false);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const available = await obsidianIsAvailable();
-        if (!cancelled) setObsidianAvailable(available);
-      } catch {
-        if (!cancelled) setObsidianAvailable(false);
-      }
-    })();
-    onCleanup(() => {
-      cancelled = true;
-    });
+  const agentLabel = createMemo(() => {
+    const name = props.selectedSessionAgent ?? "Default agent";
+    return name.charAt(0).toUpperCase() + name.slice(1);
   });
-
-  const agentLabel = createMemo(
-    () => props.selectedSessionAgent ?? "Default agent",
-  );
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
     workspace.openworkWorkspaceName?.trim() ||
@@ -883,38 +867,6 @@ export default function SessionView(props: SessionViewProps) {
     () => Boolean(props.selectedSessionId) && hasUserMessages(),
   );
 
-  const touchedFiles = createMemo(() => {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    const add = (value: string) => {
-      const normalized = String(value ?? "")
-        .trim()
-        .replace(/[\\/]+/g, "/");
-      if (!normalized) return;
-      const key = normalized.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(normalized);
-    };
-
-    const artifacts = props.artifacts;
-    for (let idx = artifacts.length - 1; idx >= 0; idx -= 1) {
-      const item = artifacts[idx];
-      add(item?.path ?? item?.name ?? "");
-      if (out.length >= 48) break;
-    }
-
-    if (out.length === 0) {
-      const working = props.workingFiles;
-      for (let idx = working.length - 1; idx >= 0; idx -= 1) {
-        add(working[idx] ?? "");
-        if (out.length >= 48) break;
-      }
-    }
-
-    return out;
-  });
-
   const resolveLocalFileCandidates = async (file: string) => {
     const trimmed = normalizeLocalFilePath(file).trim();
     if (!trimmed) return [];
@@ -977,7 +929,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const runLocalFileAction = async (
     file: string,
-    mode: "open" | "reveal" | "obsidian",
+    mode: "open" | "reveal",
     action: (candidate: string) => Promise<void>,
   ) => {
     const candidates = await resolveLocalFileCandidates(file);
@@ -1542,97 +1494,6 @@ export default function SessionView(props: SessionViewProps) {
     void resetRemoteFileSync();
   });
 
-  const revealArtifact = async (file: string) => {
-    if (props.activeWorkspaceDisplay.workspaceType === "remote") {
-      setToastMessage("Reveal is unavailable for remote workspaces.");
-      return;
-    }
-    if (!isTauriRuntime()) {
-      setToastMessage("Reveal is available in the desktop app.");
-      return;
-    }
-    try {
-      const { openPath, revealItemInDir } =
-        await import("@tauri-apps/plugin-opener");
-      const result = await runLocalFileAction(
-        file,
-        "reveal",
-        async (candidate) => {
-          if (isWindowsPlatform()) {
-            await openPath(candidate);
-            return;
-          }
-          await revealItemInDir(candidate);
-        },
-      );
-      if (!result.ok && result.reason === "missing-root") {
-        setToastMessage("Pick a workspace to reveal files.");
-        return;
-      }
-      if (!result.ok) {
-        setToastMessage(result.reason);
-        return;
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unable to reveal file";
-      setToastMessage(message);
-    }
-  };
-
-  const openArtifactInObsidian = async (file: string) => {
-    if (!/\.(md|mdx|markdown)$/i.test(file)) return;
-    if (!obsidianAvailable()) {
-      setToastMessage("Obsidian is not available on this system.");
-      return;
-    }
-    if (!isTauriRuntime()) {
-      setToastMessage("Open in Obsidian is available in the desktop app.");
-      return;
-    }
-
-    const isRemoteWorkspace =
-      props.activeWorkspaceDisplay.workspaceType === "remote";
-    const preferLocalOpen = !isRemoteWorkspace || isSandboxWorkspace();
-
-    try {
-      if (preferLocalOpen) {
-        const localResult = await runLocalFileAction(
-          file,
-          "obsidian",
-          async (candidate) => {
-            await openInObsidian(candidate);
-          },
-        );
-        if (localResult.ok) {
-          return;
-        }
-        if (localResult.reason === "missing-root" && !isRemoteWorkspace) {
-          setToastMessage("Pick a workspace to open files.");
-          return;
-        }
-        if (!isRemoteWorkspace) {
-          setToastMessage(localResult.reason);
-          return;
-        }
-      }
-
-      if (!isRemoteWorkspace) {
-        setToastMessage("Pick a workspace to open files.");
-        return;
-      }
-
-      const mirrored = await mirrorRemoteArtifactForObsidian(file);
-      await openInObsidian(mirrored);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to open file in Obsidian";
-      setToastMessage(message);
-    }
-  };
-
   const revealWorkspaceInFinder = async (workspaceId: string) => {
     const workspace =
       props.workspaces.find((entry) => entry.id === workspaceId) ?? null;
@@ -2083,17 +1944,6 @@ export default function SessionView(props: SessionViewProps) {
       }
     }
     if (part.type === "reasoning") {
-      const text = cleanReasoning(
-        typeof (part as any).text === "string" ? (part as any).text : "",
-      );
-      const first = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find(Boolean);
-      if (first) {
-        const clipped = first.length > 56 ? `${first.slice(0, 53)}...` : first;
-        return `Thinking: ${clipped}`;
-      }
       return "Thinking";
     }
     if (part.type === "text") {
@@ -2107,6 +1957,15 @@ export default function SessionView(props: SessionViewProps) {
     if (status) return status;
     if (runPhase() === "thinking") return "Thinking";
     return null;
+  });
+
+  const showFooterRunStatus = createMemo(() => {
+    if (!showRunIndicator()) return false;
+    const part = latestRunPart();
+    if (part?.type === "reasoning" && props.showThinking) {
+      return false;
+    }
+    return true;
   });
 
   const runProgressSignature = createMemo(() => {
@@ -2615,11 +2474,6 @@ export default function SessionView(props: SessionViewProps) {
         window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
       });
     });
-  };
-
-  const closeCommandPaletteAndFocusComposer = () => {
-    closeCommandPalette();
-    focusComposer();
   };
 
   const openCommandPalette = (mode: CommandPaletteMode = "root") => {
@@ -3168,25 +3022,9 @@ export default function SessionView(props: SessionViewProps) {
       const url = mountedUrl || hostUrl;
       const ownerToken = props.openworkServerHostInfo?.ownerToken?.trim() || "";
       const collaboratorToken = props.openworkServerHostInfo?.clientToken?.trim() || "";
-      const inviteToken = ownerToken || collaboratorToken;
-      const inviteUrl = buildOpenworkConnectInviteUrl({
-        workspaceUrl: url,
-        token: inviteToken,
-      });
       return [
         {
-          label: "OpenWork invite link",
-          value: inviteUrl,
-          secret: true,
-          placeholder: !isTauriRuntime()
-            ? "Desktop app required"
-            : "Starting server...",
-          hint: ownerToken
-            ? "One link that prefills the worker URL and owner token for permission prompts."
-            : "One link that prefills the worker URL and collaborator token.",
-        },
-        {
-          label: "OpenWork worker URL",
+          label: "Worker URL",
           value: url,
           placeholder: !isTauriRuntime()
             ? "Desktop app required"
@@ -3198,13 +3036,13 @@ export default function SessionView(props: SessionViewProps) {
               : undefined,
         },
         {
-          label: "Owner token",
+          label: "Password",
           value: ownerToken,
           secret: true,
           placeholder: isTauriRuntime() ? "-" : "Desktop app required",
           hint: mountedUrl
             ? "Use on phones or laptops connecting to this worker."
-            : "Use on phones or laptops connecting to this host when the remote client must answer permission prompts.",
+            : "Use when the remote client must answer permission prompts.",
         },
         {
           label: "Collaborator token",
@@ -3227,27 +3065,17 @@ export default function SessionView(props: SessionViewProps) {
         ws.openworkToken?.trim() ||
         props.openworkServerSettings.token?.trim() ||
         "";
-      const inviteUrl = buildOpenworkConnectInviteUrl({
-        workspaceUrl: url,
-        token,
-      });
       return [
         {
-          label: "OpenWork invite link",
-          value: inviteUrl,
-          secret: true,
-          hint: "One link that prefills worker URL and token.",
-        },
-        {
-          label: "OpenWork worker URL",
+          label: "Worker URL",
           value: url,
         },
         {
-          label: "Connected token",
+          label: "Password",
           value: token,
           secret: true,
           placeholder: token ? undefined : "Set token in workspace settings",
-          hint: "This worker is currently connected with this token.",
+          hint: "This workspace is currently connected with this password.",
         },
       ];
     }
@@ -3665,7 +3493,7 @@ export default function SessionView(props: SessionViewProps) {
       {
         id: "model",
         title: "Change model",
-        detail: `Current: ${props.selectedSessionModelLabel || "Model"}`,
+        detail: `${props.selectedSessionModelLabel || "Model"} · ${props.modelVariantLabel}`,
         meta: "Open",
         action: () => {
           closeCommandPalette();
@@ -3689,18 +3517,6 @@ export default function SessionView(props: SessionViewProps) {
               setToastMessage(message);
               focusComposer();
             });
-        },
-      },
-      {
-        id: "thinking",
-        title: "Change thinking",
-        detail: `Current: ${props.modelVariantLabel}`,
-        meta: "Adjust",
-        action: () => {
-          setCommandPaletteMode("thinking");
-          setCommandPaletteQuery("");
-          setCommandPaletteActiveIndex(0);
-          focusCommandPaletteInput();
         },
       },
     ];
@@ -3737,48 +3553,21 @@ export default function SessionView(props: SessionViewProps) {
     }));
   });
 
-  const commandPaletteThinkingItems = createMemo<CommandPaletteItem[]>(() => {
-    const normalizedRaw = (props.modelVariant ?? "none").trim().toLowerCase();
-    const activeVariant =
-      normalizedRaw === "balanced" || normalizedRaw === "balance"
-        ? "none"
-        : normalizedRaw;
-    const query = commandPaletteQuery().trim().toLowerCase();
-
-    return COMMAND_PALETTE_THINKING_OPTIONS.filter((option) => {
-      if (!query) return true;
-      return `${option.label} ${option.detail}`.toLowerCase().includes(query);
-    }).map((option) => ({
-      id: `thinking:${option.value}`,
-      title: option.label,
-      detail: option.detail,
-      meta: activeVariant === option.value ? "Current" : undefined,
-      action: () => {
-        props.setModelVariant(option.value);
-        closeCommandPaletteAndFocusComposer();
-        setToastMessage(`Thinking set to ${option.label}.`);
-      },
-    }));
-  });
-
   const commandPaletteItems = createMemo<CommandPaletteItem[]>(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return commandPaletteSessionItems();
-    if (mode === "thinking") return commandPaletteThinkingItems();
     return commandPaletteRootItems();
   });
 
   const commandPaletteTitle = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return "Search sessions";
-    if (mode === "thinking") return "Change thinking";
     return "Quick actions";
   });
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return "Find by session title or workspace";
-    if (mode === "thinking") return "Filter thinking options";
     return "Search actions";
   });
 
@@ -3916,13 +3705,13 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openNewSessionProviderCta = () => {
-    openProviderAuth("anthropic");
+    openProviderAuth("openai");
   };
 
-  const hasAnthropicProviderConnected = createMemo(() =>
-    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "anthropic")
+  const hasOpenAiProviderConnected = createMemo(() =>
+    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
   );
-  const showNewSessionProviderCta = createMemo(() => !hasAnthropicProviderConnected());
+  const showNewSessionProviderCta = createMemo(() => !hasOpenAiProviderConnected());
   const emptyStatePreset = createMemo(
     () =>
       props.activeWorkspaceConfig?.workspace?.preset?.trim() ||
@@ -3961,7 +3750,7 @@ export default function SessionView(props: SessionViewProps) {
       if (!title) continue;
       if (kind === "action") {
         if (!action) continue;
-        if (action === "connect-anthropic" && !showNewSessionProviderCta()) {
+        if (action === "connect-openai" && !showNewSessionProviderCta()) {
           continue;
         }
         resolved.push({
@@ -4003,7 +3792,7 @@ export default function SessionView(props: SessionViewProps) {
   };
   const handleEmptyStateStarter = (starter: ResolvedEmptyStateStarter) => {
     if (starter.kind === "action") {
-      if (starter.action === "connect-anthropic") {
+      if (starter.action === "connect-openai") {
         openNewSessionProviderCta();
       }
       return;
@@ -4015,148 +3804,6 @@ export default function SessionView(props: SessionViewProps) {
     }
     applyStarterPrompt(starter.prompt);
   };
-  const rightSidebarNavButton = (
-    label: string,
-    icon: any,
-    active: boolean,
-    onClick: () => void,
-    options?: {
-      disabled?: boolean;
-      badge?: JSX.Element;
-      disabledTitle?: string;
-      expanded?: boolean;
-      onSelect?: () => void;
-    },
-  ) => {
-    const expanded = options?.expanded ?? rightSidebarExpanded();
-    return (
-      <button
-        type="button"
-        disabled={options?.disabled}
-        class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
-          options?.disabled
-            ? "cursor-not-allowed border-transparent text-gray-8 opacity-70"
-            : active
-              ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-              : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
-        } ${
-          expanded
-            ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
-            : "flex h-12 items-center justify-center rounded-[16px] px-0"
-        }`}
-        onClick={() => {
-          onClick();
-          options?.onSelect?.();
-        }}
-        title={options?.disabled ? options.disabledTitle ?? label : label}
-        aria-label={options?.disabled ? `${label}. ${options.disabledTitle ?? "Desktop only."}` : label}
-      >
-        {icon}
-        <Show when={expanded}>
-          <span class="flex min-w-0 flex-1 items-center gap-2">
-            <span class="truncate">{label}</span>
-            {options?.badge}
-          </span>
-        </Show>
-      </button>
-    );
-  };
-
-  const renderRightSidebar = (expanded: boolean, mobile = false) => (
-    <div class={`flex h-full w-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
-      <div class={`flex items-center pb-3 ${expanded ? "justify-end" : "justify-center"}`}>
-        <button
-          type="button"
-          class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
-          onClick={mobile ? () => setMobileRightSidebarOpen(false) : toggleRightSidebar}
-          title={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-          aria-label={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          <Show when={mobile} fallback={<Show when={expanded} fallback={<ChevronLeft size={18} />}><ChevronRight size={18} /></Show>}>
-            <X size={18} />
-          </Show>
-        </button>
-      </div>
-      <div class={`flex-1 overflow-y-auto ${expanded ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
-        <div class="space-y-1 mb-2">
-          {rightSidebarNavButton(
-            "Automations",
-            <History size={18} />,
-            showRightSidebarSelection() && props.tab === "scheduled",
-            () => {
-              props.setTab("scheduled");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          {rightSidebarNavButton(
-            "Skills",
-            <Zap size={18} />,
-            showRightSidebarSelection() && props.tab === "skills",
-            () => {
-              props.setTab("skills");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          {rightSidebarNavButton(
-            "Extensions",
-            <Box size={18} />,
-            showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins"),
-            () => {
-              props.setTab("mcp");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          {rightSidebarNavButton(
-            "Messaging",
-            <MessageCircle size={18} />,
-            showRightSidebarSelection() && props.tab === "identities",
-            () => {
-              props.setTab("identities");
-              props.setView("dashboard");
-            },
-            mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-          )}
-          <Show when={props.developerMode}>
-            {rightSidebarNavButton(
-              "Advanced",
-              <SlidersHorizontal size={18} />,
-              showRightSidebarSelection() && props.tab === "config",
-              openConfig,
-              mobile ? { expanded, onSelect: () => setMobileRightSidebarOpen(false) } : { expanded },
-            )}
-          </Show>
-        </div>
-
-        <Show when={expanded && props.activeWorkspaceDisplay.workspaceType === "remote"}>
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <InboxPanel
-              id={mobile ? "mobile-sidebar-inbox" : "sidebar-inbox"}
-              client={props.openworkServerClient}
-              workspaceId={props.openworkServerWorkspaceId}
-              onToast={(message) => setToastMessage(message)}
-            />
-          </div>
-        </Show>
-
-        <Show when={expanded}>
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <ArtifactsPanel
-              id={mobile ? "mobile-sidebar-artifacts" : "sidebar-artifacts"}
-              files={touchedFiles()}
-              workspaceRoot={props.activeWorkspaceRoot}
-              onRevealArtifact={revealArtifact}
-              onOpenInObsidian={openArtifactInObsidian}
-              obsidianAvailable={obsidianAvailable()}
-            />
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
-
   return (
     <div class="h-[100dvh] min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] p-3 md:p-4 text-gray-12 font-sans">
       <div class="flex h-full w-full gap-3 md:gap-4">
@@ -4280,13 +3927,6 @@ export default function SessionView(props: SessionViewProps) {
                 </button>
               </Show>
 
-              <span class="shrink-0 rounded-md bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">
-                {showWorkspaceSetupEmptyState()
-                  ? "Workspace"
-                  : props.activeWorkspaceDisplay.workspaceType === "remote"
-                    ? "Remote workspace"
-                    : "Workspace"}
-              </span>
               <h1 class="truncate text-[15px] font-semibold text-dls-text">
                 {showWorkspaceSetupEmptyState()
                   ? "Create or connect a workspace"
@@ -4391,21 +4031,6 @@ export default function SessionView(props: SessionViewProps) {
                 aria-label="Open sidebar"
               >
                 <Menu size={16} />
-              </button>
-              <button
-                type="button"
-                class="hidden h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60 md:flex"
-                onClick={compactSessionHistory}
-                disabled={!canCompactSession() || historyActionBusy() !== null}
-                title="Compact session context"
-                aria-label="Compact session context"
-              >
-                <Show
-                  when={historyActionBusy() === "compact"}
-                  fallback={<Maximize2 size={16} />}
-                >
-                  <Loader2 size={16} class="animate-spin" />
-                </Show>
               </button>
             </div>
           </header>
@@ -4587,32 +4212,62 @@ export default function SessionView(props: SessionViewProps) {
               >
                 <div class="mx-auto w-full max-w-[800px]">
                   <Show when={showWorkspaceSetupEmptyState()}>
-                    <div class="mx-auto max-w-xl rounded-[24px] border border-dls-border bg-dls-sidebar p-8 text-center shadow-[var(--dls-card-shadow)]">
-                      <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-gray-11">
-                        <HardDrive size={24} />
-                      </div>
-                      <h3 class="text-2xl font-semibold text-gray-12">
-                        Set up your first workspace
-                      </h3>
-                      <p class="mt-2 text-sm text-gray-10">
-                        OpenWork needs a local or remote workspace before you can
-                        start a session.
-                      </p>
-                      <div class="mt-6 grid gap-3 sm:grid-cols-2">
-                        <button
-                          type="button"
-                          class="rounded-full border border-gray-7 bg-gray-12 px-5 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
-                          onClick={props.openCreateWorkspace}
-                        >
-                          Create local workspace
-                        </button>
-                        <button
-                          type="button"
-                          class="rounded-full border border-dls-border bg-dls-surface px-5 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-2"
-                          onClick={props.openCreateRemoteWorkspace}
-                        >
-                          Connect remote workspace
-                        </button>
+                    <div class="mx-auto max-w-2xl rounded-[32px] border border-dls-border bg-dls-sidebar/95 p-5 shadow-[var(--dls-shell-shadow)] sm:p-8">
+                      <div class="rounded-[28px] border border-dls-border bg-dls-surface p-6 sm:p-8">
+                        <div class="flex flex-col gap-6">
+                          <div class="flex flex-col items-center text-center">
+                            <div class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-sidebar text-gray-11 shadow-[var(--dls-card-shadow)]">
+                              <HardDrive size={24} />
+                            </div>
+                            <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">
+                              Workspace setup
+                            </div>
+                            <h3 class="mt-3 text-3xl font-semibold tracking-tight text-gray-12">
+                              Set up your first workspace
+                            </h3>
+                            <p class="mt-3 max-w-xl text-sm leading-6 text-dls-secondary sm:text-[15px]">
+                              Start with a guided OpenWork workspace, or choose an existing folder you want to work in.
+                            </p>
+                          </div>
+
+                          <div class="grid gap-3 sm:grid-cols-[1.2fr_1fr]">
+                            <button
+                              type="button"
+                              class="group rounded-[24px] border border-transparent bg-dls-accent px-5 py-5 text-left text-white shadow-[var(--dls-card-shadow)] transition-all hover:-translate-y-0.5 hover:bg-[var(--dls-accent-hover)]"
+                              onClick={() => void props.getStartedWorkspace()}
+                            >
+                              <div class="flex items-start gap-4">
+                                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-white/10">
+                                  <HardDrive size={18} />
+                                </div>
+                                <div class="min-w-0">
+                                  <div class="text-base font-semibold">Get Started</div>
+                                  <div class="mt-1 text-sm leading-6 text-white/80">
+                                    Start working right away in a new OpenWork folder.
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+
+                            <button
+                              type="button"
+                              class="group rounded-[24px] border border-dls-border bg-dls-sidebar px-5 py-5 text-left text-gray-12 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:bg-gray-2/80"
+                              onClick={() => void props.pickFolderWorkspace()}
+                            >
+                              <div class="flex items-start gap-4">
+                                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-gray-11">
+                                  <FolderOpen size={18} />
+                                </div>
+                                <div class="min-w-0">
+                                  <div class="text-base font-semibold">Pick a folder you want to work in</div>
+                                  <div class="mt-1 text-sm leading-6 text-dls-secondary">
+                                    Choose an existing project or notes folder and OpenWork will use it as your workspace.
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </Show>
@@ -4705,7 +4360,7 @@ export default function SessionView(props: SessionViewProps) {
                       scrollMessageIntoViewById = handler;
                     }}
                     footer={
-                      showRunIndicator() ? (
+                      showRunIndicator() && showFooterRunStatus() ? (
                         <div class="flex justify-start pl-2">
                           <div class="w-full max-w-[68ch]">
                             <div
@@ -4859,6 +4514,7 @@ export default function SessionView(props: SessionViewProps) {
               onModelClick={() => props.openSessionModelPicker()}
               modelVariantLabel={props.modelVariantLabel}
               modelVariant={props.modelVariant}
+              modelBehaviorOptions={props.modelBehaviorOptions}
               onModelVariantChange={props.setModelVariant}
               agentLabel={agentLabel()}
               selectedAgent={props.selectedSessionAgent}
@@ -4898,6 +4554,7 @@ export default function SessionView(props: SessionViewProps) {
             developerMode={props.developerMode}
             settingsOpen={false}
             onSendFeedback={openFeedback}
+            showSettingsButton={false}
             onOpenSettings={props.toggleSettings}
             onOpenMessaging={openConfig}
             onOpenProviders={openProviderAuth}
@@ -4910,13 +4567,6 @@ export default function SessionView(props: SessionViewProps) {
                 : props.selectedSessionId
                   ? "Session Ready"
                   : "Ready"
-            }
-            statusDetail={
-              showRunIndicator()
-                ? `${props.activeWorkspaceDisplay.name} is running`
-                : props.selectedSessionId
-                  ? `${selectedSessionTitle() || DEFAULT_SESSION_TITLE} is ready`
-                  : "Open a session or create a task"
             }
             statusDotClass={
               showRunIndicator()
@@ -4941,14 +4591,76 @@ export default function SessionView(props: SessionViewProps) {
             "min-width": `${rightSidebarWidth()}px`,
           }}
         >
-          {renderRightSidebar(rightSidebarExpanded())}
+          <WorkspaceRightSidebar
+            expanded={rightSidebarExpanded()}
+            showSelection={showRightSidebarSelection()}
+            tab={props.tab}
+            developerMode={props.developerMode}
+            activeWorkspaceLabel={props.activeWorkspaceDisplay.displayName || props.activeWorkspaceDisplay.name || "Workspace"}
+            activeWorkspaceType={props.activeWorkspaceDisplay.workspaceType}
+            openworkServerClient={props.openworkServerClient}
+            openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+            inboxId="sidebar-inbox"
+            onToggleExpanded={toggleRightSidebar}
+            onOpenAutomations={() => {
+              props.setTab("scheduled");
+              props.setView("dashboard");
+            }}
+            onOpenSkills={() => {
+              props.setTab("skills");
+              props.setView("dashboard");
+            }}
+            onOpenExtensions={() => {
+              props.setTab("mcp");
+              props.setView("dashboard");
+            }}
+            onOpenMessaging={() => {
+              props.setTab("identities");
+              props.setView("dashboard");
+            }}
+            onOpenAdvanced={openConfig}
+            onOpenSettings={() => openSettings("general")}
+            onInboxToast={(message) => setToastMessage(message)}
+          />
         </aside>
 
         <MobileSidebarDrawer
           open={mobileRightSidebarOpen()}
           onClose={() => setMobileRightSidebarOpen(false)}
         >
-          {renderRightSidebar(true, true)}
+          <WorkspaceRightSidebar
+            expanded
+            mobile
+            showSelection={showRightSidebarSelection()}
+            tab={props.tab}
+            developerMode={props.developerMode}
+            activeWorkspaceLabel={props.activeWorkspaceDisplay.displayName || props.activeWorkspaceDisplay.name || "Workspace"}
+            activeWorkspaceType={props.activeWorkspaceDisplay.workspaceType}
+            openworkServerClient={props.openworkServerClient}
+            openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+            inboxId="mobile-sidebar-inbox"
+            onToggleExpanded={toggleRightSidebar}
+            onCloseMobile={() => setMobileRightSidebarOpen(false)}
+            onOpenAutomations={() => {
+              props.setTab("scheduled");
+              props.setView("dashboard");
+            }}
+            onOpenSkills={() => {
+              props.setTab("skills");
+              props.setView("dashboard");
+            }}
+            onOpenExtensions={() => {
+              props.setTab("mcp");
+              props.setView("dashboard");
+            }}
+            onOpenMessaging={() => {
+              props.setTab("identities");
+              props.setView("dashboard");
+            }}
+            onOpenAdvanced={openConfig}
+            onOpenSettings={() => openSettings("general")}
+            onInboxToast={(message) => setToastMessage(message)}
+          />
         </MobileSidebarDrawer>
       </div>
 
@@ -5062,6 +4774,7 @@ export default function SessionView(props: SessionViewProps) {
         submitting={providerAuthActionBusy()}
         error={props.providerAuthError}
         preferredProviderId={props.providerAuthPreferredProviderId}
+        workerType={props.providerAuthWorkerType}
         providers={props.providers}
         connectedProviderIds={props.providerConnectedIds}
         authMethods={props.providerAuthMethods}

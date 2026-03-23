@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import type {
   DashboardTab,
   McpServerEntry,
@@ -25,11 +25,10 @@ import {
   normalizeDirectoryPath,
 } from "../utils";
 import { usePlatform } from "../context/platform";
-import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
+import { buildFeedbackUrl } from "../lib/feedback";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 import {
-  buildOpenworkConnectInviteUrl,
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   parseOpenworkWorkspaceIdFromUrl,
@@ -60,22 +59,18 @@ import ProviderAuthModal, {
 } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
-import InboxPanel from "../components/session/inbox-panel";
 import MobileSidebarDrawer from "../components/mobile-sidebar-drawer";
 import WebUnavailableSurface from "../components/web-unavailable-surface";
+import WorkspaceRightSidebar from "../components/workspace-right-sidebar";
 import {
   Box,
-  ChevronLeft,
-  ChevronRight,
   Circle,
   History,
   Loader2,
   Menu,
   MessageCircle,
-  MoreHorizontal,
   Plus,
   SlidersHorizontal,
-  X,
   Zap,
 } from "lucide-solid";
 import type { Language } from "../../i18n";
@@ -92,6 +87,7 @@ export type DashboardViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthPreferredProviderId: string | null;
+  providerAuthWorkerType: "local" | "remote";
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
     preferredProviderId?: string;
@@ -267,6 +263,8 @@ export type DashboardViewProps = {
   toggleAutoCompactContext: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  opencodeEnableExa: boolean;
+  toggleOpencodeEnableExa: () => void;
   modelVariantLabel: string;
   editModelVariant: () => void;
   language: Language;
@@ -454,7 +452,18 @@ export default function DashboardView(props: DashboardViewProps) {
   } = createWorkspaceShellLayout({ expandedRightWidth: 280 });
 
   const openFeedback = () => {
-    const resolved = FEEDBACK_EMAIL_URL.trim();
+    const resolved = buildFeedbackUrl({
+      entrypoint: "dashboard-status-bar",
+      deployment: getOpenWorkDeployment(),
+      appVersion: props.appVersion,
+      openworkServerVersion: props.openworkServerDiagnostics?.version ?? null,
+      opencodeVersion:
+        props.orchestratorStatus?.binaries?.opencode?.actualVersion ??
+        props.engineDoctorVersion ??
+        null,
+      orchestratorVersion: props.orchestratorStatus?.cliVersion ?? null,
+      opencodeRouterVersion: props.opencodeRouterInfo?.version ?? null,
+    });
     if (!resolved) return;
     platform.openLink(resolved);
   };
@@ -551,53 +560,6 @@ export default function DashboardView(props: DashboardViewProps) {
     });
   });
 
-  const navItem = (
-    t: DashboardTab,
-    label: string,
-    icon: any,
-    options?: {
-      disabled?: boolean;
-      badge?: JSX.Element;
-      disabledTitle?: string;
-      expanded?: boolean;
-      onSelect?: () => void;
-    },
-  ) => {
-    const expanded = options?.expanded ?? rightSidebarExpanded();
-    const active = () => props.tab === t || (t === "mcp" && props.tab === "plugins");
-    return (
-      <button
-        type="button"
-        disabled={options?.disabled}
-        class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
-          options?.disabled
-            ? "cursor-not-allowed border-transparent text-gray-8 opacity-70"
-            : active()
-              ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-              : "border-transparent text-dls-secondary hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
-        } ${
-          expanded
-            ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
-            : "flex h-12 items-center justify-center rounded-[16px] px-0"
-        }`}
-        onClick={() => {
-          props.setTab(t);
-          options?.onSelect?.();
-        }}
-        title={options?.disabled ? options.disabledTitle ?? label : label}
-        aria-label={options?.disabled ? `${label}. ${options.disabledTitle ?? "Desktop only."}` : label}
-      >
-        {icon}
-        <Show when={expanded}>
-          <span class="flex min-w-0 flex-1 items-center gap-2">
-            <span class="truncate">{label}</span>
-            {options?.badge}
-          </span>
-        </Show>
-      </button>
-    );
-  };
-
   const openSettings = (tab: SettingsTab = "general") => {
     props.setSettingsTab(tab);
     props.setTab("settings");
@@ -606,45 +568,6 @@ export default function DashboardView(props: DashboardViewProps) {
   const openConfig = () => {
     props.setTab(props.developerMode ? "config" : "identities");
   };
-
-  const renderRightSidebar = (expanded: boolean, mobile = false) => (
-    <div class={`flex h-full w-full flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 ${mobile ? "shadow-2xl" : "transition-[width] duration-200"}`}>
-      <div class={`flex items-center pb-3 ${expanded ? "justify-end" : "justify-center"}`}>
-        <button
-          type="button"
-          class="flex h-10 w-10 items-center justify-center rounded-[16px] text-dls-secondary transition-colors hover:bg-dls-surface hover:text-dls-text"
-          onClick={mobile ? () => setMobileRightSidebarOpen(false) : toggleRightSidebar}
-          title={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-          aria-label={mobile ? "Close sidebar" : rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          <Show when={mobile} fallback={<Show when={expanded} fallback={<ChevronLeft size={18} />}><ChevronRight size={18} /></Show>}>
-            <X size={18} />
-          </Show>
-        </button>
-      </div>
-      <div class={`pt-1 ${expanded ? "space-y-5" : "space-y-3"}`}>
-        <div class="space-y-1">
-          {navItem("scheduled", "Automations", <History size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
-          {navItem("skills", "Skills", <Zap size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
-          {navItem("mcp", "Extensions", <Box size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
-          {navItem("identities", "Messaging", <MessageCircle size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
-          <Show when={props.developerMode}>
-            {navItem("config", "Advanced", <SlidersHorizontal size={18} />, { expanded, onSelect: mobile ? () => setMobileRightSidebarOpen(false) : undefined })}
-          </Show>
-        </div>
-
-        <Show when={expanded && props.activeWorkspaceDisplay.workspaceType === "remote"}>
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <InboxPanel
-              id={mobile ? "dashboard-mobile-sidebar-inbox" : "dashboard-sidebar-inbox"}
-              client={props.openworkServerClient}
-              workspaceId={props.openworkServerWorkspaceId}
-            />
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
 
   const revealWorkspaceInFinder = async (workspaceId: string) => {
     const workspace = props.workspaces.find((entry) => entry.id === workspaceId) ?? null;
@@ -774,23 +697,9 @@ export default function DashboardView(props: DashboardViewProps) {
       const url = mountedUrl || hostUrl;
       const ownerToken = props.openworkServerHostInfo?.ownerToken?.trim() || "";
       const collaboratorToken = props.openworkServerHostInfo?.clientToken?.trim() || "";
-      const inviteToken = ownerToken || collaboratorToken;
-      const inviteUrl = buildOpenworkConnectInviteUrl({
-        workspaceUrl: url,
-        token: inviteToken,
-      });
       return [
         {
-          label: "OpenWork invite link",
-          value: inviteUrl,
-          secret: true,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
-          hint: ownerToken
-            ? "One link that prefills the worker URL and owner token for permission prompts."
-            : "One link that prefills the worker URL and collaborator token.",
-        },
-        {
-          label: "OpenWork worker URL",
+          label: "Worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
@@ -800,13 +709,13 @@ export default function DashboardView(props: DashboardViewProps) {
               : undefined,
         },
         {
-          label: "Owner token",
+          label: "Password",
           value: ownerToken,
           secret: true,
           placeholder: isTauriRuntime() ? "-" : "Desktop app required",
           hint: mountedUrl
             ? "Use on phones or laptops connecting to this worker."
-            : "Use on phones or laptops connecting to this host when the remote client must answer permission prompts.",
+            : "Use when the remote client must answer permission prompts.",
         },
         {
           label: "Collaborator token",
@@ -827,27 +736,17 @@ export default function DashboardView(props: DashboardViewProps) {
         ws.openworkToken?.trim() ||
         props.openworkServerSettings.token?.trim() ||
         "";
-      const inviteUrl = buildOpenworkConnectInviteUrl({
-        workspaceUrl: url,
-        token,
-      });
       return [
         {
-          label: "OpenWork invite link",
-          value: inviteUrl,
-          secret: true,
-          hint: "One link that prefills worker URL and token.",
-        },
-        {
-          label: "OpenWork worker URL",
+          label: "Worker URL",
           value: url,
         },
         {
-          label: "Connected token",
+          label: "Password",
           value: token,
           secret: true,
           placeholder: token ? undefined : "Set token in Advanced",
-          hint: "This worker is currently connected with this token.",
+          hint: "This workspace is currently connected with this password.",
         },
       ];
     }
@@ -1270,15 +1169,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 </Show>
               </button>
             </Show>
-            <span class="shrink-0 rounded-md bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">
-              {props.activeWorkspaceDisplay.workspaceType === "remote"
-                ? "Remote workspace"
-                : "Workspace"}
-            </span>
             <h1 class="truncate text-[15px] font-semibold text-dls-text">{title()}</h1>
-            <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
-              {props.activeWorkspaceDisplay.name}
-            </span>
             <Show when={props.developerMode}>
               <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.headerStatus}</span>
             </Show>
@@ -1286,7 +1177,7 @@ export default function DashboardView(props: DashboardViewProps) {
               <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.busyHint}</span>
             </Show>
           </div>
-          <div class="flex items-center gap-1.5 text-gray-10">
+          <div class="flex items-center text-gray-10">
             <button
               type="button"
               class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
@@ -1295,27 +1186,6 @@ export default function DashboardView(props: DashboardViewProps) {
               aria-label="Open sidebar"
             >
               <Menu size={16} />
-            </button>
-            <button
-              type="button"
-              class="hidden items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:flex"
-              onClick={toggleRightSidebar}
-              title="Menu"
-              aria-label="Menu"
-            >
-              <Menu size={15} />
-              <span>Menu</span>
-              <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">⌘K</span>
-            </button>
-            <div class="hidden h-4 w-px bg-dls-border md:block" />
-            <button
-              type="button"
-              class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
-              onClick={props.toggleSettings}
-              title="More"
-              aria-label="More"
-            >
-              <MoreHorizontal size={16} />
             </button>
           </div>
         </header>
@@ -1508,6 +1378,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   setEngineCustomBinPath={props.setEngineCustomBinPath}
                   engineRuntime={props.engineRuntime}
                   setEngineRuntime={props.setEngineRuntime}
+                  opencodeEnableExa={props.opencodeEnableExa}
+                  toggleOpencodeEnableExa={props.toggleOpencodeEnableExa}
                   isWindows={props.isWindows}
                   defaultModelLabel={props.defaultModelLabel}
                   defaultModelRef={props.defaultModelRef}
@@ -1622,6 +1494,7 @@ export default function DashboardView(props: DashboardViewProps) {
           submitting={providerAuthActionBusy()}
           error={props.providerAuthError}
           preferredProviderId={props.providerAuthPreferredProviderId}
+          workerType={props.providerAuthWorkerType}
           providers={props.providers}
           connectedProviderIds={props.providerConnectedIds}
           authMethods={props.providerAuthMethods}
@@ -1673,6 +1546,7 @@ export default function DashboardView(props: DashboardViewProps) {
           openworkServerStatus={props.openworkServerStatus}
           developerMode={props.developerMode}
           settingsOpen={props.tab === "settings"}
+          showSettingsButton={false}
           onSendFeedback={openFeedback}
           onOpenSettings={props.toggleSettings}
           onOpenMessaging={openConfig}
@@ -1741,14 +1615,48 @@ export default function DashboardView(props: DashboardViewProps) {
           "min-width": `${rightSidebarWidth()}px`,
         }}
       >
-        {renderRightSidebar(rightSidebarExpanded())}
+        <WorkspaceRightSidebar
+          expanded={rightSidebarExpanded()}
+          tab={props.tab}
+          developerMode={props.developerMode}
+          activeWorkspaceLabel={props.activeWorkspaceDisplay.displayName || props.activeWorkspaceDisplay.name || "Workspace"}
+          activeWorkspaceType={props.activeWorkspaceDisplay.workspaceType}
+          openworkServerClient={props.openworkServerClient}
+          openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+          inboxId="dashboard-sidebar-inbox"
+          onToggleExpanded={toggleRightSidebar}
+          onOpenAutomations={() => props.setTab("scheduled")}
+          onOpenSkills={() => props.setTab("skills")}
+          onOpenExtensions={() => props.setTab("mcp")}
+          onOpenMessaging={() => props.setTab("identities")}
+          onOpenAdvanced={openConfig}
+          onOpenSettings={() => openSettings("general")}
+        />
       </aside>
 
       <MobileSidebarDrawer
         open={mobileRightSidebarOpen()}
         onClose={() => setMobileRightSidebarOpen(false)}
       >
-        {renderRightSidebar(true, true)}
+        <WorkspaceRightSidebar
+          expanded
+          mobile
+          tab={props.tab}
+          developerMode={props.developerMode}
+          activeWorkspaceLabel={props.activeWorkspaceDisplay.displayName || props.activeWorkspaceDisplay.name || "Workspace"}
+          activeWorkspaceType={props.activeWorkspaceDisplay.workspaceType}
+          openworkServerClient={props.openworkServerClient}
+          openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+          inboxId="dashboard-mobile-sidebar-inbox"
+          onToggleExpanded={toggleRightSidebar}
+          onCloseMobile={() => setMobileRightSidebarOpen(false)}
+          onOpenAutomations={() => props.setTab("scheduled")}
+          onOpenSkills={() => props.setTab("skills")}
+          onOpenExtensions={() => props.setTab("mcp")}
+          onOpenMessaging={() => props.setTab("identities")}
+          onOpenAdvanced={openConfig}
+          onOpenSettings={() => openSettings("general")}
+        />
       </MobileSidebarDrawer>
       </div>
 

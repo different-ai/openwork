@@ -789,7 +789,7 @@ export default {
   "app.migration.desktop_required": "迁移修复需要桌面应用。",
   "app.migration.local_only": "迁移修复仅适用于本地工作区。",
   "app.migration.workspace_required": "请先选择本地工作区文件夹再修复迁移。",
-  "app.migration.unsupported": "当前 OpenCode 二进制不支持 `opencode db migrate`。请将 OpenCode 更新到 >=1.2.6，或切换为内置引擎。",
+  "app.migration.unsupported": "当前 OpenCode 二进制不支持 `opencode db migrate`。请更新到 OpenWork 固定的 OpenCode 版本，或切换为内置引擎。",
   "app.migration.failed": "OpenCode 迁移失败。",
   "app.migration.restart_failed": "迁移已完成，但 OpenWork 无法重启本地引擎。",
   "app.migration.success": "迁移已修复，已重试本地启动。",

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const childProcess = require("child_process")
+const fs = require("fs")
 const os = require("os")
 const path = require("path")
 
@@ -45,14 +46,18 @@ if (!arch) {
 
 const pkg = `openwork-orchestrator-${platform}-${arch}`
 const binary = platform === "windows" ? "openwork.exe" : "openwork"
+const fallback = path.join(__dirname, "..", "dist", "bin", binary)
 
 let pkgJsonPath
 try {
   pkgJsonPath = require.resolve(`${pkg}/package.json`)
 } catch {
+  if (fs.existsSync(fallback)) {
+    run(fallback)
+  }
   console.error(
     `openwork: no prebuilt binary package found for ${platform}/${arch}.\n` +
-      `Try installing the platform package manually: ${pkg}`,
+      `Try reinstalling openwork-orchestrator or installing the platform package manually: ${pkg}`,
   )
   process.exit(1)
 }

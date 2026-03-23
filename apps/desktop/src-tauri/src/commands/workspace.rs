@@ -8,7 +8,7 @@ use crate::types::{
 };
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
-    ensure_starter_workspace, load_workspace_state, save_workspace_state, stable_workspace_id,
+    load_workspace_state, save_workspace_state, stable_workspace_id,
     stable_workspace_id_for_openwork, stable_workspace_id_for_remote,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
@@ -26,19 +26,12 @@ pub fn workspace_bootstrap(
     println!("[workspace] bootstrap");
     let mut state = load_workspace_state(&app)?;
 
-    let starter = ensure_starter_workspace(&app)?;
-    ensure_workspace_files(&starter.path, &starter.preset)?;
-
-    if !state.workspaces.iter().any(|w| w.id == starter.id) {
-        state.workspaces.push(starter.clone());
-    }
-
-    if state.active_id.trim().is_empty() {
-        state.active_id = starter.id.clone();
-    }
-
     if !state.workspaces.iter().any(|w| w.id == state.active_id) {
-        state.active_id = starter.id.clone();
+        state.active_id = state
+            .workspaces
+            .first()
+            .map(|entry| entry.id.clone())
+            .unwrap_or_default();
     }
 
     save_workspace_state(&app, &state)?;
@@ -80,10 +73,7 @@ pub fn workspace_forget(
     }
 
     if state.workspaces.is_empty() {
-        let starter = ensure_starter_workspace(&app)?;
-        ensure_workspace_files(&starter.path, &starter.preset)?;
-        state.active_id = starter.id.clone();
-        state.workspaces.push(starter);
+        state.active_id.clear();
     }
 
     save_workspace_state(&app, &state)?;

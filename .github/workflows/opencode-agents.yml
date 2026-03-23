@@ -20,7 +20,9 @@ jobs:
           fetch-depth: 1
 
       - name: Install opencode
-        run: curl -fsSL https://opencode.ai/install | bash
+        run: |
+          version="$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")"
+          curl -fsSL https://opencode.ai/install | bash -s -- --version "$version" --no-modify-path
 
       - name: Triage issue
         env:
@@ -48,7 +50,9 @@ jobs:
           fetch-depth: 1
 
       - name: Install opencode
-        run: curl -fsSL https://opencode.ai/install | bash
+        run: |
+          version="$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")"
+          curl -fsSL https://opencode.ai/install | bash -s -- --version "$version" --no-modify-path
 
       - name: Build prompt
         env:

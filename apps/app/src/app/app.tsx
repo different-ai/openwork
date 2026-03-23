@@ -148,6 +148,12 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { createSessionStore } from "./context/session";
+import {
+  formatGenericBehaviorLabel,
+  getModelBehaviorSummary,
+  normalizeModelBehaviorValue,
+  sanitizeModelBehaviorValue,
+} from "./lib/model-behavior";
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -922,6 +928,7 @@ export default function App() {
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
 
   const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwork-orchestrator");
+  const [opencodeEnableExa, setOpencodeEnableExa] = createSignal(false);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
@@ -1526,7 +1533,6 @@ export default function App() {
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const activeMessages = createMemo(() => messages());
   const activeTodos = createMemo(() => todos());
-  const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
 
   const sessionActivity = (session: Session) =>
@@ -1785,7 +1791,7 @@ export default function App() {
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
       const parts = await buildPromptParts(resolvedDraft);
-      const selectedVariant = modelVariant() ?? undefined;
+      const selectedVariant = sanitizeModelVariantForRef(model, getVariantFor(model)) ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = reasoningEffort
@@ -1918,7 +1924,7 @@ export default function App() {
       sessionID,
       messageCount: visible.length,
       model: modelLabel,
-      variant: modelVariant() ?? null,
+      variant: sanitizeModelVariantForRef(model, getVariantFor(model)) ?? null,
     });
 
     try {
@@ -2268,6 +2274,7 @@ export default function App() {
   const buildProviderAuthMethods = (
     methods: Record<string, ProviderAuthMethod[]>,
     availableProviders: ProviderListItem[],
+    workerType: "local" | "remote",
   ) => {
     const merged = Object.fromEntries(
       Object.entries(methods ?? {}).map(([id, providerMethods]) => [
@@ -2286,16 +2293,33 @@ export default function App() {
       if (existing.some((method) => method.type === "api")) continue;
       merged[id] = [...existing, { type: "api", label: "API key" }];
     }
+    for (const [id, providerMethods] of Object.entries(merged)) {
+      const provider = availableProviders.find((item) => item.id === id);
+      const normalizedId = id.trim().toLowerCase();
+      const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
+      const isOpenAiProvider = normalizedId === "openai" || normalizedName === "openai";
+      if (!isOpenAiProvider) continue;
+      merged[id] = providerMethods.filter((method) => {
+        if (method.type !== "oauth") return true;
+        const label = method.label.toLowerCase();
+        const isHeadless = label.includes("headless") || label.includes("device");
+        return workerType === "remote" ? isHeadless : !isHeadless;
+      });
+    }
     return merged;
   };
 
-  const loadProviderAuthMethods = async () => {
+  const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
     }
     const methods = unwrap(await c.provider.auth());
-    return buildProviderAuthMethods(methods as Record<string, ProviderAuthMethod[]>, providers());
+    return buildProviderAuthMethods(
+      methods as Record<string, ProviderAuthMethod[]>,
+      providers(),
+      workerType,
+    );
   };
 
   async function startProviderAuth(
@@ -2309,9 +2333,10 @@ export default function App() {
     }
     try {
       const cachedMethods = providerAuthMethods();
+      const workerType = activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
       const authMethods = Object.keys(cachedMethods).length
         ? cachedMethods
-        : await loadProviderAuthMethods();
+        : await loadProviderAuthMethods(workerType);
       const providerIds = Object.keys(authMethods).sort();
       if (!providerIds.length) {
         throw new Error("No providers available");
@@ -2558,12 +2583,13 @@ export default function App() {
     returnFocusTarget?: PromptFocusReturnTarget;
     preferredProviderId?: string;
   }) {
+    const workerType = activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
     setProviderAuthReturnFocusTarget(options?.returnFocusTarget ?? "none");
     setProviderAuthPreferredProviderId(options?.preferredProviderId?.trim() || null);
     setProviderAuthBusy(true);
     setProviderAuthError(null);
     try {
-      const methods = await loadProviderAuthMethods();
+      const methods = await loadProviderAuthMethods(workerType);
       setProviderAuthMethods(methods);
       setProviderAuthModalOpen(true);
     } catch (error) {
@@ -2919,7 +2945,19 @@ export default function App() {
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
   const [autoCompactContext, setAutoCompactContext] = createSignal(false);
-  const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+  const [modelVariantMap, setModelVariantMap] = createSignal<Record<string, string>>({});
+  const modelVariant = () => getVariantFor(selectedSessionModel());
+  const getVariantFor = (ref: ModelRef) => modelVariantMap()[`${ref.providerID}/${ref.modelID}`] ?? null;
+  const updateModelVariant = (ref: ModelRef, value: string | null) => {
+    const key = `${ref.providerID}/${ref.modelID}`;
+    setModelVariantMap((prev) => {
+      const next = { ...prev };
+      if (value) next[key] = value;
+      else delete next[key];
+      return next;
+    });
+  };
+  const setModelVariant = (value: string | null) => updateModelVariant(selectedSessionModel(), value);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
   const [authorizedFolders, setAuthorizedFolders] = createSignal<string[]>([]);
   const [authorizedFolderDraft, setAuthorizedFolderDraft] = createSignal("");
@@ -2929,47 +2967,14 @@ export default function App() {
   const [authorizedFoldersStatus, setAuthorizedFoldersStatus] = createSignal<string | null>(null);
   const [authorizedFoldersError, setAuthorizedFoldersError] = createSignal<string | null>(null);
 
-  const MODEL_VARIANT_OPTIONS = [
-    { value: "none", label: "None" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "xhigh", label: "X-High" },
-  ];
-
-  const normalizeModelVariant = (value: string | null) => {
-    if (!value) return null;
-    const trimmed = value.trim().toLowerCase();
-    if (trimmed === "balance" || trimmed === "balanced") return "none";
-    const match = MODEL_VARIANT_OPTIONS.find((option) => option.value === trimmed);
-    return match ? match.value : null;
-  };
-
   const resolveCodexReasoningEffort = (modelID: string, variant: string | null) => {
     if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
-    const normalized = normalizeModelVariant(variant);
+    const normalized = normalizeModelBehaviorValue(variant);
     if (!normalized || normalized === "none") return undefined;
-    if (normalized === "xhigh") return "high";
+    if (normalized === "minimal") return "low";
+    if (normalized === "xhigh" || normalized === "max") return "high";
+    if (!["low", "medium", "high"].includes(normalized)) return undefined;
     return normalized;
-  };
-
-  const formatModelVariantLabel = (value: string | null) => {
-    const normalized = normalizeModelVariant(value) ?? "none";
-    return MODEL_VARIANT_OPTIONS.find((option) => option.value === normalized)?.label ?? "None";
-  };
-
-  const handleEditModelVariant = () => {
-    const next = window.prompt(
-      "Model variant (none, low, medium, high, xhigh)",
-      normalizeModelVariant(modelVariant()) ?? "none"
-    );
-    if (next == null) return;
-    const normalized = normalizeModelVariant(next);
-    if (!normalized) {
-      window.alert("Variant must be one of: none, low, medium, high, xhigh.");
-      return;
-    }
-    setModelVariant(normalized);
   };
 
   const workspaceStore = createWorkspaceStore({
@@ -3010,6 +3015,7 @@ export default function App() {
     refreshPlugins,
     engineSource,
     engineCustomBinPath,
+    opencodeEnableExa,
     setEngineSource,
     setView,
     setTab,
@@ -3017,6 +3023,8 @@ export default function App() {
     openworkServerSettings,
     updateOpenworkServerSettings,
     openworkServerClient,
+    openworkServerStatus,
+    openworkServerWorkspaceId,
     onEngineStable: () => {},
     engineRuntime,
     developerMode,
@@ -3318,6 +3326,26 @@ export default function App() {
         ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
+      if (developerMode()) {
+        console.log("[sidebar-sync] workspace session scope", {
+          wsId,
+          status,
+          activeWorkspace,
+          activeWorkspaceRoot,
+          allSessions: allSessions.map((session) => ({
+            id: session.id,
+            title: session.title,
+            directory: session.directory,
+            parentID: session.parentID,
+          })),
+          scopedSessions: scopedSessions.map((session) => ({
+            id: session.id,
+            title: session.title,
+            directory: session.directory,
+            parentID: session.parentID,
+          })),
+        });
+      }
       const rootItems: SidebarSessionItem[] = sorted.map((s) => ({
         id: s.id,
         title: s.title,
@@ -3415,6 +3443,22 @@ export default function App() {
     }
     return dedupedWorkspaces.map((workspace) => {
       const groupSessions = sessionsById[workspace.id] ?? [];
+      if (developerMode()) {
+        console.log("[sidebar-groups] workspace group", {
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+          workspaceType: workspace.workspaceType,
+          workspacePath: workspace.path,
+          workspaceDirectory: workspace.directory,
+          sessionCount: groupSessions.length,
+          sessions: groupSessions.map((session) => ({
+            id: session.id,
+            title: session.title,
+            directory: session.directory,
+            parentID: session.parentID,
+          })),
+        });
+      }
       return {
         workspace,
         sessions: groupSessions,
@@ -3512,7 +3556,7 @@ export default function App() {
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
           const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
-          setOpenworkServerWorkspaceId(match?.id ?? response.activeId ?? null);
+          setOpenworkServerWorkspaceId(match?.id ?? null);
         } catch {
           if (!cancelled) setOpenworkServerWorkspaceId(null);
         }
@@ -3602,7 +3646,7 @@ export default function App() {
   };
 
   const findSharedBundleImportWorkspaceId = (
-    items: Array<{ id: string; path?: string; directory?: string; opencode?: { directory?: string } }>,
+    items: Array<{ id: string; path?: string | null; directory?: string | null; opencode?: { directory?: string | null } }>,
     target?: SharedBundleImportTarget,
   ) => {
     const explicitId = target?.workspaceId?.trim() ?? "";
@@ -4897,8 +4941,6 @@ export default function App() {
 
   // Scheduler helpers - must be defined after workspaceStore
   const resolveOpenworkScheduler = () => {
-    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
-    if (!isRemoteWorkspace) return null;
     const client = openworkServerClient();
     const workspaceId = openworkServerWorkspaceId();
     if (openworkServerStatus() !== "connected" || !client || !workspaceId) return null;
@@ -4906,7 +4948,7 @@ export default function App() {
   };
 
   const scheduledJobsSource = createMemo<"local" | "remote">(() => {
-    return workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
+    return resolveOpenworkScheduler() ? "remote" : "local";
   });
 
   const scheduledJobsSourceReady = createMemo(() => {
@@ -5177,9 +5219,46 @@ export default function App() {
     formatModelLabel(selectedSessionModel(), providers())
   );
 
+  const findProviderModel = (ref: ModelRef) => {
+    const provider = providers().find((entry) => entry.id === ref.providerID);
+    return provider?.models?.[ref.modelID] ?? null;
+  };
+
+  const sanitizeModelVariantForRef = (ref: ModelRef, value: string | null) => {
+    const modelInfo = findProviderModel(ref);
+    if (!modelInfo) return normalizeModelBehaviorValue(value);
+    return sanitizeModelBehaviorValue(ref.providerID, modelInfo, value);
+  };
+
+  const getModelBehaviorCopy = (ref: ModelRef, value: string | null) => {
+    const modelInfo = findProviderModel(ref);
+    if (!modelInfo) {
+      return {
+        title: "Model behavior",
+        label: formatGenericBehaviorLabel(value),
+        description: "Choose the model first to see provider-specific behavior controls.",
+        options: [],
+      };
+    }
+    return getModelBehaviorSummary(ref.providerID, modelInfo, value);
+  };
+
   const modelPickerCurrent = createMemo(() =>
     modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel()
   );
+
+  const isHeroModel = (id: string) => {
+    const check = id.toLowerCase();
+    if (check.includes("gpt-5")) return true;
+    if (check.includes("opus-4")) return true;
+    if (check.includes("claude-3-7-sonnet")) return true;
+    if (check.includes("claude-3-5-sonnet")) return true;
+    if (check.includes("gpt-4o") && !check.includes("mini") && !check.includes("audio")) return true;
+    if (check.includes("o3-mini")) return true;
+    if (check.includes("o1") && !check.includes("mini")) return true;
+    if (check.includes("deepseek-r1")) return true;
+    return false;
+  };
 
   const modelOptions = createMemo<ModelOption[]>(() => {
     const allProviders = providers();
@@ -5187,6 +5266,7 @@ export default function App() {
     const currentDefault = defaultModel();
 
     if (!allProviders.length) {
+      const behavior = getModelBehaviorCopy(DEFAULT_MODEL, getVariantFor(DEFAULT_MODEL));
       return [
         {
           providerID: DEFAULT_MODEL.providerID,
@@ -5194,6 +5274,11 @@ export default function App() {
           title: DEFAULT_MODEL.modelID,
           description: DEFAULT_MODEL.providerID,
           footer: t("settings.model_fallback", currentLocale()),
+          behaviorTitle: behavior.title,
+          behaviorLabel: behavior.label,
+          behaviorDescription: behavior.description,
+          behaviorValue: normalizeModelBehaviorValue(getVariantFor(DEFAULT_MODEL)),
+          behaviorOptions: behavior.options,
           isFree: true,
           isConnected: false,
         },
@@ -5222,6 +5307,9 @@ export default function App() {
         const isFree = model.cost?.input === 0 && model.cost?.output === 0;
         const isDefault =
           provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
+        const ref = { providerID: provider.id, modelID: model.id };
+        const behavior = getModelBehaviorSummary(provider.id, model, getVariantFor(ref));
+        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, getVariantFor(ref));
         const footerBits: string[] = [];
         if (defaultModelID === model.id || isDefault) {
           footerBits.push(t("settings.model_default", currentLocale()));
@@ -5236,9 +5324,15 @@ export default function App() {
           footer: footerBits.length
             ? footerBits.slice(0, 2).join(" · ")
             : undefined,
+          behaviorTitle: behavior.title,
+          behaviorLabel: behavior.label,
+          behaviorDescription: behavior.description,
+          behaviorValue,
+          behaviorOptions: behavior.options,
           disabled: !isConnected,
           isFree,
           isConnected,
+          isRecommended: isHeroModel(model.id),
         });
       }
     }
@@ -5265,6 +5359,9 @@ export default function App() {
         opt.title,
         opt.description ?? "",
         opt.footer ?? "",
+        opt.behaviorTitle,
+        opt.behaviorLabel,
+        opt.behaviorDescription,
         `${opt.providerID}/${opt.modelID}`,
         opt.isConnected ? "connected" : "disconnected",
         opt.isFree ? "free" : "paid",
@@ -5304,6 +5401,7 @@ export default function App() {
 
   function applyModelSelection(next: ModelRef) {
     const restorePromptFocus = modelPickerTarget() === "session";
+
     if (modelPickerTarget() === "default") {
       setDefaultModelExplicit(true);
       setDefaultModel(next);
@@ -5557,6 +5655,25 @@ export default function App() {
       setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
     }
   }
+
+  const readMcpConfigFile = async (scope: "project" | "global") => {
+    const projectDir = workspaceProjectDir().trim();
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      resolvedOpenworkCapabilities()?.config?.read;
+
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+      return openworkClient.readOpencodeConfigFile(openworkWorkspaceId, scope);
+    }
+    if (!isTauriRuntime()) {
+      return null;
+    }
+    return readOpencodeConfig(scope, projectDir);
+  };
 
   async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
     const startedAt = perfNow();
@@ -6165,6 +6282,13 @@ export default function App() {
           setEngineRuntime(storedEngineRuntime);
         }
 
+        const storedOpencodeEnableExa = window.localStorage.getItem(
+          "openwork.opencodeEnableExa"
+        );
+        if (storedOpencodeEnableExa === "0" || storedOpencodeEnableExa === "1") {
+          setOpencodeEnableExa(storedOpencodeEnableExa === "1");
+        }
+
         const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
         const parsedDefaultModel = parseModelRef(storedDefaultModel);
         if (parsedDefaultModel) {
@@ -6221,9 +6345,15 @@ export default function App() {
 
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
-          const normalized = normalizeModelVariant(storedVariant);
-          if (normalized) {
-            setModelVariant(normalized);
+          try {
+            const parsed = JSON.parse(storedVariant);
+            if (typeof parsed === "object" && parsed !== null) {
+              setModelVariantMap(parsed);
+            } else {
+              setModelVariantMap({ [`${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`]: normalizeModelBehaviorValue(storedVariant)! });
+            }
+          } catch {
+            setModelVariantMap({ [`${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`]: normalizeModelBehaviorValue(storedVariant)! });
           }
         }
 
@@ -6715,6 +6845,18 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
+        "openwork.opencodeEnableExa",
+        opencodeEnableExa() ? "1" : "0"
+      );
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
         MODEL_PREF_KEY,
         formatModelRef(defaultModel())
       );
@@ -6788,9 +6930,9 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const value = modelVariant();
-      if (value) {
-        window.localStorage.setItem(VARIANT_PREF_KEY, value);
+      const map = modelVariantMap();
+      if (Object.keys(map).length > 0) {
+        window.localStorage.setItem(VARIANT_PREF_KEY, JSON.stringify(map));
       } else {
         window.localStorage.removeItem(VARIANT_PREF_KEY);
       }
@@ -7022,6 +7164,10 @@ export default function App() {
       setTab("settings");
       setView("dashboard");
     },
+    onOpenAdvancedSettings: () => {
+      setTab("config");
+      setView("dashboard");
+    },
     themeMode: themeMode(),
     setThemeMode,
   });
@@ -7029,6 +7175,7 @@ export default function App() {
   const dashboardProps = () => {
     const workspaceType = activeWorkspaceDisplay().workspaceType;
     const isRemoteWorkspace = workspaceType === "remote";
+    const providerAuthWorkerType: "local" | "remote" = isRemoteWorkspace ? "remote" : "local";
     const openworkStatus = openworkServerStatus();
     const canUseDesktopTools = isTauriRuntime() && !isRemoteWorkspace;
     const canInstallSkillCreator = isRemoteWorkspace
@@ -7069,6 +7216,7 @@ export default function App() {
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
       providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
+      providerAuthWorkerType,
       openProviderAuthModal,
       disconnectProvider,
       closeProviderAuthModal,
@@ -7128,6 +7276,8 @@ export default function App() {
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
+      getStartedWorkspace: workspaceStore.quickStartWorkspaceFlow,
+      pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
@@ -7207,8 +7357,8 @@ export default function App() {
       toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
-      modelVariantLabel: formatModelVariantLabel(modelVariant()),
-      editModelVariant: handleEditModelVariant,
+      modelVariantLabel: getModelBehaviorCopy(defaultModel(), getVariantFor(defaultModel())).label,
+      editModelVariant: openDefaultModelPicker,
       updateAutoCheck: updateAutoCheck(),
       toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
       updateAutoDownload: updateAutoDownload(),
@@ -7233,6 +7383,8 @@ export default function App() {
       setEngineCustomBinPath,
       engineRuntime: engineRuntime(),
       setEngineRuntime,
+      opencodeEnableExa: opencodeEnableExa(),
+      toggleOpencodeEnableExa: () => setOpencodeEnableExa((v) => !v),
       isWindows: isWindowsPlatform(),
       toggleDeveloperMode: () => setDeveloperMode((v) => !v),
       developerMode: developerMode(),
@@ -7300,6 +7452,7 @@ export default function App() {
       mcpConnectingName: mcpConnectingName(),
       selectedMcp: selectedMcp(),
       setSelectedMcp,
+      readConfigFile: readMcpConfigFile,
       quickConnect: MCP_QUICK_CONNECT,
       connectMcp,
       authorizeMcp,
@@ -7336,6 +7489,9 @@ export default function App() {
   };
 
   const sessionProps = () => ({
+    providerAuthWorkerType: (activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local") as
+      | "remote"
+      | "local",
     selectedSessionId: activeSessionId(),
     setView,
     tab: tab(),
@@ -7355,6 +7511,8 @@ export default function App() {
     editWorkspaceConnection: openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
+    getStartedWorkspace: workspaceStore.quickStartWorkspaceFlow,
+    pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
     openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
@@ -7363,10 +7521,15 @@ export default function App() {
     clientConnected: Boolean(client()),
     openworkServerStatus: openworkServerStatus(),
     openworkServerClient: openworkServerClient(),
+    openworkServerDiagnostics: openworkServerDiagnostics(),
     openworkServerSettings: openworkServerSettings(),
     openworkServerHostInfo: openworkServerHostInfo(),
     openworkServerWorkspaceId: openworkServerWorkspaceId(),
     engineInfo: workspaceStore.engine(),
+    engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
+    orchestratorStatus: orchestratorStatusState(),
+    opencodeRouterInfo: opencodeRouterInfoState(),
+    appVersion: appVersion(),
     stopHost,
     headerStatus: headerStatus(),
     busyHint: busyHint(),
@@ -7375,10 +7538,12 @@ export default function App() {
     anyActiveRuns: anyActiveRuns(),
     installUpdateAndRestart,
     selectedSessionModelLabel: selectedSessionModelLabel(),
+    selectedProviderID: selectedSessionModel().providerID,
     openSessionModelPicker: openSessionModelPicker,
-    modelVariantLabel: formatModelVariantLabel(modelVariant()),
-    modelVariant: modelVariant(),
-    setModelVariant: (value: string) => setModelVariant(value),
+    modelVariantLabel: getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).label,
+    modelVariant: getVariantFor(selectedSessionModel()),
+    modelBehaviorOptions: getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).options,
+    setModelVariant: (value: string | null) => updateModelVariant(selectedSessionModel(), value),
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
     mcpServers: mcpServers(),
@@ -7427,7 +7592,6 @@ export default function App() {
     setExpandedStepIds: setExpandedStepIds,
     expandedSidebarSections: expandedSidebarSections(),
     setExpandedSidebarSections: setExpandedSidebarSections,
-    artifacts: activeArtifacts(),
     workingFiles: activeWorkingFiles(),
     authorizedDirs: activeAuthorizedDirs(),
     busy: busy(),
@@ -7627,6 +7791,9 @@ export default function App() {
         target={modelPickerTarget()}
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
+        onBehaviorChange={(model, value) => {
+          updateModelVariant(model, sanitizeModelVariantForRef(model, value));
+        }}
         onOpenSettings={openSettingsFromModelPicker}
         onClose={closeModelPicker}
       />

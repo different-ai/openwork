@@ -144,7 +144,7 @@ export type StartupPreference = "local" | "server";
 
 export type EngineRuntime = "direct" | "openwork-orchestrator";
 
-export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
+export type OnboardingStep = "welcome" | "local" | "server" | "connecting" | "bootstrap";
 
 export type DashboardTab =
   | "scheduled"
@@ -155,7 +155,15 @@ export type DashboardTab =
   | "config"
   | "settings";
 
-export type SettingsTab = "general" | "den" | "model" | "advanced" | "debug";
+export type SettingsTab =
+  | "general"
+  | "den"
+  | "model"
+  | "advanced"
+  | "appearance"
+  | "updates"
+  | "recovery"
+  | "debug";
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
@@ -171,7 +179,7 @@ export type ResetOpenworkMode = "onboarding" | "all";
 
 export type WorkspaceBlueprintStarterKind = "prompt" | "session" | "action";
 
-export type WorkspaceBlueprintStarterAction = "connect-anthropic";
+export type WorkspaceBlueprintStarterAction = "connect-openai";
 
 export type WorkspaceBlueprintStarter = {
   id?: string | null;
@@ -320,15 +328,27 @@ export type ModelRef = {
   modelID: string;
 };
 
+export type ModelBehaviorOption = {
+  value: string | null;
+  label: string;
+  description: string;
+};
+
 export type ModelOption = {
   providerID: string;
   modelID: string;
   title: string;
   description?: string;
   footer?: string;
+  behaviorTitle: string;
+  behaviorLabel: string;
+  behaviorDescription: string;
+  behaviorValue: string | null;
+  behaviorOptions?: ModelBehaviorOption[];
   disabled?: boolean;
   isFree: boolean;
   isConnected: boolean;
+  isRecommended?: boolean;
 };
 
 export type SelectedSessionSnapshot = {

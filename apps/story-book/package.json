@@ -1,0 +1,45 @@
+{
+  "name": "@openwork/story-book",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.1",
+    "vite-plugin-solid": "^2.11.0"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "dependencies": {
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-markdown": "^6.3.3",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.0",
+    "@opencode-ai/sdk": "^1.1.31",
+    "@radix-ui/colors": "^3.0.0",
+    "@solid-primitives/event-bus": "^1.1.2",
+    "@solid-primitives/storage": "^4.3.3",
+    "@solidjs/router": "^0.15.4",
+    "@tanstack/solid-virtual": "^3.13.19",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-deep-link": "^2.4.7",
+    "@tauri-apps/plugin-dialog": "~2.6.0",
+    "@tauri-apps/plugin-http": "~2.5.6",
+    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-process": "~2.3.1",
+    "@tauri-apps/plugin-updater": "~2.9.0",
+    "fuzzysort": "^3.1.0",
+    "jsonc-parser": "^3.2.1",
+    "lucide-solid": "^0.562.0",
+    "marked": "^17.0.1",
+    "solid-js": "^1.9.0"
+  }
+}

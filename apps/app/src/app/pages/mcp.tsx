@@ -33,6 +33,7 @@ export type McpViewProps = {
   busy: boolean;
   activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
+  readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
   showHeader?: boolean;
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
@@ -155,8 +156,9 @@ export default function McpView(props: McpViewProps) {
   createEffect(() => {
     const root = props.activeWorkspaceRoot.trim();
     const nextId = (configRequestId += 1);
+    const readConfig = props.readConfigFile;
 
-    if (!isTauriRuntime()) {
+    if (!readConfig && !isTauriRuntime()) {
       setProjectConfig(null);
       setGlobalConfig(null);
       setConfigError(null);
@@ -167,8 +169,10 @@ export default function McpView(props: McpViewProps) {
       try {
         setConfigError(null);
         const [project, global] = await Promise.all([
-          root ? readOpencodeConfig("project", root) : Promise.resolve(null),
-          readOpencodeConfig("global", root),
+          root
+            ? (readConfig ? readConfig("project") : readOpencodeConfig("project", root))
+            : Promise.resolve(null),
+          readConfig ? readConfig("global") : readOpencodeConfig("global", root),
         ]);
         if (nextId !== configRequestId) return;
         setProjectConfig(project);
@@ -207,7 +211,12 @@ export default function McpView(props: McpViewProps) {
     setRevealBusy(true);
     setConfigError(null);
     try {
-      const resolved = await readOpencodeConfig(configScope(), root);
+      const resolved = props.readConfigFile
+        ? await props.readConfigFile(configScope())
+        : await readOpencodeConfig(configScope(), root);
+      if (!resolved) {
+        throw new Error(tr("mcp.config_load_failed"));
+      }
       const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
       if (isWindowsPlatform()) {
         await openPath(resolved.path);

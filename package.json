@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
+    "dev:windows": "scripts/dev-windows.cmd",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
+    "dev:story": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/story-book dev",
     "dev:web": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork-ee/den-web dev",
     "dev:web-local": "OPENWORK_DEV_MODE=1 bash scripts/dev-web-local.sh",
     "dev:den-docker": "bash packaging/docker/den-dev-up.sh",
