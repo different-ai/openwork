@@ -175,7 +175,25 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
       Boolean(workspace.sandboxContainerName?.trim())
       ? "Sandbox"
       : "Remote"
-    : "Local";
+      : "Local";
+
+const EmptyWorkspaceSessionsState = (props: {
+  workspaceId: string;
+  disabled: boolean;
+  onCreateTaskInWorkspace: (workspaceId: string) => void;
+}) => (
+  <button
+    type="button"
+    class="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+    onClick={() => props.onCreateTaskInWorkspace(props.workspaceId)}
+    disabled={props.disabled}
+  >
+    <div class="font-medium text-gray-11">No sessions yet</div>
+    <div class="mt-0.5 text-[11px] leading-5 text-gray-10 group-hover/empty:text-gray-11">
+      Your first session will appear here.
+    </div>
+  </button>
+);
 
 const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 
@@ -734,7 +752,18 @@ export default function WorkspaceSessionList(props: Props) {
                   <Show
                     when={isWorkspaceExpanded(workspace().id)}
                     fallback={
-                      <Show when={group.sessions.length > 0}>
+                      <Show
+                        when={group.sessions.length > 0}
+                        fallback={
+                          <Show when={group.status === "ready"}>
+                            <EmptyWorkspaceSessionsState
+                              workspaceId={workspace().id}
+                              disabled={props.newTaskDisabled}
+                              onCreateTaskInWorkspace={props.onCreateTaskInWorkspace}
+                            />
+                          </Show>
+                        }
+                      >
                         <For
                           each={previewSessions(
                             workspace().id,
@@ -794,27 +823,12 @@ export default function WorkspaceSessionList(props: Props) {
                               )}
                           </For>
 
-                          <Show
-                            when={
-                              group.sessions.length === 0 &&
-                              group.status === "ready"
-                            }
-                          >
-                            <button
-                              type="button"
-                              class="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
-                              onClick={() =>
-                                props.onCreateTaskInWorkspace(workspace().id)
-                              }
+                          <Show when={group.sessions.length === 0 && group.status === "ready"}>
+                            <EmptyWorkspaceSessionsState
+                              workspaceId={workspace().id}
                               disabled={props.newTaskDisabled}
-                            >
-                              <span class="group-hover/empty:hidden">
-                                No tasks yet.
-                              </span>
-                              <span class="hidden group-hover/empty:inline font-medium">
-                                + New task
-                              </span>
-                            </button>
+                              onCreateTaskInWorkspace={props.onCreateTaskInWorkspace}
+                            />
                           </Show>
 
                           <Show
