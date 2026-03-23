@@ -1,0 +1,133 @@
+<mjml>
+  <mj-head>
+    <mj-title>OpenWork App Feedback</mj-title>
+    <mj-preview>New app feedback from {DATA_VARIABLE:name}</mj-preview>
+    <mj-attributes>
+      <mj-all font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" />
+      <mj-text color="#0f172a" font-size="14px" line-height="1.6" />
+      <mj-section padding="0" />
+      <mj-column padding="0" />
+    </mj-attributes>
+  </mj-head>
+  <mj-body background-color="#edf4fb">
+    <mj-section padding="24px 16px 12px">
+      <mj-column width="100%">
+        <mj-text
+          align="center"
+          color="#475569"
+          font-size="11px"
+          font-weight="700"
+          letter-spacing="1.6px"
+          padding="0"
+          text-transform="uppercase"
+        >
+          OpenWork app feedback
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <mj-wrapper
+      background-color="#ffffff"
+      border="1px solid #dbe7f3"
+      border-radius="24px"
+      padding="0"
+    >
+      <mj-section padding="28px 28px 20px">
+        <mj-column width="100%">
+          <mj-text
+            color="#011627"
+            font-size="24px"
+            font-weight="700"
+            line-height="1.2"
+            padding="0"
+          >
+            New feedback from {DATA_VARIABLE:name}
+          </mj-text>
+          <mj-text color="#475569" font-size="14px" padding="8px 0 0">
+            {DATA_VARIABLE:senderLine}
+          </mj-text>
+          <mj-text color="#64748b" font-size="13px" padding="4px 0 0">
+            Submitted: {DATA_VARIABLE:submittedAtDisplay}
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <mj-section padding="0 28px 20px">
+        <mj-column width="100%">
+          <mj-text
+            color="#64748b"
+            font-size="11px"
+            font-weight="700"
+            letter-spacing="1.6px"
+            padding="0 0 10px"
+            text-transform="uppercase"
+          >
+            Issue
+          </mj-text>
+          <mj-text padding="0">
+            <div style="background-color:#f8fbff;border:1px solid #dbe7f3;border-radius:18px;padding:18px 20px;color:#011627;font-size:15px;line-height:1.7;">
+              {DATA_VARIABLE:message}
+            </div>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <mj-section padding="0 28px 16px">
+        <mj-column width="100%">
+          <mj-text
+            color="#64748b"
+            font-size="11px"
+            font-weight="700"
+            letter-spacing="1.6px"
+            padding="0 0 10px"
+            text-transform="uppercase"
+          >
+            App + environment
+          </mj-text>
+          <mj-text padding="0">
+            <div style="background-color:#f8fbff;border:1px solid #dbe7f3;border-radius:18px;padding:18px 20px;color:#0f172a;font-size:14px;line-height:1.8;">
+              App version: {DATA_VARIABLE:appVersion}<br />
+              Platform: {DATA_VARIABLE:platform}<br />
+              OS: {DATA_VARIABLE:osLabel}<br />
+              <span style="display:block;height:12px;line-height:12px;font-size:12px;">&nbsp;</span>
+              OpenWork server: {DATA_VARIABLE:openworkServerVersion}<br />
+              OpenCode: {DATA_VARIABLE:opencodeVersion}<br />
+              Orchestrator: {DATA_VARIABLE:orchestratorVersion}<br />
+              Router: {DATA_VARIABLE:opencodeRouterVersion}
+            </div>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+
+      <mj-section padding="0 28px 28px">
+        <mj-column width="100%">
+          <mj-text
+            color="#64748b"
+            font-size="11px"
+            font-weight="700"
+            letter-spacing="1.6px"
+            padding="0 0 10px"
+            text-transform="uppercase"
+          >
+            Context
+          </mj-text>
+          <mj-text padding="0">
+            <div style="background-color:#f8fbff;border:1px solid #dbe7f3;border-radius:18px;padding:18px 20px;color:#0f172a;font-size:14px;line-height:1.8;">
+              Source: {DATA_VARIABLE:source}<br />
+              Entrypoint: {DATA_VARIABLE:entrypoint}<br />
+              Deployment: {DATA_VARIABLE:deployment}
+            </div>
+          </mj-text>
+        </mj-column>
+      </mj-section>
+    </mj-wrapper>
+    
+    <mj-section padding="0 16px 24px">
+      <mj-column width="100%">
+        <mj-text align="center" color="#94a3b8" font-size="12px" padding="12px 0 0">
+          OpenWork app feedback
+        </mj-text>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>
