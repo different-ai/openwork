@@ -1835,7 +1835,7 @@ export default function Composer(props: ComposerProps) {
                               onClick={sendDraft}
                               class={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium transition-colors ${!hasDraftContent()
                                 ? "bg-gray-4 text-gray-10"
-                                : "bg-dls-accent text-white hover:bg-[var(--dls-accent-hover)]"
+                                : "bg-green-9 text-white hover:bg-green-10"
                                 }`}
                               title="Run task"
                             >
