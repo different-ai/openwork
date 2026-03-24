@@ -92,7 +92,6 @@ export const setLocale = (newLocale: Language) => {
  */
 export const t = (key: string, localeOverride?: Language): string => {
   const loc = localeOverride ?? locale();
-1
 
   // Try target language first
   if (TRANSLATIONS[loc]?.[key]) {

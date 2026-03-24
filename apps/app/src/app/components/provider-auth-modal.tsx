@@ -170,6 +170,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (!session) return false;
     return session.providerId === "openai" && session.methodLabel.toLowerCase().includes("headless");
   });
+  const shouldStartOauthAutoPolling = createMemo(() => {
+    if (!props.open || resolvedView() !== "oauth-auto" || !oauthSession()) {
+      return false;
+    }
+    if (!isOpenAiHeadlessSession()) return true;
+    return oauthBrowserOpened();
+  });
 
   const oauthDisplayCode = createMemo(() => {
     const instructions = oauthInstructions();
@@ -320,7 +327,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   });
 
   createEffect(() => {
-    if (!props.open || resolvedView() !== "oauth-auto" || !oauthSession()) {
+    if (!shouldStartOauthAutoPolling()) {
       stopOauthAutoPolling();
       return;
     }
@@ -862,7 +869,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                           const url = oauthSession()?.authorization.url ?? "";
                           void openOauthUrl(url);
                         }}
-                        disabled={actionDisabled()}
                       >
                         Open browser again
                       </Button>
@@ -914,10 +920,19 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         </Button>
                       </div>
                     </Show>
-                    <div class="flex items-center gap-2 text-xs text-gray-9">
-                      <Loader2 size={14} class={props.submitting || pollingBusy() || oauthAutoBusy() ? "animate-spin" : ""} />
-                      <span>Checking connection status automatically...</span>
-                    </div>
+                    <Show
+                      when={isOpenAiHeadlessSession() && !oauthBrowserOpened()}
+                      fallback={
+                        <div class="flex items-center gap-2 text-xs text-gray-9">
+                          <Loader2 size={14} class={props.submitting || pollingBusy() || oauthAutoBusy() ? "animate-spin" : ""} />
+                          <span>Checking connection status automatically...</span>
+                        </div>
+                      }
+                    >
+                      <div class="flex items-center gap-2 text-xs text-gray-9">
+                        <span>Authorization checks will start after you click Open Browser.</span>
+                      </div>
+                    </Show>
                     <div class="flex items-center justify-between gap-3">
                       <Button
                         variant="outline"
@@ -925,7 +940,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                           const url = oauthSession()?.authorization.url ?? "";
                           void openOauthUrl(url);
                         }}
-                        disabled={actionDisabled()}
                       >
                         {isOpenAiHeadlessSession()
                           ? oauthBrowserOpened()
