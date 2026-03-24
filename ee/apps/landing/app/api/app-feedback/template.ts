@@ -20,6 +20,8 @@ type BuildFeedbackEmailVariablesInput = {
   context: FeedbackTemplateContext;
 };
 
+const DEFAULT_REPLY_TEAM_EMAIL = "team@openworklabs.com";
+
 function buildSummary(
   items: Array<{ label: string; value: string | undefined }>,
 ): string {
@@ -82,6 +84,7 @@ export function buildFeedbackEmailVariables(
   const senderName = input.name;
   const senderEmail = input.email;
   const senderLine = `${senderName} <${senderEmail}>`;
+  const replyToLine = `${senderLine}, OpenWork team <${DEFAULT_REPLY_TEAM_EMAIL}>`;
   const plainTextBody = [
     "OpenWork App Feedback",
     `From: ${senderLine}`,
@@ -101,6 +104,7 @@ export function buildFeedbackEmailVariables(
     senderName,
     senderEmail,
     senderLine,
+    replyToLine,
     submittedAtDisplay,
     osLabel,
     environmentSummary,
