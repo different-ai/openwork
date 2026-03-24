@@ -1,11 +1,13 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
+import { withBotId } from "botid/next/config";
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(rootDir, "../..");
 
 const nextConfig: NextConfig = {
+  reactStrictMode: true,
   turbopack: {
     root: workspaceRoot
   },
@@ -17,4 +19,4 @@ const nextConfig: NextConfig = {
   }
 };
 
-export default nextConfig;
+export default withBotId(nextConfig);
