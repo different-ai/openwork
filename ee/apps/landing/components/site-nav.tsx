@@ -55,6 +55,7 @@ export function SiteNav(props: Props) {
               <Link
                 key={item.key}
                 href={item.href}
+                {...(item.key === "docs" ? { target: "_blank" } : {})}
                 className={navLink(props.active === item.key)}
               >
                 {item.label}
@@ -109,6 +110,7 @@ export function SiteNav(props: Props) {
                 <Link
                   key={item.key}
                   href={item.href}
+                  {...(item.key === "docs" ? { target: "_blank" } : {})}
                   className={`rounded-2xl px-4 py-3 ${navLink(
                     props.active === item.key
                   )}`}
