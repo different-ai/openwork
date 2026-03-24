@@ -79,7 +79,9 @@ export function buildFeedbackEmailVariables(
   ]);
 
   const submittedAtDisplay = formatSubmittedAtDisplay(input.submittedAt);
-  const senderLine = `${input.name} <${input.email}>`;
+  const senderName = input.name;
+  const senderEmail = input.email;
+  const senderLine = `${senderName} <${senderEmail}>`;
   const plainTextBody = [
     "OpenWork App Feedback",
     `From: ${senderLine}`,
@@ -96,6 +98,8 @@ export function buildFeedbackEmailVariables(
   ].join("\n");
 
   return {
+    senderName,
+    senderEmail,
     senderLine,
     submittedAtDisplay,
     osLabel,

@@ -44,7 +44,7 @@
             New feedback from {DATA_VARIABLE:name}
           </mj-text>
           <mj-text color="#475569" font-size="14px" padding="8px 0 0">
-            {DATA_VARIABLE:senderLine}
+            {DATA_VARIABLE:senderName} &lt;{DATA_VARIABLE:senderEmail}&gt;
           </mj-text>
           <mj-text color="#64748b" font-size="13px" padding="4px 0 0">
             Submitted: {DATA_VARIABLE:submittedAtDisplay}
