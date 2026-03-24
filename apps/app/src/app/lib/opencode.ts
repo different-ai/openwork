@@ -7,6 +7,33 @@ type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
   | ({ data?: undefined; error: unknown } & { request: Request; response: Response });
 
+type PromptAsyncParameters = {
+  sessionID: string;
+  directory?: string;
+  messageID?: string;
+  model?: { providerID: string; modelID: string };
+  agent?: string;
+  noReply?: boolean;
+  tools?: { [key: string]: boolean };
+  system?: string;
+  variant?: string;
+  parts?: unknown[];
+  reasoning_effort?: string;
+};
+
+type CommandParameters = {
+  sessionID: string;
+  directory?: string;
+  messageID?: string;
+  agent?: string;
+  model?: string;
+  arguments?: string;
+  command?: string;
+  variant?: string;
+  parts?: unknown[];
+  reasoning_effort?: string;
+};
+
 export type OpencodeAuth = {
   username?: string;
   password?: string;
@@ -34,6 +61,55 @@ function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number): 
     return Math.max(fallbackMs, MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS);
   }
   return fallbackMs;
+}
+
+
+function buildDirectoryHeader(directory?: string) {
+  if (!directory?.trim()) return undefined;
+  const trimmed = directory.trim();
+  return /[^\x00-\x7F]/.test(trimmed) ? encodeURIComponent(trimmed) : trimmed;
+}
+
+async function postSessionRequest<T>(
+  fetchImpl: typeof globalThis.fetch,
+  baseUrl: string,
+  path: string,
+  body: Record<string, unknown>,
+  options?: { headers?: Record<string, string>; directory?: string; throwOnError?: boolean },
+): Promise<FieldsResult<T>> {
+  const headers = new Headers(options?.headers);
+  headers.set("Content-Type", "application/json");
+  const directoryHeader = buildDirectoryHeader(options?.directory);
+  if (directoryHeader) {
+    headers.set("x-opencode-directory", directoryHeader);
+  }
+
+  const response = await fetchImpl(`${baseUrl}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  const request = new Request(`${baseUrl}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (response.ok) {
+    const data = response.status === 204 ? ({} as T) : ((await response.json()) as T);
+    return { data, request, response };
+  }
+
+  const text = await response.text();
+  let error: unknown = text;
+  try {
+    error = text ? JSON.parse(text) : text;
+  } catch {
+    // ignore
+  }
+  if (options?.throwOnError) throw error;
+  return { error, request, response };
 }
 
 async function fetchWithTimeout(
@@ -153,12 +229,46 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     ? createTauriFetch(auth)
     : (input: RequestInfo | URL, init?: RequestInit) =>
         fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
-  return createOpencodeClient({
+  const client = createOpencodeClient({
     baseUrl,
     directory,
     headers: Object.keys(headers).length ? headers : undefined,
     fetch: fetchImpl,
   });
+
+  const session = client.session as typeof client.session;
+  const sessionOverrides = session as any as {
+    promptAsync: (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+    command: (parameters: CommandParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+  };
+
+  const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);
+  sessionOverrides.promptAsync = (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
+    if (!("reasoning_effort" in parameters)) {
+      return promptAsyncOriginal(parameters, options);
+    }
+    const { sessionID, directory: requestDirectory, ...body } = parameters;
+    return postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/prompt_async`, body, {
+      headers: Object.keys(headers).length ? headers : undefined,
+      directory: requestDirectory ?? directory,
+      throwOnError: options?.throwOnError,
+    });
+  };
+
+  const commandOriginal = sessionOverrides.command.bind(session);
+  sessionOverrides.command = (parameters: CommandParameters, options?: { throwOnError?: boolean }) => {
+    if (!("reasoning_effort" in parameters)) {
+      return commandOriginal(parameters, options);
+    }
+    const { sessionID, directory: requestDirectory, ...body } = parameters;
+    return postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/command`, body, {
+      headers: Object.keys(headers).length ? headers : undefined,
+      directory: requestDirectory ?? directory,
+      throwOnError: options?.throwOnError,
+    });
+  };
+
+  return client;
 }
 
 export async function waitForHealthy(
