@@ -4,12 +4,36 @@ use std::path::PathBuf;
 use sha2::{Digest, Sha256};
 use tauri::Manager;
 
+use crate::paths::home_dir;
 use crate::types::{WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION};
 
 pub fn stable_workspace_id(path: &str) -> String {
     let digest = Sha256::digest(path.as_bytes());
     let hex = format!("{:x}", digest);
     format!("ws_{}", &hex[..12])
+}
+
+pub fn normalize_local_workspace_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let expanded = if trimmed == "~" {
+        home_dir().unwrap_or_else(|| PathBuf::from(trimmed))
+    } else if trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
+        if let Some(home) = home_dir() {
+            let suffix = trimmed[2..].trim_start_matches(['/', '\\']);
+            home.join(suffix)
+        } else {
+            PathBuf::from(trimmed)
+        }
+    } else {
+        PathBuf::from(trimmed)
+    };
+
+    let normalized = fs::canonicalize(&expanded).unwrap_or(expanded);
+    normalized.to_string_lossy().to_string()
 }
 
 pub fn openwork_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
@@ -36,7 +60,13 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
     let old_active_id = state.active_id.clone();
     for workspace in state.workspaces.iter_mut() {
         let next_id = match workspace.workspace_type {
-            WorkspaceType::Local => stable_workspace_id(&workspace.path),
+            WorkspaceType::Local => {
+                let normalized = normalize_local_workspace_path(&workspace.path);
+                if !normalized.is_empty() {
+                    workspace.path = normalized;
+                }
+                stable_workspace_id(&workspace.path)
+            }
             WorkspaceType::Remote => {
                 if workspace.remote_type == Some(crate::types::RemoteType::Openwork) {
                     stable_workspace_id_for_openwork(
@@ -107,4 +137,44 @@ pub fn stable_workspace_id_for_openwork(host_url: &str, workspace_id: Option<&st
         }
     }
     stable_workspace_id(&key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_local_workspace_path, stable_workspace_id};
+    use std::fs;
+
+    #[test]
+    fn normalize_local_workspace_path_expands_home_prefix() {
+        let home = crate::paths::home_dir().expect("home dir");
+        let expected = home.join("OpenWork").join("openwork-state-test-expand");
+        let actual = normalize_local_workspace_path("~/OpenWork/openwork-state-test-expand");
+        assert_eq!(actual, expected.to_string_lossy());
+    }
+
+    #[test]
+    fn normalize_local_workspace_path_keeps_canonical_id_stable() {
+        let temp = std::env::temp_dir().join(format!(
+            "openwork-workspace-state-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let nested = temp.join("starter");
+        fs::create_dir_all(&nested).expect("create temp workspace");
+
+        let raw = format!("{}/../starter", nested.display());
+        let normalized = normalize_local_workspace_path(&raw);
+
+        let canonical = fs::canonicalize(&nested).expect("canonical starter workspace");
+        assert_eq!(normalized, canonical.to_string_lossy());
+        assert_eq!(
+            stable_workspace_id(&normalized),
+            stable_workspace_id(&canonical.to_string_lossy())
+        );
+
+        let _ = fs::remove_dir_all(&temp);
+    }
 }

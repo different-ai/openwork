@@ -8,8 +8,8 @@ use crate::types::{
 };
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
-    load_workspace_state, save_workspace_state, stable_workspace_id,
-    stable_workspace_id_for_openwork, stable_workspace_id_for_remote,
+    load_workspace_state, normalize_local_workspace_path, save_workspace_state,
+    stable_workspace_id, stable_workspace_id_for_openwork, stable_workspace_id_for_remote,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::Serialize;
@@ -161,7 +161,7 @@ pub fn workspace_create(
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create local request");
-    let folder = folder_path.trim().to_string();
+    let mut folder = folder_path.trim().to_string();
     if folder.is_empty() {
         return Err("folderPath is required".to_string());
     }
@@ -179,6 +179,7 @@ pub fn workspace_create(
     };
 
     fs::create_dir_all(&folder).map_err(|e| format!("Failed to create workspace folder: {e}"))?;
+    folder = normalize_local_workspace_path(&folder);
 
     let id = stable_workspace_id(&folder);
 
@@ -881,6 +882,7 @@ pub fn workspace_import_config(
         .trim()
         .to_string();
 
+    let target_dir = normalize_local_workspace_path(&target_dir);
     let id = stable_workspace_id(&target_dir);
 
     let mut state = load_workspace_state(&app)?;
