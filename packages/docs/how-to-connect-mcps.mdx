@@ -8,13 +8,13 @@ Connecting a custom MCP server with openwork takes four clicks.
 - Inside your workspace, click in `Extensions` \> `Advanced Settings` \> `Add MCP server`
 
 <Frame>
-  ![Clean Shot 2026 03 24 At 15 04 03@2x](/images/CleanShot2026-03-24at15.04.03@2x.png)
+  ![Extensions page with Advanced Settings link](/images/mcp-extensions-advanced-settings.png)
 </Frame>
 
 You can choose to add the MCP server in this workspace or for all workspaces (global Ow config)
 
 <Frame>
-  ![Clean Shot 2026 03 24 At 15 13 28@2x](/images/CleanShot2026-03-24at15.13.28@2x.png)
+  ![Add MCP Server dialog with name, URL, and OAuth toggle](/images/mcp-add-server-dialog.png)
 
   You should indicate wether it requires OAuth or not.
 </Frame>
@@ -22,7 +22,7 @@ You can choose to add the MCP server in this workspace or for all workspaces (gl
 This setup is aimed at servers that allow for dynamic user registration (eg: OAuth based MCPs)
 
 <Frame>
-  ![Clean Shot 2026 03 24 At 15 16 15@2x](/images/CleanShot2026-03-24at15.16.15@2x.png)
+  ![OAuth approval page for MCP server](/images/mcp-oauth-approval-page.png)
 </Frame>
 
 Once in their Oath page, you should just continue with the registration or custom setup. It should redirect back to openwork. Feel free to [open an issue](https://github.com/different-ai/openwork/issues/) if you require a custom MCP that we currently do not support.
@@ -32,5 +32,5 @@ Once in their Oath page, you should just continue with the registration or custo
 Some MCP servers do not support dynamic client registration. We do not currently support them.
 
 <Frame>
-  ![Clean Shot 2026 03 24 At 15 09 00@2x](/images/CleanShot2026-03-24at15.09.00@2x.png)
+  ![Error when MCP server does not support dynamic client registration](/images/mcp-dynamic-registration-error.png)
 </Frame>
