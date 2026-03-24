@@ -10,6 +10,8 @@ const defaultAllowedOrigins = [
   "https://openwork.software",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "tauri://localhost",
+  "http://tauri.localhost",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://localhost:3006",
