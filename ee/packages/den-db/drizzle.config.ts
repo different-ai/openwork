@@ -31,6 +31,6 @@ function resolveDrizzleDbCredentials() {
 export default defineConfig({
   dialect: "mysql",
   schema: path.join(currentDir, "src", "schema.ts"),
-  out: path.join(currentDir, "..", "..", "services", "den", "drizzle"),
+  out: path.join(currentDir, "..", "..", "apps", "den-controller", "drizzle"),
   dbCredentials: resolveDrizzleDbCredentials(),
 })
