@@ -1,49 +1,84 @@
 ---
-title: "Start here"
-description: "Pick the right OpenWork path fast"
+title: "CLI Quickstart"
+description: "Install OpenWork and run your first worker"
 ---
-
-OpenWork has two common entry points. Pick the one that matches how you want to use the product.
-
-<CardGroup cols={2}>
-  <Card title="Technical" icon="terminal" href="/technical">
-    Choose between a desktop-hosted app/server and a CLI-hosted server, then set up sharing.
-  </Card>
-  <Card title="Non-technical" icon="users" href="/non-technical">
-    Start with example tasks, desktop-first onboarding, and the simplest way to share with teammates.
-  </Card>
-</CardGroup>
-
----
-
-## Choose a path
-
-### Pick Technical if
-
-You are deciding how to run OpenWork, how to host the server inside the desktop app or via CLI, or how teammates should connect.
-
-### Pick Non-technical if
-
-You want example tasks, desktop-first onboarding, and plain-language guidance on what OpenWork can do.
-
----
-
-## Share clearly
-
-Every share flow starts with a worker.
-
-- Use `OpenWork invite link` for the fastest teammate onboarding.
-- Use `OpenWork worker URL` + `Access token` when you want a manual connect flow.
-- Keep the `host token` private for owner actions.
-
-<CardGroup cols={3}>
-  <Card title="Quickstart" icon="zap" href="/quickstart">
-    Install the app and run your first worker.
-  </Card>
-  <Card title="Share a worker" icon="share-2" href="/tutorials/share-worker-invite-link">
-    Prefill URL and token with one invite link.
-  </Card>
-  <Card title="What is OpenWork" icon="compass" href="/openwork">
-    Learn the app, server, and worker model.
-  </Card>
-</CardGroup>
+# OpenWork headless CLI setup
+I've you've reached this point, we assume you've already downloaded the Openwork app and are technical. This documentation refers to the Openwork CLI. We aim to expand it overtime to facilitate OSS contributions.
+With the CLI, you can run a workspace on your server and connect to it from your desktop, so execution stays remote while your interface stays local.
+```text
+Your server                           Your machine
+-------------                         ----------------
+openwork start  ------------------>   OpenWork desktop app
+workspace + services                 local interface, shared remote workspace
+```
+If you only want the desktop app, you can find the most recent version [here](https://openworklabs.com/download). You can also cherry pick from a [specific release](https://github.com/different-ai/openwork/releases) although we'd recommend updating it regulary and not pinning it to a specific version.
+## What you do
+1. On your remote server, install the OpenWork CLI.
+2. On your remote server, start it in the workspace you want to use.
+3. On your local machine, connect the OpenWork desktop app with the server URL and token from the dashboard.
+That is the whole setup.
+## Step 1: Install on your remote server
+Install the npm package:
+```bash
+npm install -g openwork-orchestrator
+```
+## Step 2: Start OpenWork in your workspace
+Run OpenWork where your code lives:
+```bash
+openwork start --workspace /path/to/your/workspace --approval auto
+```
+That one command brings up OpenCode, the OpenWork server, and the router services for that workspace.
+When it starts, you get a terminal dashboard with two sections:
+- **Services**: `opencode`, `openwork-server`, `opencode-router`, health, uptime, and logs
+- **Connect**: OpenWork URL, collaborator token, owner token, host admin token, OpenCode URL/password, and an attach command
+Here is what each connection field is for:
+- `OpenWork URL (LAN)`: The server address your desktop app connects to.
+- `OpenWork Collaborator Token`: The default token for routine access. Share this when someone needs to connect without owner privileges.
+- `OpenWork Owner Token`: A higher-privilege token. Keep this private. Use it only when that client needs to answer permission prompts or perform owner-level actions.
+- `OpenWork Host Admin Token`: The server operator token for approvals CLI and other host-only APIs. Do not share this as a normal client token.
+- `OpenCode URL`, `OpenCode Server Password`, and `Attach`: Extra connection details for `opencode`. You can ignore these for the main desktop app setup.
+Useful follow-ups:
+```bash
+openwork status --openwork-url http://<server-ip>:8787 --opencode-url http://<server-ip>:<opencode-port>
+openwork approvals list --openwork-url http://<server-ip>:8787 --host-token <host-admin-token>
+```
+Key env vars:
+- `OPENWORK_TOKEN`: routine client access token
+- `OPENWORK_HOST_TOKEN`: host admin token for approvals and host-only APIs
+- `OPENWORK_APPROVAL_MODE`: `manual` or `auto`
+## Step 3: Connect the OpenWork desktop app
+On your local machine, open the OpenWork desktop app and connect into a remote workspace with:
+- `OpenWork server URL`
+- a `Collaborator or owner token`
+Paste the URL from the Connect panel into **OpenWork server URL**. Paste the collaborator token for routine access, or the owner token if that specific client needs to answer permission prompts.
+Tip: Instead of connecting to the full IP, you can connect it to `http://openwork-studio:<port>:` if your DNS or local network search domain knows that bare hostname (also works with Tailscale)
+If you are setting this up for yourself:
+- You can use the owner on your own trusted client. The owner token stays stable for the same workspace, and you do not need to re-share it after routine app or CLI restarts.
+If you are setting this up for someone else on your team:
+- If they are technical and expected to manage permission prompts, give them the desktop app download, the `OpenWork server URL`, and the owner token.
+- If they are not technical, give them the desktop app download, the `OpenWork server URL`, and the collaborator token.
+- Use the collaborator token as the simpler default. Use the owner token only when you want that person to handle owner-level actions on that workspace.
+- Keep the host admin token private to the server operator.
+## You are ready
+- Make sure to keep the `openwork start` session running. 
+- You may need to reconnect your workspace to a new port if you exit of the openwork server and start it again.
+## What this gives you right away
+- Your code and services stay on the remote machine.
+- Your local machine stays light.
+- You get a fast path from install to a connected remote OpenWork workspace.
+## Easter egg: you can use `openwork` to code in `opencode`, too
+If `opencode` is your go-to tool for everyday development, OpenWork also starts a remote OpenCode instance for the same workspace.
+If you do not already have `opencode` installed locally, install it first. If you already have it, skip this.
+```bash
+npm install -g opencode
+```
+Then SSH into the machine where you want to use `opencode`, and run the attach command from the dashboard:
+```bash
+ssh <your-user>@<your-machine>
+OPENCODE_SERVER_PASSWORD=<password> opencode attach http://<server-ip>:<opencode-port> --dir /path/to/your/project
+```
+In that command:
+- `OPENCODE_SERVER_PASSWORD` authenticates you to the remote OpenCode server.
+- `opencode attach http://<server-ip>:<opencode-port>` connects your local client to that remote instance.
+- `--dir /path/to/your/project` opens the workspace that is already running on the server.
+Do not hand-build this command. You can copy the one OpenWork prints in the Connect panel typing `[C]` so you use the right URL, password, and workspace.
