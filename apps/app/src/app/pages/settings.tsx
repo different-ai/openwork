@@ -2382,9 +2382,10 @@ export default function SettingsView(props: SettingsViewProps) {
                         </Button>
                         <div class="text-[11px] text-gray-8">
                           Accepts <span class="font-mono">openwork://</span>,{" "}
-                          <span class="font-mono">openwork-dev://</span>, or a raw supported{" "}
+                          <span class="font-mono">openwork-dev://</span>, or a
+                          raw supported{" "}
                           <span class="font-mono">
-                            https://share.openwork.software/b/...
+                            https://share.openworklabs.com/b/...
                           </span>{" "}
                           URL.
                         </div>

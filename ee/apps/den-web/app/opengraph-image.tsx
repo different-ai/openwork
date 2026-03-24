@@ -86,7 +86,7 @@ export default function OpenGraphImage() {
             </div>
 
             <div style={{ fontSize: 24, lineHeight: 1.45, color: "#475569", display: "flex", maxWidth: 520 }}>
-              Launch cloud workers, manage Polar checkout, and operate Den directly from app.openwork.software.
+              Launch cloud workers, manage Polar checkout, and operate Den directly from app.openworklabs.com.
             </div>
 
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>

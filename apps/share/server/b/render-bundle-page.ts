@@ -60,7 +60,7 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
   <style>
     @font-face {
       font-family: "FK Raster Roman Compact Smooth";
-      src: url("https://openwork.software/fonts/FKRasterRomanCompact-Smooth.woff2") format("woff2");
+      src: url("https://openworklabs.com/fonts/FKRasterRomanCompact-Smooth.woff2") format("woff2");
       font-weight: 400;
       font-style: normal;
       font-display: swap;
@@ -409,9 +409,9 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
         <span>openwork</span>
       </a>
       <div class="nav-links">
-        <a href="https://openwork.software/docs" target="_blank" rel="noreferrer">Docs</a>
+        <a href="https://openworklabs.com/docs" target="_blank" rel="noreferrer">Docs</a>
         <a href="${escapeHtml(OPENWORK_DOWNLOAD_URL)}" target="_blank" rel="noreferrer">Download</a>
-        <a href="https://openwork.software/enterprise" target="_blank" rel="noreferrer">Enterprise</a>
+        <a href="https://openworklabs.com/enterprise" target="_blank" rel="noreferrer">Enterprise</a>
       </div>
       <div class="nav-actions">
         <a class="button-secondary" href="https://github.com/different-ai/openwork" target="_blank" rel="noreferrer">

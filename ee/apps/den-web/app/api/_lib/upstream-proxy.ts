@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
-const DEFAULT_API_BASE = "https://api.openwork.software";
-const DEFAULT_AUTH_ORIGIN = "https://app.openwork.software";
+const DEFAULT_API_BASE = "https://api.openworklabs.com";
+const DEFAULT_AUTH_ORIGIN = "https://app.openworklabs.com";
 const DEFAULT_AUTH_FALLBACK_BASE = "https://den-control-plane-openwork.onrender.com";
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 

@@ -239,7 +239,7 @@ export function deriveOnboardingWorkerName(user: AuthUser): string {
 
 export function getSocialCallbackUrl(): string {
   try {
-    const origin = typeof window !== "undefined" ? window.location.origin : OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software";
+    const origin = typeof window !== "undefined" ? window.location.origin : OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openworklabs.com";
     const callbackUrl = new URL("/", origin);
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -252,7 +252,7 @@ export function getSocialCallbackUrl(): string {
     }
     return callbackUrl.toString();
   } catch {
-    return "https://app.openwork.software/";
+    return "https://app.openworklabs.com/";
   }
 }
 

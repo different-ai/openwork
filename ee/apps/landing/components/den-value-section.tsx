@@ -14,7 +14,7 @@ export function DenValueSection(props: DenValueSectionProps) {
 I want to automate this {TASK} because {REASON}. I don't trust AI to do this because of the following {AI_CONCERN}. I'm willing to pay you {BUDGET} for {HOURS} of your time.
 
 Best`;
-  const hireHumanHref = `mailto:ben@openwork.software?subject=${encodeURIComponent(hireHumanSubject)}&body=${encodeURIComponent(hireHumanBody)}`;
+  const hireHumanHref = `mailto:ben@openworklabs.com?subject=${encodeURIComponent(hireHumanSubject)}&body=${encodeURIComponent(hireHumanBody)}`;
   const getStartedExternal = /^https?:\/\//.test(props.getStartedHref);
 
   return (

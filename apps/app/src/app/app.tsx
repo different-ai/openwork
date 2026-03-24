@@ -637,7 +637,14 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
       const host = url.hostname.toLowerCase();
       const path = url.pathname.replace(/^\/+/, "");
       const segments = path.split("/").filter(Boolean);
-      if ((host === "share.openwork.software" || host.endsWith(".openwork.software")) && segments[0] === "b" && segments[1]) {
+      if (
+        (host === "share.openworklabs.com"
+          || host.endsWith(".openworklabs.com")
+          || host === "share.openwork.software"
+          || host.endsWith(".openwork.software"))
+        && segments[0] === "b"
+        && segments[1]
+      ) {
         const intent = normalizeSharedBundleImportIntent(url.searchParams.get("ow_intent") ?? url.searchParams.get("intent"));
         const source = url.searchParams.get("ow_source")?.trim() ?? url.searchParams.get("source")?.trim() ?? "";
         const orgId = url.searchParams.get("ow_org")?.trim() ?? "";
@@ -786,7 +793,7 @@ function normalizeDebugDeepLinkInput(rawValue: string): string {
   const directMatch = trimmed.match(/(?:openwork-dev|openwork|https?):\/\/[^\s"'<>]+/i);
   if (directMatch) return directMatch[0];
 
-  const bareShareMatch = trimmed.match(/share\.openwork\.software\/b\/[^\s"'<>]+/i);
+  const bareShareMatch = trimmed.match(/share\.openwork(?:labs\.com|\.software)\/b\/[^\s"'<>]+/i);
   if (bareShareMatch) return `https://${bareShareMatch[0]}`;
 
   return trimmed;
@@ -836,12 +843,12 @@ function parseDebugDeepLinkInput(rawValue: string):
     }
   }
 
-  const shareIdMatch = normalized.match(/share\.openwork\.software\/b\/([^\s/?#"'<>]+)/i);
+  const shareIdMatch = normalized.match(/share\.openwork(?:labs\.com|\.software)\/b\/([^\s/?#"'<>]+)/i);
   if (shareIdMatch?.[1]) {
     return {
       kind: "bundle",
       link: {
-        bundleUrl: `https://share.openwork.software/b/${shareIdMatch[1]}`,
+        bundleUrl: `https://share.openworklabs.com/b/${shareIdMatch[1]}`,
         intent: "new_worker",
       },
     };

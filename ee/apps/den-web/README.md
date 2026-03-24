@@ -1,14 +1,14 @@
 # OpenWork Cloud App (`ee/apps/den-web`)
 
-Frontend for `app.openwork.software`.
+Frontend for `app.openworklabs.com`.
 
 ## What it does
 
 - Signs up / signs in users against Den service auth.
 - Launches cloud workers via `POST /v1/workers`.
 - Handles paywall responses (`402 payment_required`) and shows Polar checkout links.
-- Uses a Next.js proxy route (`/api/den/*`) to reach `api.openwork.software` without browser CORS issues.
-- Uses a same-origin auth proxy (`/api/auth/*`) so GitHub OAuth callbacks can land on `app.openwork.software`.
+- Uses a Next.js proxy route (`/api/den/*`) to reach `api.openworklabs.com` without browser CORS issues.
+- Uses a same-origin auth proxy (`/api/auth/*`) so GitHub OAuth callbacks can land on `app.openworklabs.com`.
 
 ## Local development
 
@@ -22,16 +22,16 @@ Frontend for `app.openwork.software`.
 ### Optional env vars
 
 - `DEN_API_BASE` (server-only): upstream API base used by proxy route.
-  - default: `https://api.openwork.software`
+  - default: `https://api.openworklabs.com`
 - `DEN_AUTH_ORIGIN` (server-only): Origin header sent to Better Auth endpoints when the browser request does not include one.
-  - default: `https://app.openwork.software`
+  - default: `https://app.openworklabs.com`
 - `DEN_AUTH_FALLBACK_BASE` (server-only): fallback Den origin used if `DEN_API_BASE` serves an HTML/5xx error.
   - default: `https://den-control-plane-openwork.onrender.com`
 - `NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
-  - Example: `https://openwork.software/app`
+  - Example: `https://openworklabs.com/app`
   - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
 - `NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
-  - default: `https://app.openwork.software`
+  - default: `https://app.openworklabs.com`
   - this host must serve `/api/auth/*`; the included proxy route does that
 - `NEXT_PUBLIC_POSTHOG_KEY` (client): PostHog project key used for Den analytics.
   - optional override; defaults to the same project key used by `ee/apps/landing`
@@ -51,4 +51,4 @@ Recommended project settings:
 
 Then assign custom domain:
 
-- `app.openwork.software`
+- `app.openworklabs.com`

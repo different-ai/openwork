@@ -8,6 +8,8 @@ type FixedWindowEntry = {
 const minimumSubmissionAgeMs = 1500;
 const maximumSubmissionAgeMs = 1000 * 60 * 60;
 const defaultAllowedOrigins = [
+  "https://openworklabs.com",
+  "https://www.openworklabs.com",
   "https://openwork.software",
   "https://www.openwork.software",
   "http://localhost:3000",

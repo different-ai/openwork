@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { buildBundleUrls, renderBundlePage, wantsDownload } from "./render-bundle-page.ts";
 import type { RequestLike } from "../_lib/types.ts";
 
-function makeReq({ accept = "", query = {}, host = "share.openwork.software" }: { accept?: string; query?: Record<string, string>; host?: string } = {}): RequestLike {
+function makeReq({ accept = "", query = {}, host = "share.openworklabs.com" }: { accept?: string; query?: Record<string, string>; host?: string } = {}): RequestLike {
   return {
     query,
     headers: {
@@ -42,7 +42,7 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   const html = renderBundlePage({
     id: "01TEST",
     rawJson,
-    req: makeReq({ accept: "text/html", host: "share.openwork.software" }),
+    req: makeReq({ accept: "text/html", host: "share.openworklabs.com" }),
   });
 
   assert.match(html, /data-openwork-share="true"/);
@@ -50,7 +50,7 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.match(html, /meta name="openwork:bundle-id" content="01TEST"/);
   assert.match(html, /\/b\/01TEST\/data/);
   assert.match(html, /openwork:\/\/import-bundle\?/);
-  assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.openwork\.software%2Fb%2F01TEST/);
+  assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.openworklabs\.com%2Fb%2F01TEST/);
   assert.match(html, /ow_intent=new_worker/);
   assert.match(html, /ow_source=share_service/);
   assert.match(html, /id="openwork-bundle-json" type="application\/json"/);
@@ -81,7 +81,7 @@ test("renderBundlePage shows workspace profile metadata", () => {
   const html = renderBundlePage({
     id: "01WORKSPACE",
     rawJson,
-    req: makeReq({ accept: "text/html", host: "share.openwork.software" }),
+    req: makeReq({ accept: "text/html", host: "share.openworklabs.com" }),
   });
 
   assert.match(html, /Open the bundle in OpenWork/);
