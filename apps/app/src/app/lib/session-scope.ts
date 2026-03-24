@@ -1,4 +1,5 @@
 import { normalizeDirectoryPath } from "../utils";
+import { normalizeDirectoryQueryPath } from "../utils";
 
 type WorkspaceType = "local" | "remote";
 
@@ -7,12 +8,16 @@ export function resolveScopedClientDirectory(input: {
   targetRoot?: string | null;
   workspaceType?: WorkspaceType | null;
 }) {
-  const directory = input.directory?.trim() ?? "";
+  const directory = toSessionTransportDirectory(input.directory);
   if (directory) return directory;
 
   if (input.workspaceType === "remote") return "";
 
-  return input.targetRoot?.trim() ?? "";
+  return toSessionTransportDirectory(input.targetRoot);
+}
+
+export function toSessionTransportDirectory(input?: string | null) {
+  return normalizeDirectoryQueryPath(input);
 }
 
 export function scopedRootsMatch(a?: string | null, b?: string | null) {

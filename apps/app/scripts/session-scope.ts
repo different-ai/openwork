@@ -13,6 +13,7 @@ const {
   scopedRootsMatch,
   shouldApplyScopedSessionLoad,
   shouldRedirectMissingSessionAfterScopedLoad,
+  toSessionTransportDirectory,
 } = await import("../src/app/lib/session-scope.ts");
 
 const starterRoot = "/Users/test/OpenWork/starter";
@@ -86,6 +87,23 @@ try {
       }),
       true,
     );
+  });
+
+  await step("windows create and list use the same transport directory", () => {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        platform: "Win32",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      },
+    });
+
+    const winRoot = String.raw`C:\Users\Test\OpenWork\starter`;
+    const transport = toSessionTransportDirectory(winRoot);
+
+    assert.equal(transport, "C:/Users/Test/OpenWork/starter");
+    assert.equal(resolveScopedClientDirectory({ workspaceType: "local", targetRoot: winRoot }), transport);
+    assert.equal(resolveScopedClientDirectory({ workspaceType: "local", directory: winRoot }), transport);
   });
 
   await step("route guard only redirects when the loaded scope matches", () => {

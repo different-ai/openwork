@@ -164,6 +164,7 @@ import {
 import {
   shouldApplyScopedSessionLoad,
   shouldRedirectMissingSessionAfterScopedLoad,
+  toSessionTransportDirectory,
 } from "./lib/session-scope";
 
 const fileToDataUrl = (file: File) =>
@@ -2202,7 +2203,8 @@ export default function App() {
     }
 
     const root = workspaceStore.activeWorkspaceRoot().trim();
-    const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
+    const directory = toSessionTransportDirectory(root);
+    const params = directory ? { sessionID: trimmed, directory } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
 
     // Remove the deleted session from the store and sidebar locally.
@@ -3101,7 +3103,7 @@ export default function App() {
     if (workspace.workspaceType === "local") {
       const info = workspaceStore.engine();
       const baseUrl = info?.baseUrl?.trim() ?? "";
-      const directory = workspace.path?.trim() ?? "";
+      const directory = toSessionTransportDirectory(workspace.path?.trim() ?? "");
       const username = info?.opencodeUsername?.trim() ?? "";
       const password = info?.opencodePassword?.trim() ?? "";
       const auth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
@@ -6209,7 +6211,7 @@ export default function App() {
       try {
         mark("session:create:start");
         rawResult = await c.session.create({
-          directory: workspaceStore.activeWorkspaceRoot().trim(),
+          directory: toSessionTransportDirectory(workspaceStore.activeWorkspaceRoot().trim()) || undefined,
         });
         mark("session:create:ok");
       } catch (createErr) {
