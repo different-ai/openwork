@@ -203,6 +203,7 @@ export function createSessionStore(options: {
   const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
   const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
   const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
+  const [loadedScopeRoot, setLoadedScopeRoot] = createSignal("");
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
@@ -819,6 +820,7 @@ export function createSessionStore(options: {
       })),
     });
     sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
+    setLoadedScopeRoot(root);
     rememberSessions(filtered);
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
   }
@@ -1727,6 +1729,7 @@ export function createSessionStore(options: {
 
   return {
     sessions,
+    loadedScopeRoot,
     sessionById,
     sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
     selectedSessionErrorTurns: createMemo(() => {

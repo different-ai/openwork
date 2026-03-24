@@ -21,6 +21,7 @@ import {
   writeStartupPreference,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import { resolveScopedClientDirectory } from "../lib/session-scope";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
@@ -762,12 +763,13 @@ export function createWorkspaceStore(options: {
       ) {
         const now = Date.now();
         if (now - lastEngineReconnectAt > 10_000) {
+          const reconnectRoot = activeWorkspacePath().trim() || info.projectDir?.trim() || "";
           lastEngineReconnectAt = now;
           reconnectingEngine = true;
           connectToServer(
             info.baseUrl,
-            info.projectDir ?? undefined,
-            { reason: "engine-refresh" },
+            reconnectRoot || undefined,
+            { workspaceType: "local", targetRoot: reconnectRoot, reason: "engine-refresh" },
             auth ?? undefined,
             { quiet: true, navigate: false },
           )
@@ -1174,8 +1176,8 @@ export function createWorkspaceStore(options: {
           if (nextInfo.baseUrl) {
             connectedToLocalHost = await connectToServer(
               nextInfo.baseUrl,
-              nextInfo.projectDir ?? undefined,
-              { reason: "workspace-attach-local" },
+              next.path,
+              { workspaceType: "local", targetRoot: next.path, reason: "workspace-attach-local" },
               auth,
               { navigate: false },
             );
@@ -1232,8 +1234,8 @@ export function createWorkspaceStore(options: {
             if (newInfo.baseUrl) {
               const ok = await connectToServer(
                 newInfo.baseUrl,
-                newInfo.projectDir ?? undefined,
-                { reason: "workspace-orchestrator-switch" },
+                next.path,
+                { workspaceType: "local", targetRoot: next.path, reason: "workspace-orchestrator-switch" },
                 auth,
                 { navigate: false },
               );
@@ -1267,8 +1269,8 @@ export function createWorkspaceStore(options: {
             if (newInfo.baseUrl) {
               const ok = await connectToServer(
                 newInfo.baseUrl,
-                newInfo.projectDir ?? undefined,
-                { reason: "workspace-restart" },
+                next.path,
+                { workspaceType: "local", targetRoot: next.path, reason: "workspace-restart" },
                 auth,
                 { navigate: false },
               );
@@ -1363,7 +1365,11 @@ export function createWorkspaceStore(options: {
       const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
 
       try {
-        let resolvedDirectory = directory?.trim() ?? "";
+        let resolvedDirectory = resolveScopedClientDirectory({
+          directory,
+          targetRoot: context?.targetRoot,
+          workspaceType: context?.workspaceType ?? "local",
+        });
         let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
         const healthTimeoutMs = resolveConnectHealthTimeoutMs(context?.reason);
         const health = await waitForHealthy(nextClient, { timeoutMs: healthTimeoutMs });
@@ -2855,16 +2861,16 @@ export function createWorkspaceStore(options: {
       const auth = username && password ? { username, password } : undefined;
       setEngineAuth(auth ?? null);
 
-       if (info.baseUrl) {
-         const ok = await connectToServer(
-           info.baseUrl,
-           info.projectDir ?? undefined,
-           { reason: "host-start" },
-           auth,
-           { navigate: optionsOverride?.navigate ?? true },
-         );
-         if (!ok) return false;
-       }
+      if (info.baseUrl) {
+        const ok = await connectToServer(
+          info.baseUrl,
+          dir,
+          { workspaceType: "local", targetRoot: dir, reason: "host-start" },
+          auth,
+          { navigate: optionsOverride?.navigate ?? true },
+        );
+        if (!ok) return false;
+      }
 
       markOnboardingComplete();
       return true;
@@ -3022,8 +3028,8 @@ export function createWorkspaceStore(options: {
         if (nextInfo.baseUrl) {
           const ok = await connectToServer(
             nextInfo.baseUrl,
-            nextInfo.projectDir ?? undefined,
-            { reason: "engine-reload-orchestrator" },
+            root,
+            { workspaceType: "local", targetRoot: root, reason: "engine-reload-orchestrator" },
             auth,
           );
           if (!ok) {
@@ -3057,8 +3063,8 @@ export function createWorkspaceStore(options: {
       if (nextInfo.baseUrl) {
         const ok = await connectToServer(
           nextInfo.baseUrl,
-          nextInfo.projectDir ?? undefined,
-          { reason: "engine-reload" },
+          root,
+          { workspaceType: "local", targetRoot: root, reason: "engine-reload" },
           auth,
         );
         if (!ok) {
@@ -3343,11 +3349,12 @@ export function createWorkspaceStore(options: {
       options.setStartupPreference("local");
 
       if (info?.running && info.baseUrl) {
+        const bootstrapRoot = activeWorkspacePath().trim() || info.projectDir?.trim() || "";
         options.setOnboardingStep("connecting");
         const ok = await connectToServer(
           info.baseUrl,
-          info.projectDir ?? undefined,
-          { reason: "bootstrap-local" },
+          bootstrapRoot || undefined,
+          { workspaceType: "local", targetRoot: bootstrapRoot, reason: "bootstrap-local" },
           engineAuth() ?? undefined,
         );
         if (!ok) {
@@ -3417,10 +3424,11 @@ export function createWorkspaceStore(options: {
   async function onAttachHost() {
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
+    const attachRoot = activeWorkspacePath().trim() || engine()?.projectDir?.trim() || "";
     const ok = await connectToServer(
       engine()?.baseUrl ?? "",
-      engine()?.projectDir ?? undefined,
-      { reason: "attach-local" },
+      attachRoot || undefined,
+      { workspaceType: "local", targetRoot: attachRoot, reason: "attach-local" },
       engineAuth() ?? undefined,
     );
     if (!ok) {

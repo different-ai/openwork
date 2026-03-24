@@ -161,6 +161,10 @@ import {
   normalizeModelBehaviorValue,
   sanitizeModelBehaviorValue,
 } from "./lib/model-behavior";
+import {
+  shouldApplyScopedSessionLoad,
+  shouldRedirectMissingSessionAfterScopedLoad,
+} from "./lib/session-scope";
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -1499,6 +1503,7 @@ export default function App() {
 
   const {
     sessions,
+    loadedScopeRoot: loadedSessionScopeRoot,
     sessionById,
     sessionStatusById,
     selectedSession,
@@ -3331,6 +3336,21 @@ export default function App() {
           ? activeWorkspace.path
           : activeWorkspace?.directory ?? activeWorkspace?.path,
       );
+      if (
+        !shouldApplyScopedSessionLoad({
+          loadedScopeRoot: loadedSessionScopeRoot(),
+          workspaceRoot: activeWorkspaceRoot,
+        })
+      ) {
+        if (developerMode()) {
+          console.log("[sidebar-sync] skip stale session scope", {
+            wsId,
+            loadedScopeRoot: loadedSessionScopeRoot(),
+            activeWorkspaceRoot,
+          });
+        }
+        return;
+      }
       const scopedSessions = activeWorkspaceRoot
         ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
         : allSessions;
@@ -7774,7 +7794,14 @@ export default function App() {
 
       // If the URL points at a session that no longer exists (e.g. after deletion),
       // route back to /session so the app can fall back safely.
-      if (sessionsLoaded() && !sessions().some((session) => session.id === id)) {
+      if (
+        sessionsLoaded() &&
+        shouldRedirectMissingSessionAfterScopedLoad({
+          loadedScopeRoot: loadedSessionScopeRoot(),
+          workspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          hasMatchingSession: sessions().some((session) => session.id === id),
+        })
+      ) {
         if (selectedSessionId() === id) {
           setSelectedSessionId(null);
         }
