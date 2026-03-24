@@ -92,7 +92,7 @@ This is a minimal packaging template to run the OpenWork Host contract in a sing
 It runs:
 
 - `opencode serve` (engine) bound to `127.0.0.1:4096` inside the container
-- `openwork-server` bound to `0.0.0.0:8787` (the only published surface)
+- `openwork-server` published on `0.0.0.0:8787` via an explicit `--remote-access` launch path (the only published surface)
 
 ### Local run (compose)
 

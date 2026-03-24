@@ -13,6 +13,7 @@ pub struct OpenworkServerManager {
 pub struct OpenworkServerState {
     pub child: Option<CommandChild>,
     pub child_exited: bool,
+    pub remote_access_enabled: bool,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub base_url: Option<String>,
@@ -39,6 +40,7 @@ impl OpenworkServerManager {
 
         OpenworkServerInfo {
             running,
+            remote_access_enabled: state.remote_access_enabled,
             host: state.host.clone(),
             port: state.port,
             base_url: state.base_url.clone(),
@@ -59,6 +61,7 @@ impl OpenworkServerManager {
             let _ = child.kill();
         }
         state.child_exited = true;
+        state.remote_access_enabled = false;
         state.host = None;
         state.port = None;
         state.base_url = None;

@@ -146,6 +146,9 @@ export type SessionViewProps = {
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
+  shareRemoteAccessBusy: boolean;
+  shareRemoteAccessError: string | null;
+  saveShareRemoteAccess: (enabled: boolean) => Promise<void>;
   openworkServerWorkspaceId: string | null;
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
@@ -3007,6 +3010,9 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
+      if (props.openworkServerHostInfo?.remoteAccessEnabled !== true) {
+        return [];
+      }
       const hostUrl =
         props.openworkServerHostInfo?.connectUrl?.trim() ||
         props.openworkServerHostInfo?.lanUrl?.trim() ||
@@ -4816,6 +4822,14 @@ export default function SessionView(props: SessionViewProps) {
         workspaceName={shareWorkspaceName()}
         workspaceDetail={shareWorkspaceDetail()}
         fields={shareFields()}
+        remoteAccess={shareWorkspace()?.workspaceType === "local"
+          ? {
+              enabled: props.openworkServerHostInfo?.remoteAccessEnabled === true,
+              busy: props.shareRemoteAccessBusy,
+              error: props.shareRemoteAccessError,
+              onSave: props.saveShareRemoteAccess,
+            }
+          : undefined}
         note={shareNote()}
         publisherBaseUrl={DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
         onShareWorkspaceProfile={publishWorkspaceProfileLink}

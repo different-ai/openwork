@@ -86,6 +86,7 @@ export type OpenworkServerSettings = {
   urlOverride?: string;
   portOverride?: number;
   token?: string;
+  remoteAccessEnabled?: boolean;
 };
 
 export type OpenworkWorkspaceInfo = WorkspaceInfo & {
@@ -526,6 +527,7 @@ export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
+const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 export function normalizeOpenworkServerUrl(input: string) {
   const trimmed = input.trim();
@@ -827,10 +829,12 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
+    const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
       portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
       token: token?.trim() || undefined,
+      remoteAccessEnabled: remoteAccessRaw === "1",
     };
   } catch {
     return {};
@@ -843,6 +847,7 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     const urlOverride = normalizeOpenworkServerUrl(next.urlOverride ?? "");
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
+    const remoteAccessEnabled = next.remoteAccessEnabled === true;
 
     if (urlOverride) {
       window.localStorage.setItem(STORAGE_URL_OVERRIDE, urlOverride);
@@ -860,6 +865,12 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.setItem(STORAGE_TOKEN, token);
     } else {
       window.localStorage.removeItem(STORAGE_TOKEN);
+    }
+
+    if (remoteAccessEnabled) {
+      window.localStorage.setItem(STORAGE_REMOTE_ACCESS, "1");
+    } else {
+      window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
     }
 
     return readOpenworkServerSettings();
@@ -920,6 +931,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
+    window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore
   }

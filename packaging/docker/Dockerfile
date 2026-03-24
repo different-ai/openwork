@@ -29,7 +29,7 @@ EXPOSE 3005
 VOLUME ["/workspace", "/data"]
 
 # Defaults:
-# - OpenWork server is public (0.0.0.0:8787)
+# - OpenWork server is published intentionally via --remote-access
 # - OpenCode stays internal (127.0.0.1:4096)
 # - OpenWork server proxies OpenCode via localhost
 # - OpenCode Router disabled by default
@@ -37,7 +37,7 @@ CMD [
   "openwork",
   "serve",
   "--workspace", "/workspace",
-  "--openwork-host", "0.0.0.0",
+  "--remote-access",
   "--openwork-port", "8787",
   "--opencode-host", "127.0.0.1",
   "--opencode-port", "4096",

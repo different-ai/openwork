@@ -96,6 +96,7 @@ export type SettingsViewProps = {
   openworkServerUrl: string;
   openworkReconnectBusy: boolean;
   reconnectOpenworkServer: () => Promise<boolean>;
+  openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
@@ -747,7 +748,10 @@ export default function SettingsView(props: SettingsViewProps) {
     setOpenworkServerRestarting(true);
     setOpenworkServerRestartError(null);
     try {
-      await openworkServerRestart();
+      await openworkServerRestart({
+        remoteAccessEnabled:
+          props.openworkServerSettings.remoteAccessEnabled === true,
+      });
       await props.reconnectOpenworkServer();
     } catch (e) {
       setOpenworkServerRestartError(e instanceof Error ? e.message : String(e));
@@ -761,7 +765,11 @@ export default function SettingsView(props: SettingsViewProps) {
     setOpencodeRestarting(true);
     setOpencodeRestartError(null);
     try {
-      await engineRestart({ opencodeEnableExa: props.opencodeEnableExa });
+      await engineRestart({
+        opencodeEnableExa: props.opencodeEnableExa,
+        openworkRemoteAccess:
+          props.openworkServerSettings.remoteAccessEnabled === true,
+      });
       await props.reconnectOpenworkServer();
     } catch (e) {
       setOpencodeRestartError(e instanceof Error ? e.message : String(e));

@@ -96,7 +96,7 @@ services:
 
         exec pnpm --filter openwork-orchestrator dev -- start \
           --workspace /workspace \
-          --openwork-host 0.0.0.0 \
+          --remote-access \
           --openwork-port 8787 \
           --openwork-token "$$OPENWORK_TOKEN" \
           --openwork-host-token "$$OPENWORK_HOST_TOKEN" \
@@ -104,7 +104,6 @@ services:
           --opencode-router-bin "$$OPENCODE_ROUTER_BIN" \
           --approval auto \
           --allow-external \
-          --no-opencode-auth \
           --cors "*"
     ports:
       - "${OPENWORK_PORT:-8787}:8787"

@@ -19,6 +19,7 @@ export type EngineInfo = {
 
 export type OpenworkServerInfo = {
   running: boolean;
+  remoteAccessEnabled: boolean;
   host: string | null;
   port: number | null;
   baseUrl: string | null;
@@ -145,6 +146,7 @@ export async function engineStart(
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
     opencodeEnableExa?: boolean;
+    openworkRemoteAccess?: boolean;
   },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
@@ -152,6 +154,7 @@ export async function engineStart(
     preferSidecar: options?.preferSidecar ?? false,
     opencodeBinPath: options?.opencodeBinPath ?? null,
     opencodeEnableExa: options?.opencodeEnableExa ?? null,
+    openworkRemoteAccess: options?.openworkRemoteAccess ?? null,
     runtime: options?.runtime ?? null,
     workspacePaths: options?.workspacePaths ?? null,
   });
@@ -366,9 +369,11 @@ export async function engineStop(): Promise<EngineInfo> {
 
 export async function engineRestart(options?: {
   opencodeEnableExa?: boolean;
+  openworkRemoteAccess?: boolean;
 }): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_restart", {
     opencodeEnableExa: options?.opencodeEnableExa ?? null,
+    openworkRemoteAccess: options?.openworkRemoteAccess ?? null,
   });
 }
 
@@ -514,8 +519,12 @@ export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
   return invoke<OpenworkServerInfo>("openwork_server_info");
 }
 
-export async function openworkServerRestart(): Promise<OpenworkServerInfo> {
-  return invoke<OpenworkServerInfo>("openwork_server_restart");
+export async function openworkServerRestart(options?: {
+  remoteAccessEnabled?: boolean;
+}): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_restart", {
+    remoteAccessEnabled: options?.remoteAccessEnabled ?? null,
+  });
 }
 
 export async function engineInfo(): Promise<EngineInfo> {

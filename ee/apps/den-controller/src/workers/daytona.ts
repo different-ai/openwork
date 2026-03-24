@@ -124,7 +124,7 @@ function buildOpenWorkStartCommand(input: ProvisionInput) {
     shellQuote(input.activityToken),
     " openwork serve",
     ` --workspace ${shellQuote(env.daytona.runtimeWorkspacePath)}`,
-    ` --openwork-host 0.0.0.0`,
+    ` --remote-access`,
     ` --openwork-port ${env.daytona.openworkPort}`,
     ` --opencode-host 127.0.0.1`,
     ` --opencode-port ${env.daytona.opencodePort}`,

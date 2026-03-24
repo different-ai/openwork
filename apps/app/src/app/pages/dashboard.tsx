@@ -121,6 +121,9 @@ export type DashboardViewProps = {
   reconnectOpenworkServer: () => Promise<boolean>;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
+  shareRemoteAccessBusy: boolean;
+  shareRemoteAccessError: string | null;
+  saveShareRemoteAccess: (enabled: boolean) => Promise<void>;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerWorkspaceId: string | null;
@@ -685,6 +688,9 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
+      if (props.openworkServerHostInfo?.remoteAccessEnabled !== true) {
+        return [];
+      }
       const hostUrl =
         props.openworkServerHostInfo?.connectUrl?.trim() ||
         props.openworkServerHostInfo?.lanUrl?.trim() ||
@@ -1355,6 +1361,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerUrl={props.openworkServerUrl}
                   openworkReconnectBusy={props.openworkReconnectBusy}
                   reconnectOpenworkServer={props.reconnectOpenworkServer}
+                  openworkServerSettings={props.openworkServerSettings}
                   openworkServerHostInfo={props.openworkServerHostInfo}
                   openworkServerCapabilities={props.openworkServerCapabilities}
                   openworkServerDiagnostics={props.openworkServerDiagnostics}
@@ -1512,6 +1519,14 @@ export default function DashboardView(props: DashboardViewProps) {
           workspaceName={shareWorkspaceName()}
           workspaceDetail={shareWorkspaceDetail()}
           fields={shareFields()}
+          remoteAccess={shareWorkspace()?.workspaceType === "local"
+            ? {
+                enabled: props.openworkServerHostInfo?.remoteAccessEnabled === true,
+                busy: props.shareRemoteAccessBusy,
+                error: props.shareRemoteAccessError,
+                onSave: props.saveShareRemoteAccess,
+              }
+            : undefined}
           note={shareNote()}
           publisherBaseUrl={DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
           onShareWorkspaceProfile={publishWorkspaceProfileLink}

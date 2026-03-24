@@ -8,11 +8,11 @@ use tauri_plugin_shell::ShellExt;
 
 const DEFAULT_OPENWORK_PORT: u16 = 8787;
 
-pub fn resolve_openwork_port() -> Result<u16, String> {
-    if TcpListener::bind(("0.0.0.0", DEFAULT_OPENWORK_PORT)).is_ok() {
+pub fn resolve_openwork_port(host: &str) -> Result<u16, String> {
+    if TcpListener::bind((host, DEFAULT_OPENWORK_PORT)).is_ok() {
         return Ok(DEFAULT_OPENWORK_PORT);
     }
-    let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
+    let listener = TcpListener::bind((host, 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)
 }

@@ -198,11 +198,6 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
     (connect_url, mdns_url, lan_url)
 }
 
-pub fn resolve_connect_url(port: u16) -> Option<String> {
-    let (connect_url, _mdns_url, _lan_url) = build_urls(port);
-    connect_url
-}
-
 pub fn start_openwork_server(
     app: &AppHandle,
     manager: &OpenworkServerManager,
@@ -211,6 +206,7 @@ pub fn start_openwork_server(
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
+    remote_access_enabled: bool,
 ) -> Result<OpenworkServerInfo, String> {
     let mut state = manager
         .inner
@@ -218,8 +214,12 @@ pub fn start_openwork_server(
         .map_err(|_| "openwork server mutex poisoned".to_string())?;
     OpenworkServerManager::stop_locked(&mut state);
 
-    let host = "0.0.0.0".to_string();
-    let port = resolve_openwork_port()?;
+    let host = if remote_access_enabled {
+        "0.0.0.0".to_string()
+    } else {
+        "127.0.0.1".to_string()
+    };
+    let port = resolve_openwork_port(&host)?;
     let active_workspace = workspace_paths
         .first()
         .map(|path| path.as_str())
@@ -248,6 +248,7 @@ pub fn start_openwork_server(
 
     state.child = Some(child);
     state.child_exited = false;
+    state.remote_access_enabled = remote_access_enabled;
     state.host = Some(host.clone());
     state.port = Some(port);
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
@@ -255,7 +256,11 @@ pub fn start_openwork_server(
         .base_url
         .clone()
         .unwrap_or_else(|| format!("http://127.0.0.1:{port}"));
-    let (connect_url, mdns_url, lan_url) = build_urls(port);
+    let (connect_url, mdns_url, lan_url) = if remote_access_enabled {
+        build_urls(port)
+    } else {
+        (None, None, None)
+    };
     state.connect_url = connect_url;
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;

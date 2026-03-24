@@ -95,6 +95,7 @@ pub struct EngineInfo {
 #[serde(rename_all = "camelCase")]
 pub struct OpenworkServerInfo {
     pub running: bool,
+    pub remote_access_enabled: bool,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub base_url: Option<String>,

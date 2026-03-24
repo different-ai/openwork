@@ -10,7 +10,7 @@ use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::openwork_server::{
-    manager::OpenworkServerManager, resolve_connect_url, start_openwork_server,
+    manager::OpenworkServerManager, start_openwork_server,
 };
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
@@ -19,6 +19,8 @@ use crate::utils::truncate_output;
 use serde_json::json;
 use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
+
+const MANAGED_OPENCODE_CREDENTIAL_LENGTH: usize = 512;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -88,6 +90,22 @@ struct OutputState {
     stderr: String,
     exited: bool,
     exit_code: Option<i32>,
+}
+
+fn generate_managed_opencode_secret() -> String {
+    let mut value = String::with_capacity(MANAGED_OPENCODE_CREDENTIAL_LENGTH);
+    while value.len() < MANAGED_OPENCODE_CREDENTIAL_LENGTH {
+        value.push_str(&Uuid::new_v4().simple().to_string());
+    }
+    value.truncate(MANAGED_OPENCODE_CREDENTIAL_LENGTH);
+    value
+}
+
+fn generate_managed_opencode_credentials() -> (String, String) {
+    (
+        generate_managed_opencode_secret(),
+        generate_managed_opencode_secret(),
+    )
 }
 
 #[tauri::command]
@@ -186,6 +204,7 @@ pub fn engine_restart(
     openwork_manager: State<OpenworkServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
     opencode_enable_exa: Option<bool>,
+    openwork_remote_access: Option<bool>,
 ) -> Result<EngineInfo, String> {
     let (project_dir, runtime) = {
         let state = manager.inner.lock().expect("engine mutex poisoned");
@@ -209,6 +228,7 @@ pub fn engine_restart(
         None,
         None,
         opencode_enable_exa,
+        openwork_remote_access,
         Some(runtime),
         Some(workspace_paths),
     )
@@ -310,6 +330,7 @@ pub fn engine_start(
     prefer_sidecar: Option<bool>,
     opencode_bin_path: Option<String>,
     opencode_enable_exa: Option<bool>,
+    openwork_remote_access: Option<bool>,
     runtime: Option<EngineRuntime>,
     workspace_paths: Option<Vec<String>>,
 ) -> Result<EngineInfo, String> {
@@ -343,27 +364,15 @@ pub fn engine_start(
     workspace_paths.retain(|path| path.trim() != project_dir);
     workspace_paths.insert(0, project_dir.clone());
 
-    let bind_host = std::env::var("OPENWORK_OPENCODE_BIND_HOST")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "0.0.0.0".to_string());
+    let bind_host = "127.0.0.1".to_string();
     let client_host = "127.0.0.1".to_string();
     let port = find_free_port()?;
     let dev_mode = openwork_dev_mode_enabled();
-    let enable_auth = std::env::var("OPENWORK_OPENCODE_AUTH")
-        .ok()
-        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
-    let opencode_username = if enable_auth {
-        Some("opencode".to_string())
-    } else {
-        None
-    };
-    let opencode_password = if enable_auth {
-        Some(Uuid::new_v4().to_string())
-    } else {
-        None
-    };
+    let openwork_remote_access_enabled = openwork_remote_access.unwrap_or(false);
+    let (managed_opencode_username, managed_opencode_password) =
+        generate_managed_opencode_credentials();
+    let opencode_username = Some(managed_opencode_username);
+    let opencode_password = Some(managed_opencode_password);
 
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
     EngineManager::stop_locked(&mut state);
@@ -505,8 +514,7 @@ pub fn engine_start(
             .ok_or_else(|| "Orchestrator did not report OpenCode status".to_string())?;
         let opencode_port = opencode.port;
         let opencode_base_url = format!("http://127.0.0.1:{opencode_port}");
-        let opencode_connect_url =
-            resolve_connect_url(opencode_port).unwrap_or_else(|| opencode_base_url.clone());
+        let opencode_connect_url = opencode_base_url.clone();
 
         if let Ok(mut state) = manager.inner.lock() {
             state.runtime = EngineRuntime::Orchestrator;
@@ -543,6 +551,7 @@ pub fn engine_start(
             opencode_username.as_deref(),
             opencode_password.as_deref(),
             opencode_router_health_port,
+            openwork_remote_access_enabled,
         ) {
             if let Ok(mut state) = manager.inner.lock() {
                 state.last_stderr =
@@ -705,7 +714,7 @@ pub fn engine_start(
     state.opencode_password = opencode_password.clone();
 
     let opencode_connect_url =
-        resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
+        format!("http://{client_host}:{port}");
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {
@@ -725,6 +734,7 @@ pub fn engine_start(
         opencode_username.as_deref(),
         opencode_password.as_deref(),
         opencode_router_health_port,
+        openwork_remote_access_enabled,
     ) {
         state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
     }

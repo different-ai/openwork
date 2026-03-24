@@ -941,6 +941,8 @@ export default function App() {
   const [clientDirectory, setClientDirectory] = createSignal("");
 
   const [openworkServerSettings, setOpenworkServerSettings] = createSignal<OpenworkServerSettings>({});
+  const [shareRemoteAccessBusy, setShareRemoteAccessBusy] = createSignal(false);
+  const [shareRemoteAccessError, setShareRemoteAccessError] = createSignal<string | null>(null);
   const [openworkServerUrl, setOpenworkServerUrl] = createSignal("");
   const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
   const [openworkServerCapabilities, setOpenworkServerCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
@@ -4066,6 +4068,39 @@ export default function App() {
     const stored = writeOpenworkServerSettings(next);
     setOpenworkServerSettings(stored);
   }
+
+  const saveShareRemoteAccess = async (enabled: boolean) => {
+    if (shareRemoteAccessBusy()) return;
+    const previous = openworkServerSettings();
+    const next: OpenworkServerSettings = {
+      ...previous,
+      remoteAccessEnabled: enabled,
+    };
+
+    setShareRemoteAccessBusy(true);
+    setShareRemoteAccessError(null);
+    updateOpenworkServerSettings(next);
+
+    try {
+      if (isTauriRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local") {
+        const restarted = await restartLocalServer();
+        if (!restarted) {
+          throw new Error("Failed to restart the local worker with the updated sharing setting.");
+        }
+        await reconnectOpenworkServer();
+      }
+    } catch (error) {
+      updateOpenworkServerSettings(previous);
+      setShareRemoteAccessError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update remote access.",
+      );
+      return;
+    } finally {
+      setShareRemoteAccessBusy(false);
+    }
+  };
 
   const resetOpenworkServerSettings = () => {
     clearOpenworkServerSettings();
@@ -7269,6 +7304,9 @@ export default function App() {
       reconnectOpenworkServer,
       openworkServerSettings: openworkServerSettings(),
       openworkServerHostInfo: openworkServerHostInfo(),
+      shareRemoteAccessBusy: shareRemoteAccessBusy(),
+      shareRemoteAccessError: shareRemoteAccessError(),
+      saveShareRemoteAccess,
       openworkServerCapabilities: devtoolsCapabilities(),
       openworkServerDiagnostics: openworkServerDiagnostics(),
       openworkServerWorkspaceId: openworkServerWorkspaceId(),
@@ -7552,6 +7590,9 @@ export default function App() {
     openworkServerDiagnostics: openworkServerDiagnostics(),
     openworkServerSettings: openworkServerSettings(),
     openworkServerHostInfo: openworkServerHostInfo(),
+    shareRemoteAccessBusy: shareRemoteAccessBusy(),
+    shareRemoteAccessError: shareRemoteAccessError(),
+    saveShareRemoteAccess,
     openworkServerWorkspaceId: openworkServerWorkspaceId(),
     engineInfo: workspaceStore.engine(),
     engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,

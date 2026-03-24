@@ -6,7 +6,7 @@
 - Local-first, cloud-ready: OpenWork runs on your machine in one click. Send a message instantly.
 - Composable: desktop app, WhatsApp/Slack/Telegram connector, or server. Use what fits, no lock-in.
 - Ejectable: OpenWork is powered by OpenCode, so everything OpenCode can do works in OpenWork, even without a UI yet.
-- Sharing is caring: start solo, then share. One CLI or desktop command spins up an instantly shareable instance.
+- Sharing is caring: start solo on localhost, then explicitly opt into remote sharing when you need it.
 
 <p align="center">
   <img src="./app-demo.gif" alt="OpenWork demo" width="800" />

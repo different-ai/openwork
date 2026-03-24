@@ -279,6 +279,8 @@ pub fn spawn_orchestrator_daemon(
         command = command.env(key, value);
     }
 
+    command = command.env("OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS", "1");
+
     if options.dev_mode {
         command = command.env("OPENWORK_DEV_MODE", "1");
     }

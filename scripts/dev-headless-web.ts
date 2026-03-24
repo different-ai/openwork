@@ -116,7 +116,8 @@ const shutdown = (
 
 await ensureTmp();
 
-const host = process.env.OPENWORK_HOST ?? "0.0.0.0";
+const remoteAccessEnabled = readBool(process.env.OPENWORK_REMOTE_ACCESS);
+const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 const viteHost = process.env.VITE_HOST ?? process.env.HOST ?? host;
 const publicHost = process.env.OPENWORK_PUBLIC_HOST ?? null;
 const clientHost = publicHost ?? (host === "0.0.0.0" ? "127.0.0.1" : host);
@@ -233,6 +234,7 @@ const headlessEnv = {
   ...process.env,
   OPENWORK_WORKSPACE: workspace,
   OPENWORK_HOST: host,
+  OPENWORK_REMOTE_ACCESS: remoteAccessEnabled ? "1" : "0",
   OPENWORK_PORT: String(openworkPort),
   OPENWORK_TOKEN: openworkToken,
   OPENWORK_HOST_TOKEN: openworkHostToken,
@@ -294,12 +296,10 @@ const headlessProcess = spawnLogged(
     "--approval",
     "auto",
     "--allow-external",
-    "--no-opencode-auth",
     "--opencode-router",
     opencodeRouterEnabled ? "true" : "false",
     ...(opencodeRouterRequired ? ["--opencode-router-required"] : []),
-    "--openwork-host",
-    host,
+    ...(remoteAccessEnabled ? ["--remote-access"] : []),
     "--openwork-port",
     String(openworkPort),
     "--openwork-token",

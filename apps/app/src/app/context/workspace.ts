@@ -1252,6 +1252,7 @@ export function createWorkspaceStore(options: {
             opencodeBinPath:
               options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
             opencodeEnableExa: options.opencodeEnableExa?.() ?? false,
+            openworkRemoteAccess: options.openworkServerSettings().remoteAccessEnabled === true,
             runtime,
             workspacePaths: resolveWorkspacePaths(),
           });
@@ -2843,6 +2844,7 @@ export function createWorkspaceStore(options: {
         opencodeBinPath:
           options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
         opencodeEnableExa: options.opencodeEnableExa?.() ?? false,
+        openworkRemoteAccess: options.openworkServerSettings().remoteAccessEnabled === true,
         runtime: resolveEngineRuntime(),
         workspacePaths: resolveWorkspacePaths(),
       });
@@ -3041,6 +3043,7 @@ export function createWorkspaceStore(options: {
         opencodeBinPath:
           options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
         opencodeEnableExa: options.opencodeEnableExa?.() ?? false,
+        openworkRemoteAccess: options.openworkServerSettings().remoteAccessEnabled === true,
         runtime,
         workspacePaths: resolveWorkspacePaths(),
       });

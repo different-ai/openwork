@@ -21,6 +21,7 @@ pub fn openwork_server_restart(
     manager: State<OpenworkServerManager>,
     engine_manager: State<EngineManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
+    remote_access_enabled: Option<bool>,
 ) -> Result<OpenworkServerInfo, String> {
     let (workspace_path, opencode_url, opencode_username, opencode_password) = {
         let engine = engine_manager
@@ -52,5 +53,6 @@ pub fn openwork_server_restart(
         opencode_username.as_deref(),
         opencode_password.as_deref(),
         opencode_router_health_port,
+        remote_access_enabled.unwrap_or(false),
     )
 }

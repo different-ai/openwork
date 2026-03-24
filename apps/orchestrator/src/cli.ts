@@ -4,7 +4,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
-import { randomUUID, createHash } from "node:crypto";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
 import {
   chmod,
   copyFile,
@@ -130,7 +130,9 @@ declare const __OPENWORK_ORCHESTRATOR_VERSION__: string | undefined;
 declare const __OPENWORK_PINNED_OPENCODE_VERSION__: string | undefined;
 const DEFAULT_OPENWORK_PORT = 8787;
 const DEFAULT_APPROVAL_TIMEOUT = 30000;
-const DEFAULT_OPENCODE_USERNAME = "opencode";
+const MANAGED_OPENCODE_CREDENTIAL_LENGTH = 512;
+const INTERNAL_OPENCODE_CREDENTIALS_ENV =
+  "OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
 const DEFAULT_ACTIVITY_WINDOW_MS = 5 * 60_000;
@@ -1211,6 +1213,129 @@ function resolveConnectUrl(
 
 function encodeBasicAuth(username: string, password: string): string {
   return Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return (
+    normalized === "127.0.0.1" ||
+    normalized === "localhost" ||
+    normalized === "::1"
+  );
+}
+
+function randomCredential(length: number): string {
+  return randomBytes(Math.ceil(length / 2)).toString("hex").slice(0, length);
+}
+
+function generateManagedOpencodeCredentials(): {
+  username: string;
+  password: string;
+} {
+  return {
+    username: randomCredential(MANAGED_OPENCODE_CREDENTIAL_LENGTH),
+    password: randomCredential(MANAGED_OPENCODE_CREDENTIAL_LENGTH),
+  };
+}
+
+function resolveManagedOpencodeCredentials(args: ParsedArgs): {
+  username: string;
+  password: string;
+} {
+  const explicitUsernameFlag = args.flags.get("opencode-username");
+  const explicitPasswordFlag = args.flags.get("opencode-password");
+  const requestedUsername =
+    typeof explicitUsernameFlag === "string"
+      ? explicitUsernameFlag
+      : process.env.OPENWORK_OPENCODE_USERNAME ??
+        process.env.OPENCODE_SERVER_USERNAME;
+  const requestedPassword =
+    typeof explicitPasswordFlag === "string"
+      ? explicitPasswordFlag
+      : process.env.OPENWORK_OPENCODE_PASSWORD ??
+        process.env.OPENCODE_SERVER_PASSWORD;
+  const allowInjectedCredentials =
+    (process.env[INTERNAL_OPENCODE_CREDENTIALS_ENV] ?? "").trim() === "1";
+  const hasExplicitCredentialFlags =
+    typeof explicitUsernameFlag === "string" ||
+    typeof explicitPasswordFlag === "string";
+
+  if (
+    hasExplicitCredentialFlags &&
+    ((requestedUsername && !requestedPassword) ||
+      (!requestedUsername && requestedPassword))
+  ) {
+    throw new Error(
+      "OpenCode credentials must include both username and password.",
+    );
+  }
+
+  if (requestedUsername && requestedPassword && hasExplicitCredentialFlags) {
+    if (!allowInjectedCredentials) {
+      throw new Error(
+        "OpenCode credentials are managed by OpenWork. Custom --opencode-username/--opencode-password values are not supported.",
+      );
+    }
+    return {
+      username: requestedUsername,
+      password: requestedPassword,
+    };
+  }
+
+  if (requestedUsername && requestedPassword && allowInjectedCredentials) {
+    return {
+      username: requestedUsername,
+      password: requestedPassword,
+    };
+  }
+
+  return generateManagedOpencodeCredentials();
+}
+
+function assertManagedOpencodeAuth(args: ParsedArgs) {
+  const authEnabled = readBool(
+    args.flags,
+    "opencode-auth",
+    true,
+    "OPENWORK_OPENCODE_AUTH",
+  );
+  if (!authEnabled) {
+    throw new Error(
+      "OpenCode basic auth is always enabled when OpenWork launches OpenCode.",
+    );
+  }
+}
+
+function resolveManagedOpencodeHost(requestedHost?: string): string {
+  const normalized = requestedHost?.trim();
+  if (!normalized) return "127.0.0.1";
+  if (!isLoopbackHost(normalized)) {
+    throw new Error(
+      `OpenCode must stay on loopback. Unsupported --opencode-host value: ${normalized}`,
+    );
+  }
+  return normalized === "localhost" ? "127.0.0.1" : normalized;
+}
+
+function resolveOpenworkRemoteAccess(args: ParsedArgs): boolean {
+  const explicitHost =
+    readFlag(args.flags, "openwork-host") ?? process.env.OPENWORK_HOST;
+  const remoteAccessRequested =
+    readBool(args.flags, "remote-access", false, "OPENWORK_REMOTE_ACCESS") ||
+    explicitHost?.trim() === "0.0.0.0";
+
+  if (explicitHost) {
+    const normalized = explicitHost.trim();
+    if (!normalized) return remoteAccessRequested;
+    if (normalized === "0.0.0.0") return true;
+    if (!isLoopbackHost(normalized)) {
+      throw new Error(
+        `Unsupported --openwork-host value: ${normalized}. Use loopback by default or --remote-access for shared access.`,
+      );
+    }
+  }
+
+  return remoteAccessRequested;
 }
 
 function unwrap<T>(result: FieldsResult<T>): T {
@@ -3455,18 +3580,18 @@ function printHelp(): void {
     "  --daemon-host <host>      Host for orchestrator router daemon (default: 127.0.0.1)",
     "  --daemon-port <port>      Port for orchestrator router daemon (default: random)",
     "  --opencode-bin <path>     Path to opencode binary (requires --allow-external)",
-    "  --opencode-host <host>    Bind host for opencode serve (default: 0.0.0.0)",
+    "  --opencode-host <host>    Bind host for opencode serve (loopback only, default: 127.0.0.1)",
     "  --opencode-port <port>    Port for opencode serve (default: random)",
     "  --opencode-workdir <p>    Workdir for router-managed opencode serve",
-    "  --opencode-auth           Enable OpenCode basic auth (default: true)",
-    "  --no-opencode-auth        Disable OpenCode basic auth",
+    "  --opencode-auth           OpenCode basic auth is always enabled",
     "  --opencode-hot-reload     Enable OpenCode hot reload (default: true)",
     "  --opencode-hot-reload-debounce-ms <ms>  Debounce window for hot reload triggers (default: 700)",
     "  --opencode-hot-reload-cooldown-ms <ms>  Minimum interval between hot reloads (default: 1500)",
-    "  --opencode-username <u>   OpenCode basic auth username",
-    "  --opencode-password <p>   OpenCode basic auth password",
-    "  --openwork-host <host>    Bind host for openwork-server (default: 0.0.0.0)",
+    "  --opencode-username <u>   Internal-only override for managed OpenCode auth username",
+    "  --opencode-password <p>   Internal-only override for managed OpenCode auth password",
+    "  --openwork-host <host>    Bind host for openwork-server (default: 127.0.0.1)",
     "  --openwork-port <port>    Port for openwork-server (default: 8787)",
+    "  --remote-access           Expose OpenWork on 0.0.0.0 for remote sharing",
     "  --openwork-token <token>  Client token for openwork-server",
     "  --openwork-host-token <t> Host token for approvals",
     "  --workspace-id <id>       Workspace id for file session commands",
@@ -4227,7 +4352,7 @@ async function startDockerSandbox(options: {
     "--name",
     options.containerName,
     "-p",
-    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    `127.0.0.1:${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
     "-v",
     `${options.workspace}:/workspace`,
     "-v",
@@ -4272,7 +4397,7 @@ async function startDockerSandbox(options: {
   if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
     args.push(
       "-p",
-      `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`,
+      `127.0.0.1:${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`,
     );
   }
 
@@ -4389,7 +4514,7 @@ async function startAppleContainerSandbox(options: {
     "--name",
     options.containerName,
     "-p",
-    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    `127.0.0.1:${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
     "-v",
     `${options.workspace}:/workspace`,
     "-v",
@@ -4434,7 +4559,7 @@ async function startAppleContainerSandbox(options: {
   if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
     args.push(
       "-p",
-      `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`,
+      `127.0.0.1:${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`,
     );
   }
 
@@ -5165,11 +5290,7 @@ function buildAttachCommand(input: {
   password?: string;
 }): string {
   const parts: string[] = [];
-  if (
-    input.username &&
-    input.password &&
-    input.username !== DEFAULT_OPENCODE_USERNAME
-  ) {
+  if (input.username && input.password) {
     parts.push(`OPENCODE_SERVER_USERNAME=${input.username}`);
   }
   if (input.password) {
@@ -5241,8 +5362,10 @@ async function spawnRouterDaemon(
 
   const opencodeBin =
     readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
-  const opencodeHost =
-    readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST;
+  assertManagedOpencodeAuth(args);
+  const opencodeHost = resolveManagedOpencodeHost(
+    readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST,
+  );
   const opencodePort =
     readFlag(args.flags, "opencode-port") ?? process.env.OPENWORK_OPENCODE_PORT;
   const opencodeWorkdir =
@@ -5257,12 +5380,9 @@ async function spawnRouterDaemon(
   const opencodeHotReloadCooldownMs =
     readFlag(args.flags, "opencode-hot-reload-cooldown-ms") ??
     process.env.OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS;
-  const opencodeUsername =
-    readFlag(args.flags, "opencode-username") ??
-    process.env.OPENWORK_OPENCODE_USERNAME;
-  const opencodePassword =
-    readFlag(args.flags, "opencode-password") ??
-    process.env.OPENWORK_OPENCODE_PASSWORD;
+  const opencodeCredentials = resolveManagedOpencodeCredentials(args);
+  const opencodeUsername = opencodeCredentials.username;
+  const opencodePassword = opencodeCredentials.password;
   const corsValue =
     readFlag(args.flags, "cors") ?? process.env.OPENWORK_OPENCODE_CORS;
   const allowExternal = readBool(
@@ -5298,10 +5418,8 @@ async function spawnRouterDaemon(
       "--opencode-hot-reload-cooldown-ms",
       String(opencodeHotReloadCooldownMs),
     );
-  if (opencodeUsername)
-    commandArgs.push("--opencode-username", opencodeUsername);
-  if (opencodePassword)
-    commandArgs.push("--opencode-password", opencodePassword);
+  commandArgs.push("--opencode-username", opencodeCredentials.username);
+  commandArgs.push("--opencode-password", opencodeCredentials.password);
   if (corsValue) commandArgs.push("--cors", corsValue);
   if (allowExternal) commandArgs.push("--allow-external");
   if (sidecarSource) commandArgs.push("--sidecar-source", sidecarSource);
@@ -5559,24 +5677,16 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   const opencodeBin =
     readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
-  const opencodeHost =
-    readFlag(args.flags, "opencode-host") ??
-    process.env.OPENWORK_OPENCODE_HOST ??
-    "127.0.0.1";
-  const opencodePassword =
-    readFlag(args.flags, "opencode-password") ??
-    process.env.OPENWORK_OPENCODE_PASSWORD ??
-    process.env.OPENCODE_SERVER_PASSWORD;
-  const opencodeUsername =
-    readFlag(args.flags, "opencode-username") ??
-    process.env.OPENWORK_OPENCODE_USERNAME ??
-    process.env.OPENCODE_SERVER_USERNAME ??
-    DEFAULT_OPENCODE_USERNAME;
-  const authHeaders = opencodePassword
-    ? {
-        Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`,
-      }
-    : undefined;
+  assertManagedOpencodeAuth(args);
+  const opencodeHost = resolveManagedOpencodeHost(
+    readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST,
+  );
+  const opencodeCredentials = resolveManagedOpencodeCredentials(args);
+  const opencodeUsername = opencodeCredentials.username;
+  const opencodePassword = opencodeCredentials.password;
+  const authHeaders = {
+    Authorization: `Basic ${encodeBasicAuth(opencodeCredentials.username, opencodeCredentials.password)}`,
+  };
   const opencodePort = await resolvePort(
     readNumber(
       args.flags,
@@ -5713,8 +5823,8 @@ async function runRouterDaemon(args: ParsedArgs) {
       hotReload: opencodeHotReload,
       bindHost: opencodeHost,
       port: opencodePort,
-      username: opencodePassword ? opencodeUsername : undefined,
-      password: opencodePassword,
+      username: opencodeCredentials.username,
+      password: opencodeCredentials.password,
       corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
       logger,
       runId,
@@ -6642,10 +6752,11 @@ async function runStart(args: ParsedArgs) {
   const explicitOpenCodeRouterBin =
     readFlag(args.flags, "opencode-router-bin") ??
     process.env.OPENCODE_ROUTER_BIN;
-  const opencodeBindHost =
+  assertManagedOpencodeAuth(args);
+  const opencodeBindHost = resolveManagedOpencodeHost(
     readFlag(args.flags, "opencode-host") ??
-    process.env.OPENWORK_OPENCODE_BIND_HOST ??
-    "0.0.0.0";
+      process.env.OPENWORK_OPENCODE_BIND_HOST,
+  );
   const opencodePort =
     sandboxMode !== "none"
       ? SANDBOX_INTERNAL_OPENCODE_PORT
@@ -6671,27 +6782,12 @@ async function runStart(args: ParsedArgs) {
       cooldownMs: "OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
     },
   );
-  const opencodeAuth = readBool(
-    args.flags,
-    "opencode-auth",
-    true,
-    "OPENWORK_OPENCODE_AUTH",
-  );
-  const opencodeUsername = opencodeAuth
-    ? (readFlag(args.flags, "opencode-username") ??
-      process.env.OPENWORK_OPENCODE_USERNAME ??
-      DEFAULT_OPENCODE_USERNAME)
-    : undefined;
-  const opencodePassword = opencodeAuth
-    ? (readFlag(args.flags, "opencode-password") ??
-      process.env.OPENWORK_OPENCODE_PASSWORD ??
-      randomUUID())
-    : undefined;
+  const opencodeCredentials = resolveManagedOpencodeCredentials(args);
+  const opencodeUsername = opencodeCredentials.username;
+  const opencodePassword = opencodeCredentials.password;
 
-  const openworkHost =
-    readFlag(args.flags, "openwork-host") ??
-    process.env.OPENWORK_HOST ??
-    "0.0.0.0";
+  const remoteAccessEnabled = resolveOpenworkRemoteAccess(args);
+  const openworkHost = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
   const openworkPort = await resolvePort(
     readNumber(args.flags, "openwork-port", undefined, "OPENWORK_PORT"),
     "127.0.0.1",
@@ -6885,7 +6981,9 @@ async function runStart(args: ParsedArgs) {
   }
 
   const openworkBaseUrl = `http://127.0.0.1:${openworkPort}`;
-  const openworkConnect = resolveConnectUrl(openworkPort, connectHost);
+  const openworkConnect = remoteAccessEnabled
+    ? resolveConnectUrl(openworkPort, connectHost)
+    : {};
   const openworkConnectUrl = openworkConnect.connectUrl ?? openworkBaseUrl;
 
   const opencodeBaseUrl =
@@ -6895,8 +6993,7 @@ async function runStart(args: ParsedArgs) {
   const opencodeConnectUrl =
     sandboxMode !== "none"
       ? `${openworkConnectUrl.replace(/\/$/, "")}/opencode`
-      : (resolveConnectUrl(opencodePort, connectHost).connectUrl ??
-        opencodeBaseUrl);
+      : opencodeBaseUrl;
 
   const attachCommand =
     sandboxMode !== "none"
@@ -6905,7 +7002,7 @@ async function runStart(args: ParsedArgs) {
           url: opencodeConnectUrl,
           workspace: resolvedWorkspace,
           username: opencodeUsername,
-          password: opencodePassword,
+          password: opencodeCredentials.password,
         });
 
   const opencodeRouterHealthUrl = `http://127.0.0.1:${opencodeRouterHealthPort}`;
@@ -7042,7 +7139,7 @@ async function runStart(args: ParsedArgs) {
         headers:
           opencodeUsername && opencodePassword
             ? {
-                Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`,
+          Authorization: `Basic ${encodeBasicAuth(opencodeCredentials.username, opencodeCredentials.password)}`,
               }
             : undefined,
       }),
