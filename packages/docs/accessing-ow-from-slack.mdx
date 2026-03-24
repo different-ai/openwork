@@ -1,0 +1,101 @@
+---
+title: "Connecting you slack with your workspace"
+description: "Learn how to connect your slack with your workspace"
+---
+
+In order to connect `slack` with your openwork `workspace`, you will need:
+  1. Valid slack permissions
+  2. Create a simple slack app
+  3. Connect said slack app with your workspace 
+
+This is one of the most relevant and meaningful applications of Openwork, and we use it daily ourselves. 
+Disclaimer: _We recommend setting the slackbot with a remote workspace instead of in your local machine._
+_We use this setup ourselfs in order to ensure there's hardware isolation between what our ai can see and the files in our machine._
+_This prevents leaking private and confidential data in the event of an external attack that could exploit this connection._
+
+First, of all, you'll need to have valid slack permissions to add an app into your slack. 
+
+Then, go to [Create new app](https://api.slack.com/apps?new_app=1) in Slack. What you need to obtain are the xoxb (bot) and xoxp (user) tokens to paste into Openwork.
+
+# Creating a slack app
+
+1. Create the App Manifest: Go to api.slack.com/apps → Create New App → From a manifest → pick your workspace.
+Note: Sharing a template manifest at the end of this tutorial for you to copy directly
+
+You can share a `SKILL.md` by clicking under `Your_Workspace` \> `Skills`
+
+<Frame>
+  ![Skills management page showing installed skills](/images/sharing-skills-list.png)
+</Frame>
+
+Then, on `Create Link` which will create a custom page for the skill at `share.openwork.software/b/:skill_id`
+
+<Frame>
+  ![Create share link dialog for a skill](/images/sharing-create-link-dialog.png)
+</Frame>
+
+This creates a url that you can share with other people so they can `copy the skill` or `Open in Openwork`
+
+<Frame>
+  ![Shared skill page with Copy and Open in OpenWork buttons](/images/sharing-skill-share-page.png)
+</Frame>
+
+## Sharing your entire configuration
+
+OpenWork also allows you to share your entire configuration with others. That includes skills, MCPs, agents, unique LLM providers you might've added, and more.
+
+
+Click on the `...` next to the workspace name, then `Share ...` , then `Share a template`
+
+<Frame>
+  ![Share workspace dialog with template and remote options](/images/sharing-workspace-template-dialog.png)
+</Frame>
+
+# Template Manifest Example
+
+{
+    "display_information": {
+        "name": "MyBot",
+        "description": "Your description",
+        "background_color": "#000000"
+    },
+    "features": {
+        "bot_user": {
+            "display_name": "your-display-name",
+            "always_online": false
+        }
+    },
+    "oauth_config": {
+        "scopes": {
+            "bot": [
+                "assistant:write",
+                "app_mentions:read",
+                "channels:read",
+                "channels:history",
+                "chat:write",
+                "files:read",
+                "files:write",
+                "im:history",
+                "links:read",
+                "links:write",
+                "lists:read",
+                "lists:write"
+            ]
+        },
+        "pkce_enabled": false
+    },
+    "settings": {
+        "event_subscriptions": {
+            "bot_events": [
+                "app_mention",
+                "message.im"
+            ]
+        },
+        "interactivity": {
+            "is_enabled": true
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": true,
+        "token_rotation_enabled": false
+    }
+}
