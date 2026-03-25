@@ -33,6 +33,7 @@ import {
   sanitizeOpenworkTemplateConfig,
 } from "./blueprint-sessions.js";
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
+import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listTemplateFiles, planTemplateFiles, writeTemplateFiles } from "./template-files.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -5275,6 +5276,11 @@ async function materializeBlueprintSessions(workspace: WorkspaceInfo): Promise<{
     if (!sessionId) {
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }
+    seedOpencodeSessionMessages({
+      sessionId,
+      workspaceRoot: resolveOpencodeDirectory(workspace) ?? workspace.path,
+      messages: template.messages,
+    });
     created.push({ templateId: template.id, sessionId, title: template.title });
   }
 

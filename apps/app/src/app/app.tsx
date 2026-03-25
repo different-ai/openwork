@@ -2127,9 +2127,17 @@ export default function App() {
     };
   };
 
+  const [blueprintSeedMessagesBySessionId, setBlueprintSeedMessagesBySessionId] =
+    createSignal<Record<string, Array<{ role?: "assistant" | "user" | null; text?: string | null }>>>({});
+
   const blueprintSeedMessagesForSelectedSession = createMemo(() => {
     const sessionID = selectedSessionId();
     if (!sessionID) return [];
+
+    const fallback = blueprintSeedMessagesBySessionId()[sessionID];
+    if (Array.isArray(fallback) && fallback.length > 0) {
+      return fallback;
+    }
 
     const materialized = blueprintMaterializedSessions(resolvedActiveWorkspaceConfig());
     const match = materialized.find((item) => item.sessionId?.trim() === sessionID);
@@ -2150,6 +2158,7 @@ export default function App() {
     seeds: Array<{ role?: "assistant" | "user" | null; text?: string | null }>,
   ) => {
     if (!sessionID || seeds.length === 0) return list;
+    if (list.length > 0) return list;
     const existingIds = new Set(list.map((message) => messageIdFromInfo(message)));
     const synthetic = seeds
       .map((seed, index) => createSyntheticBlueprintSeedMessage(sessionID, index, seed))
@@ -5531,6 +5540,11 @@ export default function App() {
     const templates = blueprintSessions(config);
     const materialized = blueprintMaterializedSessions(config);
     const currentSessions = sessions();
+    const normalizedRoot = normalizeDirectoryPath(root);
+    const hasWorkspaceSessions = currentSessions.some((session) => {
+      const directory = typeof session.directory === "string" ? session.directory : "";
+      return normalizeDirectoryPath(directory) === normalizedRoot;
+    });
 
     if (!workspaceId || !client || !connected) return;
     if (!root) return;
@@ -5539,7 +5553,7 @@ export default function App() {
     if (selectedSessionId()) return;
     if (!templates.length) return;
     if (materialized.length > 0) return;
-    if (currentSessions.length > 0) return;
+    if (hasWorkspaceSessions) return;
     if (blueprintSessionMaterializeBusyByWorkspaceId()[workspaceId]) return;
     if (blueprintSessionMaterializeAttemptedByWorkspaceId()[workspaceId]) return;
 
@@ -5551,6 +5565,21 @@ export default function App() {
     void (async () => {
       try {
         const result = await client.materializeBlueprintSessions(workspaceId);
+        const templateMessages = new Map(
+          templates.map((template) => [template.id?.trim(), (template.messages ?? []).filter((entry) => entry?.text?.trim())] as const),
+        );
+        if (result.created.length > 0) {
+          setBlueprintSeedMessagesBySessionId((current) => {
+            const next = { ...current };
+            result.created.forEach((entry) => {
+              const messages = templateMessages.get(entry.templateId?.trim());
+              if (messages && messages.length > 0) {
+                next[entry.sessionId] = messages;
+              }
+            });
+            return next;
+          });
+        }
         setBlueprintSessionMaterializeAttemptedByWorkspaceId((current) => ({
           ...current,
           [workspaceId]: true,
@@ -5558,6 +5587,7 @@ export default function App() {
         await refreshActiveWorkspaceServerConfig(workspaceId);
         await loadSessionsWithReady(root || undefined);
         if (result.openSessionId) {
+          setView("session");
           await selectSession(result.openSessionId);
         }
       } catch (error) {
