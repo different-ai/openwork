@@ -51,6 +51,7 @@ Guidelines:
 - Local Tauri filesystem commands are a host-mode fallback, not the primary product surface.
 - If a feature cannot yet write through the OpenWork server, treat that as an architecture gap and close it before depending on direct local writes.
 - Reads can fall back locally when necessary, but writes should be designed around the OpenWork server path.
+- Local workspace bootstrap follows the same rule: starter and newly created local workspaces should be initialized through the OpenWork server contract, with Tauri only responsible for remembering/selecting the folder.
 
 ## Agent authority map
 

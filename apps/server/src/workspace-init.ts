@@ -136,6 +136,12 @@ type WorkspaceOpenworkConfig = {
   } | null;
 };
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function buildDefaultWorkspaceBlueprint(_preset: string): Record<string, unknown> {
   return {
     emptyState: {
@@ -303,20 +309,44 @@ async function ensureOpencodeConfig(workspaceRoot: string, preset: string): Prom
   await writeJsoncFile(path, next);
 }
 
+async function readWorkspaceOpenworkConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
+  const path = openworkConfigPath(workspaceRoot);
+  if (!(await exists(path))) return {};
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    throw new ApiError(422, "invalid_json", "Failed to parse openwork.json");
+  }
+}
+
 async function ensureWorkspaceOpenworkConfig(workspaceRoot: string, preset: string): Promise<void> {
   const path = openworkConfigPath(workspaceRoot);
-  if (await exists(path)) return;
   const now = Date.now();
+  const existing = await readWorkspaceOpenworkConfig(workspaceRoot);
+  const existingWorkspace = readRecord(existing.workspace);
+  const existingBlueprint = readRecord(existing.blueprint);
   const config: WorkspaceOpenworkConfig = {
-    version: 1,
+    ...(existing as WorkspaceOpenworkConfig),
+    version: typeof existing.version === "number" && Number.isFinite(existing.version) ? existing.version : 1,
     workspace: {
-      name: basename(workspaceRoot) || "Workspace",
-      createdAt: now,
-      preset,
+      name:
+        typeof existingWorkspace?.name === "string" && existingWorkspace.name.trim()
+          ? existingWorkspace.name
+          : basename(workspaceRoot) || "Workspace",
+      createdAt:
+        typeof existingWorkspace?.createdAt === "number"
+          ? existingWorkspace.createdAt
+          : now,
+      preset:
+        typeof existingWorkspace?.preset === "string" && existingWorkspace.preset.trim()
+          ? existingWorkspace.preset
+          : preset,
     },
-    authorizedRoots: [workspaceRoot],
-    blueprint: buildDefaultWorkspaceBlueprint(preset),
-    reload: null,
+    authorizedRoots: Array.isArray(existing.authorizedRoots) && existing.authorizedRoots.length > 0
+      ? existing.authorizedRoots
+      : [workspaceRoot],
+    blueprint: existingBlueprint ?? buildDefaultWorkspaceBlueprint(preset),
+    reload: existing.reload ?? null,
   };
   await ensureDir(join(workspaceRoot, ".opencode"));
   await writeFile(path, JSON.stringify(config, null, 2) + "\n", "utf8");

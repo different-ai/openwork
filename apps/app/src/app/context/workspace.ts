@@ -742,6 +742,16 @@ export function createWorkspaceStore(options: {
     return client;
   };
 
+  const waitForConnectedOpenworkServer = async (timeoutMs = 5000, pollMs = 100) => {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const client = resolveConnectedOpenworkServer();
+      if (client) return client;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    return null;
+  };
+
   const resolveActiveOpenworkWorkspace = () => {
     const client = resolveConnectedOpenworkServer();
     const workspaceId = options.runtimeWorkspaceId?.()?.trim() ?? "";
@@ -1727,7 +1737,6 @@ export function createWorkspaceStore(options: {
 
   const activateFreshLocalWorkspace = async (workspaceId: string | null, workspacePath: string) => {
     if (!workspaceId) {
-      await openEmptySession(workspacePath);
       return true;
     }
 
@@ -1740,7 +1749,6 @@ export function createWorkspaceStore(options: {
       return false;
     }
 
-    await openEmptySession(selectedWorkspaceRoot().trim() || workspacePath);
     return true;
   };
 
@@ -1796,6 +1804,31 @@ export function createWorkspaceStore(options: {
       if (!opened) {
         return false;
       }
+
+      if (!openworkServer) {
+        const connectedOpenworkServer = await waitForConnectedOpenworkServer();
+        if (!connectedOpenworkServer) {
+          throw new Error("OpenWork server did not become ready after starting the local worker.");
+        }
+
+        const synced = await connectedOpenworkServer.createLocalWorkspace({
+          folderPath: resolvedFolder,
+          name,
+          preset,
+        });
+        const syncedSelectedId = pickSelectedWorkspaceId(
+          synced.workspaces,
+          [nextSelectedId, resolveWorkspaceListSelectedId(synced)],
+          synced,
+        );
+        applyServerLocalWorkspaces(synced.workspaces, syncedSelectedId);
+        if (syncedSelectedId) {
+          syncSelectedWorkspaceId(syncedSelectedId);
+          updateWorkspaceConnectionState(syncedSelectedId, { status: "connected", message: null });
+        }
+      }
+
+      await openEmptySession(selectedWorkspaceRoot().trim() || resolvedFolder);
 
       markOnboardingComplete();
 

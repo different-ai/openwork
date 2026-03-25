@@ -6,7 +6,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceOpenworkConfig, WorkspaceType,
 };
-use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
     load_workspace_state, normalize_local_workspace_path, save_workspace_state,
     stable_workspace_id, stable_workspace_id_for_openwork, stable_workspace_id_for_remote,
@@ -248,8 +247,6 @@ pub fn workspace_create(
     folder = normalize_local_workspace_path(&folder);
 
     let id = stable_workspace_id(&folder);
-
-    ensure_workspace_files(&folder, &preset)?;
 
     let mut state = load_workspace_state(&app)?;
 
