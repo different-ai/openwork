@@ -25,14 +25,11 @@ package() {
   # Extract the internal data archive directly to the cwd.
   bsdtar -O -xf "${pkgname}-${pkgver}.deb" 'data.tar*' | bsdtar -C "${pkgdir}" -xf -
 
-  # Remove the bundled opencode binary from the package staging dir if
-  # opencode-bin is already installed on the system. Both packages install
-  # /usr/bin/opencode and pacman will abort with a file conflict otherwise.
-  # openwork does not require this binary to be in PATH; it uses the copy
-  # inside /opt/openwork/ at runtime.
-  if pacman -Qq opencode-bin &>/dev/null 2>&1; then
-    rm -f "${pkgdir}/usr/bin/opencode"
-  fi
+  # The upstream .deb includes /usr/bin/opencode, but the AUR package should
+  # not claim the global CLI name. OpenWork uses its bundled copy under
+  # /opt/openwork/ at runtime, while opencode-bin should remain the owner of
+  # /usr/bin/opencode when users install the standalone CLI.
+  rm -f "${pkgdir}/usr/bin/opencode"
 }
 # .deb Internal Structure Reference:
 # └── openwork-desktop-linux-amd64.deb
