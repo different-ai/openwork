@@ -36,6 +36,8 @@ interface FileConfig {
   corsOrigins?: string[];
   authorizedRoots?: string[];
   readOnly?: boolean;
+  opencodeBaseUrl?: string;
+  opencodeDirectory?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   logFormat?: LogFormat;
@@ -222,8 +224,8 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envOpencodeDirectory = process.env.OPENWORK_OPENCODE_DIRECTORY;
   const envOpencodeUsername = process.env.OPENWORK_OPENCODE_USERNAME;
   const envOpencodePassword = process.env.OPENWORK_OPENCODE_PASSWORD;
-  const opencodeBaseUrl = cli.opencodeBaseUrl ?? envOpencodeBaseUrl;
-  const opencodeDirectory = cli.opencodeDirectory ?? envOpencodeDirectory;
+  const opencodeBaseUrl = cli.opencodeBaseUrl ?? envOpencodeBaseUrl ?? fileConfig.opencodeBaseUrl;
+  const opencodeDirectory = cli.opencodeDirectory ?? envOpencodeDirectory ?? fileConfig.opencodeDirectory;
   const opencodeUsername = cli.opencodeUsername ?? envOpencodeUsername ?? fileConfig.opencodeUsername;
   const opencodePassword = cli.opencodePassword ?? envOpencodePassword ?? fileConfig.opencodePassword;
 
@@ -317,6 +319,10 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     token,
     hostToken,
     configPath,
+    opencodeBaseUrl,
+    opencodeDirectory,
+    opencodeUsername,
+    opencodePassword,
     approval,
     corsOrigins,
     workspaces,

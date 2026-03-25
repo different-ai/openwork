@@ -77,6 +77,10 @@ export interface ServerConfig {
   token: string;
   hostToken: string;
   configPath?: string;
+  opencodeBaseUrl?: string;
+  opencodeDirectory?: string;
+  opencodeUsername?: string;
+  opencodePassword?: string;
   approval: ApprovalConfig;
   corsOrigins: string[];
   workspaces: WorkspaceInfo[];

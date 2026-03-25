@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Database } from "bun:sqlite";
 
-import { seedOpencodeSessionMessages } from "./opencode-db.js";
+import { resolveOpencodeDbPath, seedOpencodeSessionMessages } from "./opencode-db.js";
 
 async function createDb(): Promise<{ path: string; dispose: () => void }> {
   const dir = await mkdtemp(join(tmpdir(), "openwork-opencode-db-"));
@@ -71,10 +71,17 @@ describe("seedOpencodeSessionMessages", () => {
     const decoded = rows.map((row) => JSON.parse(row.data) as Record<string, unknown>);
     expect(decoded[0]?.role).toBe("assistant");
     expect(decoded[0]?.parentID).toBe(rows[0]?.id);
+    expect(decoded[0]?.modelID).toBe("gpt-5.4");
+    expect(decoded[0]?.providerID).toBe("openai");
     expect(decoded[1]?.role).toBe("user");
+    expect(decoded[1]?.summary).toEqual({ diffs: [] });
     expect(decoded[2]?.role).toBe("assistant");
     expect(decoded[2]?.parentID).toBe(rows[1]?.id);
-    expect(parts.map((row) => JSON.parse(row.data).text)).toEqual(["Welcome", "Help me start", "Sure"]);
+    expect(parts.map((row) => JSON.parse(row.data))).toEqual([
+      { type: "text", text: "Welcome" },
+      { type: "text", text: "Help me start" },
+      { type: "text", text: "Sure" },
+    ]);
     expect(session.time_updated).toBe(1700000000003);
   });
 
@@ -95,5 +102,63 @@ describe("seedOpencodeSessionMessages", () => {
 
     expect(first.skipped).toBe(false);
     expect(second).toEqual({ inserted: 0, skipped: true });
+  });
+});
+
+describe("resolveOpencodeDbPath", () => {
+  test("prefers an existing XDG opencode.db when present", async () => {
+    const xdg = await mkdtemp(join(tmpdir(), "openwork-opencode-xdg-"));
+    const dir = join(xdg, "opencode");
+    const file = join(dir, "opencode.db");
+    await mkdir(dir, { recursive: true });
+    await writeFile(file, "", "utf8");
+
+    const previousXdg = process.env.XDG_DATA_HOME;
+    const previousChannel = process.env.OPENCODE_CHANNEL;
+    const previousDb = process.env.OPENCODE_DB;
+    try {
+      process.env.XDG_DATA_HOME = xdg;
+      process.env.OPENCODE_CHANNEL = "local";
+      delete process.env.OPENCODE_DB;
+
+      expect(resolveOpencodeDbPath()).toBe(file);
+    } finally {
+      if (previousXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = previousXdg;
+      if (previousChannel === undefined) delete process.env.OPENCODE_CHANNEL;
+      else process.env.OPENCODE_CHANNEL = previousChannel;
+      if (previousDb === undefined) delete process.env.OPENCODE_DB;
+      else process.env.OPENCODE_DB = previousDb;
+    }
+  });
+
+  test("finds orchestrator-managed OpenCode dbs under OPENWORK_DATA_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openwork-orchestrator-data-"));
+    const dir = join(root, "opencode-dev", "ws-test", "xdg", "data", "opencode");
+    const file = join(dir, "opencode.db");
+    await mkdir(dir, { recursive: true });
+    await writeFile(file, "", "utf8");
+
+    const previousDataDir = process.env.OPENWORK_DATA_DIR;
+    const previousXdg = process.env.XDG_DATA_HOME;
+    const previousChannel = process.env.OPENCODE_CHANNEL;
+    const previousDb = process.env.OPENCODE_DB;
+    try {
+      process.env.OPENWORK_DATA_DIR = root;
+      delete process.env.XDG_DATA_HOME;
+      process.env.OPENCODE_CHANNEL = "local";
+      delete process.env.OPENCODE_DB;
+
+      expect(resolveOpencodeDbPath()).toBe(file);
+    } finally {
+      if (previousDataDir === undefined) delete process.env.OPENWORK_DATA_DIR;
+      else process.env.OPENWORK_DATA_DIR = previousDataDir;
+      if (previousXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = previousXdg;
+      if (previousChannel === undefined) delete process.env.OPENCODE_CHANNEL;
+      else process.env.OPENCODE_CHANNEL = previousChannel;
+      if (previousDb === undefined) delete process.env.OPENCODE_DB;
+      else process.env.OPENCODE_DB = previousDb;
+    }
   });
 });

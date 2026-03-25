@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -10,33 +10,101 @@ type SeedMessage = {
   text: string;
 };
 
+const DEFAULT_AGENT = "openwork";
+const DEFAULT_PROVIDER = "openai";
+const DEFAULT_MODEL = "gpt-5.4";
+
 function truthy(value: string | undefined): boolean {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-function opencodeDataDir(): string {
+function opencodeOrchestratorDataDirs(): string[] {
+  const root = process.env.OPENWORK_DATA_DIR?.trim();
+  if (!root) return [];
+
+  const base = join(root, "opencode-dev");
+  const dirs: string[] = [];
+  const pushIfExists = (dir: string) => {
+    if (existsSync(dir)) dirs.push(dir);
+  };
+
+  pushIfExists(join(base, "xdg", "data", "opencode"));
+  if (!existsSync(base)) return dirs;
+
+  for (const entry of readdirSync(base, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    pushIfExists(join(base, entry.name, "xdg", "data", "opencode"));
+  }
+
+  return dirs;
+}
+
+function opencodeDataDirs(): string[] {
+  const dirs: string[] = [];
+  dirs.push(...opencodeOrchestratorDataDirs());
   const xdg = process.env.XDG_DATA_HOME?.trim();
-  if (xdg) return join(xdg, "opencode");
-  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", "opencode");
+  if (xdg) dirs.push(join(xdg, "opencode"));
+  dirs.push(join(homedir(), ".local", "share", "opencode"));
+  if (process.platform === "darwin") dirs.push(join(homedir(), "Library", "Application Support", "opencode"));
   if (process.platform === "win32") {
     const appData = process.env.APPDATA?.trim();
-    if (appData) return join(appData, "opencode");
+    if (appData) dirs.push(join(appData, "opencode"));
   }
-  return join(homedir(), ".local", "share", "opencode");
+  return Array.from(new Set(dirs));
+}
+
+function preferredDbNames(): string[] {
+  const channel = process.env.OPENCODE_CHANNEL?.trim() || "local";
+  return channel === "latest" || channel === "beta" || truthy(process.env.OPENCODE_DISABLE_CHANNEL_DB)
+    ? ["opencode.db"]
+    : [`opencode-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`, "opencode.db"];
+}
+
+function candidateOpencodeDbPaths(): string[] {
+  const override = process.env.OPENCODE_DB?.trim();
+  if (override) {
+    if (isAbsolute(override)) return [override];
+    const candidates: string[] = [];
+    for (const dir of opencodeDataDirs()) {
+      candidates.push(join(dir, override));
+    }
+    candidates.push(join(opencodeDataDirs()[0] ?? join(homedir(), ".local", "share", "opencode"), override));
+    return Array.from(new Set(candidates));
+  }
+
+  const candidates: string[] = [];
+  for (const dir of opencodeDataDirs()) {
+    for (const name of preferredDbNames()) {
+      candidates.push(join(dir, name));
+    }
+  }
+
+  return Array.from(new Set(candidates));
 }
 
 export function resolveOpencodeDbPath(): string {
-  const override = process.env.OPENCODE_DB?.trim();
-  if (override) return isAbsolute(override) ? override : join(opencodeDataDir(), override);
+  const candidates = candidateOpencodeDbPaths();
+  const existing = candidates.find((candidate) => existsSync(candidate));
+  if (existing) return existing;
+  return candidates[0] ?? join(homedir(), ".local", "share", "opencode", preferredDbNames()[0] ?? "opencode.db");
+}
 
-  const channel = process.env.OPENCODE_CHANNEL?.trim() || "local";
-  if (channel === "latest" || channel === "beta" || truthy(process.env.OPENCODE_DISABLE_CHANNEL_DB)) {
-    return join(opencodeDataDir(), "opencode.db");
+function findOpencodeSessionDbPath(sessionId: string, inputPath?: string): string | null {
+  const candidates = (inputPath ? [inputPath] : candidateOpencodeDbPaths()).filter((candidate) => existsSync(candidate));
+  for (const dbPath of candidates) {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const session = db.query("select id from session where id = ?1").get(sessionId);
+      if (session) return dbPath;
+    } catch {
+      // ignore non-matching dbs
+    } finally {
+      db.close();
+    }
   }
-
-  return join(opencodeDataDir(), `opencode-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`);
+  return null;
 }
 
 function randomBase62(length: number): string {
@@ -75,7 +143,8 @@ export function seedOpencodeSessionMessages(input: {
     return { inserted: 0, skipped: true };
   }
 
-  const dbPath = input.dbPath?.trim() || resolveOpencodeDbPath();
+  const explicitDbPath = input.dbPath?.trim() || undefined;
+  const dbPath = findOpencodeSessionDbPath(sessionId, explicitDbPath) || explicitDbPath || resolveOpencodeDbPath();
   if (!existsSync(dbPath)) {
     throw new Error(`OpenCode database not found at ${dbPath}`);
   }
@@ -119,17 +188,18 @@ export function seedOpencodeSessionMessages(input: {
             ? {
                 role: "user",
                 time: { created: createdAt },
-                agent: "",
-                model: { providerID: "", modelID: "" },
+                summary: { diffs: [] },
+                agent: DEFAULT_AGENT,
+                model: { providerID: DEFAULT_PROVIDER, modelID: DEFAULT_MODEL },
               }
             : {
                 role: "assistant",
                 time: { created: createdAt, completed: createdAt },
                 parentID: lastUserId ?? messageId,
-                modelID: "",
-                providerID: "",
-                mode: "",
-                agent: "",
+                modelID: DEFAULT_MODEL,
+                providerID: DEFAULT_PROVIDER,
+                mode: DEFAULT_AGENT,
+                agent: DEFAULT_AGENT,
                 path: { cwd: input.workspaceRoot, root: input.workspaceRoot },
                 cost: 0,
                 tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -142,7 +212,7 @@ export function seedOpencodeSessionMessages(input: {
           sessionId,
           createdAt,
           createdAt,
-          JSON.stringify({ type: "text", text: item.text.trim(), synthetic: true, time: { start: createdAt, end: createdAt } }),
+          JSON.stringify({ type: "text", text: item.text.trim() }),
         );
 
         if (item.role === "user") {
