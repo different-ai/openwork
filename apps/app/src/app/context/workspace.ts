@@ -150,6 +150,7 @@ export function createWorkspaceStore(options: {
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   openworkServerClient?: () => OpenworkServerClient | null;
   openworkServerStatus?: () => OpenworkServerStatus;
+  ensureLocalOpenworkServerClient?: () => Promise<OpenworkServerClient | null>;
   runtimeWorkspaceId?: () => string | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
@@ -2742,6 +2743,10 @@ export function createWorkspaceStore(options: {
     }
 
     try {
+      const server = await options.ensureLocalOpenworkServerClient?.();
+      if (!server) {
+        throw new Error("OpenWork server is unavailable. Restart the app and try again.");
+      }
       return await createWorkspaceFlow("starter", await resolveStarterBootstrapFolder());
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -2759,6 +2764,10 @@ export function createWorkspaceStore(options: {
     options.setError(null);
 
     try {
+      const server = await options.ensureLocalOpenworkServerClient?.();
+      if (!server) {
+        throw new Error("OpenWork server is unavailable. Restart the app and try again.");
+      }
       const ok = await createWorkspaceFlow("starter", await resolveStarterBootstrapFolder());
       if (!ok) {
         setPersistedStarterBootstrapState("failed");

@@ -190,6 +190,7 @@ import {
   updaterEnvironment,
   readOpencodeConfig,
   writeOpencodeConfig,
+  openworkServerRestart,
   schedulerDeleteJob,
   schedulerListJobs,
   openworkServerInfo,
@@ -3279,6 +3280,7 @@ export default function App() {
     updateOpenworkServerSettings,
     openworkServerClient,
     openworkServerStatus,
+    ensureLocalOpenworkServerClient,
     runtimeWorkspaceId,
     onEngineStable: () => {},
     engineRuntime,
@@ -5039,6 +5041,56 @@ export default function App() {
       setOpenworkReconnectBusy(false);
     }
   };
+
+  async function ensureLocalOpenworkServerClient(): Promise<OpenworkServerClient | null> {
+    let hostInfo = openworkServerHostInfo();
+    if (hostInfo?.baseUrl?.trim() && hostInfo.clientToken?.trim()) {
+      const existing = createOpenworkServerClient({
+        baseUrl: hostInfo.baseUrl.trim(),
+        token: hostInfo.clientToken.trim(),
+        hostToken: hostInfo.hostToken?.trim() || undefined,
+      });
+      try {
+        await existing.health();
+        if (startupPreference() !== "server") {
+          await reconnectOpenworkServer();
+        }
+        return existing;
+      } catch {
+        // restart below
+      }
+    }
+
+    if (!isTauriRuntime()) {
+      return null;
+    }
+
+    try {
+      hostInfo = await openworkServerRestart({
+        remoteAccessEnabled: openworkServerSettings().remoteAccessEnabled === true,
+      });
+      setOpenworkServerHostInfo(hostInfo);
+    } catch {
+      return null;
+    }
+
+    const baseUrl = hostInfo?.baseUrl?.trim() ?? "";
+    const token = hostInfo?.clientToken?.trim() ?? "";
+    const hostToken = hostInfo?.hostToken?.trim() ?? "";
+    if (!baseUrl || !token) {
+      return null;
+    }
+
+    if (startupPreference() !== "server") {
+      await reconnectOpenworkServer();
+    }
+
+    return createOpenworkServerClient({
+      baseUrl,
+      token,
+      hostToken: hostToken || undefined,
+    });
+  }
 
   const restartLocalServer = async () => {
     const activeWorkspace = workspaceStore.selectedWorkspaceDisplay();
