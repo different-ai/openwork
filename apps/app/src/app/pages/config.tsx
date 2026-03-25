@@ -222,7 +222,7 @@ export default function ConfigView(props: ConfigViewProps) {
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
         <div class="text-sm font-medium text-gray-12">Workspace config</div>
         <div class="text-xs text-gray-10">
-          These settings affect the active workspace (sharing, reload, bots). Global app behavior lives in Settings.
+          These settings affect the selected workspace. Runtime-only actions apply to whichever workspace is currently connected.
         </div>
         <Show when={props.runtimeWorkspaceId}>
           <div class="text-[11px] text-gray-7 font-mono truncate">

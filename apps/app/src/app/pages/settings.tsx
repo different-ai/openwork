@@ -1434,7 +1434,7 @@ export default function SettingsView(props: SettingsViewProps) {
       case "debug":
         return "Review runtime diagnostics, logs, and low-level debugging utilities.";
       default:
-        return "Connect providers, choose the default model, authorize folders, and control the active OpenWork workspace.";
+        return "Connect providers, choose the default model, authorize folders, and control the selected OpenWork workspace plus its runtime connection.";
     }
   };
 
@@ -3491,7 +3491,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           )}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          Active workspace:{" "}
+                          Runtime workspace:{" "}
                           {props.orchestratorStatus?.activeId ?? "—"}
                         </div>
                       </div>
@@ -3759,7 +3759,10 @@ export default function SettingsView(props: SettingsViewProps) {
                           </div>
                           <div>Workspaces: {diag().workspaceCount}</div>
                           <div>
-                            Active workspace: {diag().activeWorkspaceId ?? diag().selectedWorkspaceId ?? "—"}
+                            Selected workspace: {diag().selectedWorkspaceId ?? "—"}
+                          </div>
+                          <div>
+                            Runtime workspace: {diag().activeWorkspaceId ?? "—"}
                           </div>
                           <div>
                             Config path: {diag().server.configPath ?? "default"}

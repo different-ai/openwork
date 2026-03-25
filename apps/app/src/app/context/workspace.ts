@@ -2670,7 +2670,7 @@ export function createWorkspaceStore(options: {
         throw new Error(details || `Failed to stop sandbox (status ${result.status})`);
       }
 
-      // If the user stopped the active workspace, proactively disconnect the client.
+      // If the user stopped the runtime-connected workspace, proactively disconnect the client.
       if (connectedWorkspaceId() === id) {
         options.setClient(null);
         options.setConnectedVersion(null);

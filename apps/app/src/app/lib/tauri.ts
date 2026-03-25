@@ -130,8 +130,11 @@ export type WorkspaceInfo = {
 };
 
 export type WorkspaceList = {
+  // UI-selected workspace persisted by the desktop shell.
   selectedId?: string;
+  // Runtime/watch target currently followed by the desktop host.
   watchedId?: string | null;
+  // Legacy desktop payloads used activeId for the UI-selected workspace.
   activeId?: string | null;
   workspaces: WorkspaceInfo[];
 };

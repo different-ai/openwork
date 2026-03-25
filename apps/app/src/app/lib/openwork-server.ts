@@ -531,6 +531,8 @@ export type OpenworkReloadEvent = {
   timestamp: number;
 };
 
+// Fallback for explicit server-mode URL derivation. Desktop local workers replace this
+// with the persisted runtime-discovered port once the host reports it.
 export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
