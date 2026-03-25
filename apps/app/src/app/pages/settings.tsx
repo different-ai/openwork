@@ -475,6 +475,11 @@ export default function SettingsView(props: SettingsViewProps) {
     return props.busy;
   });
 
+  const updateRestartBlockedMessage = createMemo(() => {
+    if (updateState() !== "ready" || !props.anyActiveRuns) return null;
+    return "OpenWork needs to restart to finish this update. To avoid interrupting your current work, install is paused until your active runs finish or you stop them.";
+  });
+
   const handleUpdateToolbarAction = () => {
     if (updateToolbarDisabled()) return;
     const state = updateState();
@@ -1505,32 +1510,35 @@ export default function SettingsView(props: SettingsViewProps) {
             </p>
           </div>
           <Show when={showUpdateToolbar() && activeTab() === "general"}>
-            <div class="mt-4 flex flex-wrap items-center gap-2 md:mt-0 md:justify-end">
-              <div
-                class={`rounded-full border px-3 py-1.5 text-xs shadow-sm flex items-center gap-2 ${updateToolbarTone()}`}
-                title={updateToolbarTitle()}
-              >
-                <Show when={updateToolbarSpinning()}>
-                  <RefreshCcw size={12} class="animate-spin" />
-                </Show>
-                <span class="tabular-nums whitespace-nowrap">
-                  {updateToolbarLabel()}
-                </span>
-              </div>
-              <Show when={updateToolbarActionLabel()}>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
-                  onClick={handleUpdateToolbarAction}
-                  disabled={updateToolbarDisabled()}
-                  title={
-                    updateState() === "ready" && props.anyActiveRuns
-                      ? "Stop active runs to update"
-                      : ""
-                  }
+            <div class="mt-4 space-y-2 md:mt-0 md:max-w-sm md:text-right">
+              <div class="flex flex-wrap items-center gap-2 md:justify-end">
+                <div
+                  class={`rounded-full border px-3 py-1.5 text-xs shadow-sm flex items-center gap-2 ${updateToolbarTone()}`}
+                  title={updateToolbarTitle()}
                 >
-                  {updateToolbarActionLabel()}
-                </Button>
+                  <Show when={updateToolbarSpinning()}>
+                    <RefreshCcw size={12} class="animate-spin" />
+                  </Show>
+                  <span class="tabular-nums whitespace-nowrap">
+                    {updateToolbarLabel()}
+                  </span>
+                </div>
+                <Show when={updateToolbarActionLabel()}>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
+                    onClick={handleUpdateToolbarAction}
+                    disabled={updateToolbarDisabled()}
+                    title={updateRestartBlockedMessage() ?? ""}
+                  >
+                    {updateToolbarActionLabel()}
+                  </Button>
+                </Show>
+              </div>
+              <Show when={updateRestartBlockedMessage()}>
+                <div class="text-xs leading-relaxed text-amber-11/90 md:max-w-sm">
+                  {updateRestartBlockedMessage()}
+                </div>
               </Show>
             </div>
           </Show>
@@ -2546,111 +2554,115 @@ export default function SettingsView(props: SettingsViewProps) {
                           </button>
                         </div>
 
-                        <div class="flex items-center justify-between gap-3 bg-gray-1 p-3 rounded-xl border border-gray-6">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">
-                              <Switch>
-                                <Match when={updateState() === "checking"}>
-                                  Checking...
-                                </Match>
-                                <Match when={updateState() === "available"}>
-                                  Update available: v{updateVersion()}
-                                </Match>
-                                <Match when={updateState() === "downloading"}>
-                                  Downloading...
-                                </Match>
-                                <Match when={updateState() === "ready"}>
-                                  Ready to install: v{updateVersion()}
-                                </Match>
-                                <Match when={updateState() === "error"}>
-                                  Update check failed
-                                </Match>
-                                <Match when={true}>Up to date</Match>
-                              </Switch>
+                        <div class="bg-gray-1 p-3 rounded-xl border border-gray-6 space-y-3">
+                          <div class="flex items-center justify-between gap-3">
+                            <div class="space-y-0.5">
+                              <div class="text-sm text-gray-12">
+                                <Switch>
+                                  <Match when={updateState() === "checking"}>
+                                    Checking...
+                                  </Match>
+                                  <Match when={updateState() === "available"}>
+                                    Update available: v{updateVersion()}
+                                  </Match>
+                                  <Match when={updateState() === "downloading"}>
+                                    Downloading...
+                                  </Match>
+                                  <Match when={updateState() === "ready"}>
+                                    Ready to install: v{updateVersion()}
+                                  </Match>
+                                  <Match when={updateState() === "error"}>
+                                    Update check failed
+                                  </Match>
+                                  <Match when={true}>Up to date</Match>
+                                </Switch>
+                              </div>
+                              <Show
+                                when={
+                                  updateState() === "idle" &&
+                                  updateLastCheckedAt()
+                                }
+                              >
+                                <div class="text-xs text-gray-7">
+                                  Last checked{" "}
+                                  {formatRelativeTime(
+                                    updateLastCheckedAt() as number,
+                                  )}
+                                </div>
+                              </Show>
+                              <Show
+                                when={
+                                  updateState() === "available" && updateDate()
+                                }
+                              >
+                                <div class="text-xs text-gray-7">
+                                  Published {updateDate()}
+                                </div>
+                              </Show>
+                              <Show when={updateState() === "downloading"}>
+                                <div class="text-xs text-gray-7">
+                                  {formatBytes(
+                                    (updateDownloadedBytes() as number) ?? 0,
+                                  )}
+                                  <Show when={updateTotalBytes() != null}>
+                                    {` / ${formatBytes(updateTotalBytes() as number)}`}
+                                  </Show>
+                                </div>
+                              </Show>
+                              <Show when={updateState() === "error"}>
+                                <div class="text-xs text-red-11">
+                                  {updateErrorMessage()}
+                                </div>
+                              </Show>
                             </div>
-                            <Show
-                              when={
-                                updateState() === "idle" &&
-                                updateLastCheckedAt()
-                              }
-                            >
-                              <div class="text-xs text-gray-7">
-                                Last checked{" "}
-                                {formatRelativeTime(
-                                  updateLastCheckedAt() as number,
-                                )}
-                              </div>
-                            </Show>
-                            <Show
-                              when={
-                                updateState() === "available" && updateDate()
-                              }
-                            >
-                              <div class="text-xs text-gray-7">
-                                Published {updateDate()}
-                              </div>
-                            </Show>
-                            <Show when={updateState() === "downloading"}>
-                              <div class="text-xs text-gray-7">
-                                {formatBytes(
-                                  (updateDownloadedBytes() as number) ?? 0,
-                                )}
-                                <Show when={updateTotalBytes() != null}>
-                                  {` / ${formatBytes(updateTotalBytes() as number)}`}
-                                </Show>
-                              </div>
-                            </Show>
-                            <Show when={updateState() === "error"}>
-                              <div class="text-xs text-red-11">
-                                {updateErrorMessage()}
-                              </div>
-                            </Show>
+
+                            <div class="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                class="text-xs h-9 py-0 px-4 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
+                                onClick={props.checkForUpdates}
+                                disabled={
+                                  props.busy ||
+                                  updateState() === "checking" ||
+                                  updateState() === "downloading"
+                                }
+                              >
+                                Check
+                              </Button>
+
+                              <Show when={updateState() === "available"}>
+                                <Button
+                                  variant="secondary"
+                                  class="text-xs h-9 py-0 px-4 rounded-full"
+                                  onClick={props.downloadUpdate}
+                                  disabled={
+                                    props.busy || updateState() === "downloading"
+                                  }
+                                >
+                                  Download
+                                </Button>
+                              </Show>
+
+                              <Show when={updateState() === "ready"}>
+                                <Button
+                                  variant="secondary"
+                                  class="text-xs h-9 py-0 px-4 rounded-full"
+                                  onClick={props.installUpdateAndRestart}
+                                  disabled={props.busy || props.anyActiveRuns}
+                                  title={updateRestartBlockedMessage() ?? ""}
+                                >
+                                  Install & Restart
+                                </Button>
+                              </Show>
+                            </div>
                           </div>
 
-                          <div class="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              class="text-xs h-9 py-0 px-4 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
-                              onClick={props.checkForUpdates}
-                              disabled={
-                                props.busy ||
-                                updateState() === "checking" ||
-                                updateState() === "downloading"
-                              }
-                            >
-                              Check
-                            </Button>
-
-                            <Show when={updateState() === "available"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-9 py-0 px-4 rounded-full"
-                                onClick={props.downloadUpdate}
-                                disabled={
-                                  props.busy || updateState() === "downloading"
-                                }
-                              >
-                                Download
-                              </Button>
-                            </Show>
-
-                            <Show when={updateState() === "ready"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-9 py-0 px-4 rounded-full"
-                                onClick={props.installUpdateAndRestart}
-                                disabled={props.busy || props.anyActiveRuns}
-                                title={
-                                  props.anyActiveRuns
-                                    ? "Stop active runs to update"
-                                    : ""
-                                }
-                              >
-                                Install & Restart
-                              </Button>
-                </Show>
-              </div>
-            </div>
+                          <Show when={updateRestartBlockedMessage()}>
+                            <div class="rounded-xl border border-amber-7/25 bg-amber-3/10 px-3 py-2 text-xs leading-relaxed text-amber-11">
+                              {updateRestartBlockedMessage()}
+                            </div>
+                          </Show>
+                        </div>
 
                         <Show
                           when={updateState() === "available" && updateNotes()}
