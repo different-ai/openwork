@@ -450,6 +450,7 @@ export type OpenworkWorkspaceExport = {
   openwork?: Record<string, unknown>;
   skills?: Array<{ name: string; description?: string; trigger?: string; content: string }>;
   commands?: Array<{ name: string; description?: string; template?: string }>;
+  files?: Array<{ path: string; content: string }>;
 };
 
 export type OpenworkArtifactItem = {
@@ -1188,6 +1189,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     opencodeRouter: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
+    shareBundle: 20_000,
     binary: 60_000,
   };
 
@@ -1270,6 +1272,31 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
         timeoutMs: timeouts.workspaceImport,
+      }),
+    publishBundle: (payload: unknown, bundleType: "skill" | "workspace-profile" | "skills-set", options?: { name?: string; baseUrl?: string | null; timeoutMs?: number }) =>
+      requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          payload,
+          bundleType,
+          name: options?.name,
+          baseUrl: options?.baseUrl ?? undefined,
+          timeoutMs: options?.timeoutMs,
+        },
+        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
+      }),
+    fetchBundle: (bundleUrl: string, options?: { timeoutMs?: number }) =>
+      requestJson<Record<string, unknown>>(baseUrl, "/share/bundles/fetch", {
+        token,
+        hostToken,
+        method: "POST",
+        body: {
+          bundleUrl,
+          timeoutMs: options?.timeoutMs,
+        },
+        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
       }),
     getConfig: (workspaceId: string) =>
       requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(

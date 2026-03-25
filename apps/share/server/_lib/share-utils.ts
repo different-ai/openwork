@@ -6,9 +6,10 @@ import type {
   BundleUrls,
   Frontmatter,
   NormalizedBundle,
-  OgImageUrlSet,
   NormalizedCommandItem,
   NormalizedSkillItem,
+  NormalizedTemplateFileItem,
+  OgImageUrlSet,
   OpenInAppUrls,
   RequestLike,
   ValidationResult,
@@ -92,6 +93,9 @@ export function escapeJsonForScript(rawJson: string): string {
 
 export function humanizeType(type: unknown): string {
   if (!type) return "Bundle";
+  if (String(type).trim().toLowerCase() === "workspace-profile") {
+    return "Workspace Template";
+  }
   return String(type)
     .split("-")
     .filter(Boolean)
@@ -253,6 +257,43 @@ function normalizeCommandItem(value: unknown): NormalizedCommandItem | null {
   };
 }
 
+function normalizeTemplateFileItem(value: unknown): NormalizedTemplateFileItem | null {
+  const record = maybeObject(value);
+  if (!record) return null;
+  const path = maybeString(record.path).trim();
+  if (!path) return null;
+  return {
+    path,
+    content: maybeString(record.content),
+  };
+}
+
+function workspaceTemplateFiles(bundle: NormalizedBundle): NormalizedTemplateFileItem[] {
+  return maybeArray(bundle.workspace?.files)
+    .map(normalizeTemplateFileItem)
+    .filter((file): file is NormalizedTemplateFileItem => file !== null);
+}
+
+function basename(path: string): string {
+  const normalized = String(path ?? "").replaceAll("\\", "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? normalized;
+}
+
+function templateFilePreviewMeta(path: string): { kind: PreviewItem["kind"]; tone: PreviewItem["tone"]; label: string } {
+  const normalized = String(path ?? "").toLowerCase();
+  if (normalized.startsWith(".opencode/agents/")) {
+    return { kind: "Agent", tone: "agent", label: "Agent file" };
+  }
+  if (normalized.startsWith(".opencode/commands/")) {
+    return { kind: "Command", tone: "command", label: "Command file" };
+  }
+  if (normalized.startsWith(".opencode/skills/")) {
+    return { kind: "Skill", tone: "skill", label: "Skill file" };
+  }
+  return { kind: "Config", tone: "config", label: "Template file" };
+}
+
 export function parseBundle(rawJson: string): NormalizedBundle {
   try {
     return normalizeBundleRecord(JSON.parse(rawJson));
@@ -322,6 +363,7 @@ export function getBundleCounts(bundle: NormalizedBundle): BundleCounts {
   const openwork = maybeObject(bundle.workspace?.openwork);
   const genericConfig = maybeObject(bundle.workspace?.config);
   const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null);
+  const files = workspaceTemplateFiles(bundle);
   const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
   const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
   const opencodeConfigKeys = Object.keys(opencode ?? {}).filter((key) => !["agent", "mcp"].includes(key));
@@ -339,6 +381,7 @@ export function getBundleCounts(bundle: NormalizedBundle): BundleCounts {
     agentCount: agentEntries.length,
     mcpCount: mcpEntries.length,
     configCount: (openwork ? 1 : 0) + (opencodeConfigKeys.length ? 1 : 0) + Object.keys(genericConfig ?? {}).length,
+    fileCount: files.length,
     hasConfig: Boolean(openwork || opencodeConfigKeys.length || genericConfig),
   };
 }
@@ -443,6 +486,16 @@ export function collectBundleItems(bundle: NormalizedBundle, limit = 8): Preview
         kind: "Config",
         meta: "Config file",
         tone: "config",
+      });
+    }
+
+    for (const file of workspaceTemplateFiles(bundle)) {
+      const preview = templateFilePreviewMeta(file.path);
+      items.push({
+        name: basename(file.path),
+        kind: preview.kind,
+        meta: file.path,
+        tone: preview.tone,
       });
     }
   }
@@ -584,6 +637,18 @@ export function buildBundlePreview(bundle: NormalizedBundle): {
       text: buildJsonPreview(value, `{\n  "${name}": {}\n}`),
       tone: "config",
       label: `Config preview · ${extension}`,
+    });
+  }
+
+  const files = workspaceTemplateFiles(bundle);
+  if (files.length) {
+    const firstFile = files[0]!;
+    const preview = templateFilePreviewMeta(firstFile.path);
+    return buildBundlePreviewSelection({
+      filename: basename(firstFile.path),
+      text: buildTextPreview(firstFile.content, `# ${basename(firstFile.path) || "OpenWork template file"}`),
+      tone: preview.tone,
+      label: `${preview.label} · ${firstFile.path}`,
     });
   }
 
@@ -738,6 +803,21 @@ export function buildBundlePreviewSelections(bundle: NormalizedBundle): {
     }));
   }
 
+  const files = workspaceTemplateFiles(bundle);
+  if (files.length) {
+    selections.push(...files.map((file, index) => {
+      const preview = templateFilePreviewMeta(file.path);
+      return {
+        id: `workspace-file-${index}`,
+        name: basename(file.path),
+        filename: basename(file.path),
+        text: buildTextPreview(file.content, `# ${basename(file.path) || `File ${index + 1}`}`),
+        tone: preview.tone,
+        label: `${preview.label} · ${file.path}`,
+      };
+    }));
+  }
+
   if (selections.length) return selections;
 
   const preview = buildBundlePreview(bundle);
@@ -776,6 +856,7 @@ export function buildBundleNarrative(bundle: NormalizedBundle): string {
   if (counts.mcpCount) parts.push(`${counts.mcpCount} MCP${counts.mcpCount === 1 ? "" : "s"}`);
   if (counts.commandCount) parts.push(`${counts.commandCount} command${counts.commandCount === 1 ? "" : "s"}`);
   if (counts.configCount) parts.push(`${counts.configCount} config${counts.configCount === 1 ? "" : "s"}`);
+  if (counts.fileCount) parts.push(`${counts.fileCount} template file${counts.fileCount === 1 ? "" : "s"}`);
   return parts.length
     ? `${parts.join(", ")} bundled into a worker package that imports through OpenWork with one step.`
     : "Worker configuration bundle prepared for OpenWork import.";

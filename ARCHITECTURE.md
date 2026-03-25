@@ -70,6 +70,8 @@ Agents, skills, and commands should model the following as OpenWork server behav
 - workspace creation and initialization
 - writes to `.opencode/`, `opencode.json`, and `opencode.jsonc`
 - OpenWork workspace config writes (`.opencode/openwork.json`)
+- workspace template export/import, including shareable `.opencode/**` files and `opencode.json` state
+- share-bundle publish/fetch flows used by OpenWork template links
 - reload event generation after config or capability changes
 - other filesystem-backed capability changes that must work across desktop host mode and remote clients
 

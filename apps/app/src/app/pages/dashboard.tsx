@@ -43,7 +43,7 @@ import type {
   OpenworkServerStatus,
 } from "../lib/openwork-server";
 import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
 
 import Button from "../components/button";
 import ExtensionsView from "./extensions";
@@ -889,15 +889,14 @@ export default function DashboardView(props: DashboardViewProps) {
       const payload: WorkspaceProfileBundleV1 = {
         schemaVersion: 1,
         type: "workspace-profile",
-        name: `${workspaceLabel(workspace)} profile`,
-        description: "Full OpenWork workspace profile with config, MCP setup, commands, and skills.",
+        name: `${workspaceLabel(workspace)} template`,
+        description: "Full OpenWork workspace template with config, commands, skills, and extra .opencode files.",
         workspace: exported,
       };
 
-      const result = await publishOpenworkBundleJson({
-        payload,
-        bundleType: "workspace-profile",
+      const result = await client.publishBundle(payload, "workspace-profile", {
         name: payload.name,
+        baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
       });
 
       setShareWorkspaceProfileUrl(result.url);
@@ -944,10 +943,9 @@ export default function DashboardView(props: DashboardViewProps) {
         },
       };
 
-      const result = await publishOpenworkBundleJson({
-        payload,
-        bundleType: "skills-set",
+      const result = await client.publishBundle(payload, "skills-set", {
         name: payload.name,
+        baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
       });
 
       setShareSkillsSetUrl(result.url);

@@ -224,6 +224,7 @@ import {
   type OpenworkServerDiagnostics,
   type OpenworkServerStatus,
   type OpenworkServerSettings,
+  type OpenworkServerClient,
   type OpenworkWorkspaceExport,
   OpenworkServerError,
 } from "./lib/openwork-server";
@@ -382,6 +383,15 @@ function readSkillItem(value: unknown): SharedSkillItem | null {
   };
 }
 
+function readTemplateFileItem(value: unknown): { path: string; content: string } | null {
+  const record = readRecord(value);
+  if (!record) return null;
+  const path = typeof record.path === "string" ? record.path.trim() : "";
+  const content = typeof record.content === "string" ? record.content : "";
+  if (!path) return null;
+  return { path, content };
+}
+
 function parseSharedBundle(value: unknown): SharedBundleV1 {
   const record = readRecord(value);
   if (!record) {
@@ -432,19 +442,25 @@ function parseSharedBundle(value: unknown): SharedBundleV1 {
     if (!workspace) {
       throw new Error("Workspace profile bundle is missing workspace payload.");
     }
+    const files = Array.isArray(workspace.files)
+      ? workspace.files.map(readTemplateFileItem).filter((item): item is { path: string; content: string } => Boolean(item))
+      : [];
     return {
       schemaVersion: 1,
       type: "workspace-profile",
       name: name || "Shared workspace profile",
       description: typeof record.description === "string" ? record.description : undefined,
-      workspace: workspace as OpenworkWorkspaceExport,
+      workspace: {
+        ...(workspace as OpenworkWorkspaceExport),
+        ...(files.length ? { files } : {}),
+      },
     };
   }
 
   throw new Error(`Unsupported bundle type: ${type || "unknown"}`);
 }
 
-async function fetchSharedBundle(bundleUrl: string): Promise<SharedBundleV1> {
+async function fetchSharedBundle(bundleUrl: string, serverClient?: OpenworkServerClient | null): Promise<SharedBundleV1> {
   let targetUrl: URL;
   try {
     targetUrl = new URL(bundleUrl);
@@ -458,6 +474,10 @@ async function fetchSharedBundle(bundleUrl: string): Promise<SharedBundleV1> {
 
   if (!targetUrl.searchParams.has("format")) {
     targetUrl.searchParams.set("format", "json");
+  }
+
+  if (serverClient) {
+    return parseSharedBundle(await serverClient.fetchBundle(targetUrl.toString()));
   }
 
   const controller = new AbortController();
@@ -541,6 +561,7 @@ function buildImportPayloadFromBundle(bundle: SharedBundleV1): {
   if (workspace.openwork && typeof workspace.openwork === "object") payload.openwork = workspace.openwork;
   if (Array.isArray(workspace.skills) && workspace.skills.length) payload.skills = workspace.skills;
   if (Array.isArray(workspace.commands) && workspace.commands.length) payload.commands = workspace.commands;
+  if (Array.isArray(workspace.files) && workspace.files.length) payload.files = workspace.files;
 
   const importedSkillsCount = Array.isArray(workspace.skills) ? workspace.skills.length : 0;
   return { payload, importedSkillsCount };
@@ -3885,7 +3906,7 @@ export default function App() {
     bundleOverride?: SharedBundleV1,
   ) => {
     try {
-      const bundle = bundleOverride ?? (await fetchSharedBundle(request.bundleUrl));
+      const bundle = bundleOverride ?? (await fetchSharedBundle(request.bundleUrl, openworkServerClient()));
       await importSharedBundlePayload(bundle, target);
       setError(null);
       return true;
@@ -3959,7 +3980,7 @@ export default function App() {
   };
 
   const processSharedBundleInvite = async (request: SharedBundleDeepLink) => {
-    const bundle = await fetchSharedBundle(request.bundleUrl);
+    const bundle = await fetchSharedBundle(request.bundleUrl, openworkServerClient());
 
     if (bundle.type === "skill") {
       setView("dashboard");

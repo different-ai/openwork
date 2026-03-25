@@ -25,6 +25,8 @@ import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
+import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
+import { listTemplateFiles, planTemplateFiles, writeTemplateFiles } from "./template-files.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -3902,11 +3904,16 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
+    const templateFiles = planTemplateFiles(workspace.path, body.files);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.import",
       summary: "Import workspace config",
-      paths: [opencodeConfigPath(workspace.path), openworkConfigPath(workspace.path)],
+      paths: [
+        opencodeConfigPath(workspace.path),
+        openworkConfigPath(workspace.path),
+        ...templateFiles.map((file) => file.absolutePath),
+      ],
     });
     await importWorkspace(workspace, body);
     await recordAudit(workspace.path, {
@@ -3920,6 +3927,28 @@ function createRoutes(
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
     return jsonResponse({ ok: true });
+  });
+
+  addRoute(routes, "POST", "/share/bundles/publish", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const body = await readJsonBody(ctx.request);
+    const result = await publishSharedBundle({
+      payload: body.payload,
+      bundleType: String(body.bundleType ?? "").trim(),
+      name: typeof body.name === "string" ? body.name : undefined,
+      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
+      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/share/bundles/fetch", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const body = await readJsonBody(ctx.request);
+    const bundle = await fetchSharedBundle(body.bundleUrl, {
+      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
+    });
+    return jsonResponse(bundle);
   });
 
   addRoute(routes, "GET", "/approvals", "host", async (ctx) => {
@@ -5086,6 +5115,7 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
   const openwork = await readOpenworkConfig(workspace.path);
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
+  const files = await listTemplateFiles(workspace.path);
   const skillContents = await Promise.all(
     skills.map(async (skill) => ({
       name: skill.name,
@@ -5108,6 +5138,7 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
     openwork,
     skills: skillContents,
     commands: commandContents,
+    ...(files.length ? { files } : {}),
   };
 }
 
@@ -5117,6 +5148,7 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
   const openwork = payload.openwork as Record<string, unknown> | undefined;
   const skills = (payload.skills as { name: string; content: string; description?: string }[] | undefined) ?? [];
   const commands = (payload.commands as { name: string; content?: string; description?: string; template?: string; agent?: string; model?: string | null; subtask?: boolean }[] | undefined) ?? [];
+  const files = payload.files;
 
   if (opencode) {
     if (modes.opencode === "replace") {
@@ -5177,5 +5209,9 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
         });
       }
     }
+  }
+
+  if (Array.isArray(files) && files.length > 0) {
+    await writeTemplateFiles(workspace.path, files, { replace: modes.files === "replace" });
   }
 }

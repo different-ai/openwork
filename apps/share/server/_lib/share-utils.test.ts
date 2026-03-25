@@ -41,6 +41,7 @@ test("buildBundlePreviewSelections exposes workspace configs alongside skills", 
       config: {
         "team-rules.json": { strict: true },
       },
+      files: [{ path: ".opencode/agents/openwork.md", content: "# OpenWork\n" }],
     },
     skills: [],
     commands: [],
@@ -50,10 +51,20 @@ test("buildBundlePreviewSelections exposes workspace configs alongside skills", 
 
   assert.deepEqual(
     selections.map((selection) => selection.filename),
-    ["workspace-guide.md", "daily-sync.md", "concierge.json", "github.json", "opencode.json", "openwork.json", "team-rules.json"],
+    [
+      "workspace-guide.md",
+      "daily-sync.md",
+      "concierge.json",
+      "github.json",
+      "opencode.json",
+      "openwork.json",
+      "team-rules.json",
+      "openwork.md",
+    ],
   );
   assert.equal(selections[4]?.label, "OpenCode settings");
   assert.equal(selections[5]?.label, "Workspace settings");
+  assert.match(selections[7]?.label ?? "", /Agent file/);
 });
 
 test("buildOgImageUrls returns typed platform variants", () => {

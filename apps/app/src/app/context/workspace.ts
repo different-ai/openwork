@@ -3552,6 +3552,7 @@ export function createWorkspaceStore(options: {
     importingWorkspaceConfig,
     migrationRepairBusy,
     migrationRepairResult,
+    activeWorkspaceInfo,
     activeWorkspaceDisplay,
     activeWorkspacePath,
     activeWorkspaceRoot,

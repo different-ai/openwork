@@ -40,6 +40,11 @@ export interface NormalizedCommandItem {
   subtask: boolean;
 }
 
+export interface NormalizedTemplateFileItem {
+  path: string;
+  content: string;
+}
+
 export interface NormalizedBundle {
   schemaVersion: number | null;
   type: string;
@@ -58,6 +63,7 @@ export interface BundleCounts {
   agentCount: number;
   mcpCount: number;
   configCount: number;
+  fileCount: number;
   hasConfig: boolean;
 }
 
