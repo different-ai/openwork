@@ -1,12 +1,58 @@
 ---
-title: "Computer-Use"
-description: "How to enable computer-use with Openwork existing skills and plugins"
+title: "Computer use"
+description: "What Chrome automation supports today"
 ---
 
-This guide will teach you how to setup chome-devtools
+Computer use in OpenWork currently means browser automation in Google Chrome. It does not yet mean full desktop control of Ubuntu, macOS, or Windows apps.
 
-## How to enable Computer
+## Understand the scope
 
-## what the expected happy path looks like
+OpenWork runs browser actions on the machine that owns the workspace. If you connect to a remote OpenWork server, that remote machine also needs Chrome.
 
-- what the main troubleshooting steps are
+Today, the supported path is `Control Chrome`, which uses Chrome DevTools MCP.
+
+## Check the requirements
+
+- A workspace that can already run normal chat prompts
+- Google Chrome on the machine running the session
+- `Settings > Extensions > Control Chrome`
+- Chrome 144+ only if you want OpenWork to attach to an existing Chrome window
+- For CLI/web-hosted OpenWork, a runtime that can launch `chrome-devtools-mcp` (typically via Node/npm)
+
+<Frame>
+  ![Control Chrome setup modal in OpenWork](/images/computer-use-control-chrome-setup.png)
+</Frame>
+
+## Run the first task
+
+1. Open `Settings > Extensions`.
+2. Add `Control Chrome`.
+3. Start a new chat.
+4. Click `Automate your browser` or run `/browser-setup`.
+5. Ask OpenWork to open `https://example.com` and read the title.
+6. Confirm you see Chrome tool steps and the response `Example Domain`.
+
+<Frame>
+  ![OpenWork session using Control Chrome to open example.com and return the page title](/images/computer-use-example-domain-success.png)
+</Frame>
+
+Once this works, OpenWork can open pages, click, type, inspect page text, run small page scripts, and take browser screenshots.
+
+## Know the current limit
+
+OpenWork computer use today is Chrome-only. It does not yet ship a general Ubuntu desktop agent.
+
+Not supported today:
+
+- arbitrary desktop apps outside Chrome
+- OS-level window management or terminal or file-manager automation
+- a ready-made Docker image with Ubuntu desktop plus OpenWork plus Chrome as a full computer-use worker
+
+The current Docker dev stack is not the recommended computer-use path today. It does not include Chrome inside the container, so browser tasks from that container fail until a browser-capable runtime is added.
+
+## Fix common setup issues
+
+- If the chat says Chrome MCP is not ready, reconnect `Control Chrome` in `Settings > Extensions`.
+- If Chrome tool calls fail before a page opens, confirm Chrome is installed on the machine running the session.
+- If you want OpenWork to attach to the Chrome you already use, enable remote debugging at `chrome://inspect/#remote-debugging` and then turn on `Use my existing Chrome profile`.
+- If the chat fails before any browser tool runs, fix the model/provider first; browser automation only starts after the session can run a normal prompt.
