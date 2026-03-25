@@ -78,11 +78,8 @@ fn save_openwork_server_token_store(
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
-    fs::write(
-        path,
-        serde_json::to_string_pretty(store).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    let payload = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    fs::write(path, payload).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     Ok(())
 }
 
@@ -98,13 +95,11 @@ fn load_or_create_workspace_tokens_at_path(
     path: &Path,
     workspace_key: &str,
 ) -> Result<PersistedOpenworkServerTokens, String> {
-    let mut store = load_openwork_server_token_store(&path)?;
+    let mut store = load_openwork_server_token_store(path)?;
     if let Some(tokens) = store.workspaces.get(workspace_key) {
         return Ok(tokens.clone());
     }
 
-    // Keep the desktop-hosted share codes stable for the same workspace across
-    // full app restarts so reconnecting clients do not need a fresh invite.
     let tokens = PersistedOpenworkServerTokens {
         client_token: generate_token(),
         host_token: generate_token(),
@@ -114,7 +109,7 @@ fn load_or_create_workspace_tokens_at_path(
     store
         .workspaces
         .insert(workspace_key.to_string(), tokens.clone());
-    save_openwork_server_token_store(&path, &store)?;
+    save_openwork_server_token_store(path, &store)?;
     Ok(tokens)
 }
 
@@ -132,13 +127,13 @@ fn persist_workspace_owner_token_at_path(
     workspace_key: &str,
     owner_token: &str,
 ) -> Result<(), String> {
-    let mut store = load_openwork_server_token_store(&path)?;
+    let mut store = load_openwork_server_token_store(path)?;
     let Some(tokens) = store.workspaces.get_mut(workspace_key) else {
         return Ok(());
     };
     tokens.owner_token = Some(owner_token.to_string());
     tokens.updated_at = now_ms();
-    save_openwork_server_token_store(&path, &store)
+    save_openwork_server_token_store(path, &store)
 }
 
 fn wait_for_openwork_health(base_url: &str, timeout: Duration) -> Result<(), String> {
@@ -192,7 +187,6 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
     };
 
     let lan_url = local_ip().ok().map(|ip| format!("http://{ip}:{port}"));
-
     let connect_url = lan_url.clone().or(mdns_url.clone());
 
     (connect_url, mdns_url, lan_url)
@@ -322,4 +316,33 @@ pub fn start_openwork_server(
     });
 
     Ok(OpenworkServerManager::snapshot_locked(&mut state))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("openwork-server-{name}-{nonce}.json"))
+    }
+
+    #[test]
+    fn reuses_tokens_for_the_same_workspace_after_restart() {
+        let path = unique_temp_path("reuse");
+        let first = load_or_create_workspace_tokens_at_path(&path, "/tmp/workspace")
+            .expect("create first token set");
+        let second = load_or_create_workspace_tokens_at_path(&path, "/tmp/workspace")
+            .expect("load existing token set");
+
+        assert_eq!(first.client_token, second.client_token);
+        assert_eq!(first.host_token, second.host_token);
+        assert_eq!(first.owner_token, second.owner_token);
+
+        let _ = fs::remove_file(path);
+    }
 }

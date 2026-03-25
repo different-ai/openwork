@@ -327,6 +327,10 @@ pub struct WorkspaceInfo {
     #[serde(default)]
     pub openwork_token: Option<String>,
     #[serde(default)]
+    pub openwork_client_token: Option<String>,
+    #[serde(default)]
+    pub openwork_host_token: Option<String>,
+    #[serde(default)]
     pub openwork_workspace_id: Option<String>,
     #[serde(default)]
     pub openwork_workspace_name: Option<String>,

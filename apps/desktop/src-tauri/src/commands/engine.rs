@@ -9,9 +9,7 @@ use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
-use crate::openwork_server::{
-    manager::OpenworkServerManager, start_openwork_server,
-};
+use crate::openwork_server::{manager::OpenworkServerManager, start_openwork_server};
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
@@ -66,7 +64,10 @@ fn openwork_dev_mode_enabled() -> bool {
 }
 
 fn pinned_opencode_version() -> String {
-    let constants = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../constants.json"));
+    let constants = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../constants.json"
+    ));
     let parsed: serde_json::Value =
         serde_json::from_str(constants).expect("constants.json must be valid JSON");
     parsed["opencodeVersion"]
@@ -396,8 +397,8 @@ pub fn engine_start(
         let notes_text = notes.join("\n");
         let install_command = pinned_opencode_install_command();
         return Err(format!(
-      "OpenCode CLI not found.\n\nInstall with:\n- {install_command}\n\nNotes:\n{notes_text}"
-    ));
+            "OpenCode CLI not found.\n\nInstall with:\n- {install_command}\n\nNotes:\n{notes_text}"
+        ));
     };
 
     let (sidecar_candidate, _sidecar_notes) = resolve_sidecar_candidate(
@@ -713,8 +714,7 @@ pub fn engine_start(
     state.opencode_username = opencode_username.clone();
     state.opencode_password = opencode_password.clone();
 
-    let opencode_connect_url =
-        format!("http://{client_host}:{port}");
+    let opencode_connect_url = format!("http://{client_host}:{port}");
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {

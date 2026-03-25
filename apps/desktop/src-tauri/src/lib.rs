@@ -244,7 +244,10 @@ pub fn run() {
         }
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
-            let urls = urls.into_iter().map(|url| url.to_string()).collect::<Vec<_>>();
+            let urls = urls
+                .into_iter()
+                .map(|url| url.to_string())
+                .collect::<Vec<_>>();
             show_main_window(&app_handle);
             emit_native_deep_links(&app_handle, urls);
         }

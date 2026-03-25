@@ -200,6 +200,8 @@ pub fn workspace_create(
         display_name: None,
         openwork_host_url: None,
         openwork_token: None,
+        openwork_client_token: None,
+        openwork_host_token: None,
         openwork_workspace_id: None,
         openwork_workspace_name: None,
         sandbox_backend: None,
@@ -228,6 +230,8 @@ pub fn workspace_create_remote(
     remote_type: Option<RemoteType>,
     openwork_host_url: Option<String>,
     openwork_token: Option<String>,
+    openwork_client_token: Option<String>,
+    openwork_host_token: Option<String>,
     openwork_workspace_id: Option<String>,
     openwork_workspace_name: Option<String>,
     sandbox_backend: Option<String>,
@@ -257,6 +261,14 @@ pub fn workspace_create_remote(
         .filter(|value| !value.is_empty());
 
     let openwork_token = openwork_token
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let openwork_client_token = openwork_client_token
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let openwork_host_token = openwork_host_token
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
@@ -307,6 +319,8 @@ pub fn workspace_create_remote(
         display_name,
         openwork_host_url,
         openwork_token,
+        openwork_client_token,
+        openwork_host_token,
         openwork_workspace_id,
         openwork_workspace_name,
         sandbox_backend: sandbox_backend
@@ -341,6 +355,8 @@ pub fn workspace_update_remote(
     remote_type: Option<RemoteType>,
     openwork_host_url: Option<String>,
     openwork_token: Option<String>,
+    openwork_client_token: Option<String>,
+    openwork_host_token: Option<String>,
     openwork_workspace_id: Option<String>,
     openwork_workspace_name: Option<String>,
     sandbox_backend: Option<String>,
@@ -406,6 +422,18 @@ pub fn workspace_update_remote(
 
     if openwork_token.is_some() {
         entry.openwork_token = openwork_token
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    if openwork_client_token.is_some() {
+        entry.openwork_client_token = openwork_client_token
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    if openwork_host_token.is_some() {
+        entry.openwork_host_token = openwork_host_token
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
     }
@@ -899,6 +927,8 @@ pub fn workspace_import_config(
         display_name: None,
         openwork_host_url: None,
         openwork_token: None,
+        openwork_client_token: None,
+        openwork_host_token: None,
         openwork_workspace_id: None,
         openwork_workspace_name: None,
         sandbox_backend: None,

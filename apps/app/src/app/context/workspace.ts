@@ -1866,6 +1866,8 @@ export function createWorkspaceStore(options: {
         const ok = await createRemoteWorkspaceFlow({
           openworkHostUrl: host.openworkUrl,
           openworkToken: host.ownerToken?.trim() || host.token,
+          openworkClientToken: host.token,
+          openworkHostToken: host.hostToken,
           directory: resolvedFolder,
           displayName: name,
           sandboxBackend: host.sandboxBackend ?? "docker",
@@ -1913,6 +1915,8 @@ export function createWorkspaceStore(options: {
   async function createRemoteWorkspaceFlow(input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
+    openworkClientToken?: string | null;
+    openworkHostToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
     manageBusy?: boolean;
@@ -2048,6 +2052,10 @@ export function createWorkspaceStore(options: {
           remoteType,
           openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
           openworkToken: remoteType === "openwork" ? (token || null) : null,
+          openworkClientToken:
+            remoteType === "openwork" ? (input.openworkClientToken?.trim() || null) : null,
+          openworkHostToken:
+            remoteType === "openwork" ? (input.openworkHostToken?.trim() || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
           sandboxBackend: input.sandboxBackend ?? null,
@@ -2071,6 +2079,10 @@ export function createWorkspaceStore(options: {
           displayName,
           openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
           openworkToken: remoteType === "openwork" ? (token || null) : null,
+          openworkClientToken:
+            remoteType === "openwork" ? (input.openworkClientToken?.trim() || null) : null,
+          openworkHostToken:
+            remoteType === "openwork" ? (input.openworkHostToken?.trim() || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
           sandboxBackend: input.sandboxBackend ?? null,
@@ -2132,6 +2144,8 @@ export function createWorkspaceStore(options: {
     input: {
       openworkHostUrl?: string | null;
       openworkToken?: string | null;
+      openworkClientToken?: string | null;
+      openworkHostToken?: string | null;
       directory?: string | null;
       displayName?: string | null;
     },
@@ -2241,6 +2255,10 @@ export function createWorkspaceStore(options: {
           displayName,
           openworkHostUrl: resolvedHostUrl,
           openworkToken: token ? token : null,
+          openworkClientToken:
+            input.openworkClientToken?.trim() || workspace.openworkClientToken?.trim() || null,
+          openworkHostToken:
+            input.openworkHostToken?.trim() || workspace.openworkHostToken?.trim() || null,
           openworkWorkspaceId: openworkWorkspace?.id ?? workspace.openworkWorkspaceId ?? null,
           openworkWorkspaceName: openworkWorkspace?.name ?? workspace.openworkWorkspaceName ?? null,
         });
@@ -2261,6 +2279,10 @@ export function createWorkspaceStore(options: {
                 displayName,
                 openworkHostUrl: resolvedHostUrl,
                 openworkToken: token ? token : null,
+                openworkClientToken:
+                  input.openworkClientToken?.trim() || item.openworkClientToken?.trim() || null,
+                openworkHostToken:
+                  input.openworkHostToken?.trim() || item.openworkHostToken?.trim() || null,
                 openworkWorkspaceId: openworkWorkspace?.id ?? item.openworkWorkspaceId ?? null,
                 openworkWorkspaceName: openworkWorkspace?.name ?? item.openworkWorkspaceName ?? null,
               }
@@ -2397,7 +2419,11 @@ export function createWorkspaceStore(options: {
         sandboxBackend: "docker",
         runId: workspace.sandboxRunId?.trim() || null,
         openworkToken:
-          workspace.openworkToken?.trim() || options.openworkServerSettings().token?.trim() || null,
+          workspace.openworkClientToken?.trim() ||
+          workspace.openworkToken?.trim() ||
+          options.openworkServerSettings().token?.trim() ||
+          null,
+        openworkHostToken: workspace.openworkHostToken?.trim() || null,
       });
 
       const resolved = await resolveOpenworkHost({
@@ -2417,6 +2443,8 @@ export function createWorkspaceStore(options: {
         directory: resolved.directory || workspacePath,
         openworkHostUrl: resolved.hostUrl,
         openworkToken: host.ownerToken?.trim() || host.token,
+        openworkClientToken: host.token,
+        openworkHostToken: host.hostToken,
         openworkWorkspaceId: resolved.workspace.id,
         openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
         sandboxBackend: host.sandboxBackend ?? "docker",

@@ -118,6 +118,8 @@ export type WorkspaceInfo = {
   displayName?: string | null;
   openworkHostUrl?: string | null;
   openworkToken?: string | null;
+  openworkClientToken?: string | null;
+  openworkHostToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
 
@@ -187,6 +189,8 @@ export async function workspaceCreateRemote(input: {
   remoteType?: "openwork" | "opencode" | null;
   openworkHostUrl?: string | null;
   openworkToken?: string | null;
+  openworkClientToken?: string | null;
+  openworkHostToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
 
@@ -202,6 +206,8 @@ export async function workspaceCreateRemote(input: {
     remoteType: input.remoteType ?? null,
     openworkHostUrl: input.openworkHostUrl ?? null,
     openworkToken: input.openworkToken ?? null,
+    openworkClientToken: input.openworkClientToken ?? null,
+    openworkHostToken: input.openworkHostToken ?? null,
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
@@ -218,6 +224,8 @@ export async function workspaceUpdateRemote(input: {
   remoteType?: "openwork" | "opencode" | null;
   openworkHostUrl?: string | null;
   openworkToken?: string | null;
+  openworkClientToken?: string | null;
+  openworkHostToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
 
@@ -234,6 +242,8 @@ export async function workspaceUpdateRemote(input: {
     remoteType: input.remoteType ?? null,
     openworkHostUrl: input.openworkHostUrl ?? null,
     openworkToken: input.openworkToken ?? null,
+    openworkClientToken: input.openworkClientToken ?? null,
+    openworkHostToken: input.openworkHostToken ?? null,
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
