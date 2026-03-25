@@ -6,10 +6,20 @@ import { realpathSync, statSync } from "node:fs";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
+function resolveBasicAuthHeader() {
+  const password = process.env.OPENCODE_SERVER_PASSWORD?.trim() ?? "";
+  if (!password) return undefined;
+  const username = process.env.OPENCODE_SERVER_USERNAME?.trim() || "opencode";
+  const encoded = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+  return `Basic ${encoded}`;
+}
+
 export function makeClient({ baseUrl, directory }) {
+  const authorization = resolveBasicAuthHeader();
   return createOpencodeClient({
     baseUrl,
     directory,
+    headers: authorization ? { Authorization: authorization } : undefined,
     responseStyle: "data",
     throwOnError: true,
   });
