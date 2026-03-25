@@ -8,7 +8,7 @@ import { Cpu } from "lucide-solid";
 
 export type PluginsViewProps = {
   busy: boolean;
-  activeWorkspaceRoot: string;
+  selectedWorkspaceRoot: string;
   canEditPlugins: boolean;
   canUseGlobalScope: boolean;
   accessHint?: string | null;
@@ -130,7 +130,7 @@ export default function PluginsView(props: PluginsViewProps) {
                             props.busy ||
                             isInstalled() ||
                             !props.canEditPlugins ||
-                            (props.pluginScope === "project" && !props.activeWorkspaceRoot.trim())
+                            (props.pluginScope === "project" && !props.selectedWorkspaceRoot.trim())
                           }
                         >
                           {isInstalled() ? "Added" : "Add"}

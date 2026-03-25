@@ -30,7 +30,7 @@ export type SidebarProps = {
   expandedSections: SidebarSectionState;
   onToggleSection: (section: keyof SidebarSectionState) => void;
   workspaceGroups: WorkspaceSessionGroup[];
-  activeWorkspaceId: string;
+  selectedWorkspaceId: string;
   connectingWorkspaceId?: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   onSelectWorkspace: (workspaceId: string) => void;
@@ -303,7 +303,7 @@ export default function SessionSidebar(props: SidebarProps) {
             >
               <For each={props.workspaceGroups}>
                 {(group) => {
-                  const isActive = () => props.activeWorkspaceId === group.workspace.id;
+                  const isActive = () => props.selectedWorkspaceId === group.workspace.id;
                   const isConnecting = () => props.connectingWorkspaceId === group.workspace.id;
                   const pathLabel = () => workspacePathLabel(group.workspace);
                   const detailLabel = () => workspaceDetailLabel(group.workspace);
@@ -319,7 +319,7 @@ export default function SessionSidebar(props: SidebarProps) {
                   const isActivelyConnecting = () => isConnecting() && connectionStatus() === "connecting";
                   const hasPendingSwitch = () => {
                     const pendingId = props.connectingWorkspaceId;
-                    if (!pendingId || pendingId === props.activeWorkspaceId) return false;
+                    if (!pendingId || pendingId === props.selectedWorkspaceId) return false;
                     const pendingStatus = props.workspaceConnectionStateById[pendingId]?.status ?? "idle";
                     return pendingStatus === "connecting";
                   };

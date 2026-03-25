@@ -48,7 +48,8 @@ use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
     workspace_export_config, workspace_forget, workspace_import_config, workspace_openwork_read,
-    workspace_openwork_write, workspace_set_active, workspace_update_display_name,
+    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active, workspace_set_selected,
+    workspace_update_display_name,
     workspace_update_remote,
 };
 use engine::manager::EngineManager;
@@ -187,6 +188,8 @@ pub fn run() {
             opencodeRouter_status,
             opencodeRouter_config_set,
             workspace_bootstrap,
+            workspace_set_selected,
+            workspace_set_runtime_active,
             workspace_set_active,
             workspace_create,
             workspace_create_remote,

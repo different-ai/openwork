@@ -30,7 +30,7 @@ import {
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
-  activeWorkspaceId: string;
+  selectedWorkspaceId: string;
   developerMode: boolean;
   selectedSessionId: string | null;
   showSessionActions?: boolean;
@@ -39,9 +39,7 @@ type Props = {
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
   importingWorkspaceConfig: boolean;
-  onActivateWorkspace: (
-    workspaceId: string,
-  ) => Promise<boolean> | boolean | void;
+  onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: () => void;
@@ -240,11 +238,11 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   onMount(() => {
-    expandWorkspace(props.activeWorkspaceId);
+    expandWorkspace(props.selectedWorkspaceId);
   });
 
   createEffect(() => {
-    expandWorkspace(props.activeWorkspaceId);
+    expandWorkspace(props.selectedWorkspaceId);
   });
 
   const previewCount = (workspaceId: string) => {
@@ -517,7 +515,7 @@ export default function WorkspaceSessionList(props: Props) {
               if (group.status === "error") return taskLoadError().label;
               if (isConnectionActionBusy()) return "Connecting";
               if (!props.developerMode) return "";
-              if (props.activeWorkspaceId === workspace().id) return "Active";
+              if (props.selectedWorkspaceId === workspace().id) return "Selected";
               return workspaceKindLabel(workspace());
             };
             const statusTone = () => {
@@ -536,14 +534,14 @@ export default function WorkspaceSessionList(props: Props) {
                     role="button"
                     tabIndex={0}
                     class={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-[13px] transition-colors ${
-                      props.activeWorkspaceId === workspace().id
+                      props.selectedWorkspaceId === workspace().id
                         ? "bg-gray-2/70 text-gray-12"
                         : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-12"
                     } ${isConnecting() ? "opacity-75" : ""}`}
                     onClick={() => {
                       expandWorkspace(workspace().id);
                       void Promise.resolve(
-                        props.onActivateWorkspace(workspace().id),
+                        props.onSelectWorkspace(workspace().id),
                       );
                     }}
                     onKeyDown={(event) => {
@@ -552,7 +550,7 @@ export default function WorkspaceSessionList(props: Props) {
                       event.preventDefault();
                       expandWorkspace(workspace().id);
                       void Promise.resolve(
-                        props.onActivateWorkspace(workspace().id),
+                        props.onSelectWorkspace(workspace().id),
                       );
                     }}
                    >

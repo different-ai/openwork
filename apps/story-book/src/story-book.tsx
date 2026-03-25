@@ -277,7 +277,7 @@ const RightRailButton: Component<{
 );
 
 export default function StoryBookApp() {
-  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal(localWorkspace.id);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = createSignal(localWorkspace.id);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sb-session-shell");
   const [rightRailNav, setRightRailNav] = createSignal<RightRailNav>("automations");
   const [themeMode] = createSignal<ThemeMode>(getInitialThemeMode());
@@ -344,7 +344,7 @@ export default function StoryBookApp() {
   });
   const showingSettings = createMemo(() => rightRailNav() === "advanced");
   const activeWorkspace = createMemo(
-    () => workspaceSessionGroups.find((group) => group.workspace.id === activeWorkspaceId())?.workspace ?? localWorkspace,
+    () => workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId())?.workspace ?? localWorkspace,
   );
   const shareWorkspace = createMemo(
     () => storyWorkspaces.find((workspace) => workspace.id === shareWorkspaceId()) ?? null,
@@ -491,7 +491,7 @@ export default function StoryBookApp() {
   };
 
   const openMockShareModal = (workspaceId?: string | null) => {
-    const nextId = workspaceId?.trim() || activeWorkspaceId();
+    const nextId = workspaceId?.trim() || selectedWorkspaceId();
     setShareWorkspaceId(nextId);
     setShareWorkspaceProfileUrl(null);
     setShareSkillsSetUrl(null);
@@ -670,7 +670,7 @@ export default function StoryBookApp() {
         meta: "Share",
         action: () => {
           closeCommandPalette();
-          openMockShareModal(activeWorkspaceId());
+          openMockShareModal(selectedWorkspaceId());
         },
       },
     ];
@@ -690,10 +690,10 @@ export default function StoryBookApp() {
       id: `session:${item.workspaceId}:${item.sessionId}`,
       title: item.title,
       detail: item.workspaceTitle,
-      meta: item.workspaceId === activeWorkspaceId() ? "Current workspace" : "Switch",
+      meta: item.workspaceId === selectedWorkspaceId() ? "Current workspace" : "Switch",
       action: () => {
         closeCommandPalette();
-        setActiveWorkspaceId(item.workspaceId);
+        setSelectedWorkspaceId(item.workspaceId);
         setSelectedSessionId(item.sessionId);
       },
     }));
@@ -857,7 +857,7 @@ export default function StoryBookApp() {
           />
         </div>
 
-        <Show when={expanded && activeWorkspaceId() === remoteWorkspace.id}>
+        <Show when={expanded && selectedWorkspaceId() === remoteWorkspace.id}>
           <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
             <InboxPanel
               id="sidebar-inbox"
@@ -885,7 +885,7 @@ export default function StoryBookApp() {
             <WorkspaceSessionList
               developerMode
               workspaceSessionGroups={workspaceSessionGroups}
-              activeWorkspaceId={activeWorkspaceId()}
+              selectedWorkspaceId={selectedWorkspaceId()}
               selectedSessionId={selectedSessionId()}
               showSessionActions
               sessionStatusById={sessionStatusById}
@@ -893,16 +893,16 @@ export default function StoryBookApp() {
               workspaceConnectionStateById={workspaceConnectionStateById}
               newTaskDisabled={false}
               importingWorkspaceConfig={false}
-              onActivateWorkspace={(workspaceId) => {
-                setActiveWorkspaceId(workspaceId);
+              onSelectWorkspace={(workspaceId) => {
+                setSelectedWorkspaceId(workspaceId);
                 return true;
               }}
               onOpenSession={(workspaceId, sessionId) => {
-                setActiveWorkspaceId(workspaceId);
+                setSelectedWorkspaceId(workspaceId);
                 setSelectedSessionId(sessionId);
               }}
               onCreateTaskInWorkspace={(workspaceId) => {
-                setActiveWorkspaceId(workspaceId);
+                setSelectedWorkspaceId(workspaceId);
               }}
               onOpenRenameSession={() => undefined}
               onOpenDeleteSession={() => undefined}
@@ -1081,8 +1081,8 @@ export default function StoryBookApp() {
                 if (!normalized) return workingFiles.slice(0, 8);
                 return workingFiles.filter((path) => path.toLowerCase().includes(normalized)).slice(0, 8);
               }}
-              isRemoteWorkspace={activeWorkspaceId() === remoteWorkspace.id}
-              isSandboxWorkspace={activeWorkspaceId() === remoteWorkspace.id}
+              isRemoteWorkspace={selectedWorkspaceId() === remoteWorkspace.id}
+              isSandboxWorkspace={selectedWorkspaceId() === remoteWorkspace.id}
               attachmentsEnabled
               attachmentsDisabledReason={null}
               listCommands={async () => commandOptions}

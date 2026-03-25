@@ -145,7 +145,7 @@ const appendPartDelta = (list: Part[], partID: string, field: string, delta: str
 
 export function createSessionStore(options: {
   client: () => Client | null;
-  activeWorkspaceRoot: () => string;
+  selectedWorkspaceRoot: () => string;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
   sessionModelState: () => SessionModelState;
@@ -350,7 +350,7 @@ export function createSessionStore(options: {
     if (!options.markReloadRequired) return;
     if (!part?.id || !part.messageID) return;
 
-    const root = normalizeDirectoryPath(options.activeWorkspaceRoot());
+    const root = normalizeDirectoryPath(options.selectedWorkspaceRoot());
     if (root) {
       const session = store.sessions.find((candidate) => candidate.id === part.sessionID) ?? null;
       const sessionRoot = normalizeDirectoryPath(session?.directory ?? "");
@@ -787,8 +787,8 @@ export function createSessionStore(options: {
       scopeScope: describeDirectoryScope(scopeRoot),
       queryDirectory: queryDirectory ?? null,
       queryScope: describeDirectoryScope(queryDirectory),
-      activeWorkspaceRoot: options.activeWorkspaceRoot?.() ?? null,
-      activeWorkspaceScope: describeDirectoryScope(options.activeWorkspaceRoot?.() ?? null),
+      selectedWorkspaceRoot: options.selectedWorkspaceRoot?.() ?? null,
+      activeWorkspaceScope: describeDirectoryScope(options.selectedWorkspaceRoot?.() ?? null),
     });
 
     const start = Date.now();

@@ -33,8 +33,8 @@ export type IdentitiesViewProps = {
   openworkReconnectBusy: boolean;
   reconnectOpenworkServer: () => Promise<boolean>;
   restartLocalServer: () => Promise<boolean>;
-  openworkServerWorkspaceId: string | null;
-  activeWorkspaceRoot: string;
+  runtimeWorkspaceId: string | null;
+  selectedWorkspaceRoot: string;
   developerMode: boolean;
   showHeader?: boolean;
 };
@@ -202,7 +202,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const [messagingRestartAction, setMessagingRestartAction] = createSignal<"enable" | "disable">("enable");
 
   const workspaceId = createMemo(() => {
-    const explicitId = props.openworkServerWorkspaceId?.trim() ?? "";
+    const explicitId = props.runtimeWorkspaceId?.trim() ?? "";
     if (explicitId) return explicitId;
     return parseOpenworkWorkspaceIdFromUrl(props.openworkServerUrl) ?? "";
   });
@@ -217,7 +217,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
   const serverReady = createMemo(() => props.openworkServerStatus === "connected" && Boolean(openworkServerClient()));
   const scopedWorkspaceReady = createMemo(() => Boolean(workspaceId()));
-  const defaultRoutingDirectory = createMemo(() => props.activeWorkspaceRoot.trim() || "Not set");
+  const defaultRoutingDirectory = createMemo(() => props.selectedWorkspaceRoot.trim() || "Not set");
 
   let lastResetKey = "";
 

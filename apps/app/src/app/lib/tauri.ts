@@ -130,9 +130,17 @@ export type WorkspaceInfo = {
 };
 
 export type WorkspaceList = {
-  activeId: string;
+  selectedId?: string;
+  watchedId?: string | null;
+  activeId?: string | null;
   workspaces: WorkspaceInfo[];
 };
+
+export function resolveWorkspaceListSelectedId(
+  list: Pick<WorkspaceList, "selectedId" | "activeId"> | null | undefined,
+): string {
+  return list?.selectedId?.trim() || list?.activeId?.trim() || "";
+}
 
 export type WorkspaceExportSummary = {
   outputPath: string;
@@ -166,8 +174,12 @@ export async function workspaceBootstrap(): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_bootstrap");
 }
 
-export async function workspaceSetActive(workspaceId: string): Promise<WorkspaceList> {
-  return invoke<WorkspaceList>("workspace_set_active", { workspaceId });
+export async function workspaceSetSelected(workspaceId: string): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_set_selected", { workspaceId });
+}
+
+export async function workspaceSetRuntimeActive(workspaceId: string | null): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_set_runtime_active", { workspaceId: workspaceId ?? "" });
 }
 
 export async function workspaceCreate(input: {

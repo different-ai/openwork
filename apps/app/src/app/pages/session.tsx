@@ -116,14 +116,15 @@ export type SessionViewProps = {
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
   toggleSettings: () => void;
-  activeWorkspaceDisplay: WorkspaceDisplay;
-  activeWorkspaceRoot: string;
+  selectedWorkspaceDisplay: WorkspaceDisplay;
+  selectedWorkspaceRoot: string;
   activeWorkspaceConfig: WorkspaceOpenworkConfig | null;
   workspaces: WorkspaceInfo[];
-  activeWorkspaceId: string;
+  selectedWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  selectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  ensureWorkspaceActivated: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
@@ -145,7 +146,7 @@ export type SessionViewProps = {
   shareRemoteAccessBusy: boolean;
   shareRemoteAccessError: string | null;
   saveShareRemoteAccess: (enabled: boolean) => Promise<void>;
-  openworkServerWorkspaceId: string | null;
+  runtimeWorkspaceId: string | null;
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
   orchestratorStatus: OrchestratorStatus | null;
@@ -521,8 +522,8 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     out.sort((a, b) => {
-      const aActive = a.workspaceId === props.activeWorkspaceId;
-      const bActive = b.workspaceId === props.activeWorkspaceId;
+      const aActive = a.workspaceId === props.selectedWorkspaceId;
+      const bActive = b.workspaceId === props.selectedWorkspaceId;
       if (aActive !== bActive) return aActive ? -1 : 1;
       return b.updatedAt - a.updatedAt;
     });
@@ -907,7 +908,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!trimmed) return [];
     if (isAbsolutePath(trimmed)) return [trimmed];
 
-    const root = props.activeWorkspaceRoot.trim();
+    const root = props.selectedWorkspaceRoot.trim();
     if (!root) return [];
 
     const normalized = trimmed
@@ -1051,8 +1052,8 @@ export default function SessionView(props: SessionViewProps) {
     createSignal<RemoteFileSyncSession | null>(null);
   const remoteMirrorWorkspaceKey = createMemo(
     () =>
-      props.openworkServerWorkspaceId?.trim() ||
-      props.activeWorkspaceDisplay.id?.trim() ||
+      props.runtimeWorkspaceId?.trim() ||
+      props.selectedWorkspaceDisplay.id?.trim() ||
       "remote-worker",
   );
   let remoteMirrorSyncTimer: number | undefined;
@@ -1150,7 +1151,7 @@ export default function SessionView(props: SessionViewProps) {
       .replace(/[\\/]+/g, "/");
     if (!normalized) return "";
 
-    const root = props.activeWorkspaceRoot
+    const root = props.selectedWorkspaceRoot
       .trim()
       .replace(/[\\/]+/g, "/")
       .replace(/\/+$/, "");
@@ -1211,7 +1212,7 @@ export default function SessionView(props: SessionViewProps) {
   const ensureRemoteFileSyncSession =
     async (): Promise<RemoteFileSyncSession> => {
       const client = props.openworkServerClient;
-      const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+      const workspaceId = props.runtimeWorkspaceId?.trim() ?? "";
       if (!client || !workspaceId) {
         throw new Error("Connect to OpenWork server to sync remote files.");
       }
@@ -1496,8 +1497,8 @@ export default function SessionView(props: SessionViewProps) {
       () =>
         [
           isTauriRuntime(),
-          props.activeWorkspaceDisplay.workspaceType,
-          props.openworkServerWorkspaceId?.trim() ?? "",
+          props.selectedWorkspaceDisplay.workspaceType,
+          props.runtimeWorkspaceId?.trim() ?? "",
           Boolean(props.openworkServerClient),
         ] as const,
       ([desktopRuntime, workspaceType, workspaceId, hasClient], previous) => {
@@ -1569,7 +1570,7 @@ export default function SessionView(props: SessionViewProps) {
   let initialAnchorGuardTimer: ReturnType<typeof setTimeout> | undefined;
   let jumpControlsSuppressTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
-    if (props.activeWorkspaceDisplay.workspaceType !== "remote") return true;
+    if (props.selectedWorkspaceDisplay.workspaceType !== "remote") return true;
     return props.openworkServerStatus === "connected";
   });
   const attachmentsDisabledReason = createMemo(() => {
@@ -1766,7 +1767,7 @@ export default function SessionView(props: SessionViewProps) {
     const trimmed = file.trim();
     if (!trimmed) return;
 
-    if (props.activeWorkspaceDisplay.workspaceType === "remote") {
+    if (props.selectedWorkspaceDisplay.workspaceType === "remote") {
       setToastMessage("File open is unavailable for remote workspaces.");
       return;
     }
@@ -3379,7 +3380,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const isSandboxWorkspace = createMemo(() =>
     Boolean(
-      (props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim(),
+      (props.selectedWorkspaceDisplay as any)?.sandboxContainerName?.trim(),
     ),
   );
 
@@ -3389,7 +3390,7 @@ export default function SessionView(props: SessionViewProps) {
   ): Promise<Array<{ name: string; path: string }>> => {
     const notify = options?.notify ?? true;
     const client = props.openworkServerClient;
-    const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+    const workspaceId = props.runtimeWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
       if (notify) {
         setToastMessage(
@@ -3448,17 +3449,9 @@ export default function SessionView(props: SessionViewProps) {
   ) => {
     if (!sessionId) return;
     const shouldFocusComposer = options?.focusComposer === true;
-    // Route-driven selection: navigate first and let the route effect own selectSession.
-    if (workspaceId === props.activeWorkspaceId) {
-      props.setView("session", sessionId);
-      if (shouldFocusComposer) {
-        focusComposer();
-      }
-      return;
-    }
-    // For different workspace, activate workspace first
     void (async () => {
-      await Promise.resolve(props.activateWorkspace(workspaceId));
+      const ready = await Promise.resolve(props.ensureWorkspaceActivated(workspaceId));
+      if (!ready) return;
       props.setView("session", sessionId);
       if (shouldFocusComposer) {
         focusComposer();
@@ -3469,12 +3462,9 @@ export default function SessionView(props: SessionViewProps) {
   const createTaskInWorkspace = (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
-    if (id === props.activeWorkspaceId) {
-      props.createSessionAndOpen();
-      return;
-    }
     void (async () => {
-      await Promise.resolve(props.activateWorkspace(id));
+      const ready = await Promise.resolve(props.ensureWorkspaceActivated(id));
+      if (!ready) return;
       props.createSessionAndOpen();
     })();
   };
@@ -3577,7 +3567,7 @@ export default function SessionView(props: SessionViewProps) {
       title: item.title,
       detail: item.workspaceTitle,
       meta:
-        item.workspaceId === props.activeWorkspaceId
+        item.workspaceId === props.selectedWorkspaceId
           ? "Current workspace"
           : "Switch",
       action: () => {
@@ -3750,7 +3740,7 @@ export default function SessionView(props: SessionViewProps) {
   const emptyStatePreset = createMemo(
     () =>
       props.activeWorkspaceConfig?.workspace?.preset?.trim() ||
-      props.activeWorkspaceDisplay.preset ||
+      props.selectedWorkspaceDisplay.preset ||
       "starter",
   );
   const blueprintEmptyState = createMemo(
@@ -3888,7 +3878,7 @@ export default function SessionView(props: SessionViewProps) {
           <div class="flex min-h-0 flex-1">
             <WorkspaceSessionList
               workspaceSessionGroups={props.workspaceSessionGroups}
-              activeWorkspaceId={props.activeWorkspaceId}
+              selectedWorkspaceId={props.selectedWorkspaceId}
               developerMode={props.developerMode}
               selectedSessionId={props.selectedSessionId}
               showSessionActions
@@ -3897,7 +3887,7 @@ export default function SessionView(props: SessionViewProps) {
               workspaceConnectionStateById={props.workspaceConnectionStateById}
               newTaskDisabled={props.newTaskDisabled}
               importingWorkspaceConfig={props.importingWorkspaceConfig}
-              onActivateWorkspace={props.activateWorkspace}
+              onSelectWorkspace={props.selectWorkspace}
               onOpenSession={openSessionFromList}
               onCreateTaskInWorkspace={createTaskInWorkspace}
               onOpenRenameSession={openRenameModal}
@@ -3968,7 +3958,7 @@ export default function SessionView(props: SessionViewProps) {
                   : selectedSessionTitle() || DEFAULT_SESSION_TITLE}
               </h1>
               <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                {props.activeWorkspaceDisplay.displayName || props.activeWorkspaceDisplay.name || "Workspace"}
+                {props.selectedWorkspaceDisplay.displayName || props.selectedWorkspaceDisplay.name || "Workspace"}
               </span>
               <Show when={props.developerMode}>
                 <span class="hidden text-[12px] text-dls-secondary lg:inline">
@@ -4374,7 +4364,7 @@ export default function SessionView(props: SessionViewProps) {
                     getMessagesBySessionId={props.getMessagesBySessionId}
                     ensureSessionLoaded={props.ensureSessionLoaded}
                     sessionLoadingById={props.sessionLoadingById}
-                    workspaceRoot={props.activeWorkspaceRoot}
+                    workspaceRoot={props.selectedWorkspaceRoot}
                     expandedStepIds={props.expandedStepIds}
                     setExpandedStepIds={props.setExpandedStepIds}
                     openSessionById={(sessionId) =>
@@ -4567,7 +4557,7 @@ export default function SessionView(props: SessionViewProps) {
               searchFiles={props.searchFiles}
               listCommands={props.listCommands}
               isRemoteWorkspace={
-                props.activeWorkspaceDisplay.workspaceType === "remote"
+                props.selectedWorkspaceDisplay.workspaceType === "remote"
               }
               isSandboxWorkspace={isSandboxWorkspace()}
               onUploadInboxFiles={uploadInboxFiles}

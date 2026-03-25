@@ -43,7 +43,8 @@ export type OpenworkServerDiagnostics = {
   approval: { mode: "manual" | "auto"; timeoutMs: number };
   corsOrigins: string[];
   workspaceCount: number;
-  activeWorkspaceId: string | null;
+  activeWorkspaceId?: string | null;
+  selectedWorkspaceId?: string | null;
   workspace: OpenworkWorkspaceInfo | null;
   authorizedRoots: string[];
   server: { host: string; port: number; configPath?: string | null };

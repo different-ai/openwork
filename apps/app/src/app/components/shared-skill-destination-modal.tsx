@@ -16,7 +16,7 @@ export default function SharedSkillDestinationModal(props: {
   open: boolean;
   skill: SharedSkillSummary | null;
   workspaces: WorkspaceInfo[];
-  activeWorkspaceId?: string | null;
+  selectedWorkspaceId?: string | null;
   busyWorkspaceId?: string | null;
   onClose: () => void;
   onSubmitWorkspace: (workspaceId: string) => void | Promise<void>;
@@ -68,7 +68,7 @@ export default function SharedSkillDestinationModal(props: {
 
   createEffect(() => {
     if (!props.open) return;
-    const activeMatch = props.workspaces.find((workspace) => workspace.id === props.activeWorkspaceId) ?? props.workspaces[0] ?? null;
+    const activeMatch = props.workspaces.find((workspace) => workspace.id === props.selectedWorkspaceId) ?? props.workspaces[0] ?? null;
     setSelectedWorkspaceId(activeMatch?.id ?? null);
   });
 
@@ -169,7 +169,7 @@ export default function SharedSkillDestinationModal(props: {
                 <div class="space-y-2">
                   <For each={props.workspaces}>
                     {(workspace) => {
-                      const isActive = () => workspace.id === props.activeWorkspaceId;
+                      const isActive = () => workspace.id === props.selectedWorkspaceId;
                       const isSelected = () => workspace.id === selectedWorkspaceId();
                       const isBusy = () => workspace.id === props.busyWorkspaceId;
                       const WorkspaceIcon = () => (workspace.workspaceType === "remote" ? <Globe size={16} /> : <Folder size={16} />);

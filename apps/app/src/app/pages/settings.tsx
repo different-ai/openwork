@@ -117,8 +117,8 @@ export type SettingsViewProps = {
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkServerWorkspaceId: string | null;
-  activeWorkspaceRoot: string;
+  runtimeWorkspaceId: string | null;
+  selectedWorkspaceRoot: string;
   activeWorkspaceType: "local" | "remote";
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
@@ -308,7 +308,7 @@ export function OpenCodeRouterSettings(_props: {
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
   openworkServerSettings: OpenworkServerSettings;
-  openworkServerWorkspaceId: string | null;
+  runtimeWorkspaceId: string | null;
   openworkServerHostInfo: OpenworkServerInfo | null;
   developerMode: boolean;
 }) {
@@ -335,7 +335,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const canPickAuthorizedFolder = createMemo(
     () => isTauriRuntime() && props.authorizedFoldersEditable && props.activeWorkspaceType === "local",
   );
-  const workspaceRootFolder = createMemo(() => props.activeWorkspaceRoot.trim());
+  const workspaceRootFolder = createMemo(() => props.selectedWorkspaceRoot.trim());
   const visibleAuthorizedFolders = createMemo(() => {
     const root = workspaceRootFolder();
     return root ? [root, ...props.authorizedFolders] : props.authorizedFolders;
@@ -888,14 +888,14 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const openworkAuditStatusLabel = createMemo(() => {
-    if (!props.openworkServerWorkspaceId) return "Unavailable";
+    if (!props.runtimeWorkspaceId) return "Unavailable";
     if (props.openworkAuditStatus === "loading") return "Loading";
     if (props.openworkAuditStatus === "error") return "Error";
     return "Ready";
   });
 
   const openworkAuditStatusStyle = createMemo(() => {
-    if (!props.openworkServerWorkspaceId)
+    if (!props.runtimeWorkspaceId)
       return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     if (props.openworkAuditStatus === "loading")
       return "bg-amber-7/10 text-amber-11 border-amber-7/20";
@@ -1158,7 +1158,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const workspaceConfigPath = createMemo(() => {
-    const root = props.activeWorkspaceRoot.trim();
+    const root = props.selectedWorkspaceRoot.trim();
     if (!root) return "";
     const normalized = root.replace(/[\\/]+$/, "");
     const separator = props.isWindows ? "\\" : "/";
@@ -1171,7 +1171,7 @@ export default function SettingsView(props: SettingsViewProps) {
       version: appVersionLabel(),
       commit: appCommitLabel(),
       startupPreference: props.startupPreference ?? "unset",
-      workspaceRoot: props.activeWorkspaceRoot.trim() || null,
+      workspaceRoot: props.selectedWorkspaceRoot.trim() || null,
       workspaceConfigPath: workspaceConfigPath() || null,
     },
     versions: {
@@ -2081,7 +2081,7 @@ export default function SettingsView(props: SettingsViewProps) {
               refreshJobs={props.refreshScheduledJobs}
               deleteJob={props.deleteScheduledJob}
               isWindows={props.isWindows}
-              activeWorkspaceRoot={props.activeWorkspaceRoot}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               createSessionAndOpen={props.createSessionAndOpen}
               setPrompt={props.setPrompt}
               newTaskDisabled={props.newTaskDisabled}
@@ -2098,7 +2098,7 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "skills"}>
           <WebUnavailableSurface unavailable={webDeployment()}>
             <SkillsView
-              workspaceName={props.activeWorkspaceRoot.trim() || "Workspace"}
+              workspaceName={props.selectedWorkspaceRoot.trim() || "Workspace"}
               busy={props.busy}
               showHeader={false}
               canInstallSkillCreator={props.canInstallSkillCreator}
@@ -2134,7 +2134,7 @@ export default function SettingsView(props: SettingsViewProps) {
               initialSection="all"
               showHeader={false}
               busy={props.busy}
-              activeWorkspaceRoot={props.activeWorkspaceRoot}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               isRemoteWorkspace={props.activeWorkspaceType === "remote"}
               refreshMcpServers={props.refreshMcpServers}
               mcpServers={props.mcpServers}
@@ -2184,8 +2184,8 @@ export default function SettingsView(props: SettingsViewProps) {
               openworkReconnectBusy={props.openworkReconnectBusy}
               reconnectOpenworkServer={props.reconnectOpenworkServer}
               restartLocalServer={props.restartLocalServer}
-              openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-              activeWorkspaceRoot={props.activeWorkspaceRoot}
+              runtimeWorkspaceId={props.runtimeWorkspaceId}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               developerMode={props.developerMode}
             />
           </WebUnavailableSurface>
@@ -3759,7 +3759,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           </div>
                           <div>Workspaces: {diag().workspaceCount}</div>
                           <div>
-                            Active workspace: {diag().activeWorkspaceId ?? "—"}
+                            Active workspace: {diag().activeWorkspaceId ?? diag().selectedWorkspaceId ?? "—"}
                           </div>
                           <div>
                             Config path: {diag().server.configPath ?? "default"}
@@ -3779,8 +3779,8 @@ export default function SettingsView(props: SettingsViewProps) {
                         OpenWork server capabilities
                       </div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
-                        {props.openworkServerWorkspaceId
-                          ? `Worker ${props.openworkServerWorkspaceId}`
+                        {props.runtimeWorkspaceId
+                          ? `Worker ${props.runtimeWorkspaceId}`
                           : "Worker unresolved"}
                       </div>
                     </div>

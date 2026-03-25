@@ -25,7 +25,7 @@ type Props = {
   activeWorkspaceLabel: string;
   activeWorkspaceType: "local" | "remote";
   openworkServerClient: OpenworkServerClient | null;
-  openworkServerWorkspaceId: string | null;
+  runtimeWorkspaceId: string | null;
   inboxId: string;
   onToggleExpanded: () => void;
   onCloseMobile?: () => void;
@@ -141,7 +141,7 @@ export default function WorkspaceRightSidebar(props: Props) {
             <InboxPanel
               id={props.inboxId}
               client={props.openworkServerClient}
-              workspaceId={props.openworkServerWorkspaceId}
+              workspaceId={props.runtimeWorkspaceId}
               onToast={props.onInboxToast}
             />
           </div>

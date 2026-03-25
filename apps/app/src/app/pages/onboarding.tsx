@@ -20,7 +20,7 @@ export type OnboardingViewProps = {
   openworkToken: string;
   newAuthorizedDir: string;
   authorizedDirs: string[];
-  activeWorkspacePath: string;
+  selectedWorkspacePath: string;
   workspaces: WorkspaceInfo[];
   localHostLabel: string;
   engineRunning: boolean;
@@ -271,7 +271,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
             </div>
             <Button
               onClick={props.onStartHost}
-              disabled={props.busy || !props.activeWorkspacePath.trim()}
+              disabled={props.busy || !props.selectedWorkspacePath.trim()}
               class="w-full py-3 text-base"
             >
               {translate("onboarding.start")}

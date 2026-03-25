@@ -374,6 +374,12 @@ Practical consequences:
 - OpenWork server is already multi-workspace aware.
 - Desktop router management is still effectively single-root at a time.
 
+Terminology clarification:
+
+- `selected workspace` is a UI concept: the workspace the user is currently viewing and where compose/config actions should target.
+- `runtime active workspace` is a backend concept: the workspace the local server/orchestrator currently reports as active.
+- These states must be treated separately. UI selection can change without implying that the backend has switched roots yet.
+
 ```text
 Shared-root case
 
