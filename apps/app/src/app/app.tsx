@@ -4102,7 +4102,7 @@ export default function App() {
       const imported = await importSharedBundleIntoActiveWorker(
         request.request,
         {
-          localRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
         },
         request.bundle,
       );
@@ -5449,10 +5449,10 @@ export default function App() {
     workspaceIdOverride?: string | null,
   ): Promise<WorkspaceOpenworkConfig | null> => {
     const client = openworkServerClient();
-    const workspaceId = (workspaceIdOverride ?? openworkServerWorkspaceId() ?? "").trim();
+    const workspaceId = (workspaceIdOverride ?? runtimeWorkspaceId() ?? "").trim();
     if (!client || !workspaceId) return null;
 
-    const workspace = activeWorkspaceDisplay();
+    const workspace = selectedWorkspaceDisplay();
     const config = await client.getConfig(workspaceId);
     const normalized = normalizeWorkspaceOpenworkConfig(
       config.openwork,
@@ -5558,10 +5558,10 @@ export default function App() {
     createSignal<Record<string, boolean>>({});
 
   createEffect(() => {
-    const workspaceId = (openworkServerWorkspaceId() ?? "").trim();
+    const workspaceId = (runtimeWorkspaceId() ?? "").trim();
     const client = openworkServerClient();
     const connected = openworkServerStatus() === "connected";
-    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const root = workspaceStore.selectedWorkspaceRoot().trim();
     const config = resolvedActiveWorkspaceConfig();
     const templates = blueprintSessions(config);
     const materialized = blueprintMaterializedSessions(config);
