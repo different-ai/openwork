@@ -828,6 +828,30 @@ export function createSessionStore(options: {
       })),
     });
     sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
+
+    // Guard: do not wipe existing sessions with an empty list when a specific
+    // scope root was requested. This happens when the engine is restarting
+    // (app update, worker switch, workspace change) and session.list() returns
+    // [] before the server has finished indexing — reconcile([]) would destroy
+    // all session history from the store. We only skip the store update; the
+    // loadedScopeRoot is still updated so the next successful load can proceed
+    // normally. If no scope root was given (global load), we always reconcile
+    // since an empty global list is authoritative.
+    if (root && filtered.length === 0 && store.sessions.length > 0) {
+      const existingRootSessions = store.sessions.filter(
+        (session) => normalizeDirectoryPath(session.directory) === root,
+      );
+      if (existingRootSessions.length > 0) {
+        sessionDebug("sessions:load:skip-empty-reconcile", {
+          root,
+          existingCount: existingRootSessions.length,
+          reason: "server returned empty list for scoped root — preserving existing sessions",
+        });
+        setLoadedScopeRoot(root);
+        return;
+      }
+    }
+
     setLoadedScopeRoot(root);
     rememberSessions(filtered);
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
