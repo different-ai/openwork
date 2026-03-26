@@ -1949,7 +1949,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     onboardingAutoLaunchKeyRef.current = autoLaunchKey;
-    void launchWorker({ source: "signup_auto", workerNameOverride: onboardingIntent?.workerName ?? DEFAULT_WORKER_NAME });
+    markOnboardingComplete();
   }, [billingSummary?.featureGateEnabled, billingSummary?.hasActivePlan, launchBusy, onboardingIntent?.workerName, onboardingPending, ownedWorkerCount, user?.id]);
 
   useEffect(() => {

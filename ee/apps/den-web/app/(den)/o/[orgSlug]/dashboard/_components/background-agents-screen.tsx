@@ -1,6 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { getWorkerStatusMeta } from "../../../../_lib/den-flow";
+import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import { getSharedSetupsRoute } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -12,13 +15,35 @@ const EXAMPLE_AGENTS = [
   },
   {
     name: "Renewal reminder agent",
-    status: "Paused",
+    status: "Active",
     detail: "Source: Customer success setup",
   },
 ];
 
+function statusClass(bucket: ReturnType<typeof getWorkerStatusMeta>["bucket"]) {
+  switch (bucket) {
+    case "ready":
+      return "is-success";
+    case "starting":
+      return "is-neutral";
+    case "attention":
+      return "is-warning";
+    default:
+      return "is-neutral";
+  }
+}
+
 export function BackgroundAgentsScreen() {
+  const router = useRouter();
   const { orgSlug } = useOrgDashboard();
+  const { workers, workersBusy, workersError, launchBusy, launchWorker } = useDenFlow();
+
+  async function handleAddSandbox() {
+    const result = await launchWorker({ source: "manual" });
+    if (result === "checkout") {
+      router.push("/checkout");
+    }
+  }
 
   return (
     <section className="den-page flex max-w-6xl flex-col gap-6 py-4 md:py-8">
@@ -35,9 +60,19 @@ export function BackgroundAgentsScreen() {
             </p>
           </div>
 
-          <Link href={getSharedSetupsRoute(orgSlug)} className="den-button-secondary">
-            Open shared setups
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              className="den-button-primary"
+              onClick={() => void handleAddSandbox()}
+              disabled={launchBusy}
+            >
+              {launchBusy ? "Adding..." : "+ Add sandbox"}
+            </button>
+            <Link href={getSharedSetupsRoute(orgSlug)} className="den-button-secondary">
+              Open shared setups
+            </Link>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
@@ -55,23 +90,44 @@ export function BackgroundAgentsScreen() {
         </div>
       </div>
 
+      {workersError ? <div className="den-notice is-error">{workersError}</div> : null}
+
       <div className="den-list-shell">
         <div className="px-5 py-5">
-          <p className="den-eyebrow">Example workflows</p>
+          <p className="den-eyebrow">{workers.length > 0 ? "Current sandboxes" : "Example workflows"}</p>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">
             Background workflows
           </h2>
         </div>
 
-        {EXAMPLE_AGENTS.map((agent) => (
-          <article key={agent.name} className="den-list-row">
-            <div className="grid gap-1">
-              <h3 className="text-base font-semibold text-[var(--dls-text-primary)]">{agent.name}</h3>
-              <p className="text-sm text-[var(--dls-text-secondary)]">{agent.detail}</p>
-            </div>
-            <span className="den-status-pill is-neutral">{agent.status}</span>
-          </article>
-        ))}
+        {workersBusy ? (
+          <div className="den-list-row text-sm text-[var(--dls-text-secondary)]">Loading sandboxes...</div>
+        ) : workers.length > 0 ? (
+          workers.map((worker) => {
+            const meta = getWorkerStatusMeta(worker.status);
+            return (
+              <article key={worker.workerId} className="den-list-row">
+                <div className="grid gap-1">
+                  <h3 className="text-base font-semibold text-[var(--dls-text-primary)]">{worker.workerName}</h3>
+                  <p className="text-sm text-[var(--dls-text-secondary)]">
+                    Source: {worker.provider ? `${worker.provider} sandbox` : "Cloud sandbox"}
+                  </p>
+                </div>
+                <span className={`den-status-pill ${statusClass(meta.bucket)}`}>{meta.label}</span>
+              </article>
+            );
+          })
+        ) : (
+          EXAMPLE_AGENTS.map((agent) => (
+            <article key={agent.name} className="den-list-row">
+              <div className="grid gap-1">
+                <h3 className="text-base font-semibold text-[var(--dls-text-primary)]">{agent.name}</h3>
+                <p className="text-sm text-[var(--dls-text-secondary)]">{agent.detail}</p>
+              </div>
+              <span className="den-status-pill is-neutral">{agent.status}</span>
+            </article>
+          ))
+        )}
       </div>
     </section>
   );

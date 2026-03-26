@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
+    "dev:local": "sh -lc 'OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port ${DEN_WEB_PORT:-3005}'",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "next lint"

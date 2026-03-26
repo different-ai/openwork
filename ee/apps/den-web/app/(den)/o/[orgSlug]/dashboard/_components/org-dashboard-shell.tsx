@@ -66,8 +66,8 @@ export function OrgDashboardShell({ children }: { children: ReactNode }) {
     { href: activeOrg ? getMembersRoute(activeOrg.slug) : "#", label: "Members" },
     { href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#", label: "Background agents", badge: "Alpha" },
     { href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#", label: "Custom LLM providers", badge: "Soon" },
-    { href: "/checkout", label: "Billing" },
   ];
+  const billingNavItem = { href: "/checkout", label: "Billing" };
   const dashboardHref = activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#";
 
   return (
@@ -192,6 +192,19 @@ export function OrgDashboardShell({ children }: { children: ReactNode }) {
                 );
               })}
             </nav>
+
+            <div className="pt-2">
+              <Link
+                href={billingNavItem.href}
+                className={`flex items-center justify-between gap-3 rounded-[1.2rem] px-4 py-3 text-sm transition-colors ${
+                  pathname === billingNavItem.href
+                    ? "bg-[#f0f1f3] font-medium text-[var(--dls-text-primary)]"
+                    : "text-[var(--dls-text-secondary)] hover:bg-[#f6f7f8] hover:text-[var(--dls-text-primary)]"
+                }`}
+              >
+                <span>{billingNavItem.label}</span>
+              </Link>
+            </div>
           </div>
 
           <div className="mt-auto grid gap-3">
