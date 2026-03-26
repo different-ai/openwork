@@ -30,6 +30,8 @@ async function getSessionFromBearerToken(token: string): Promise<AuthSessionLike
         id: AuthSessionTable.id,
         token: AuthSessionTable.token,
         userId: AuthSessionTable.userId,
+        activeOrganizationId: AuthSessionTable.activeOrganizationId,
+        activeTeamId: AuthSessionTable.activeTeamId,
         expiresAt: AuthSessionTable.expiresAt,
         createdAt: AuthSessionTable.createdAt,
         updatedAt: AuthSessionTable.updatedAt,

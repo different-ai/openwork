@@ -9,10 +9,11 @@ import { env } from "./env.js"
 import { adminRouter } from "./http/admin.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
+import { orgsRouter } from "./http/orgs.js"
 import { getRequestSession } from "./http/session.js"
 import { workersRouter } from "./http/workers.js"
 import { normalizeDenTypeId } from "./db/typeid.js"
-import { listUserOrgs } from "./orgs.js"
+import { resolveUserOrganizationsForSession } from "./orgs.js"
 
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
@@ -52,15 +53,27 @@ app.get("/v1/me/orgs", asyncRoute(async (req, res) => {
     return
   }
 
-  const orgs = await listUserOrgs(normalizeDenTypeId("user", session.user.id))
+  const resolved = await resolveUserOrganizationsForSession({
+    sessionId: session.session?.id ? normalizeDenTypeId("session", session.session.id) : null,
+    activeOrganizationId: session.session?.activeOrganizationId ?? null,
+    userId: normalizeDenTypeId("user", session.user.id),
+    email: session.user.email ?? `${session.user.id}@placeholder.local`,
+    name: session.user.name,
+  })
+
   res.json({
-    orgs,
-    defaultOrgId: orgs[0]?.id ?? null,
+    orgs: resolved.orgs.map((org) => ({
+      ...org,
+      isActive: org.id === resolved.activeOrgId,
+    })),
+    activeOrgId: resolved.activeOrgId,
+    activeOrgSlug: resolved.activeOrgSlug,
   })
 }))
 
 app.use("/v1/admin", adminRouter)
 app.use("/v1/auth", desktopAuthRouter)
+app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
 

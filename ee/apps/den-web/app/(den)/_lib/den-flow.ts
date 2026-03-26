@@ -243,7 +243,7 @@ export function getSocialCallbackUrl(): string {
     const callbackUrl = new URL("/", origin);
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      for (const key of ["mode", "desktopAuth", "desktopScheme"]) {
+      for (const key of ["mode", "desktopAuth", "desktopScheme", "invite"]) {
         const value = params.get(key)?.trim() ?? "";
         if (value) {
           callbackUrl.searchParams.set(key, value);
@@ -417,7 +417,11 @@ export function getWorker(payload: unknown): WorkerLaunch | null {
     openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
     workspaceId: null,
     clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
-    ownerToken: tokens && typeof tokens.owner === "string" ? tokens.owner : null,
+    ownerToken: tokens && typeof tokens.owner === "string"
+      ? tokens.owner
+      : tokens && typeof tokens.host === "string"
+        ? tokens.host
+        : null,
     hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null
   };
 }
@@ -452,7 +456,11 @@ export function getWorkerTokens(payload: unknown): WorkerTokens | null {
   const tokens = payload.tokens;
   const connect = isRecord(payload.connect) ? payload.connect : null;
   const clientToken = typeof tokens.client === "string" ? tokens.client : null;
-  const ownerToken = typeof tokens.owner === "string" ? tokens.owner : null;
+  const ownerToken = typeof tokens.owner === "string"
+    ? tokens.owner
+    : typeof tokens.host === "string"
+      ? tokens.host
+      : null;
   const hostToken = typeof tokens.host === "string" ? tokens.host : null;
   const openworkUrl = connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null;
   const workspaceId = connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null;

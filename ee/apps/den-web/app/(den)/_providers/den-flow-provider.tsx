@@ -52,6 +52,11 @@ import {
   resolveOpenworkWorkspaceUrl,
   trackPosthogEvent
 } from "../_lib/den-flow";
+import {
+  PENDING_ORG_INVITATION_STORAGE_KEY,
+  getOrgDashboardRoute,
+  parseOrgListPayload,
+} from "../_lib/den-org";
 
 type LaunchWorkerResult = "success" | "checkout" | "error";
 
@@ -81,7 +86,7 @@ type DenFlowContextValue = {
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
   signOut: () => Promise<void>;
-  resolveUserLandingRoute: () => Promise<"/dashboard" | "/checkout" | null>;
+  resolveUserLandingRoute: () => Promise<string | null>;
   billingSummary: BillingSummary | null;
   billingBusy: boolean;
   billingCheckoutBusy: boolean;
@@ -90,7 +95,7 @@ type DenFlowContextValue = {
   effectiveCheckoutUrl: string | null;
   refreshBilling: (options?: { includeCheckout?: boolean; quiet?: boolean }) => Promise<BillingSummary | null>;
   handleSubscriptionCancellation: (cancelAtPeriodEnd: boolean) => Promise<void>;
-  refreshCheckoutReturn: (sessionTokenPresent: boolean) => Promise<"/dashboard" | "/checkout">;
+  refreshCheckoutReturn: (sessionTokenPresent: boolean) => Promise<string>;
   onboardingPending: boolean;
   onboardingDecisionBusy: boolean;
   workers: WorkerListItem[];
@@ -348,7 +353,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   ): Promise<"dashboard" | "checkout" | null> {
     let payload = payloadOverride;
 
-    if (payload === undefined) {
+    if (payload === undefined || (!getToken(payload) && nextMode === "sign-up" && Boolean(password))) {
       const signInBody = {
         email: trimmedEmail,
         password,
@@ -914,6 +919,67 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     return sessionUser;
   }
 
+  async function loadOrgDirectory() {
+    const headers = new Headers();
+    if (authToken) {
+      headers.set("Authorization", `Bearer ${authToken}`);
+    }
+
+    const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET", headers }, 12000);
+    if (!response.ok) {
+      return {
+        orgs: [],
+        activeOrgId: null,
+        activeOrgSlug: null,
+      };
+    }
+
+    return parseOrgListPayload(payload);
+  }
+
+  async function acceptPendingInvitationIfNeeded() {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const invitationId = window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)?.trim() ?? "";
+    if (!invitationId) {
+      return null;
+    }
+
+    const headers = new Headers();
+    if (authToken) {
+      headers.set("Authorization", `Bearer ${authToken}`);
+    }
+
+    const { response, payload } = await requestJson(
+      `/v1/orgs/invitations/accept?id=${encodeURIComponent(invitationId)}`,
+      { method: "GET", headers },
+      12000,
+    );
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
+      }
+      return null;
+    }
+
+    window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
+    if (typeof payload === "object" && payload && "organizationSlug" in payload && typeof payload.organizationSlug === "string") {
+      return payload.organizationSlug;
+    }
+
+    return null;
+  }
+
+  async function resolveDashboardRoute() {
+    const acceptedOrgSlug = await acceptPendingInvitationIfNeeded();
+    const orgDirectory = await loadOrgDirectory();
+    const activeOrgSlug = acceptedOrgSlug ?? orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
+    return activeOrgSlug ? getOrgDashboardRoute(activeOrgSlug) : null;
+  }
+
   async function completeDesktopAuthHandoff() {
     if (!desktopAuthRequested || desktopRedirectBusy) {
       return;
@@ -984,8 +1050,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
+    const dashboardRoute = await resolveDashboardRoute();
+
     if (!onboardingPending) {
-      return "/dashboard";
+      return dashboardRoute;
     }
 
     const summary =
@@ -996,7 +1064,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return "/checkout";
     }
 
-    return !summary.featureGateEnabled || summary.hasActivePlan ? "/dashboard" : "/checkout";
+    return !summary.featureGateEnabled || summary.hasActivePlan ? (dashboardRoute ?? "/") : "/checkout";
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -1194,6 +1262,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
     }
   }
 
@@ -1608,7 +1677,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     if (!summary.featureGateEnabled || summary.hasActivePlan) {
-      return "/dashboard" as const;
+      return (await resolveDashboardRoute()) ?? "/";
     }
 
     return "/checkout" as const;
@@ -1634,6 +1703,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     const requestedScheme = params.get("desktopScheme")?.trim() ?? "";
     if (/^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)) {
       setDesktopAuthScheme(requestedScheme);
+    }
+
+    const invitationId = params.get("invite")?.trim() ?? "";
+    if (invitationId) {
+      window.sessionStorage.setItem(PENDING_ORG_INVITATION_STORAGE_KEY, invitationId);
     }
   }, []);
 
