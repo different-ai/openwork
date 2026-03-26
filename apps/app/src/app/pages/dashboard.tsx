@@ -1176,7 +1176,7 @@ export default function DashboardView(props: DashboardViewProps) {
       props.installUpdateAndRestart();
       return;
     }
-    openSettings("advanced");
+    openSettings("general");
   };
 
   return (

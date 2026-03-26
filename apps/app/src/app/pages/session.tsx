@@ -3846,7 +3846,7 @@ export default function SessionView(props: SessionViewProps) {
       props.installUpdateAndRestart();
       return;
     }
-    openSettings("advanced");
+    openSettings("general");
   };
 
   const openMcp = () => {
