@@ -4,6 +4,7 @@ import { ArrowUpRight, Boxes, Cloud, LogOut, RefreshCcw, Server, Users } from "l
 import Button from "./button";
 import TextInput from "./text-input";
 import {
+  buildDenAuthUrl,
   clearDenSession,
   DEFAULT_DEN_BASE_URL,
   DenApiError,
@@ -14,7 +15,6 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../lib/den";
-import { isDesktopDeployment } from "../lib/openwork-deployment";
 import { usePlatform } from "../context/platform";
 
 type DenSettingsPanelProps = {
@@ -157,13 +157,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   };
 
   const openBrowserAuth = (mode: "sign-in" | "sign-up") => {
-    const target = new URL(resolveDenBaseUrls(baseUrl()).baseUrl);
-    target.searchParams.set("mode", mode);
-    if (isDesktopDeployment()) {
-      target.searchParams.set("desktopAuth", "1");
-      target.searchParams.set("desktopScheme", "openwork");
-    }
-    platform.openLink(target.toString());
+    platform.openLink(buildDenAuthUrl(baseUrl(), mode));
     setStatusMessage(
       mode === "sign-up"
         ? "Finish account creation in your browser to connect OpenWork."

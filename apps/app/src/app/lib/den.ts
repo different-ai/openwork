@@ -1,4 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { isDesktopDeployment } from "./openwork-deployment";
 import { isTauriRuntime } from "../utils";
 
 const STORAGE_BASE_URL = "openwork.den.baseUrl";
@@ -243,6 +244,16 @@ export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?
     baseUrl: stripDenApiBasePath(normalizedBaseUrl ?? seedUrl) ?? DEFAULT_DEN_BASE_URL,
     apiBaseUrl: normalizedApiBaseUrl ?? deriveDenApiBaseUrl(seedUrl),
   };
+}
+
+export function buildDenAuthUrl(baseUrl: string, mode: "sign-in" | "sign-up"): string {
+  const target = new URL(resolveDenBaseUrls(baseUrl).baseUrl);
+  target.searchParams.set("mode", mode);
+  if (isDesktopDeployment()) {
+    target.searchParams.set("desktopAuth", "1");
+    target.searchParams.set("desktopScheme", "openwork");
+  }
+  return target.toString();
 }
 
 function resolveRequestBaseUrl(baseUrls: DenBaseUrls, path: string): string {

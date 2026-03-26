@@ -61,6 +61,8 @@ export default function ShareWorkspaceModal(props: {
   shareWorkspaceProfileToTeamSuccess?: string | null;
   shareWorkspaceProfileToTeamDisabledReason?: string | null;
   shareWorkspaceProfileToTeamOrgName?: string | null;
+  shareWorkspaceProfileToTeamNeedsSignIn?: boolean;
+  onShareWorkspaceProfileToTeamSignIn?: () => void | Promise<void>;
   onShareSkillsSet?: () => void;
   onOpenSingleSkillShare?: () => void;
   shareSkillsSetBusy?: boolean;
@@ -80,6 +82,9 @@ export default function ShareWorkspaceModal(props: {
 
   const title = createMemo(() => props.title ?? "Share workspace");
   const note = createMemo(() => props.note?.trim() ?? "");
+  const teamShareNeedsSignIn = createMemo(
+    () => props.shareWorkspaceProfileToTeamNeedsSignIn === true,
+  );
   const accessFields = createMemo(() => props.fields.filter((field) => !isInviteField(field.label)));
   const collaboratorField = createMemo(() => accessFields().find((field) => isCollaboratorField(field.label)) ?? null);
   const primaryAccessFields = createMemo(() =>
@@ -455,22 +460,40 @@ export default function ShareWorkspaceModal(props: {
                     </div>
                   </Show>
 
-                  <Show when={props.shareWorkspaceProfileToTeamDisabledReason?.trim()}>
+                  <Show when={props.shareWorkspaceProfileToTeamDisabledReason?.trim() && !teamShareNeedsSignIn()}>
                     <div class="text-[12px] text-gray-9">{props.shareWorkspaceProfileToTeamDisabledReason}</div>
                   </Show>
 
                   <button
-                    onClick={() => props.onShareWorkspaceProfileToTeam?.(teamTemplateName())}
+                    onClick={() => {
+                      if (teamShareNeedsSignIn()) {
+                        void props.onShareWorkspaceProfileToTeamSignIn?.();
+                        return;
+                      }
+                      void props.onShareWorkspaceProfileToTeam?.(teamTemplateName());
+                    }}
                     disabled={
-                      Boolean(props.shareWorkspaceProfileToTeamDisabledReason) ||
-                      !props.onShareWorkspaceProfileToTeam ||
-                      props.shareWorkspaceProfileToTeamBusy ||
-                      !teamTemplateName().trim()
+                      teamShareNeedsSignIn()
+                        ? !props.onShareWorkspaceProfileToTeamSignIn
+                        : Boolean(props.shareWorkspaceProfileToTeamDisabledReason) ||
+                          !props.onShareWorkspaceProfileToTeam ||
+                          props.shareWorkspaceProfileToTeamBusy ||
+                          !teamTemplateName().trim()
                     }
                     class="w-full rounded-full bg-dls-text px-5 py-3 text-[13px] font-medium text-dls-surface shadow-sm transition-colors hover:bg-gray-12 active:scale-[0.99] disabled:opacity-50"
                   >
-                    {props.shareWorkspaceProfileToTeamBusy ? "Saving..." : "Save to team"}
+                    {teamShareNeedsSignIn()
+                      ? "Sign in to share with team"
+                      : props.shareWorkspaceProfileToTeamBusy
+                        ? "Saving..."
+                        : "Save to team"}
                   </button>
+
+                  <Show when={teamShareNeedsSignIn()}>
+                    <div class="text-[11px] text-gray-9">
+                      OpenWork Cloud opens in your browser and returns here after sign-in.
+                    </div>
+                  </Show>
                 </div>
               </div>
             </Show>

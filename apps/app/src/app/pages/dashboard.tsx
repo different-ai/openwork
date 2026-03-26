@@ -26,7 +26,7 @@ import {
 } from "../utils";
 import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
-import { createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
+import { buildDenAuthUrl, createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 import {
@@ -621,6 +621,7 @@ export default function DashboardView(props: DashboardViewProps) {
   const [shareWorkspaceProfileTeamBusy, setShareWorkspaceProfileTeamBusy] = createSignal(false);
   const [shareWorkspaceProfileTeamError, setShareWorkspaceProfileTeamError] = createSignal<string | null>(null);
   const [shareWorkspaceProfileTeamSuccess, setShareWorkspaceProfileTeamSuccess] = createSignal<string | null>(null);
+  const [shareCloudSettingsVersion, setShareCloudSettingsVersion] = createSignal(0);
   const [shareSkillsSetBusy, setShareSkillsSetBusy] = createSignal(false);
   const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
   const [shareSkillsSetError, setShareSkillsSetError] = createSignal<string | null>(null);
@@ -807,7 +808,20 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const shareCloudSettings = createMemo(() => {
     shareWorkspaceId();
+    shareCloudSettingsVersion();
     return readDenSettings();
+  });
+
+  createEffect(() => {
+    const handleCloudSessionUpdate = () =>
+      setShareCloudSettingsVersion((value) => value + 1);
+    window.addEventListener("openwork-den-session-updated", handleCloudSessionUpdate);
+    onCleanup(() =>
+      window.removeEventListener(
+        "openwork-den-session-updated",
+        handleCloudSessionUpdate,
+      ),
+    );
   });
 
   const shareWorkspaceProfileTeamOrgName = createMemo(() => {
@@ -816,18 +830,25 @@ export default function DashboardView(props: DashboardViewProps) {
     return "Active Cloud org";
   });
 
+  const shareWorkspaceProfileToTeamNeedsSignIn = createMemo(
+    () => !shareCloudSettings().authToken?.trim(),
+  );
+
   const shareWorkspaceProfileTeamDisabledReason = createMemo(() => {
     const exportReason = shareServiceDisabledReason();
     if (exportReason) return exportReason;
+    if (shareWorkspaceProfileToTeamNeedsSignIn()) return null;
     const settings = shareCloudSettings();
-    if (!settings.authToken?.trim()) {
-      return "Sign in to OpenWork Cloud in Settings to share with your team.";
-    }
     if (!settings.activeOrgId?.trim() && !settings.activeOrgSlug?.trim()) {
       return "Choose an organization in Settings -> Cloud before sharing with your team.";
     }
     return null;
   });
+
+  const startShareWorkspaceProfileToTeamSignIn = () => {
+    const settings = readDenSettings();
+    platform.openLink(buildDenAuthUrl(settings.baseUrl, "sign-in"));
+  };
 
   const resolveShareExportContext = async (): Promise<{
     client: OpenworkServerClient;
@@ -1708,6 +1729,8 @@ export default function DashboardView(props: DashboardViewProps) {
           shareWorkspaceProfileToTeamSuccess={shareWorkspaceProfileTeamSuccess()}
           shareWorkspaceProfileToTeamDisabledReason={shareWorkspaceProfileTeamDisabledReason()}
           shareWorkspaceProfileToTeamOrgName={shareWorkspaceProfileTeamOrgName()}
+          shareWorkspaceProfileToTeamNeedsSignIn={shareWorkspaceProfileToTeamNeedsSignIn()}
+          onShareWorkspaceProfileToTeamSignIn={startShareWorkspaceProfileToTeamSignIn}
           onShareSkillsSet={publishSkillsSetLink}
           onOpenSingleSkillShare={() => {
             setShareWorkspaceId(null);
