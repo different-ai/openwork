@@ -7516,6 +7516,7 @@ export default function App() {
       setAutoCompactContextApplied(true);
       setAutoCompactContextDirty(false);
       setAutoCompactContextReady(false);
+      setAutoCompactContextSaving(false);
       return;
     }
 
@@ -7643,9 +7644,7 @@ export default function App() {
         const message = error instanceof Error ? error.message : safeStringify(error);
         setError(addOpencodeCacheHint(message));
       } finally {
-        if (!cancelled) {
-          setAutoCompactContextSaving(false);
-        }
+        setAutoCompactContextSaving(false);
       }
     };
 
