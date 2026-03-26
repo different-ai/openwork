@@ -134,7 +134,7 @@ describe("resolveOpencodeDbPath", () => {
 
   test("finds orchestrator-managed OpenCode dbs under OPENWORK_DATA_DIR", async () => {
     const root = await mkdtemp(join(tmpdir(), "openwork-orchestrator-data-"));
-    const dir = join(root, "openwork-dev-data", "ws-test", "xdg", "data", "opencode");
+    const dir = join(root, "openwork-dev-data", "xdg", "data", "opencode");
     const file = join(dir, "opencode.db");
     await mkdir(dir, { recursive: true });
     await writeFile(file, "", "utf8");

@@ -2910,17 +2910,16 @@ function resolveOpencodeStateLayout(options: {
   workspace: string;
   devMode: boolean;
 }): OpencodeStateLayout {
-  const workspaceId = workspaceIdForLocal(options.workspace);
   if (!options.devMode) {
     return {
       devMode: false,
-      rootDir: join(options.dataDir, "opencode-config", workspaceId),
-      configDir: join(options.dataDir, "opencode-config", workspaceId),
+      rootDir: join(options.dataDir, "opencode-config"),
+      configDir: join(options.dataDir, "opencode-config"),
       env: {},
     };
   }
 
-  const rootDir = join(options.dataDir, OPENWORK_DEV_DATA_DIR, workspaceId);
+  const rootDir = join(options.dataDir, OPENWORK_DEV_DATA_DIR);
   const homeDir = join(rootDir, "home");
   const xdgConfigHome = join(rootDir, "xdg", "config");
   const xdgDataHome = join(rootDir, "xdg", "data");
