@@ -83,7 +83,7 @@ import type {
 import {
   appBuildInfo,
   engineRestart,
-  nukeOpencodeDevConfigAndExit,
+  nukeOpenworkAndOpencodeConfigAndExit,
   opencodeRouterRestart,
   opencodeRouterStop,
   openworkServerRestart,
@@ -1106,8 +1106,8 @@ export default function SettingsView(props: SettingsViewProps) {
   >(null);
   const [sandboxProbeResult, setSandboxProbeResult] =
     createSignal<SandboxDebugProbeResult | null>(null);
-  const [nukeDevConfigBusy, setNukeDevConfigBusy] = createSignal(false);
-  const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<
+  const [nukeConfigBusy, setNukeConfigBusy] = createSignal(false);
+  const [nukeConfigStatus, setNukeConfigStatus] = createSignal<
     string | null
   >(null);
   const [debugDeepLinkOpen, setDebugDeepLinkOpen] = createSignal(false);
@@ -1330,30 +1330,32 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const handleNukeOpencodeDevConfig = async () => {
-    if (!isTauriRuntime() || !opencodeDevModeEnabled() || nukeDevConfigBusy())
-      return;
+  const handleNukeOpenworkAndOpencodeConfig = async () => {
+    if (!isTauriRuntime() || nukeConfigBusy()) return;
+    const devMode = opencodeDevModeEnabled();
     const confirmed =
       typeof window === "undefined"
         ? true
         : window.confirm(
-            "Delete the isolated OpenCode dev config and auth/data state, then quit OpenWork? This only affects dev-mode state.",
+            devMode
+              ? "This is irreversible. It WILL delete all OpenWork data for this dev build and all isolated OpenCode dev config, auth, cache, data, and state, then quit OpenWork. Continue?"
+              : "This is irreversible. It WILL delete all OpenWork data for this production build and all standard OpenCode config, auth, cache, data, and state, then quit OpenWork. Continue?",
           );
     if (!confirmed) return;
-    setNukeDevConfigBusy(true);
-    setNukeDevConfigStatus(null);
+    setNukeConfigBusy(true);
+    setNukeConfigStatus(null);
     try {
-      await nukeOpencodeDevConfigAndExit();
-      setNukeDevConfigStatus(
-        "Removed OpenCode dev state. OpenWork is closing...",
+      await nukeOpenworkAndOpencodeConfigAndExit();
+      setNukeConfigStatus(
+        "Removed OpenWork and OpenCode state. OpenWork is closing...",
       );
     } catch (error) {
-      setNukeDevConfigStatus(
+      setNukeConfigStatus(
         error instanceof Error
           ? error.message
-          : "Failed to nuke OpenCode dev config.",
+          : "Failed to remove OpenWork and OpenCode state.",
       );
-      setNukeDevConfigBusy(false);
+      setNukeConfigBusy(false);
     }
   };
 
@@ -2322,95 +2324,72 @@ export default function SettingsView(props: SettingsViewProps) {
                     : "Enable this to access the Developer panel."}
                 </div>
               </div>
-              <Show when={isTauriRuntime() && opencodeDevModeEnabled()}>
-                <div class="pt-1 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    class={compactDangerActionClass}
-                    onClick={() => void handleNukeOpencodeDevConfig()}
-                    disabled={props.busy || nukeDevConfigBusy()}
-                  >
-                    <CircleAlert size={14} />
-                    {nukeDevConfigBusy()
-                      ? "Nuking OpenCode Dev Config..."
-                      : "Nuke Opencode Dev Config"}
-                  </button>
-                  <div class="text-xs text-gray-10">
-                    Deletes isolated OpenCode dev state and then quits OpenWork.
-                  </div>
-                </div>
-                <Show when={nukeDevConfigStatus()}>
-                  {(value) => <div class="text-xs text-red-11">{value()}</div>}
-                </Show>
-
-                <Show when={props.developerMode}>
-                  <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
-                    <div class="flex items-start justify-between gap-3">
-                      <div>
-                          <div class="text-sm font-medium text-gray-12">
-                          Open Deeplink
-                          </div>
-                          <div class="text-xs text-gray-9">
-                          Paste any supported <span class="font-mono">openwork://</span> deeplink and route it through the dev app.
-                          </div>
-                        </div>
-                      <button
-                        type="button"
-                        class={compactOutlineActionClass}
-                        onClick={() => {
-                          setDebugDeepLinkOpen((value) => !value);
-                          setDebugDeepLinkStatus(null);
-                        }}
-                        disabled={props.busy || debugDeepLinkBusy()}
-                      >
-                        {debugDeepLinkOpen() ? "Hide" : "Open Deeplink"}
-                      </button>
+              <Show when={isTauriRuntime() && opencodeDevModeEnabled() && props.developerMode}>
+                <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">
+                        Open Deeplink
+                      </div>
+                      <div class="text-xs text-gray-9">
+                        Paste any supported <span class="font-mono">openwork://</span> deeplink and route it through the dev app.
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      class={compactOutlineActionClass}
+                      onClick={() => {
+                        setDebugDeepLinkOpen((value) => !value);
+                        setDebugDeepLinkStatus(null);
+                      }}
+                      disabled={props.busy || debugDeepLinkBusy()}
+                    >
+                      {debugDeepLinkOpen() ? "Hide" : "Open Deeplink"}
+                    </button>
+                  </div>
 
-                    <Show when={debugDeepLinkOpen()}>
-                      <div class="space-y-3">
-                        <textarea
-                          value={debugDeepLinkInput()}
-                          onInput={(event) =>
-                            setDebugDeepLinkInput(event.currentTarget.value)
+                  <Show when={debugDeepLinkOpen()}>
+                    <div class="space-y-3">
+                      <textarea
+                        value={debugDeepLinkInput()}
+                        onInput={(event) =>
+                          setDebugDeepLinkInput(event.currentTarget.value)
+                        }
+                        rows={3}
+                        placeholder="openwork://..."
+                        class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
+                      />
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          class="text-xs h-8 py-0 px-3"
+                          onClick={() => void submitDebugDeepLink()}
+                          disabled={
+                            props.busy ||
+                            debugDeepLinkBusy() ||
+                            !debugDeepLinkInput().trim()
                           }
-                          rows={3}
-                          placeholder="openwork://..."
-                          class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
-                        />
-                        <div class="flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="secondary"
-                            class="text-xs h-8 py-0 px-3"
-                            onClick={() => void submitDebugDeepLink()}
-                            disabled={
-                              props.busy ||
-                              debugDeepLinkBusy() ||
-                              !debugDeepLinkInput().trim()
-                            }
-                          >
-                            {debugDeepLinkBusy() ? "Opening..." : "Open deeplink"}
-                          </Button>
-                          <div class="text-[11px] text-gray-8">
-                            Accepts <span class="font-mono">openwork://</span>,{" "}
-                            <span class="font-mono">openwork-dev://</span>, or a
-                            raw supported{" "}
-                            <span class="font-mono">
-                              https://share.openwork.software/b/...
-                            </span>{" "}
-                            URL.
-                          </div>
+                        >
+                          {debugDeepLinkBusy() ? "Opening..." : "Open deeplink"}
+                        </Button>
+                        <div class="text-[11px] text-gray-8">
+                          Accepts <span class="font-mono">openwork://</span>,{" "}
+                          <span class="font-mono">openwork-dev://</span>, or a raw supported{" "}
+                          <span class="font-mono">
+                            https://share.openwork.software/b/...
+                          </span>{" "}
+                          URL.
                         </div>
                       </div>
-                    </Show>
+                    </div>
+                  </Show>
 
-                    <Show when={debugDeepLinkStatus()}>
-                      {(value) => (
-                        <div class="text-xs text-gray-10">{value()}</div>
-                      )}
-                    </Show>
-                  </div>
-                </Show>
+                  <Show when={debugDeepLinkStatus()}>
+                    {(value) => (
+                      <div class="text-xs text-gray-10">{value()}</div>
+                    )}
+                  </Show>
+                </div>
               </Show>
             </div>
 
@@ -3928,6 +3907,61 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                     </Show>
                   </div>
+
+                  <Show when={isTauriRuntime()}>
+                    <div class="rounded-2xl border border-red-7/30 bg-red-3/10 p-5 space-y-4">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <div class="text-sm font-medium text-gray-12">
+                            Reset OpenWork + OpenCode state
+                          </div>
+                          <div class="text-xs text-gray-10">
+                            This is irreversible and deletes all local OpenWork data for the current app mode. {opencodeDevModeEnabled()
+                              ? "With dev mode active, it only clears the isolated OpenCode dev state inside openwork-dev-data."
+                              : "With production mode active, it only clears the standard OpenCode config, auth, cache, data, and state paths."}
+                          </div>
+                        </div>
+                        <div
+                          class={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${opencodeDevModeEnabled()
+                            ? "border-blue-7/35 bg-blue-3/25 text-blue-11"
+                            : "border-gray-6 bg-gray-2 text-gray-10"}`}
+                        >
+                          {opencodeDevModeEnabled()
+                            ? "Dev mode"
+                            : "Production mode"}
+                        </div>
+                      </div>
+
+                      <div class="text-[11px] text-gray-8">
+                        OpenWork quits immediately after cleanup so the next launch starts from a blank local state for this mode.
+                      </div>
+
+                      <div class="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          class={compactDangerActionClass}
+                          onClick={() =>
+                            void handleNukeOpenworkAndOpencodeConfig()
+                          }
+                          disabled={props.busy || nukeConfigBusy()}
+                        >
+                          <CircleAlert size={14} />
+                          {nukeConfigBusy()
+                            ? "Removing local state..."
+                            : "Delete local config and quit"}
+                        </button>
+                        <div class="text-xs text-gray-10">
+                          Use this only when you want to fully reset the desktop app and its OpenCode runtime state.
+                        </div>
+                      </div>
+
+                      <Show when={nukeConfigStatus()}>
+                        {(value) => (
+                          <div class="text-xs text-red-11">{value()}</div>
+                        )}
+                      </Show>
+                    </div>
+                  </Show>
                 </div>
               </div>
             </section>

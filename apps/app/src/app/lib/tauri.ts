@@ -431,8 +431,8 @@ export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
 }
 
-export async function nukeOpencodeDevConfigAndExit(): Promise<void> {
-  return invoke<void>("nuke_opencode_dev_config_and_exit");
+export async function nukeOpenworkAndOpencodeConfigAndExit(): Promise<void> {
+  return invoke<void>("nuke_openwork_and_opencode_config_and_exit");
 }
 
 export type OrchestratorDetachedHost = {
