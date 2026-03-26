@@ -726,8 +726,8 @@ export function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | n
     status: item.status,
     provider: item.provider,
     instanceUrl: item.instanceUrl,
-    openworkUrl: item.instanceUrl,
-    workspaceId: null,
+    openworkUrl: current?.workerId === item.workerId ? current.openworkUrl ?? item.instanceUrl : item.instanceUrl,
+    workspaceId: current?.workerId === item.workerId ? current.workspaceId : null,
     clientToken: current?.workerId === item.workerId ? current.clientToken : null,
     ownerToken: current?.workerId === item.workerId ? current.ownerToken : null,
     hostToken: current?.workerId === item.workerId ? current.hostToken : null

@@ -33,10 +33,65 @@ function statusClass(bucket: ReturnType<typeof getWorkerStatusMeta>["bucket"]) {
   }
 }
 
+function CredentialField({
+  label,
+  value,
+  copyKey,
+  copiedField,
+  onCopy,
+}: {
+  label: string;
+  value: string | null;
+  copyKey: string;
+  copiedField: string | null;
+  onCopy: (field: string, value: string | null) => Promise<void>;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--dls-text-secondary)]">{label}</span>
+      <div className="flex items-center gap-2 rounded-2xl border border-[var(--dls-border)] bg-white px-3 py-2.5">
+        <input
+          readOnly
+          value={value ?? "Preparing..."}
+          className="min-w-0 flex-1 border-none bg-transparent font-mono text-xs text-[var(--dls-text-primary)] outline-none"
+          onClick={(event) => event.currentTarget.select()}
+        />
+        <button
+          type="button"
+          className="rounded-xl border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-1.5 text-xs font-medium text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => void onCopy(copyKey, value)}
+          disabled={!value}
+        >
+          {copiedField === copyKey ? "Copied" : value ? "Copy" : "N/A"}
+        </button>
+      </div>
+    </label>
+  );
+}
+
 export function BackgroundAgentsScreen() {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
-  const { workers, workersBusy, workersError, launchBusy, launchWorker } = useDenFlow();
+  const {
+    workers,
+    workersBusy,
+    workersError,
+    launchBusy,
+    launchWorker,
+    selectedWorker,
+    activeWorker,
+    selectWorker,
+    openworkDeepLink,
+    openworkAppConnectUrl,
+    copiedField,
+    copyToClipboard,
+    generateWorkerToken,
+    actionBusy,
+  } = useDenFlow();
+
+  const selectedWorkerId = selectedWorker?.workerId ?? null;
+  const selectedMeta = selectedWorker ? getWorkerStatusMeta(selectedWorker.status) : null;
+  const showConnectPanel = Boolean(selectedWorkerId && selectedMeta?.bucket === "ready");
 
   async function handleAddSandbox() {
     const result = await launchWorker({ source: "manual" });
@@ -105,6 +160,8 @@ export function BackgroundAgentsScreen() {
         ) : workers.length > 0 ? (
           workers.map((worker) => {
             const meta = getWorkerStatusMeta(worker.status);
+            const canConnect = meta.bucket === "ready";
+            const isSelected = selectedWorkerId === worker.workerId;
             return (
               <article key={worker.workerId} className="den-list-row">
                 <div className="grid gap-1">
@@ -113,7 +170,25 @@ export function BackgroundAgentsScreen() {
                     Source: {worker.provider ? `${worker.provider} sandbox` : "Cloud sandbox"}
                   </p>
                 </div>
-                <span className={`den-status-pill ${statusClass(meta.bucket)}`}>{meta.label}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {canConnect ? (
+                    <button
+                      type="button"
+                      className="den-button-secondary"
+                      onClick={() => {
+                        selectWorker(worker);
+                        if (!isSelected) {
+                          window.setTimeout(() => {
+                            void generateWorkerToken();
+                          }, 0);
+                        }
+                      }}
+                    >
+                      Connect
+                    </button>
+                  ) : null}
+                  <span className={`den-status-pill ${statusClass(meta.bucket)}`}>{meta.label}</span>
+                </div>
               </article>
             );
           })
@@ -129,6 +204,75 @@ export function BackgroundAgentsScreen() {
           ))
         )}
       </div>
+
+      {showConnectPanel && selectedWorker && activeWorker ? (
+        <div className="den-frame grid gap-5 p-6 md:p-8">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="den-eyebrow">Connect remote</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{selectedWorker.workerName}</h2>
+              <p className="mt-2 text-sm leading-relaxed text-[var(--dls-text-secondary)]">
+                Open this worker in web or desktop, or copy the connection details below.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <a
+                href={openworkAppConnectUrl ?? "#"}
+                target="_blank"
+                rel="noreferrer"
+                className={`den-button-primary ${openworkAppConnectUrl ? "" : "pointer-events-none opacity-60"}`}
+              >
+                Open in web
+              </a>
+              <button
+                type="button"
+                className="den-button-secondary"
+                onClick={() => {
+                  if (openworkDeepLink) {
+                    window.location.href = openworkDeepLink;
+                  }
+                }}
+                disabled={!openworkDeepLink}
+              >
+                Open in desktop
+              </button>
+              <button
+                type="button"
+                className="den-button-secondary"
+                onClick={() => void generateWorkerToken()}
+                disabled={actionBusy === "token"}
+              >
+                {actionBusy === "token" ? "Refreshing..." : "Refresh tokens"}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <CredentialField
+              label="Connection URL"
+              value={activeWorker.openworkUrl ?? activeWorker.instanceUrl}
+              copyKey="background-connect-url"
+              copiedField={copiedField}
+              onCopy={copyToClipboard}
+            />
+            <CredentialField
+              label="Owner token"
+              value={activeWorker.ownerToken}
+              copyKey="background-owner-token"
+              copiedField={copiedField}
+              onCopy={copyToClipboard}
+            />
+            <CredentialField
+              label="Collaborator token"
+              value={activeWorker.clientToken}
+              copyKey="background-client-token"
+              copiedField={copiedField}
+              onCopy={copyToClipboard}
+            />
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

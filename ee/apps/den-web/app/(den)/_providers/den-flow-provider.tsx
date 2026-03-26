@@ -1888,6 +1888,36 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     };
   }, [actionBusy, authToken, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status]);
 
+  const provisioningWorkerIds = workers
+    .filter((item) => item.status === "provisioning")
+    .map((item) => item.workerId)
+    .join(",");
+
+  useEffect(() => {
+    if (!user || !provisioningWorkerIds) {
+      return;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled || actionBusy !== null || launchBusy) {
+        return;
+      }
+
+      await refreshWorkers({ keepSelection: true });
+    };
+
+    void poll();
+    const interval = window.setInterval(() => {
+      void poll();
+    }, WORKER_STATUS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [actionBusy, launchBusy, provisioningWorkerIds, user?.id]);
+
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
     if (!user || !targetWorkerId || pendingRestoredWorkerId === targetWorkerId) {
