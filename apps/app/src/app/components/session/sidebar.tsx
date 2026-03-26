@@ -510,7 +510,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                     >
                                       <span
                                         class={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
-                                          props.sessionStatusById[session.id] === "running"
+                                          props.sessionStatusById[session.id] === "running" || props.sessionStatusById[session.id] === "retry"
                                             ? "border-amber-7/50 text-amber-11 bg-amber-2/50"
                                             : "border-gray-7/50 text-gray-10 bg-gray-2/50"
                                         }`}
@@ -519,7 +519,9 @@ export default function SessionSidebar(props: SidebarProps) {
                                           class={`w-1 h-1 rounded-full ${
                                             props.sessionStatusById[session.id] === "running"
                                               ? "bg-amber-9 animate-pulse"
-                                              : "bg-gray-9"
+                                              : props.sessionStatusById[session.id] === "retry"
+                                                ? "bg-amber-9"
+                                                : "bg-gray-9"
                                           }`}
                                         />
                                       </span>

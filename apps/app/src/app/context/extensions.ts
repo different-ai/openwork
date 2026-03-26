@@ -719,6 +719,7 @@ export function createExtensionsStore(options: {
       try {
         setPluginStatus(null);
         await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
+        options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "added" });
         if (isManualInput) {
           setPluginInput("");
         }
@@ -816,6 +817,7 @@ export function createExtensionsStore(options: {
       try {
         setPluginStatus(null);
         await openworkClient.removePlugin(openworkWorkspaceId, name);
+        options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "removed" });
         await refreshPlugins("project");
       } catch (e) {
         setPluginStatus(e instanceof Error ? e.message : "Failed to remove plugin.");

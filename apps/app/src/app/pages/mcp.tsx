@@ -30,7 +30,6 @@ import {
   MonitorSmartphone,
   Plug2,
   Plus,
-  RefreshCw,
   Settings,
   Settings2,
   Unplug,
@@ -56,9 +55,6 @@ export type McpViewProps = {
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
-  showMcpReloadBanner: boolean;
-  reloadBlocked: boolean;
-  reloadMcpEngine: () => void;
 };
 
 /* ── Status helpers ─────────────────────────────────── */
@@ -324,29 +320,6 @@ export default function McpView(props: McpViewProps) {
               </span>
             </div>
           </Show>
-        </div>
-      </Show>
-
-      {/* ── Reload banner ────────────────────────────── */}
-      <Show when={props.showMcpReloadBanner}>
-        <div class="bg-amber-2 border border-amber-6 rounded-xl px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div class="text-sm font-medium text-amber-11">{tr("mcp.finish_setup")}</div>
-            <div class="text-xs text-amber-11/70 mt-0.5">
-              {props.reloadBlocked
-                ? tr("mcp.reload_banner_description_blocked")
-                : tr("mcp.finish_setup_hint")}
-            </div>
-          </div>
-          <Button
-            variant="secondary"
-            onClick={() => props.reloadMcpEngine()}
-            disabled={props.reloadBlocked}
-            title={props.reloadBlocked ? tr("mcp.reload_banner_blocked_hint") : undefined}
-          >
-            <RefreshCw size={14} />
-            {tr("mcp.activate_button")}
-          </Button>
         </div>
       </Show>
 

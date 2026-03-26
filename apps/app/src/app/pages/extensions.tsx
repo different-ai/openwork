@@ -144,9 +144,6 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
             authorizeMcp={props.authorizeMcp}
             logoutMcpAuth={props.logoutMcpAuth}
             removeMcp={props.removeMcp}
-            showMcpReloadBanner={props.showMcpReloadBanner}
-            reloadBlocked={props.reloadBlocked}
-            reloadMcpEngine={props.reloadMcpEngine}
           />
         </div>
       </Show>

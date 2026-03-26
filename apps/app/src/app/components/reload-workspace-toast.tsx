@@ -76,7 +76,7 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
 
   return (
     <Show when={props.open}>
-      <div class="w-full max-w-[24rem] overflow-hidden rounded-[1.4rem] border border-white/70 bg-white/92 shadow-[0_24px_60px_-28px_rgba(15,23,42,0.28)] backdrop-blur-xl animate-in fade-in slide-in-from-top-4 duration-300">
+      <div class="w-full max-w-[24rem] overflow-hidden rounded-[1.4rem] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] backdrop-blur-xl animate-in fade-in slide-in-from-top-4 duration-300">
         <div class="flex items-start gap-3 px-4 py-4">
           <div
             class={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${

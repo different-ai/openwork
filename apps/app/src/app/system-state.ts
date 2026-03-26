@@ -73,7 +73,10 @@ export function createSystemState(options: {
   setError: (value: string | null) => void;
   notion?: NotionState;
 }) {
-  const [reloadRequired, setReloadRequired] = createSignal(false);
+  const isActiveSessionStatus = (status: string | null | undefined) =>
+    status === "running" || status === "retry";
+
+  const [reloadPending, setReloadPending] = createSignal(false);
   const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
   const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
   const [reloadLastFinishedAt, setReloadLastFinishedAt] = createSignal<number | null>(null);
@@ -109,7 +112,7 @@ export function createSystemState(options: {
 
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
-    return options.sessions().some((s) => statuses[s.id] === "running");
+    return options.sessions().some((s) => isActiveSessionStatus(statuses[s.id]));
   });
 
   function clearOpenworkLocalStorage(mode: ResetOpenworkMode) {
@@ -179,7 +182,7 @@ export function createSystemState(options: {
   }
 
   function markReloadRequired(reason: ReloadReason, trigger?: ReloadTrigger) {
-    setReloadRequired(true);
+    setReloadPending(true);
     setReloadLastTriggeredAt(Date.now());
     setReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
     if (trigger) {
@@ -201,7 +204,7 @@ export function createSystemState(options: {
   }
 
   function clearReloadRequired() {
-    setReloadRequired(false);
+    setReloadPending(false);
     setReloadReasons([]);
     setReloadError(null);
     setReloadTrigger(null);
@@ -265,7 +268,7 @@ export function createSystemState(options: {
   });
 
   const canReloadEngine = createMemo(() => {
-    if (!reloadRequired()) return false;
+    if (!reloadPending()) return false;
     if (reloadBusy()) return false;
     const override = options.canReloadWorkspaceEngine?.();
     if (override === true) return true;
@@ -276,7 +279,7 @@ export function createSystemState(options: {
 
   // Keep this mounted so the reload banner UX remains in the app.
   createEffect(() => {
-    reloadRequired();
+    reloadPending();
   });
 
   async function reloadEngineInstance() {
@@ -607,7 +610,7 @@ export function createSystemState(options: {
   }
 
   return {
-    reloadRequired,
+    reloadPending,
     reloadReasons,
     reloadLastTriggeredAt,
     reloadLastFinishedAt,

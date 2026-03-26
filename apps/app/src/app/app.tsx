@@ -38,6 +38,7 @@ import SharedBundleImportModal from "./components/shared-bundle-import-modal";
 import StartWithTemplateModal from "./components/start-with-template-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import StatusToast from "./components/status-toast";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
@@ -2760,6 +2761,7 @@ export default function App() {
           },
         });
         assertNoClientError(result);
+        markOpencodeConfigReloadRequired();
       } catch (error) {
         globalSync.set("config", "disabled_providers", disabledProviders);
         throw error;
@@ -5270,7 +5272,7 @@ export default function App() {
   });
 
   const {
-    reloadRequired,
+    reloadPending,
     reloadCopy,
     reloadTrigger,
     reloadBusy,
@@ -5416,10 +5418,25 @@ export default function App() {
     await reloadWorkspaceEngine();
   };
 
+  const isActiveSessionStatus = (status: string | null | undefined) =>
+    status === "running" || status === "retry";
+
+  const reloadRequired = (...sources: ReloadTrigger["type"][]) => {
+    if (!reloadPending()) return false;
+    const triggerType = reloadTrigger()?.type;
+    if (!triggerType) return false;
+    if (!sources.length) return true;
+    return sources.includes(triggerType);
+  };
+
+  const markOpencodeConfigReloadRequired = () => {
+    markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+  };
+
   const activeReloadBlockingSessions = createMemo(() => {
     const statuses = sessionStatusById();
     return sessions()
-      .filter((session) => statuses[session.id] === "running")
+      .filter((session) => isActiveSessionStatus(statuses[session.id]))
       .map((session) => ({
         id: session.id,
         title: session.title?.trim() || session.slug?.trim() || session.id,
@@ -6203,6 +6220,8 @@ export default function App() {
           throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
         }
       }
+
+      markReloadRequired("mcp", { type: "mcp", name: "notion", action: "added" });
 
       await refreshMcpServers();
       setNotionStatusDetail(t("mcp.connecting", currentLocale()));
@@ -7297,11 +7316,7 @@ export default function App() {
           "Authorized folders updated.",
         ),
       );
-      markReloadRequired("config", {
-        type: "config",
-        name: "opencode.json",
-        action: "updated",
-      });
+      markOpencodeConfigReloadRequired();
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
@@ -7480,7 +7495,7 @@ export default function App() {
           await openworkClient.patchConfig(openworkWorkspaceId, {
             opencode: { model: formatModelRef(nextModel) },
           });
-          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+          markOpencodeConfigReloadRequired();
           return;
         }
 
@@ -7494,7 +7509,7 @@ export default function App() {
           throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
         }
         setLastKnownConfigSnapshot(getConfigSnapshot(content));
-        markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+        markOpencodeConfigReloadRequired();
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
@@ -7608,7 +7623,7 @@ export default function App() {
                 },
               },
             });
-            markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+            markOpencodeConfigReloadRequired();
           }
           if (cancelled) return;
           setAutoCompactContextApplied(nextValue);
@@ -7631,7 +7646,7 @@ export default function App() {
             throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
           }
           setLastKnownConfigSnapshot(getConfigSnapshot(content));
-          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+          markOpencodeConfigReloadRequired();
         }
 
         if (cancelled) return;
@@ -8339,11 +8354,6 @@ export default function App() {
       logoutMcpAuth,
       removeMcp,
       refreshMcpServers,
-      showMcpReloadBanner:
-        reloadRequired() && (reloadTrigger()?.type === "mcp" || reloadTrigger()?.type === "config"),
-      mcpReloadBlocked: activeReloadBlockingSessions().length > 0,
-      reloadBlocked: activeReloadBlockingSessions().length > 0,
-      reloadMcpEngine: () => reloadWorkspaceEngineAndResume(),
       language: currentLocale(),
       setLanguage: setLocale,
     };
@@ -8438,17 +8448,6 @@ export default function App() {
     mcpStatus: mcpStatus(),
     skills: skills(),
     skillsStatus: skillsStatus(),
-    showSkillReloadBanner: reloadRequired() && reloadTrigger()?.type === "skill",
-    reloadBannerTitle: reloadCopy().title,
-    reloadBannerBody: reloadCopy().body,
-    reloadBannerBlocked: activeReloadBlockingSessions().length > 0,
-    reloadBannerActiveCount: activeReloadBlockingSessions().length,
-    canReloadWorkspace: canReloadWorkspace(),
-    reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
-    forceStopActiveConversations: forceStopActiveSessionsAndReload,
-    dismissReloadBanner: clearReloadRequired,
-    reloadBusy: reloadBusy(),
-    reloadError: reloadError(),
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
     abortSession: abortSession,
@@ -8982,6 +8981,27 @@ export default function App() {
       </Show>
 
       <div class="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
+        <div class="pointer-events-auto">
+          <ReloadWorkspaceToast
+            open={reloadRequired("config", "mcp", "plugin", "skill", "agent", "command")}
+            title={reloadCopy().title}
+            description={reloadCopy().body}
+            trigger={reloadTrigger()}
+            error={reloadError()}
+            reloadLabel={activeReloadBlockingSessions().length > 0 ? "Reload & Stop Tasks" : "Reload now"}
+            dismissLabel="Later"
+            busy={reloadBusy()}
+            canReload={canReloadWorkspace()}
+            hasActiveRuns={activeReloadBlockingSessions().length > 0}
+            onReload={() => {
+              void (activeReloadBlockingSessions().length > 0
+                ? forceStopActiveSessionsAndReload()
+                : reloadWorkspaceEngineAndResume());
+            }}
+            onDismiss={clearReloadRequired}
+          />
+        </div>
+
         <div class="pointer-events-auto">
           <StatusToast
             open={Boolean(sharedSkillSuccessToast())}

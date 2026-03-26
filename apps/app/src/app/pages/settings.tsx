@@ -284,9 +284,6 @@ export type SettingsViewProps = {
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
-  showMcpReloadBanner: boolean;
-  mcpReloadBlocked: boolean;
-  reloadMcpEngine: () => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
   connectRemoteWorkspace: (input: {
@@ -2180,9 +2177,6 @@ export default function SettingsView(props: SettingsViewProps) {
               authorizeMcp={props.authorizeMcp}
               logoutMcpAuth={props.logoutMcpAuth}
               removeMcp={props.removeMcp}
-              showMcpReloadBanner={props.showMcpReloadBanner}
-              reloadBlocked={props.mcpReloadBlocked}
-              reloadMcpEngine={props.reloadMcpEngine}
               canEditPlugins={props.canEditPlugins}
               canUseGlobalScope={props.canUseGlobalPluginScope}
               accessHint={props.pluginsAccessHint}

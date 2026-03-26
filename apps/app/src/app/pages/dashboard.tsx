@@ -257,9 +257,6 @@ export type DashboardViewProps = {
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
-  showMcpReloadBanner: boolean;
-  mcpReloadBlocked: boolean;
-  reloadMcpEngine: () => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
@@ -1392,9 +1389,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   authorizeMcp={props.authorizeMcp}
                   logoutMcpAuth={props.logoutMcpAuth}
                   removeMcp={props.removeMcp}
-                  showMcpReloadBanner={props.showMcpReloadBanner}
-                  reloadBlocked={props.mcpReloadBlocked}
-                  reloadMcpEngine={props.reloadMcpEngine}
                   canEditPlugins={props.canEditPlugins}
                   canUseGlobalScope={props.canUseGlobalPluginScope}
                   accessHint={props.pluginsAccessHint}
@@ -1631,14 +1625,11 @@ export default function DashboardView(props: DashboardViewProps) {
                   selectedMcp={props.selectedMcp}
                   setSelectedMcp={props.setSelectedMcp}
                   quickConnect={props.quickConnect}
-                  connectMcp={props.connectMcp}
-                  authorizeMcp={props.authorizeMcp}
-                  logoutMcpAuth={props.logoutMcpAuth}
-                  removeMcp={props.removeMcp}
-                  showMcpReloadBanner={props.showMcpReloadBanner}
-                  mcpReloadBlocked={props.mcpReloadBlocked}
-                  reloadMcpEngine={props.reloadMcpEngine}
-                  createSessionAndOpen={props.createSessionAndOpen}
+                   connectMcp={props.connectMcp}
+                   authorizeMcp={props.authorizeMcp}
+                   logoutMcpAuth={props.logoutMcpAuth}
+                   removeMcp={props.removeMcp}
+                   createSessionAndOpen={props.createSessionAndOpen}
                   setPrompt={props.setPrompt}
                   canReloadWorkspace={props.canReloadWorkspace}
                   reloadWorkspaceEngine={props.reloadWorkspaceEngine}

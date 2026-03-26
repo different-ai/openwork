@@ -85,6 +85,33 @@ Tauri or other native shell behavior remains the fallback or shell boundary for:
 
 If an agent needs one of the server-owned behaviors above and only a Tauri path exists, treat that as an architecture gap to close rather than a parallel capability surface to preserve.
 
+## Reload-required flow
+
+OpenWork uses a single reload-required flow for changes that only take effect when OpenCode restarts.
+
+Key pieces:
+
+- `createSystemState()` owns the raw queued-reload state.
+- `reloadPending()` means a reload is currently queued for the active workspace.
+- `markReloadRequired(reason, trigger)` queues the reload and records the source that caused it.
+- `app.tsx` exposes `reloadRequired(...sources)` as a small helper for UI filtering. It is used to decide whether the shared reload popup should show for a given trigger type.
+
+Use this flow when a change mutates startup-loaded OpenCode inputs, for example:
+
+- `opencode.json`
+- `.opencode/skills/**`
+- `.opencode/agents/**`
+- `.opencode/commands/**`
+- MCP definitions or plugin lists that OpenCode only loads at startup
+
+Do not invent a separate reload banner per feature. New UI that needs restart semantics should:
+
+1. perform the config or filesystem mutation
+2. call `markReloadRequired(...)`
+3. rely on the shared reload popup to explain and execute the restart path
+
+Current examples that should use this shared flow include MCP changes, auto context compaction, default model changes, authorized folder updates, plugin changes, and other `opencode.json` writes.
+
 ## opencode primitives
 how to pick the right extension abstraction for 
 @opencode
