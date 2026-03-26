@@ -1350,6 +1350,22 @@ export default function SettingsView(props: SettingsViewProps) {
     setNukeConfigBusy(true);
     setNukeConfigStatus(null);
     try {
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.clear();
+        } catch {
+          // ignore
+        }
+      }
+
+      await new Promise<void>((resolve) => {
+        if (typeof window === "undefined") {
+          resolve();
+          return;
+        }
+        window.requestAnimationFrame(() => resolve());
+      });
+
       await nukeOpenworkAndOpencodeConfigAndExit();
       setNukeConfigStatus(
         "Removed OpenWork and OpenCode state. OpenWork is closing...",
