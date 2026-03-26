@@ -33,126 +33,6 @@ function statusClass(bucket: ReturnType<typeof getWorkerStatusMeta>["bucket"]) {
   }
 }
 
-function CredentialField({
-  label,
-  value,
-  copyKey,
-  copiedField,
-  onCopy,
-}: {
-  label: string;
-  value: string | null;
-  copyKey: string;
-  copiedField: string | null;
-  onCopy: (field: string, value: string | null) => Promise<void>;
-}) {
-  return (
-    <label className="grid gap-2">
-      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--dls-text-secondary)]">{label}</span>
-      <div className="flex items-center gap-2 rounded-2xl border border-[var(--dls-border)] bg-white px-3 py-2.5">
-        <input
-          readOnly
-          value={value ?? "Preparing..."}
-          className="min-w-0 flex-1 border-none bg-transparent font-mono text-xs text-[var(--dls-text-primary)] outline-none"
-          onClick={(event) => event.currentTarget.select()}
-        />
-        <button
-          type="button"
-          className="rounded-xl border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-1.5 text-xs font-medium text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
-          onClick={() => void onCopy(copyKey, value)}
-          disabled={!value}
-        >
-          {copiedField === copyKey ? "Copied" : value ? "Copy" : "N/A"}
-        </button>
-      </div>
-    </label>
-  );
-}
-
-function RowConnectActions({
-  workerId,
-  openworkAppConnectUrl,
-  openworkDeepLink,
-  activeWorker,
-  copiedField,
-  copyToClipboard,
-  generateWorkerToken,
-  actionBusy,
-}: {
-  workerId: string;
-  openworkAppConnectUrl: string | null;
-  openworkDeepLink: string | null;
-  activeWorker: {
-    openworkUrl: string | null;
-    instanceUrl: string | null;
-    ownerToken: string | null;
-    clientToken: string | null;
-  };
-  copiedField: string | null;
-  copyToClipboard: (field: string, value: string | null) => Promise<void>;
-  generateWorkerToken: () => Promise<void>;
-  actionBusy: "status" | "token" | null;
-}) {
-  return (
-    <div className="mt-4 grid gap-4 border-t border-[var(--dls-border)] pt-4">
-      <div className="flex flex-wrap gap-3">
-        <a
-          href={openworkAppConnectUrl ?? "#"}
-          target="_blank"
-          rel="noreferrer"
-          className={`den-button-primary ${openworkAppConnectUrl ? "" : "pointer-events-none opacity-60"}`}
-        >
-          Open in web
-        </a>
-        <button
-          type="button"
-          className="den-button-secondary"
-          onClick={() => {
-            if (openworkDeepLink) {
-              window.location.href = openworkDeepLink;
-            }
-          }}
-          disabled={!openworkDeepLink}
-        >
-          Open in desktop
-        </button>
-        <button
-          type="button"
-          className="den-button-secondary"
-          onClick={() => void generateWorkerToken()}
-          disabled={actionBusy === "token"}
-        >
-          {actionBusy === "token" ? "Refreshing..." : "Refresh tokens"}
-        </button>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <CredentialField
-          label="Connection URL"
-          value={activeWorker.openworkUrl ?? activeWorker.instanceUrl}
-          copyKey={`background-connect-url-${workerId}`}
-          copiedField={copiedField}
-          onCopy={copyToClipboard}
-        />
-        <CredentialField
-          label="Owner token"
-          value={activeWorker.ownerToken}
-          copyKey={`background-owner-token-${workerId}`}
-          copiedField={copiedField}
-          onCopy={copyToClipboard}
-        />
-        <CredentialField
-          label="Collaborator token"
-          value={activeWorker.clientToken}
-          copyKey={`background-client-token-${workerId}`}
-          copiedField={copiedField}
-          onCopy={copyToClipboard}
-        />
-      </div>
-    </div>
-  );
-}
-
 export function BackgroundAgentsScreen() {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
@@ -249,14 +129,71 @@ export function BackgroundAgentsScreen() {
             const isSelected = selectedWorkerId === worker.workerId;
             const showInlineConnect = isSelected && canConnect && activeWorker?.workerId === worker.workerId;
             return (
-              <article key={worker.workerId} className="den-list-row flex-col items-stretch gap-4">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <div className="grid gap-1">
-                    <h3 className="text-base font-semibold text-[var(--dls-text-primary)]">{worker.workerName}</h3>
-                    <p className="text-sm text-[var(--dls-text-secondary)]">
-                      Source: {worker.provider ? `${worker.provider} sandbox` : "Cloud sandbox"}
-                    </p>
-                  </div>
+              <article key={worker.workerId} className="den-list-row">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <h3 className="text-base font-semibold text-[var(--dls-text-primary)]">{worker.workerName}</h3>
+                  <p className="text-sm text-[var(--dls-text-secondary)]">
+                    Source: {worker.provider ? `${worker.provider} sandbox` : "Cloud sandbox"}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {showInlineConnect ? (
+                    <>
+                      <a
+                        href={openworkAppConnectUrl ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`den-button-primary ${openworkAppConnectUrl ? "" : "pointer-events-none opacity-60"}`}
+                      >
+                        Open in web
+                      </a>
+                      <button
+                        type="button"
+                        className="den-button-secondary"
+                        onClick={() => {
+                          if (openworkDeepLink) {
+                            window.location.href = openworkDeepLink;
+                          }
+                        }}
+                        disabled={!openworkDeepLink}
+                      >
+                        Open in desktop
+                      </button>
+                      <button
+                        type="button"
+                        className="den-button-secondary"
+                        onClick={() => void copyToClipboard(`background-connect-url-${worker.workerId}`, activeWorker.openworkUrl ?? activeWorker.instanceUrl)}
+                        disabled={!activeWorker.openworkUrl && !activeWorker.instanceUrl}
+                      >
+                        {copiedField === `background-connect-url-${worker.workerId}` ? "Copied URL" : "Copy URL"}
+                      </button>
+                      <button
+                        type="button"
+                        className="den-button-secondary"
+                        onClick={() => void copyToClipboard(`background-owner-token-${worker.workerId}`, activeWorker.ownerToken)}
+                        disabled={!activeWorker.ownerToken}
+                      >
+                        {copiedField === `background-owner-token-${worker.workerId}` ? "Copied owner" : "Copy owner token"}
+                      </button>
+                      <button
+                        type="button"
+                        className="den-button-secondary"
+                        onClick={() => void copyToClipboard(`background-client-token-${worker.workerId}`, activeWorker.clientToken)}
+                        disabled={!activeWorker.clientToken}
+                      >
+                        {copiedField === `background-client-token-${worker.workerId}` ? "Copied client" : "Copy client token"}
+                      </button>
+                      <button
+                        type="button"
+                        className="den-button-secondary"
+                        onClick={() => void generateWorkerToken()}
+                        disabled={actionBusy === "token"}
+                      >
+                        {actionBusy === "token" ? "Refreshing..." : "Refresh tokens"}
+                      </button>
+                    </>
+                  ) : null}
+
                   <div className="flex flex-wrap items-center gap-2">
                     {worker.isMine ? (
                       <button
@@ -274,7 +211,7 @@ export function BackgroundAgentsScreen() {
                         {renameBusyWorkerId === worker.workerId ? "Renaming..." : "Rename"}
                       </button>
                     ) : null}
-                    {canConnect ? (
+                    {canConnect && !showInlineConnect ? (
                       <button
                         type="button"
                         className="den-button-secondary"
@@ -293,19 +230,6 @@ export function BackgroundAgentsScreen() {
                     <span className={`den-status-pill ${statusClass(meta.bucket)}`}>{meta.label}</span>
                   </div>
                 </div>
-
-                {showInlineConnect ? (
-                  <RowConnectActions
-                    workerId={worker.workerId}
-                    openworkAppConnectUrl={openworkAppConnectUrl}
-                    openworkDeepLink={openworkDeepLink}
-                    activeWorker={activeWorker}
-                    copiedField={copiedField}
-                    copyToClipboard={copyToClipboard}
-                    generateWorkerToken={generateWorkerToken}
-                    actionBusy={actionBusy}
-                  />
-                ) : null}
               </article>
             );
           })

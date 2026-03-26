@@ -21,6 +21,7 @@ import {
   type WorkerLaunch,
   type WorkerListItem,
   type WorkerRuntimeSnapshot,
+  type WorkerSummary,
   type WorkerStatusBucket,
   buildOpenworkAppConnectUrl,
   buildOpenworkDeepLink,
@@ -643,6 +644,21 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         setWorkersBusy(false);
       }
     }
+  }
+
+  function mergeWorkerSummaryIntoList(summary: WorkerSummary) {
+    setWorkers((current) => current.map((entry) =>
+      entry.workerId === summary.workerId
+        ? {
+            ...entry,
+            workerName: summary.workerName,
+            status: summary.status,
+            provider: summary.provider,
+            instanceUrl: summary.instanceUrl,
+            isMine: summary.isMine,
+          }
+        : entry,
+    ));
   }
 
   async function refreshRuntime(workerId?: string, options: { quiet?: boolean } = {}) {
@@ -1405,7 +1421,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setWorkerLookupId(id);
+    if (!background) {
+      setWorkerLookupId(id);
+    }
 
     if (!background) {
       setActionBusy("status");
@@ -1438,6 +1456,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      mergeWorkerSummaryIntoList(summary);
+
       const previousStatus = worker?.workerId === summary.workerId ? worker.status : null;
       const nextWorker: WorkerLaunch =
         worker && worker.workerId === summary.workerId
@@ -1461,10 +1481,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
               hostToken: null
             };
 
-      const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
-      setWorker(resolvedWorker);
-      setPendingRestoredWorkerId(null);
-      setWorkerLookupId(summary.workerId);
+      const shouldUpdateActiveWorker = worker?.workerId === summary.workerId || (!background && workerLookupId === summary.workerId);
+      if (shouldUpdateActiveWorker) {
+        const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
+        setWorker(resolvedWorker);
+        setPendingRestoredWorkerId(null);
+        if (!background) {
+          setWorkerLookupId(summary.workerId);
+        }
+      }
 
       if (!quiet) {
         setLaunchStatus(`Worker ${summary.workerName} is currently ${summary.status}.`);
@@ -1482,9 +1507,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      if (!background) {
-        void refreshWorkers({ keepSelection: true });
-      }
     } catch (error) {
       if (!quiet) {
         setLaunchError(error instanceof Error ? error.message : "Unknown network error");
@@ -1921,42 +1943,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     void generateWorkerToken();
   }, [actionBusy, launchBusy, pendingRestoredWorkerId, tokenFetchedForWorkerId, user, worker]);
 
-  useEffect(() => {
-    if (!user || !worker || worker.status !== "provisioning") {
-      return;
-    }
-    if (pendingRestoredWorkerId === worker.workerId) {
-      return;
-    }
-    if (actionBusy !== null || launchBusy) {
-      return;
-    }
-
-    let cancelled = false;
-    const poll = async () => {
-      if (!cancelled) {
-        await checkWorkerStatus({ workerId: worker.workerId, quiet: true, background: true });
-      }
-    };
-
-    void poll();
-    const interval = window.setInterval(() => {
-      void poll();
-    }, WORKER_STATUS_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [actionBusy, authToken, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status]);
-
   const provisioningWorkerIds = workers
     .filter((item) => item.status === "provisioning")
-    .map((item) => item.workerId)
-    .join(",");
+    .map((item) => item.workerId);
 
   useEffect(() => {
-    if (!user || !provisioningWorkerIds) {
+    if (!user || provisioningWorkerIds.length === 0) {
       return;
     }
 
@@ -1966,7 +1958,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      await refreshWorkers({ keepSelection: true, quiet: true });
+      await Promise.all(
+        provisioningWorkerIds.map((workerId) =>
+          checkWorkerStatus({ workerId, quiet: true, background: true }),
+        ),
+      );
     };
 
     void poll();
@@ -1978,7 +1974,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [actionBusy, launchBusy, provisioningWorkerIds, user?.id]);
+  }, [actionBusy, launchBusy, provisioningWorkerIds.join(","), user?.id]);
 
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
