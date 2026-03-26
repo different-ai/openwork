@@ -5445,13 +5445,29 @@ export default function App() {
 
   const schedulerPluginInstalled = createMemo(() => isPluginInstalledByName("opencode-scheduler"));
 
-  const refreshScheduledJobs = async (options?: { force?: boolean }) => {
-    if (scheduledJobsBusy() && !options?.force) return;
+  const scheduledJobsContextKey = createMemo(() => {
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    const root = normalizeDirectoryPath(workspaceStore.selectedWorkspaceRoot().trim());
+    return `${scheduledJobsSource()}:${workspaceId}:${root}`;
+  });
+
+  const scheduledJobsPollingAvailable = createMemo(() => {
+    if (scheduledJobsSource() === "remote") return scheduledJobsSourceReady();
+    return isTauriRuntime() && !isWindowsPlatform() && schedulerPluginInstalled();
+  });
+
+  const refreshScheduledJobs = async (
+    options?: { force?: boolean },
+  ): Promise<"success" | "error" | "unavailable" | "skipped"> => {
+    void options;
+    if (scheduledJobsBusy()) return "skipped";
+
+    const requestContextKey = scheduledJobsContextKey();
 
     if (scheduledJobsSource() === "remote") {
       const scheduler = resolveOpenworkScheduler();
       if (!scheduler) {
-        setScheduledJobs([]);
+        if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const status =
           openworkServerStatus() === "disconnected"
             ? "OpenWork server unavailable. Connect to sync scheduled tasks."
@@ -5459,7 +5475,7 @@ export default function App() {
               ? "OpenWork server needs a token to load scheduled tasks."
               : "OpenWork server not ready.";
         setScheduledJobsStatus(status);
-        return;
+        return "unavailable";
       }
 
       setScheduledJobsBusy(true);
@@ -5467,35 +5483,37 @@ export default function App() {
 
       try {
         const response = await scheduler.client.listScheduledJobs(scheduler.workspaceId);
+        if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const jobs = Array.isArray(response.items) ? response.items : [];
         setScheduledJobs(jobs);
         setScheduledJobsUpdatedAt(Date.now());
+        return "success";
       } catch (error) {
+        if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const message = error instanceof Error ? error.message : String(error);
-        setScheduledJobs([]);
         setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+        return "error";
       } finally {
         setScheduledJobsBusy(false);
       }
-      return;
     }
 
     if (!isTauriRuntime()) {
-      setScheduledJobs([]);
+      if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
       setScheduledJobsStatus(null);
-      return;
+      return "unavailable";
     }
 
     if (isWindowsPlatform()) {
-      setScheduledJobs([]);
+      if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
       setScheduledJobsStatus(null);
-      return;
+      return "unavailable";
     }
 
     if (!schedulerPluginInstalled()) {
-      setScheduledJobs([]);
+      if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
       setScheduledJobsStatus(null);
-      return;
+      return "unavailable";
     }
 
     setScheduledJobsBusy(true);
@@ -5504,16 +5522,87 @@ export default function App() {
     try {
       const root = workspaceStore.selectedWorkspaceRoot().trim();
       const jobs = await schedulerListJobs(root || undefined);
+      if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
       setScheduledJobs(jobs);
       setScheduledJobsUpdatedAt(Date.now());
+      return "success";
     } catch (error) {
+      if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
       const message = error instanceof Error ? error.message : String(error);
-      setScheduledJobs([]);
       setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+      return "error";
     } finally {
       setScheduledJobsBusy(false);
     }
   };
+
+  createEffect(() => {
+    scheduledJobsContextKey();
+    setScheduledJobs([]);
+    setScheduledJobsStatus(null);
+    setScheduledJobsUpdatedAt(null);
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (currentView() !== "dashboard") return;
+    if (tab() !== "scheduled") return;
+    if (!documentVisible()) return;
+
+    const pollingAvailable = scheduledJobsPollingAvailable();
+    const startedAt = Date.now();
+    let active = true;
+    let failureCount = 0;
+    let timeoutId: number | undefined;
+
+    const clearTimer = () => {
+      if (timeoutId == null) return;
+      window.clearTimeout(timeoutId);
+      timeoutId = undefined;
+    };
+
+    const nextDelayMs = () => {
+      const baseDelay = Date.now() - startedAt < 60_000 ? 5_000 : 15_000;
+      if (failureCount <= 0) return baseDelay;
+      return Math.min(baseDelay * 2 ** failureCount, 60_000);
+    };
+
+    const scheduleNext = () => {
+      clearTimer();
+      if (!active || !pollingAvailable) return;
+      timeoutId = window.setTimeout(() => {
+        void run("poll");
+      }, nextDelayMs());
+    };
+
+    const run = async (_reason: "initial" | "focus" | "poll") => {
+      if (!active) return;
+      const result = await refreshScheduledJobs();
+      if (!active) return;
+
+      if (result === "error") {
+        failureCount += 1;
+      } else if (result === "success" || result === "unavailable") {
+        failureCount = 0;
+      }
+
+      scheduleNext();
+    };
+
+    const handleFocus = () => {
+      clearTimer();
+      void run("focus");
+    };
+
+    void run("initial");
+    window.addEventListener("focus", handleFocus);
+
+    onCleanup(() => {
+      active = false;
+      clearTimer();
+      window.removeEventListener("focus", handleFocus);
+    });
+  });
 
   const deleteScheduledJob = async (name: string) => {
     if (scheduledJobsSource() === "remote") {

@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import type { ScheduledJob } from "../types";
 import { usePlatform } from "../context/platform";
@@ -484,8 +484,16 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       ? "This removes the schedule and deletes the job definition from the connected OpenWork server."
       : "This removes the schedule and deletes the job definition from your machine."
   );
+  const [lastUpdatedNow, setLastUpdatedNow] = createSignal(Date.now());
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const interval = window.setInterval(() => setLastUpdatedNow(Date.now()), 1_000);
+    onCleanup(() => window.clearInterval(interval));
+  });
 
   const lastUpdatedLabel = createMemo(() => {
+    lastUpdatedNow();
     if (!props.lastUpdatedAt) return "Not synced yet";
     return formatRelativeTime(props.lastUpdatedAt);
   });
@@ -687,6 +695,19 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           </div>
         </Show>
         <p class={`text-sm text-gray-9 ${props.showHeader !== false ? "mt-2" : ""}`}>{sourceDescription()}</p>
+        <div class="mt-4 flex flex-wrap items-center justify-center gap-2 text-[11px] text-gray-9">
+          <span class="rounded-full border border-gray-4 bg-gray-1 px-2.5 py-1">
+            {sourceLabel()}
+          </span>
+          <span class="rounded-full border border-gray-4 bg-gray-1 px-2.5 py-1">
+            Last updated {lastUpdatedLabel()}
+          </span>
+          <Show when={props.busy}>
+            <span class="rounded-full border border-blue-7/30 bg-blue-3/50 px-2.5 py-1 text-blue-11">
+              Refreshing in background
+            </span>
+          </Show>
+        </div>
       </div>
 
       <Show when={schedulerGateActive()}>

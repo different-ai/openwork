@@ -537,9 +537,6 @@ export default function DashboardView(props: DashboardViewProps) {
         if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
           await Promise.all([props.refreshPlugins(), props.refreshMcpServers()]);
         }
-        if (currentTab === "scheduled" && !cancelled) {
-          await props.refreshScheduledJobs();
-        }
       } catch {
         // Ignore errors during navigation
       } finally {
