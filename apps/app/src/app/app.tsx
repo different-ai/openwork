@@ -367,10 +367,10 @@ function describeSharedBundleImport(bundle: SharedBundleV1): { title: string; de
   }
 
   return {
-    title: "Import workspace bundle",
+    title: bundle.name?.trim() || "Open workspace template",
     description:
       bundle.description?.trim() ||
-      `Create a new worker to import ${bundle.name || "this shared workspace bundle"}.`,
+      `${bundle.name || "This shared workspace template"} is ready to start in a new worker or import into an existing one.`,
     items: Array.isArray(bundle.workspace.skills) ? bundle.workspace.skills.map((skill) => skill.name) : [],
   };
 }
@@ -4719,6 +4719,47 @@ export default function App() {
     setSharedBundleImportError(null);
   };
 
+  const openCloudTemplate = async (input: {
+    templateId: string;
+    name: string;
+    templateData: unknown;
+    organizationName?: string | null;
+  }) => {
+    const bundle = parseSharedBundle(input.templateData);
+    setError(null);
+    setView("dashboard");
+    setTab("settings");
+    setSharedSkillDestinationBusyId(null);
+    setSharedBundleImportError(null);
+    setSharedTemplateStartRequest(null);
+    setSharedBundleCreateWorkerRequest(null);
+
+    if (bundle.type === "skill") {
+      setSharedBundleImportChoice(null);
+      setSharedSkillDestinationRequest({
+        request: {
+          bundleUrl: "",
+          intent: "import_current",
+          source: "cloud-template",
+          label: input.name,
+        },
+        bundle,
+      });
+      return;
+    }
+
+    setSharedSkillDestinationRequest(null);
+    setSharedBundleImportChoice({
+      request: {
+        bundleUrl: "",
+        intent: "import_current",
+        source: "cloud-template",
+        label: input.name,
+      },
+      bundle,
+    });
+  };
+
   const sharedBundleImportCopy = createMemo(() => {
     const choice = sharedBundleImportChoice();
     if (!choice) return null;
@@ -4728,13 +4769,13 @@ export default function App() {
   const sharedBundleWorkerOptions = createMemo(() => {
     const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
     const items = workspaceStore.workspaces().map((workspace) => {
-      let disabledReason: string | null = null;
-      if (!resolveSharedBundleImportTargetForWorkspace(workspace)) {
-        disabledReason =
-          workspace.workspaceType === "remote" && workspace.remoteType !== "openwork"
-            ? "Only OpenWork-connected workers support direct shared skill imports."
+        let disabledReason: string | null = null;
+        if (!resolveSharedBundleImportTargetForWorkspace(workspace)) {
+          disabledReason =
+            workspace.workspaceType === "remote" && workspace.remoteType !== "openwork"
+            ? "Only OpenWork-connected workers support direct shared bundle imports."
             : "This worker is missing the info OpenWork needs to import the bundle.";
-      }
+        }
 
       const label =
         workspace.displayName?.trim() ||
@@ -4784,7 +4825,10 @@ export default function App() {
       setSharedBundleCreateWorkerRequest({
         request: choice.request,
         bundle: choice.bundle,
-        defaultPreset: "starter",
+        defaultPreset:
+          choice.bundle.type === "workspace-profile"
+            ? defaultPresetFromTemplateBundle(choice.bundle)
+            : "starter",
       });
       setSharedBundleImportChoice(null);
       workspaceStore.setCreateWorkspaceOpen(true);
@@ -4819,7 +4863,7 @@ export default function App() {
 
     const target = resolveSharedBundleImportTargetForWorkspace(workspace);
     if (!target) {
-      setSharedBundleImportError("This worker cannot accept shared skill imports yet.");
+      setSharedBundleImportError("This worker cannot accept shared bundle imports yet.");
       return;
     }
 
@@ -4829,7 +4873,7 @@ export default function App() {
 
     try {
       setView("dashboard");
-      setTab("skills");
+      setTab(choice.bundle.type === "workspace-profile" ? "scheduled" : "skills");
       const ok = await workspaceStore.activateWorkspace(workspace.id);
       if (!ok) {
         throw new Error(error() || `Failed to switch to ${workspace.displayName?.trim() || workspace.name || "the selected worker"}.`);
@@ -4863,13 +4907,15 @@ export default function App() {
       .exchangeDesktopHandoff(pending.grant)
       .then((result) => {
         if (!result.token) {
-          throw new Error("Desktop sign-in completed, but Den did not return a session token.");
+          throw new Error("Desktop sign-in completed, but OpenWork Cloud did not return a session token.");
         }
 
         writeDenSettings({
           baseUrl: pending.denBaseUrl,
           authToken: result.token,
           activeOrgId: null,
+          activeOrgSlug: null,
+          activeOrgName: null,
         });
 
         window.dispatchEvent(
@@ -4886,7 +4932,7 @@ export default function App() {
           new CustomEvent("openwork-den-session-updated", {
             detail: {
               status: "error",
-              message: error instanceof Error ? error.message : "Failed to complete OpenWork Den sign-in.",
+              message: error instanceof Error ? error.message : "Failed to complete OpenWork Cloud sign-in.",
             },
           }),
         );
@@ -7867,6 +7913,7 @@ export default function App() {
       pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
+      openCloudTemplate,
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,

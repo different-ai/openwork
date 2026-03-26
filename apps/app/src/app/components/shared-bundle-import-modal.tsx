@@ -122,7 +122,7 @@ export default function SharedBundleImportModal(props: {
               >
                 <div>
                   <div class="text-sm font-semibold text-gray-12">Add to existing worker</div>
-                  <div class="mt-1 text-sm text-gray-10">Pick an existing worker and import the shared skills there.</div>
+                  <div class="mt-1 text-sm text-gray-10">Pick an existing worker and import this shared bundle there.</div>
                 </div>
                 <Show when={showWorkers()} fallback={<ChevronRight size={18} class="text-gray-10" />}>
                   <ChevronDown size={18} class="text-gray-10" />

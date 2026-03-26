@@ -10,6 +10,7 @@ import {
   MessageSquare,
   MonitorUp,
   Rocket,
+  Users,
   X,
 } from "lucide-solid";
 
@@ -21,7 +22,7 @@ type ShareField = {
   hint?: string;
 };
 
-type ShareView = "chooser" | "template" | "access";
+type ShareView = "chooser" | "template" | "template-public" | "template-team" | "access";
 
 const isInviteField = (label: string) => /invite link/i.test(label);
 const isCollaboratorField = (label: string) => /collaborator token/i.test(label);
@@ -54,6 +55,12 @@ export default function ShareWorkspaceModal(props: {
   shareWorkspaceProfileUrl?: string | null;
   shareWorkspaceProfileError?: string | null;
   shareWorkspaceProfileDisabledReason?: string | null;
+  onShareWorkspaceProfileToTeam?: (name: string) => void | Promise<void>;
+  shareWorkspaceProfileToTeamBusy?: boolean;
+  shareWorkspaceProfileToTeamError?: string | null;
+  shareWorkspaceProfileToTeamSuccess?: string | null;
+  shareWorkspaceProfileToTeamDisabledReason?: string | null;
+  shareWorkspaceProfileToTeamOrgName?: string | null;
   onShareSkillsSet?: () => void;
   onOpenSingleSkillShare?: () => void;
   shareSkillsSetBusy?: boolean;
@@ -69,6 +76,7 @@ export default function ShareWorkspaceModal(props: {
   const [copiedKey, setCopiedKey] = createSignal<string | null>(null);
   const [collaboratorExpanded, setCollaboratorExpanded] = createSignal(false);
   const [remoteAccessEnabled, setRemoteAccessEnabled] = createSignal(false);
+  const [teamTemplateName, setTeamTemplateName] = createSignal("");
 
   const title = createMemo(() => props.title ?? "Share workspace");
   const note = createMemo(() => props.note?.trim() ?? "");
@@ -88,6 +96,7 @@ export default function ShareWorkspaceModal(props: {
         setCopiedKey(null);
         setCollaboratorExpanded(false);
         setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
+        setTeamTemplateName(`${props.workspaceName.trim() || "Workspace"} template`);
       },
     ),
   );
@@ -108,8 +117,13 @@ export default function ShareWorkspaceModal(props: {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      if (activeView() === "chooser") {
+      const view = activeView();
+      if (view === "chooser") {
         props.onClose();
+        return;
+      }
+      if (view === "template-public" || view === "template-team") {
+        setActiveView("template");
         return;
       }
       setActiveView("chooser");
@@ -117,6 +131,15 @@ export default function ShareWorkspaceModal(props: {
     window.addEventListener("keydown", handleKeyDown);
     onCleanup(() => window.removeEventListener("keydown", handleKeyDown));
   });
+
+  const goBack = () => {
+    const view = activeView();
+    if (view === "template-public" || view === "template-team") {
+      setActiveView("template");
+      return;
+    }
+    setActiveView("chooser");
+  };
 
   const handleCopy = async (value: string, key: string) => {
     const text = value?.trim() ?? "";
@@ -254,7 +277,7 @@ export default function ShareWorkspaceModal(props: {
 
             <Show when={activeView() !== "chooser"}>
               <button
-                onClick={() => setActiveView("chooser")}
+                onClick={goBack}
                 class="absolute top-3 left-3 p-1 text-gray-9 hover:text-gray-12 hover:bg-gray-3 rounded-md transition-colors"
                 aria-label="Back"
                 title="Back to share options"
@@ -268,6 +291,8 @@ export default function ShareWorkspaceModal(props: {
                 <h2 class="text-[14px] font-medium text-dls-text tracking-tight truncate">
                   <Show when={activeView() === "chooser"}>{title()}</Show>
                   <Show when={activeView() === "template"}>Share a template</Show>
+                  <Show when={activeView() === "template-public"}>Public template</Show>
+                  <Show when={activeView() === "template-team"}>Share with team</Show>
                   <Show when={activeView() === "access"}>Access workspace remotely</Show>
                 </h2>
                 <div class="mt-0.5 text-[12px] text-gray-10 truncate">{props.workspaceName}</div>
@@ -318,6 +343,48 @@ export default function ShareWorkspaceModal(props: {
                   Share a reusable setup without granting live access to this running workspace.
                 </div>
 
+                <div class="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("template-public")}
+                    class="w-full text-left rounded-xl p-3 hover:bg-dls-hover transition-colors group flex items-start gap-3"
+                  >
+                    <div class="mt-0.5 text-gray-10 group-hover:text-gray-12 transition-colors shrink-0">
+                      <Rocket size={18} />
+                    </div>
+                    <div class="flex-1">
+                      <h3 class="text-[13px] font-medium text-dls-text">Public</h3>
+                      <p class="text-[12px] text-gray-10 leading-snug mt-0.5 pr-4">
+                        Create a public share link anyone can use to start from this template.
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("template-team")}
+                    class="w-full text-left rounded-xl p-3 hover:bg-dls-hover transition-colors group flex items-start gap-3"
+                  >
+                    <div class="mt-0.5 text-gray-10 group-hover:text-gray-12 transition-colors shrink-0">
+                      <Users size={18} />
+                    </div>
+                    <div class="flex-1">
+                      <h3 class="text-[13px] font-medium text-dls-text">Share with team</h3>
+                      <p class="text-[12px] text-gray-10 leading-snug mt-0.5 pr-4">
+                        Save this workspace template to your active OpenWork Cloud organization.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={activeView() === "template-public"}>
+              <div class="space-y-6 pt-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                <div class="text-[12px] text-gray-10">
+                  Share this workspace as a public template link.
+                </div>
+
                 <div class="space-y-3">
                   <div class="flex items-center gap-2 mb-1">
                     <FolderCode size={16} class="text-gray-9 shrink-0" />
@@ -346,6 +413,64 @@ export default function ShareWorkspaceModal(props: {
                     props.onShareWorkspaceProfile,
                     props.shareWorkspaceProfileDisabledReason,
                   )}
+                </div>
+              </div>
+            </Show>
+
+            <Show when={activeView() === "template-team"}>
+              <div class="space-y-6 pt-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                <div class="text-[12px] text-gray-10">
+                  Save this template to your active OpenWork Cloud organization so teammates can open it later from Cloud settings.
+                </div>
+
+                <div class="space-y-4 rounded-[20px] border border-dls-border bg-gray-2/30 px-4 py-4">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="rounded-full border border-gray-6/60 bg-gray-1/40 px-2.5 py-1 text-[11px] font-medium text-gray-11">
+                      {props.shareWorkspaceProfileToTeamOrgName?.trim() || "Active Cloud org"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label class="text-[11px] uppercase tracking-wider font-medium text-gray-10 mb-1.5 block">
+                      Template name
+                    </label>
+                    <input
+                      type="text"
+                      value={teamTemplateName()}
+                      onInput={(event) => setTeamTemplateName(event.currentTarget.value)}
+                      class="w-full bg-transparent border border-dls-border rounded-md py-2 px-3 text-[13px] text-dls-text transition-colors outline-none focus:border-[rgba(var(--dls-accent-rgb),0.45)] focus:ring-1 focus:ring-[rgba(var(--dls-accent-rgb),0.18)]"
+                      placeholder={`${props.workspaceName.trim() || "Workspace"} template`}
+                    />
+                  </div>
+
+                  <Show when={props.shareWorkspaceProfileToTeamError?.trim()}>
+                    <div class="rounded-md border border-red-6/40 bg-red-3/30 px-3 py-2 text-[12px] text-red-11">
+                      {props.shareWorkspaceProfileToTeamError}
+                    </div>
+                  </Show>
+
+                  <Show when={props.shareWorkspaceProfileToTeamSuccess?.trim()}>
+                    <div class="rounded-md border border-emerald-6/40 bg-emerald-3/30 px-3 py-2 text-[12px] text-emerald-11">
+                      {props.shareWorkspaceProfileToTeamSuccess}
+                    </div>
+                  </Show>
+
+                  <Show when={props.shareWorkspaceProfileToTeamDisabledReason?.trim()}>
+                    <div class="text-[12px] text-gray-9">{props.shareWorkspaceProfileToTeamDisabledReason}</div>
+                  </Show>
+
+                  <button
+                    onClick={() => props.onShareWorkspaceProfileToTeam?.(teamTemplateName())}
+                    disabled={
+                      Boolean(props.shareWorkspaceProfileToTeamDisabledReason) ||
+                      !props.onShareWorkspaceProfileToTeam ||
+                      props.shareWorkspaceProfileToTeamBusy ||
+                      !teamTemplateName().trim()
+                    }
+                    class="w-full rounded-full bg-dls-text px-5 py-3 text-[13px] font-medium text-dls-surface shadow-sm transition-colors hover:bg-gray-12 active:scale-[0.99] disabled:opacity-50"
+                  >
+                    {props.shareWorkspaceProfileToTeamBusy ? "Saving..." : "Save to team"}
+                  </button>
                 </div>
               </div>
             </Show>

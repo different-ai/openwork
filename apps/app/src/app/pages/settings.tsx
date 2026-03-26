@@ -294,6 +294,12 @@ export type SettingsViewProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
+  openCloudTemplate: (input: {
+    templateId: string;
+    name: string;
+    templateData: unknown;
+    organizationName?: string | null;
+  }) => Promise<void> | void;
 };
 
 const DISCORD_INVITE_URL = "https://discord.gg/VEhNQXxYMB";
@@ -2221,6 +2227,7 @@ export default function SettingsView(props: SettingsViewProps) {
           <DenSettingsPanel
             developerMode={props.developerMode}
             connectRemoteWorkspace={props.connectRemoteWorkspace}
+            openCloudTemplate={props.openCloudTemplate}
           />
         </Match>
 

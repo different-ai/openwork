@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
-import { ArrowUpRight, Cloud, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
+import { ArrowUpRight, Boxes, Cloud, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -7,6 +7,7 @@ import {
   clearDenSession,
   DEFAULT_DEN_BASE_URL,
   DenApiError,
+  type DenTemplate,
   createDenClient,
   normalizeDenBaseUrl,
   readDenSettings,
@@ -24,6 +25,12 @@ type DenSettingsPanelProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
+  openCloudTemplate: (input: {
+    templateId: string;
+    name: string;
+    templateData: unknown;
+    organizationName?: string | null;
+  }) => void | Promise<void>;
 };
 
 function statusBadgeClass(kind: "ready" | "warning" | "neutral" | "error") {
@@ -77,7 +84,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [sessionBusy, setSessionBusy] = createSignal(false);
   const [orgsBusy, setOrgsBusy] = createSignal(false);
   const [workersBusy, setWorkersBusy] = createSignal(false);
+  const [templatesBusy, setTemplatesBusy] = createSignal(false);
   const [openingWorkerId, setOpeningWorkerId] = createSignal<string | null>(null);
+  const [openingTemplateId, setOpeningTemplateId] = createSignal<string | null>(null);
   const [user, setUser] = createSignal<{
     id: string;
     email: string;
@@ -97,20 +106,23 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       createdAt: string | null;
     }>
   >([]);
+  const [templates, setTemplates] = createSignal<DenTemplate[]>([]);
   const [statusMessage, setStatusMessage] = createSignal<string | null>(null);
   const [authError, setAuthError] = createSignal<string | null>(null);
   const [orgsError, setOrgsError] = createSignal<string | null>(null);
   const [workersError, setWorkersError] = createSignal<string | null>(null);
+  const [templatesError, setTemplatesError] = createSignal<string | null>(null);
 
   const activeOrg = createMemo(() => orgs().find((org) => org.id === activeOrgId()) ?? null);
   const client = createMemo(() =>
     createDenClient({ baseUrl: baseUrl(), token: authToken() }),
   );
   const isSignedIn = createMemo(() => Boolean(user() && authToken().trim()));
+  const activeOrgName = createMemo(() => activeOrg()?.name || "No org selected");
 
   const summaryTone = createMemo(() => {
-    if (authError() || workersError() || orgsError()) return "error" as const;
-    if (sessionBusy() || orgsBusy() || workersBusy()) return "warning" as const;
+    if (authError() || workersError() || orgsError() || templatesError()) return "error" as const;
+    if (sessionBusy() || orgsBusy() || workersBusy() || templatesBusy()) return "warning" as const;
     if (isSignedIn()) return "ready" as const;
     return "neutral" as const;
   });
@@ -127,6 +139,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
       authToken: authToken() || null,
       activeOrgId: activeOrgId() || null,
+      activeOrgSlug: activeOrg()?.slug ?? null,
+      activeOrgName: activeOrg()?.name ?? null,
     });
   });
 
@@ -162,9 +176,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setUser(null);
     setOrgs([]);
     setWorkers([]);
+    setTemplates([]);
     setActiveOrgId("");
     setOrgsError(null);
     setWorkersError(null);
+    setTemplatesError(null);
   };
 
   const clearSignedInState = (message?: string | null) => {
@@ -175,6 +191,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
     setAuthToken("");
     setOpeningWorkerId(null);
+    setOpeningTemplateId(null);
     clearSessionState();
     setBaseUrlError(null);
     setAuthError(null);
@@ -184,7 +201,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const applyBaseUrl = () => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft());
     if (!normalized) {
-      setBaseUrlError("Enter a valid http:// or https:// Den control plane URL.");
+      setBaseUrlError("Enter a valid http:// or https:// Cloud control plane URL.");
       return;
     }
 
@@ -197,7 +214,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState("Updated the Den control plane URL. Sign in again to continue.");
+    clearSignedInState("Updated the Cloud control plane URL. Sign in again to continue.");
   };
 
   const refreshOrgs = async (quiet = false) => {
@@ -216,7 +233,15 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const current = activeOrgId().trim();
       const fallback = response.defaultOrgId ?? response.orgs[0]?.id ?? "";
       const next = response.orgs.some((org) => org.id === current) ? current : fallback;
+      const nextOrg = response.orgs.find((org) => org.id === next) ?? null;
       setActiveOrgId(next);
+      writeDenSettings({
+        baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
+        authToken: authToken() || null,
+        activeOrgId: next || null,
+        activeOrgSlug: nextOrg?.slug ?? null,
+        activeOrgName: nextOrg?.name ?? null,
+      });
       if (!quiet && response.orgs.length > 0) {
         setStatusMessage(
           `Loaded ${response.orgs.length} org${response.orgs.length === 1 ? "" : "s"}.`,
@@ -256,6 +281,33 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
   };
 
+  const refreshTemplates = async (quiet = false) => {
+    const orgSlug = activeOrg()?.slug?.trim() ?? "";
+    if (!authToken().trim() || !orgSlug) {
+      setTemplates([]);
+      return;
+    }
+
+    setTemplatesBusy(true);
+    if (!quiet) setTemplatesError(null);
+
+    try {
+      const nextTemplates = await client().listTemplates(orgSlug);
+      setTemplates(nextTemplates);
+      if (!quiet) {
+        setStatusMessage(
+          nextTemplates.length > 0
+            ? `Loaded ${nextTemplates.length} template${nextTemplates.length === 1 ? "" : "s"} for ${activeOrg()?.name ?? "this org"}.`
+            : `No team templates found for ${activeOrg()?.name ?? "this org"}.`,
+        );
+      }
+    } catch (error) {
+      setTemplatesError(error instanceof Error ? error.message : "Failed to load team templates.");
+    } finally {
+      setTemplatesBusy(false);
+    }
+  };
+
   createEffect(() => {
     const token = authToken().trim();
     const currentBaseUrl = baseUrl();
@@ -286,7 +338,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           clearSessionState();
         }
         setAuthError(
-          error instanceof Error ? error.message : "No active Den session found.",
+          error instanceof Error ? error.message : "No active Cloud session found.",
         );
       })
       .finally(() => {
@@ -309,6 +361,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   });
 
   createEffect(() => {
+    if (!user() || !activeOrg()?.slug?.trim()) return;
+    void refreshTemplates(true);
+  });
+
+  createEffect(() => {
     const handler = (event: Event) => {
       const customEvent = event as CustomEvent<{
         status?: string;
@@ -324,13 +381,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         setAuthError(null);
         setStatusMessage(
           customEvent.detail.email?.trim()
-            ? `Connected OpenWork Den as ${customEvent.detail.email.trim()}.`
-            : "Connected OpenWork Den.",
+            ? `Connected OpenWork Cloud as ${customEvent.detail.email.trim()}.`
+            : "Connected OpenWork Cloud.",
         );
       } else if (customEvent.detail?.status === "error") {
         setAuthError(
           customEvent.detail.message?.trim() ||
-            "Failed to finish OpenWork Den sign-in.",
+            "Failed to finish OpenWork Cloud sign-in.",
         );
       }
     };
@@ -361,7 +418,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
 
     clearSignedInState(
-      "Signed out and cleared your OpenWork Den session on this device.",
+      "Signed out and cleared your OpenWork Cloud session on this device.",
     );
   };
 
@@ -406,6 +463,44 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
   };
 
+  const handleOpenTemplate = async (template: DenTemplate) => {
+    if (openingTemplateId()) return;
+
+    setOpeningTemplateId(template.id);
+    setTemplatesError(null);
+
+    try {
+      await props.openCloudTemplate({
+        templateId: template.id,
+        name: template.name,
+        templateData: template.templateData,
+        organizationName: activeOrg()?.name ?? null,
+      });
+      setStatusMessage(`Opened ${template.name} from ${activeOrg()?.name ?? "team templates"}.`);
+    } catch (error) {
+      setTemplatesError(error instanceof Error ? error.message : `Failed to open ${template.name}.`);
+    } finally {
+      setOpeningTemplateId(null);
+    }
+  };
+
+  const formatTemplateTimestamp = (value: string | null) => {
+    if (!value) return "Recently updated";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Recently updated";
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(date);
+  };
+
+  const templateCreatorLabel = (template: DenTemplate) => {
+    const creator = template.creator;
+    if (!creator) return "Unknown creator";
+    return creator.name?.trim() || creator.email?.trim() || "Unknown creator";
+  };
+
   const settingsPanelClass =
     "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
   const settingsPanelSoftClass =
@@ -422,14 +517,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           <div class="space-y-2">
             <div class={headerBadgeClass}>
               <Cloud size={13} class="text-dls-secondary" />
-              OpenWork Den
+              OpenWork Cloud
             </div>
             <div>
               <div class="text-sm font-medium text-dls-text">
-                Sign in, pick an org, and open Den workers from Settings.
+                Sign in, pick an org, and open Cloud workers or team templates.
               </div>
               <div class="mt-1 max-w-[60ch] text-xs text-dls-secondary">
-                Sign in to OpenWork Den to keep your tasks alive even when your
+                Sign in to OpenWork Cloud to keep your tasks alive even when your
                 computer sleeps.
               </div>
             </div>
@@ -445,11 +540,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <Show when={props.developerMode}>
           <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <TextInput
-              label="Den control plane URL"
+              label="Cloud control plane URL"
               value={baseUrlDraft()}
               onInput={(event) => setBaseUrlDraft(event.currentTarget.value)}
               placeholder={DEFAULT_DEN_BASE_URL}
-              hint="Developer mode only. Use this to target a local or self-hosted Den control plane. Changing it signs you out so the app can re-hydrate against the new control plane."
+              hint="Developer mode only. Use this to target a local or self-hosted Cloud control plane. Changing it signs you out so the app can re-hydrate against the new control plane."
               disabled={authBusy() || sessionBusy()}
             />
             <div class="flex flex-wrap items-center gap-2">
@@ -489,7 +584,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           )}
         </Show>
 
-        <Show when={statusMessage() && !authError() && !workersError() && !orgsError()}>
+        <Show when={statusMessage() && !authError() && !workersError() && !orgsError() && !templatesError()}>
           {(value) => (
             <div class="rounded-xl border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-xs text-gray-11">
               {value()}
@@ -500,15 +595,15 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       <Show when={!isSignedIn()}>
         <div class={`${settingsPanelClass} space-y-4`}>
-          <div class="space-y-2">
-            <div class="text-sm font-medium text-dls-text">
-              Sign in to OpenWork Den
+            <div class="space-y-2">
+              <div class="text-sm font-medium text-dls-text">
+                Sign in to OpenWork Cloud
+              </div>
+              <div class="max-w-[54ch] text-sm text-dls-secondary">
+                Sign in to OpenWork Cloud to keep your tasks alive even when your
+                computer sleeps.
+              </div>
             </div>
-            <div class="max-w-[54ch] text-sm text-dls-secondary">
-              Sign in to OpenWork Den to keep your tasks alive even when your
-              computer sleeps.
-            </div>
-          </div>
 
           <div class="flex flex-wrap items-center gap-2">
             <Button variant="secondary" onClick={() => openBrowserAuth("sign-in")}>
@@ -544,7 +639,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <div class="space-y-6">
           <div class={`${settingsPanelClass} space-y-4`}>
             <div>
-              <div class="text-sm font-medium text-dls-text">Den Account</div>
+              <div class="text-sm font-medium text-dls-text">Cloud account</div>
               <div class="mt-1 text-xs text-dls-secondary">
                 Manage your connected account and organization.
               </div>
@@ -575,7 +670,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                 <div class="min-w-0">
                   <div class="text-sm font-medium text-dls-text">Active org</div>
                   <div class="truncate text-xs text-dls-secondary">
-                    Workers are scoped to the selected org.
+                    Cloud workers and team templates are scoped to the selected org.
                   </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
@@ -583,9 +678,18 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                     class="max-w-[220px] rounded-lg border border-dls-border bg-dls-surface px-3 py-1.5 text-xs text-dls-text shadow-sm focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
                     value={activeOrgId()}
                     onChange={(event) => {
-                      setActiveOrgId(event.currentTarget.value);
+                      const nextId = event.currentTarget.value;
+                      const nextOrg = orgs().find((org) => org.id === nextId) ?? null;
+                      setActiveOrgId(nextId);
+                      writeDenSettings({
+                        baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
+                        authToken: authToken() || null,
+                        activeOrgId: nextId || null,
+                        activeOrgSlug: nextOrg?.slug ?? null,
+                        activeOrgName: nextOrg?.name ?? null,
+                      });
                       setStatusMessage(
-                        `Switched to ${activeOrg()?.name ?? "the selected org"}.`,
+                        `Switched to ${nextOrg?.name ?? "the selected org"}.`,
                       );
                     }}
                     disabled={orgsBusy() || orgs().length === 0}
@@ -624,7 +728,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Server size={15} class="text-dls-secondary" />
-                  Den workers
+                  Cloud workers
                 </div>
                 <div class="mt-1 text-xs text-dls-secondary">
                   Open workers directly into OpenWork using the same
@@ -634,7 +738,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div class="flex flex-wrap items-center gap-2">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-gray-6/60 bg-gray-1/40 px-2.5 py-1 text-[11px] font-medium text-gray-11">
                   <Users size={12} />
-                  {activeOrg()?.name || "No org selected"}
+                  {activeOrgName()}
                 </div>
                 <Button
                   variant="outline"
@@ -659,7 +763,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
             <Show when={!workersBusy() && workers().length === 0}>
               <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
                 No cloud workers are visible for this org yet. Create one in
-                Den, then refresh this tab.
+                Cloud, then refresh this tab.
               </div>
             </Show>
 
@@ -702,6 +806,93 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                         title={!status().canOpen ? "This worker is not ready to open yet." : undefined}
                       >
                         {openingWorkerId() === worker.workerId ? "Opening..." : "Open"}
+                      </Button>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          <div class={`${settingsPanelClass} space-y-4`}>
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
+                  <Boxes size={15} class="text-dls-secondary" />
+                  Team templates
+                </div>
+                <div class="mt-1 text-xs text-dls-secondary">
+                  Open reusable workspace templates shared with this organization.
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="inline-flex items-center gap-1.5 rounded-full border border-gray-6/60 bg-gray-1/40 px-2.5 py-1 text-[11px] font-medium text-gray-11">
+                  <Users size={12} />
+                  {activeOrgName()}
+                </div>
+                <Button
+                  variant="outline"
+                  class="h-8 px-3 text-xs"
+                  onClick={() => void refreshTemplates()}
+                  disabled={templatesBusy() || !activeOrg()?.slug?.trim()}
+                >
+                  <RefreshCcw size={13} class={templatesBusy() ? "animate-spin" : ""} />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+
+            <Show when={templatesError()}>
+              {(value) => (
+                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                  {value()}
+                </div>
+              )}
+            </Show>
+
+            <Show when={!templatesBusy() && templates().length === 0}>
+              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                <Show
+                  when={activeOrg()?.slug?.trim()}
+                  fallback={"Choose an org to view team templates."}
+                >
+                  No team templates yet. Use Share -&gt; Template -&gt; Share with team.
+                </Show>
+              </div>
+            </Show>
+
+            <div class="space-y-1">
+              <For each={templates()}>
+                {(template) => {
+                  const isMine = () => template.creator?.userId === user()?.id;
+                  const opening = () => openingTemplateId() === template.id;
+                  return (
+                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-gray-2/60">
+                      <div class="min-w-0 pr-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="truncate font-medium text-dls-text">
+                            {template.name}
+                          </span>
+                          <span class="inline-flex items-center rounded-full border border-gray-6/60 bg-gray-1/40 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                            Team template
+                          </span>
+                          <Show when={isMine()}>
+                            <span class="inline-flex items-center rounded-full border border-gray-6/60 bg-gray-1/40 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                              Mine
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
+                          by {templateCreatorLabel(template)} · {formatTemplateTimestamp(template.createdAt)}
+                        </div>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        class="h-8 px-4 text-xs shrink-0"
+                        onClick={() => void handleOpenTemplate(template)}
+                        disabled={openingTemplateId() !== null}
+                      >
+                        {opening() ? "Opening..." : "Open"}
                       </Button>
                     </div>
                   );

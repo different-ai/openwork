@@ -5,6 +5,8 @@ const STORAGE_BASE_URL = "openwork.den.baseUrl";
 const STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
 const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
+const STORAGE_ACTIVE_ORG_SLUG = "openwork.den.activeOrgSlug";
+const STORAGE_ACTIVE_ORG_NAME = "openwork.den.activeOrgName";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
 export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
@@ -18,6 +20,8 @@ export type DenSettings = {
   apiBaseUrl?: string;
   authToken?: string | null;
   activeOrgId?: string | null;
+  activeOrgSlug?: string | null;
+  activeOrgName?: string | null;
 };
 
 type DenBaseUrls = {
@@ -54,6 +58,25 @@ export type DenWorkerTokens = {
   hostToken: string | null;
   openworkUrl: string | null;
   workspaceId: string | null;
+};
+
+export type DenTemplateCreator = {
+  memberId: string;
+  role: "owner" | "admin" | "member";
+  userId: string;
+  name: string | null;
+  email: string | null;
+  image: string | null;
+};
+
+export type DenTemplate = {
+  id: string;
+  organizationId: string;
+  name: string;
+  templateData: unknown;
+  createdAt: string | null;
+  updatedAt: string | null;
+  creator: DenTemplateCreator | null;
 };
 
 export type DenBillingPrice = {
@@ -240,6 +263,8 @@ export function readDenSettings(): DenSettings {
     ...baseUrls,
     authToken: (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() || null,
     activeOrgId: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_ID) ?? "").trim() || null,
+    activeOrgSlug: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_SLUG) ?? "").trim() || null,
+    activeOrgName: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_NAME) ?? "").trim() || null,
   };
 }
 
@@ -251,6 +276,8 @@ export function writeDenSettings(next: DenSettings) {
   const { baseUrl, apiBaseUrl } = resolveDenBaseUrls(next);
   const authToken = next.authToken?.trim() ?? "";
   const activeOrgId = next.activeOrgId?.trim() ?? "";
+  const activeOrgSlug = next.activeOrgSlug?.trim() ?? "";
+  const activeOrgName = next.activeOrgName?.trim() ?? "";
 
   window.localStorage.setItem(STORAGE_BASE_URL, baseUrl);
   window.localStorage.setItem(STORAGE_API_BASE_URL, apiBaseUrl);
@@ -264,6 +291,18 @@ export function writeDenSettings(next: DenSettings) {
     window.localStorage.setItem(STORAGE_ACTIVE_ORG_ID, activeOrgId);
   } else {
     window.localStorage.removeItem(STORAGE_ACTIVE_ORG_ID);
+  }
+
+  if (activeOrgSlug) {
+    window.localStorage.setItem(STORAGE_ACTIVE_ORG_SLUG, activeOrgSlug);
+  } else {
+    window.localStorage.removeItem(STORAGE_ACTIVE_ORG_SLUG);
+  }
+
+  if (activeOrgName) {
+    window.localStorage.setItem(STORAGE_ACTIVE_ORG_NAME, activeOrgName);
+  } else {
+    window.localStorage.removeItem(STORAGE_ACTIVE_ORG_NAME);
   }
 }
 
@@ -279,6 +318,8 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
 
   window.localStorage.removeItem(STORAGE_AUTH_TOKEN);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_ID);
+  window.localStorage.removeItem(STORAGE_ACTIVE_ORG_SLUG);
+  window.localStorage.removeItem(STORAGE_ACTIVE_ORG_NAME);
 }
 
 function getErrorMessage(payload: unknown, fallback: string): string {
@@ -391,6 +432,64 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
     openworkUrl: connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null,
     workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
   };
+}
+
+function getTemplateCreator(value: unknown): DenTemplateCreator | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const role = value.role;
+  if (
+    typeof value.memberId !== "string" ||
+    typeof value.userId !== "string" ||
+    (role !== "owner" && role !== "admin" && role !== "member")
+  ) {
+    return null;
+  }
+
+  return {
+    memberId: value.memberId,
+    role,
+    userId: value.userId,
+    name: typeof value.name === "string" ? value.name : null,
+    email: typeof value.email === "string" ? value.email : null,
+    image: typeof value.image === "string" ? value.image : null,
+  };
+}
+
+function getTemplate(value: unknown): DenTemplate | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    typeof value.id !== "string" ||
+    typeof value.organizationId !== "string" ||
+    typeof value.name !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    organizationId: value.organizationId,
+    name: value.name,
+    templateData: value.templateData,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+    creator: getTemplateCreator(value.creator),
+  };
+}
+
+function getTemplates(payload: unknown): DenTemplate[] {
+  if (!isRecord(payload) || !Array.isArray(payload.templates)) {
+    return [];
+  }
+
+  return payload.templates
+    .map((entry) => getTemplate(entry))
+    .filter((entry): entry is DenTemplate => entry !== null);
 }
 
 function getBillingPrice(value: unknown): DenBillingPrice | null {
@@ -648,6 +747,58 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
+    },
+
+    async listTemplates(orgSlug: string): Promise<DenTemplate[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates`,
+        {
+          method: "GET",
+          token,
+        },
+      );
+      return getTemplates(payload);
+    },
+
+    async createTemplate(
+      orgSlug: string,
+      input: { name: string; templateData: unknown },
+    ): Promise<DenTemplate> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates`,
+        {
+          method: "POST",
+          token,
+          body: {
+            name: input.name.trim(),
+            templateData: input.templateData,
+          },
+        },
+      );
+      const template = isRecord(payload) ? getTemplate(payload.template) : null;
+      if (!template) {
+        throw new DenApiError(500, "invalid_template_payload", "Template response was missing template details.");
+      }
+      return template;
+    },
+
+    async deleteTemplate(orgSlug: string, templateId: string): Promise<void> {
+      const raw = await requestJsonRaw(
+        baseUrls,
+        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates/${encodeURIComponent(templateId)}`,
+        {
+          method: "DELETE",
+          token,
+        },
+      );
+      if (!raw.ok) {
+        const payload = raw.json;
+        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
+        const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
+        throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+      }
     },
 
     async getBillingStatus(options: { includeCheckout?: boolean; includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
