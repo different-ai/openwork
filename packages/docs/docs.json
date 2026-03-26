@@ -30,7 +30,12 @@
               "how-to-connect-chat-gpt"
             ]
           },
-          "missing-docs"
+          {
+            "group": "Improve this doc",
+            "pages": [
+              "missing-docs"
+            ]
+          }
         ]
       }
     ]

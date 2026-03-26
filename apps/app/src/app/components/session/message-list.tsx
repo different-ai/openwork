@@ -833,7 +833,7 @@ export default function MessageList(props: MessageListProps) {
       <div class="text-[14px] text-gray-9">
         <button
           type="button"
-          class="flex w-full items-start justify-between gap-2 text-left transition-colors hover:text-dls-text disabled:cursor-default"
+          class="w-full text-left transition-colors hover:text-dls-text disabled:cursor-default"
           aria-expanded={expandable() ? expanded() : undefined}
           disabled={!expandable()}
           onClick={() => {
@@ -841,15 +841,15 @@ export default function MessageList(props: MessageListProps) {
             toggleSteps(rowProps.id);
           }}
         >
-          <div class="min-w-0 flex-1 leading-relaxed">
-            <span>{headline()}</span>
-          </div>
-          <Show when={expandable()} fallback={<span class="mt-[2px] w-[14px] shrink-0" />}>
-            <ChevronDown
-              size={14}
-              class={`mt-[2px] shrink-0 text-gray-8 transition-transform ${expanded() ? "" : "-rotate-90"}`}
-            />
-          </Show>
+          <span class="inline-flex max-w-[720px] items-start gap-1.5 leading-relaxed align-top">
+            <span class="min-w-0 break-words">{headline()}</span>
+            <Show when={expandable()}>
+              <ChevronDown
+                size={14}
+                class={`mt-[2px] shrink-0 text-gray-8 transition-transform ${expanded() ? "" : "-rotate-90"}`}
+              />
+            </Show>
+          </span>
         </button>
         <Show when={expanded()}>
           <div class="mt-3 ml-[22px] space-y-3">

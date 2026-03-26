@@ -65,7 +65,7 @@ export default {
   "dashboard.remote_workspace_title": "远程工作区",
   "dashboard.remote_workspace_hint": "记录 OpenWork 服务器，随时重新连接。",
   "dashboard.remote_base_url_label": "OpenWork 服务器地址",
-  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:8787",
+  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:<port>",
   "dashboard.remote_base_url_required": "请先填写服务器地址。",
   "dashboard.openwork_host_label": "OpenWork 服务器地址",
   "dashboard.openwork_host_placeholder": "https://your-server.openwork.app",

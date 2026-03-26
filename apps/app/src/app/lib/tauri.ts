@@ -130,9 +130,20 @@ export type WorkspaceInfo = {
 };
 
 export type WorkspaceList = {
-  activeId: string;
+  // UI-selected workspace persisted by the desktop shell.
+  selectedId?: string;
+  // Runtime/watch target currently followed by the desktop host.
+  watchedId?: string | null;
+  // Legacy desktop payloads used activeId for the UI-selected workspace.
+  activeId?: string | null;
   workspaces: WorkspaceInfo[];
 };
+
+export function resolveWorkspaceListSelectedId(
+  list: Pick<WorkspaceList, "selectedId" | "activeId"> | null | undefined,
+): string {
+  return list?.selectedId?.trim() || list?.activeId?.trim() || "";
+}
 
 export type WorkspaceExportSummary = {
   outputPath: string;
@@ -166,8 +177,12 @@ export async function workspaceBootstrap(): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_bootstrap");
 }
 
-export async function workspaceSetActive(workspaceId: string): Promise<WorkspaceList> {
-  return invoke<WorkspaceList>("workspace_set_active", { workspaceId });
+export async function workspaceSetSelected(workspaceId: string): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_set_selected", { workspaceId });
+}
+
+export async function workspaceSetRuntimeActive(workspaceId: string | null): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_set_runtime_active", { workspaceId: workspaceId ?? "" });
 }
 
 export async function workspaceCreate(input: {
@@ -416,8 +431,8 @@ export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
 }
 
-export async function nukeOpencodeDevConfigAndExit(): Promise<void> {
-  return invoke<void>("nuke_opencode_dev_config_and_exit");
+export async function nukeOpenworkAndOpencodeConfigAndExit(): Promise<void> {
+  return invoke<void>("nuke_openwork_and_opencode_config_and_exit");
 }
 
 export type OrchestratorDetachedHost = {

@@ -43,7 +43,8 @@ export type OpenworkServerDiagnostics = {
   approval: { mode: "manual" | "auto"; timeoutMs: number };
   corsOrigins: string[];
   workspaceCount: number;
-  activeWorkspaceId: string | null;
+  activeWorkspaceId?: string | null;
+  selectedWorkspaceId?: string | null;
   workspace: OpenworkWorkspaceInfo | null;
   authorizedRoots: string[];
   server: { host: string; port: number; configPath?: string | null };
@@ -530,6 +531,8 @@ export type OpenworkReloadEvent = {
   timestamp: number;
 };
 
+// Fallback for explicit server-mode URL derivation. Desktop local workers replace this
+// with the persisted runtime-discovered port once the host reports it.
 export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
@@ -593,7 +596,7 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   }
 }
 
-export const DEFAULT_OPENWORK_CONNECT_APP_URL = "https://app.openwork.software";
+export const DEFAULT_OPENWORK_CONNECT_APP_URL = "https://app.openworklabs.com";
 
 const OPENWORK_INVITE_PARAM_URL = "ow_url";
 const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";

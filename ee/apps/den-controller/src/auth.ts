@@ -1,13 +1,15 @@
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
-import { emailOTP } from "better-auth/plugins"
+import { emailOTP, organization } from "better-auth/plugins"
+import { APIError } from "better-call"
 import { db } from "./db/index.js"
 import * as schema from "./db/schema.js"
 import { createDenTypeId, normalizeDenTypeId } from "./db/typeid.js"
-import { sendDenVerificationEmail } from "./email.js"
+import { sendDenOrganizationInvitationEmail, sendDenVerificationEmail } from "./email.js"
 import { env } from "./env.js"
 import { syncDenSignupContact } from "./loops.js"
-import { ensureDefaultOrg } from "./orgs.js"
+import { ensureUserOrgAccess, seedDefaultOrganizationRoles } from "./orgs.js"
+import { denOrganizationAccess, denOrganizationStaticRoles } from "./organization-access.js"
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -26,6 +28,22 @@ const socialProviders = {
         },
       }
     : {}),
+}
+
+function hasRole(roleValue: string, roleName: string) {
+  return roleValue
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .includes(roleName)
+}
+
+function getInvitationOrigin() {
+  return env.betterAuthTrustedOrigins.find((origin) => origin !== "*") ?? env.betterAuthUrl
+}
+
+function buildInvitationLink(invitationId: string) {
+  return new URL(`/?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
 }
 
 export const auth = betterAuth({
@@ -53,6 +71,20 @@ export const auth = betterAuth({
             return createDenTypeId("account")
           case "verification":
             return createDenTypeId("verification")
+          case "rateLimit":
+            return createDenTypeId("rateLimit")
+          case "organization":
+            return createDenTypeId("organization")
+          case "member":
+            return createDenTypeId("member")
+          case "invitation":
+            return createDenTypeId("invitation")
+          case "team":
+            return createDenTypeId("team")
+          case "teamMember":
+            return createDenTypeId("teamMember")
+          case "organizationRole":
+            return createDenTypeId("organizationRole")
           default:
             return false
         }
@@ -91,10 +123,13 @@ export const auth = betterAuth({
     sendOnSignUp: true,
     sendOnSignIn: true,
     afterEmailVerification: async (user) => {
-      const name = user.name ?? user.email ?? "Personal"
       const userId = normalizeDenTypeId("user", user.id)
       await Promise.all([
-        ensureDefaultOrg(userId, name),
+        ensureUserOrgAccess({
+          userId,
+          email: user.email,
+          name: user.name,
+        }),
         syncDenSignupContact({
           email: user.email,
           name: user.name,
@@ -122,6 +157,56 @@ export const auth = betterAuth({
           email,
           verificationCode: otp,
         })
+      },
+    }),
+    organization({
+      ac: denOrganizationAccess,
+      roles: denOrganizationStaticRoles,
+      creatorRole: "owner",
+      requireEmailVerificationOnInvitation: true,
+      dynamicAccessControl: {
+        enabled: true,
+      },
+      teams: {
+        enabled: true,
+        defaultTeam: {
+          enabled: false,
+        },
+      },
+      async sendInvitationEmail(data) {
+        await sendDenOrganizationInvitationEmail({
+          email: data.email,
+          inviteLink: buildInvitationLink(data.id),
+          invitedByName: data.inviter.user.name ?? data.inviter.user.email,
+          invitedByEmail: data.inviter.user.email,
+          organizationName: data.organization.name,
+          role: data.role,
+        })
+      },
+      organizationHooks: {
+        afterCreateOrganization: async ({ organization }) => {
+          await seedDefaultOrganizationRoles(normalizeDenTypeId("organization", organization.id))
+        },
+        beforeRemoveMember: async ({ member }) => {
+          if (hasRole(member.role, "owner")) {
+            throw new APIError("BAD_REQUEST", {
+              message: "The organization owner cannot be removed.",
+            })
+          }
+        },
+        beforeUpdateMemberRole: async ({ member, newRole }) => {
+          if (hasRole(member.role, "owner")) {
+            throw new APIError("BAD_REQUEST", {
+              message: "The organization owner role cannot be changed.",
+            })
+          }
+
+          if (hasRole(newRole, "owner")) {
+            throw new APIError("BAD_REQUEST", {
+              message: "Owner can only be assigned during organization creation.",
+            })
+          }
+        },
       },
     }),
   ],

@@ -190,6 +190,7 @@ import {
   updaterEnvironment,
   readOpencodeConfig,
   writeOpencodeConfig,
+  openworkServerRestart,
   schedulerDeleteJob,
   schedulerListJobs,
   openworkServerInfo,
@@ -637,7 +638,14 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
       const host = url.hostname.toLowerCase();
       const path = url.pathname.replace(/^\/+/, "");
       const segments = path.split("/").filter(Boolean);
-      if ((host === "share.openwork.software" || host.endsWith(".openwork.software")) && segments[0] === "b" && segments[1]) {
+      if (
+        (host === "share.openworklabs.com"
+          || host.endsWith(".openworklabs.com")
+          || host === "share.openwork.software"
+          || host.endsWith(".openwork.software"))
+        && segments[0] === "b"
+        && segments[1]
+      ) {
         const intent = normalizeSharedBundleImportIntent(url.searchParams.get("ow_intent") ?? url.searchParams.get("intent"));
         const source = url.searchParams.get("ow_source")?.trim() ?? url.searchParams.get("source")?.trim() ?? "";
         const orgId = url.searchParams.get("ow_org")?.trim() ?? "";
@@ -786,7 +794,7 @@ function normalizeDebugDeepLinkInput(rawValue: string): string {
   const directMatch = trimmed.match(/(?:openwork-dev|openwork|https?):\/\/[^\s"'<>]+/i);
   if (directMatch) return directMatch[0];
 
-  const bareShareMatch = trimmed.match(/share\.openwork\.software\/b\/[^\s"'<>]+/i);
+  const bareShareMatch = trimmed.match(/share\.openwork(?:labs\.com|\.software)\/b\/[^\s"'<>]+/i);
   if (bareShareMatch) return `https://${bareShareMatch[0]}`;
 
   return trimmed;
@@ -836,12 +844,12 @@ function parseDebugDeepLinkInput(rawValue: string):
     }
   }
 
-  const shareIdMatch = normalized.match(/share\.openwork\.software\/b\/([^\s/?#"'<>]+)/i);
+  const shareIdMatch = normalized.match(/share\.openwork(?:labs\.com|\.software)\/b\/([^\s/?#"'<>]+)/i);
   if (shareIdMatch?.[1]) {
     return {
       kind: "bundle",
       link: {
-        bundleUrl: `https://share.openwork.software/b/${shareIdMatch[1]}`,
+        bundleUrl: `https://share.openworklabs.com/b/${shareIdMatch[1]}`,
         intent: "new_worker",
       },
     };
@@ -1009,7 +1017,7 @@ export default function App() {
   const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
   const [openworkServerCapabilities, setOpenworkServerCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
   const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
-  const [openworkServerWorkspaceId, setOpenworkServerWorkspaceId] = createSignal<string | null>(null);
+  const [runtimeWorkspaceId, setRuntimeWorkspaceId] = createSignal<string | null>(null);
   const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
   const [openworkServerDiagnostics, setOpenworkServerDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
   const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
@@ -1294,6 +1302,21 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (!isTauriRuntime()) return;
+    const hostInfo = openworkServerHostInfo();
+    const port = hostInfo?.port;
+    if (!port) return;
+
+    const current = openworkServerSettings();
+    if (current.portOverride === port) return;
+
+    updateOpenworkServerSettings({
+      ...current,
+      portOverride: port,
+    });
+  });
+
+  createEffect(() => {
     if (typeof window === "undefined") return;
     if (!documentVisible()) return;
     if (!developerMode()) {
@@ -1531,7 +1554,7 @@ export default function App() {
 
   const sessionStore = createSessionStore({
     client,
-    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot().trim(),
     selectedSessionId,
     setSelectedSessionId,
     sessionModelState: () => ({
@@ -1803,6 +1826,12 @@ export default function App() {
     return fallback;
   };
 
+  const ensureSelectedWorkspaceRuntime = async () => {
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    if (!workspaceId) return false;
+    return await workspaceStore.ensureWorkspaceActivated(workspaceId);
+  };
+
   async function sendPrompt(draft?: ComposerDraft) {
     const hasExplicitDraft = Boolean(draft);
     const fallbackText = prompt().trim();
@@ -1814,6 +1843,9 @@ export default function App() {
     };
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length) return;
+
+    const ready = await ensureSelectedWorkspaceRuntime();
+    if (!ready) return;
 
     const c = client();
     if (!c) return;
@@ -2127,9 +2159,17 @@ export default function App() {
     };
   };
 
+  const [blueprintSeedMessagesBySessionId, setBlueprintSeedMessagesBySessionId] =
+    createSignal<Record<string, Array<{ role?: "assistant" | "user" | null; text?: string | null }>>>({});
+
   const blueprintSeedMessagesForSelectedSession = createMemo(() => {
     const sessionID = selectedSessionId();
     if (!sessionID) return [];
+
+    const fallback = blueprintSeedMessagesBySessionId()[sessionID];
+    if (Array.isArray(fallback) && fallback.length > 0) {
+      return fallback;
+    }
 
     const materialized = blueprintMaterializedSessions(resolvedActiveWorkspaceConfig());
     const match = materialized.find((item) => item.sessionId?.trim() === sessionID);
@@ -2150,6 +2190,7 @@ export default function App() {
     seeds: Array<{ role?: "assistant" | "user" | null; text?: string | null }>,
   ) => {
     if (!sessionID || seeds.length === 0) return list;
+    if (list.length > 0) return list;
     const existingIds = new Set(list.map((message) => messageIdFromInfo(message)));
     const synthetic = seeds
       .map((seed, index) => createSyntheticBlueprintSeedMessage(sessionID, index, seed))
@@ -2324,7 +2365,7 @@ export default function App() {
     }
     
     await renameSession(sessionID, trimmed);
-    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+    await refreshSidebarWorkspaceSessions(workspaceStore.selectedWorkspaceId()).catch(() => undefined);
   }
 
   async function deleteSessionById(sessionID: string) {
@@ -2335,7 +2376,7 @@ export default function App() {
       throw new Error("Not connected to a server");
     }
 
-    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const root = workspaceStore.selectedWorkspaceRoot().trim();
     const directory = toSessionTransportDirectory(root);
     const params = directory ? { sessionID: trimmed, directory } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
@@ -2344,7 +2385,7 @@ export default function App() {
     // SSE will handle any further sync — calling loadSessions/refreshSidebarWorkspaceSessions
     // here races with SSE and can wipe unrelated sessions from the store.
     setSessions(sessions().filter((s) => s.id !== trimmed));
-    const activeWsId = workspaceStore.activeWorkspaceId();
+    const activeWsId = workspaceStore.selectedWorkspaceId();
     setSidebarSessionsByWorkspaceId((prev) => ({
       ...prev,
       [activeWsId]: (prev[activeWsId] ?? []).filter((s) => s.id !== trimmed),
@@ -2364,7 +2405,7 @@ export default function App() {
     // If the deleted session was selected, clear selection so routing can fall back cleanly.
     if (selectedSessionId() === trimmed) {
       setSelectedSessionId(null);
-      const activeWorkspace = workspaceStore.activeWorkspaceId().trim();
+      const activeWorkspace = workspaceStore.selectedWorkspaceId().trim();
       if (activeWorkspace) {
         const map = readSessionByWorkspace();
         if (map[activeWorkspace] === trimmed) {
@@ -2400,7 +2441,7 @@ export default function App() {
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
     const c = client();
     if (!c) return [];
-    const list = await listCommandsTyped(c, workspaceStore.activeWorkspaceRoot().trim() || undefined);
+    const list = await listCommandsTyped(c, workspaceStore.selectedWorkspaceRoot().trim() || undefined);
     if (list.some((entry) => entry.name === "compact")) {
       return list;
     }
@@ -2482,7 +2523,7 @@ export default function App() {
     }
     try {
       const cachedMethods = providerAuthMethods();
-      const workerType = activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
+      const workerType = selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
       const authMethods = Object.keys(cachedMethods).length
         ? cachedMethods
         : await loadProviderAuthMethods(workerType);
@@ -2795,7 +2836,7 @@ export default function App() {
     returnFocusTarget?: PromptFocusReturnTarget;
     preferredProviderId?: string;
   }) {
-    const workerType = activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
+    const workerType = selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
     setProviderAuthReturnFocusTarget(options?.returnFocusTarget ?? "none");
     setProviderAuthPreferredProviderId(options?.preferredProviderId?.trim() || null);
     setProviderAuthBusy(true);
@@ -2911,12 +2952,12 @@ export default function App() {
   const extensionsStore = createExtensionsStore({
     client,
     projectDir: () => workspaceProjectDir(),
-    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
-    workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot(),
+    workspaceType: () => workspaceStore.selectedWorkspaceDisplay().workspaceType,
     openworkServerClient,
     openworkServerStatus,
     openworkServerCapabilities,
-    openworkServerWorkspaceId,
+    runtimeWorkspaceId,
     setBusy,
     setBusyLabel,
     setBusyStartedAt,
@@ -3246,7 +3287,8 @@ export default function App() {
     updateOpenworkServerSettings,
     openworkServerClient,
     openworkServerStatus,
-    openworkServerWorkspaceId,
+    ensureLocalOpenworkServerClient,
+    runtimeWorkspaceId,
     onEngineStable: () => {},
     engineRuntime,
     developerMode,
@@ -3265,23 +3307,23 @@ export default function App() {
 
   const logWorkspaceScopeSnapshot = (label: string, extra?: Record<string, unknown>) => {
     if (!developerMode()) return;
-    const activeWorkspace = workspaceStore.activeWorkspaceInfo();
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    const activeWorkspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const activeWorkspace = workspaceStore.selectedWorkspaceInfo();
+    const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
+    const selectedWorkspaceRoot = workspaceStore.selectedWorkspaceRoot().trim();
     const engineInfo = workspaceStore.engine();
     const map = readSessionByWorkspace();
     wsDebug(label, {
-      activeWorkspaceId: activeWorkspaceId || null,
+      selectedWorkspaceId: selectedWorkspaceId || null,
       activeWorkspaceType: activeWorkspace?.workspaceType ?? null,
-      activeWorkspacePath: activeWorkspace?.path?.trim() ?? null,
+      selectedWorkspacePath: activeWorkspace?.path?.trim() ?? null,
       activeWorkspaceDirectory: activeWorkspace?.directory?.trim() ?? null,
-      activeWorkspaceRoot: activeWorkspaceRoot || null,
-      activeWorkspaceScope: describeDirectoryScope(activeWorkspaceRoot),
+      selectedWorkspaceRoot: selectedWorkspaceRoot || null,
+      activeWorkspaceScope: describeDirectoryScope(selectedWorkspaceRoot),
       clientDirectory: clientDirectory().trim() || null,
       clientDirectoryScope: describeDirectoryScope(clientDirectory().trim()),
       engineProjectDir: engineInfo?.projectDir?.trim() ?? null,
       engineProjectScope: describeDirectoryScope(engineInfo?.projectDir?.trim() ?? null),
-      lastSessionForActiveWorkspace: activeWorkspaceId ? map[activeWorkspaceId] ?? null : null,
+      lastSessionForActiveWorkspace: selectedWorkspaceId ? map[selectedWorkspaceId] ?? null : null,
       lastSessionMapKeys: Object.keys(map),
       ...extra,
     });
@@ -3539,7 +3581,7 @@ export default function App() {
     wsDebug("sidebar:refresh", {
       engineChanged,
       workspacesChanged,
-      activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
       engineBaseUrl,
     });
 
@@ -3547,15 +3589,15 @@ export default function App() {
     // Remote->local switches commonly change engineBaseUrl, and refreshing every remote workspace
     // at the same time can trigger large /session responses and UI hangs.
     if (engineChanged && !workspacesChanged) {
-      void refreshLocalSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+      void refreshLocalSidebarWorkspaceSessions(workspaceStore.selectedWorkspaceId()).catch(() => undefined);
       return;
     }
 
-    void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+    void refreshAllSidebarWorkspaceSessions(workspaceStore.selectedWorkspaceId()).catch(() => undefined);
   });
 
   createEffect(() => {
-    const id = workspaceStore.activeWorkspaceId().trim();
+    const id = workspaceStore.selectedWorkspaceId().trim();
     if (!id) return;
     const status = sidebarSessionStatusByWorkspaceId()[id] ?? "idle";
     // Only auto-load once per workspace activation.
@@ -3566,17 +3608,17 @@ export default function App() {
 
   createEffect(() => {
     const allSessions = sessions(); // reactive dependency on session store
-    // When switching workers, the session store can update before the activeWorkspaceId flips.
+    // When switching workers, the session store can update before the selectedWorkspaceId flips.
     // Use connectingWorkspaceId as the authoritative target during the switch so we don't
     // accidentally overwrite another worker's sidebar sessions.
-    const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
+    const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.selectedWorkspaceId()).trim();
     if (!wsId) return;
     const status = sidebarSessionStatusByWorkspaceId()[wsId];
 
     // Only sync if sidebar is already in 'ready' state (not during initial load)
     if (status === "ready") {
       const activeWorkspace = workspaceStore.workspaces().find((workspace) => workspace.id === wsId) ?? null;
-      const activeWorkspaceRoot = normalizeDirectoryPath(
+      const selectedWorkspaceRoot = normalizeDirectoryPath(
         activeWorkspace?.workspaceType === "local"
           ? activeWorkspace.path
           : activeWorkspace?.directory ?? activeWorkspace?.path,
@@ -3584,20 +3626,20 @@ export default function App() {
       if (
         !shouldApplyScopedSessionLoad({
           loadedScopeRoot: loadedSessionScopeRoot(),
-          workspaceRoot: activeWorkspaceRoot,
+          workspaceRoot: selectedWorkspaceRoot,
         })
       ) {
         if (developerMode()) {
           console.log("[sidebar-sync] skip stale session scope", {
             wsId,
             loadedScopeRoot: loadedSessionScopeRoot(),
-            activeWorkspaceRoot,
+            selectedWorkspaceRoot,
           });
         }
         return;
       }
-      const scopedSessions = activeWorkspaceRoot
-        ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
+      const scopedSessions = selectedWorkspaceRoot
+        ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === selectedWorkspaceRoot)
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
       if (developerMode()) {
@@ -3605,7 +3647,7 @@ export default function App() {
           wsId,
           status,
           activeWorkspace,
-          activeWorkspaceRoot,
+          selectedWorkspaceRoot,
           allSessions: allSessions.map((session) => ({
             id: session.id,
             title: session.title,
@@ -3672,7 +3714,7 @@ export default function App() {
 
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
     const workspaces = workspaceStore.workspaces();
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
     const connectingWorkspaceId = workspaceStore.connectingWorkspaceId()?.trim() ?? "";
     const sessionsById = sidebarSessionsByWorkspaceId();
     const statusById = sidebarSessionStatusByWorkspaceId();
@@ -3708,9 +3750,9 @@ export default function App() {
       }
       const existingWorkspace = dedupedWorkspaces[existingIndex];
       const existingIsPriority =
-        existingWorkspace.id === activeWorkspaceId || existingWorkspace.id === connectingWorkspaceId;
+        existingWorkspace.id === selectedWorkspaceId || existingWorkspace.id === connectingWorkspaceId;
       const currentIsPriority =
-        workspace.id === activeWorkspaceId || workspace.id === connectingWorkspaceId;
+        workspace.id === selectedWorkspaceId || workspace.id === connectingWorkspaceId;
       if (currentIsPriority && !existingIsPriority) {
         dedupedWorkspaces[existingIndex] = workspace;
       }
@@ -3744,7 +3786,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
+    const workspaceId = workspaceStore.selectedWorkspaceId();
     const sessionId = selectedSessionId();
     if (!workspaceId || !sessionId) return;
     const map = readSessionByWorkspace();
@@ -3770,23 +3812,29 @@ export default function App() {
   });
 
   createEffect(() => {
-    const active = workspaceStore.activeWorkspaceDisplay();
+    const connectedWorkspaceId = workspaceStore.connectedWorkspaceId()?.trim() ?? "";
+    const connectedWorkspace = workspaceStore.workspaces().find((workspace) => workspace.id === connectedWorkspaceId)
+      ?? null;
     const client = openworkServerClient();
-    const openworkUrl = openworkServerUrl().trim();
 
     if (!client || openworkServerStatus() !== "connected") {
-      setOpenworkServerWorkspaceId(null);
+      setRuntimeWorkspaceId(null);
       return;
     }
 
-    if (active.workspaceType === "remote" && active.remoteType === "openwork") {
+    if (!connectedWorkspace) {
+      setRuntimeWorkspaceId(null);
+      return;
+    }
+
+    if (connectedWorkspace.workspaceType === "remote" && connectedWorkspace.remoteType === "openwork") {
       const inferredWorkspaceId =
-        parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ??
-        parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ??
-        parseOpenworkWorkspaceIdFromUrl(openworkUrl);
-      const storedId = active.openworkWorkspaceId?.trim() || inferredWorkspaceId || envOpenworkWorkspaceId || null;
+        parseOpenworkWorkspaceIdFromUrl(connectedWorkspace.openworkHostUrl ?? "") ??
+        parseOpenworkWorkspaceIdFromUrl(connectedWorkspace.baseUrl ?? "") ??
+        envOpenworkWorkspaceId;
+      const storedId = connectedWorkspace.openworkWorkspaceId?.trim() || inferredWorkspaceId || null;
       if (storedId) {
-        setOpenworkServerWorkspaceId(storedId);
+        setRuntimeWorkspaceId(storedId);
         return;
       }
 
@@ -3796,16 +3844,18 @@ export default function App() {
           const response = await client.listWorkspaces();
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
-          const directoryHint = normalizeDirectoryPath(active.directory?.trim() ?? active.path?.trim() ?? "");
+          const directoryHint = normalizeDirectoryPath(
+            connectedWorkspace.directory?.trim() ?? connectedWorkspace.path?.trim() ?? "",
+          );
           const match = directoryHint
             ? items.find((entry) => {
                 const entryPath = normalizeDirectoryPath((entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim());
                 return Boolean(entryPath && entryPath === directoryHint);
               })
             : (response.activeId ? items.find((entry) => entry.id === response.activeId) : null) ?? items[0];
-          setOpenworkServerWorkspaceId(match?.id ?? response.activeId ?? null);
+          setRuntimeWorkspaceId(match?.id ?? response.activeId ?? null);
         } catch {
-          if (!cancelled) setOpenworkServerWorkspaceId(null);
+          if (!cancelled) setRuntimeWorkspaceId(null);
         }
       };
 
@@ -3816,23 +3866,20 @@ export default function App() {
       return;
     }
 
-    if (active.workspaceType === "local") {
-      const root = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
-      if (!root) {
-        setOpenworkServerWorkspaceId(null);
-        return;
-      }
-
+    if (connectedWorkspace.workspaceType === "local") {
       let cancelled = false;
       const resolveWorkspace = async () => {
         try {
           const response = await client.listWorkspaces();
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
-          const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
-          setOpenworkServerWorkspaceId(match?.id ?? null);
+          const activeMatch = response.activeId ? items.find((entry) => entry.id === response.activeId) : null;
+          const pathMatch = items.find(
+            (entry) => normalizeDirectoryPath(entry.path) === normalizeDirectoryPath(connectedWorkspace.path),
+          );
+          setRuntimeWorkspaceId(activeMatch?.id ?? pathMatch?.id ?? response.activeId ?? null);
         } catch {
-          if (!cancelled) setOpenworkServerWorkspaceId(null);
+          if (!cancelled) setRuntimeWorkspaceId(null);
         }
       };
 
@@ -3843,7 +3890,7 @@ export default function App() {
       return;
     }
 
-    setOpenworkServerWorkspaceId(null);
+    setRuntimeWorkspaceId(null);
   });
 
   const resolveSharedBundleWorkerTarget = () => {
@@ -3948,9 +3995,9 @@ export default function App() {
   };
 
   const resolveActiveSharedBundleImportTarget = (): SharedBundleImportTarget => {
-    const active = workspaceStore.activeWorkspaceDisplay();
+    const active = workspaceStore.selectedWorkspaceDisplay();
     if (active.workspaceType === "local") {
-      return { localRoot: workspaceStore.activeWorkspaceRoot().trim() };
+      return { localRoot: workspaceStore.selectedWorkspaceRoot().trim() };
     }
 
     return {
@@ -3974,14 +4021,14 @@ export default function App() {
             const items = Array.isArray(response.items) ? response.items : [];
             const matchId = findSharedBundleImportWorkspaceId(items, target);
             if (matchId) {
-              setOpenworkServerWorkspaceId(matchId);
+              setRuntimeWorkspaceId(matchId);
               return { client, workspaceId: matchId };
             }
           } catch {
             // ignore and keep polling
           }
         } else {
-          const workspaceId = openworkServerWorkspaceId();
+          const workspaceId = runtimeWorkspaceId();
           if (workspaceId) {
             return { client, workspaceId };
           }
@@ -4064,7 +4111,7 @@ export default function App() {
       const imported = await importSharedBundleIntoActiveWorker(
         request.request,
         {
-          localRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
         },
         request.bundle,
       );
@@ -4237,8 +4284,6 @@ export default function App() {
       setDevtoolsWorkspaceId(null);
       return;
     }
-
-    const root = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
     let active = true;
 
     const run = async () => {
@@ -4247,8 +4292,7 @@ export default function App() {
         if (!active) return;
         const items = Array.isArray(response.items) ? response.items : [];
         const activeMatch = response.activeId ? items.find((item) => item.id === response.activeId) : null;
-        const match = root ? items.find((item) => normalizeDirectoryPath(item.path) === root) : activeMatch ?? items[0];
-        setDevtoolsWorkspaceId(match?.id ?? activeMatch?.id ?? null);
+        setDevtoolsWorkspaceId(activeMatch?.id ?? items[0]?.id ?? null);
       } catch {
         if (active) setDevtoolsWorkspaceId(null);
       }
@@ -4312,7 +4356,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    const active = workspaceStore.activeWorkspaceDisplay();
+    const active = workspaceStore.selectedWorkspaceDisplay();
     if (active.workspaceType !== "remote" || active.remoteType !== "openwork") {
       return;
     }
@@ -4331,7 +4375,7 @@ export default function App() {
   });
 
   const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
-  const openworkServerWorkspaceReady = createMemo(() => Boolean(openworkServerWorkspaceId()));
+  const openworkServerWorkspaceReady = createMemo(() => Boolean(runtimeWorkspaceId()));
   const resolvedOpenworkCapabilities = createMemo(() => openworkServerCapabilities());
   const openworkServerCanWriteSkills = createMemo(
     () =>
@@ -4377,7 +4421,7 @@ export default function App() {
     updateOpenworkServerSettings(next);
 
     try {
-      if (isTauriRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local") {
+      if (isTauriRuntime() && workspaceStore.selectedWorkspaceDisplay().workspaceType === "local") {
         const restarted = await restartLocalServer();
         if (!restarted) {
           throw new Error("Failed to restart the local worker with the updated sharing setting.");
@@ -4465,7 +4509,7 @@ export default function App() {
   });
 
   const sharedSkillDestinationWorkspaces = createMemo(() => {
-    const activeId = workspaceStore.activeWorkspaceId();
+    const activeId = workspaceStore.selectedWorkspaceId();
     return workspaceStore
       .workspaces()
       .filter((workspace) => isSharedBundleImportWorkspace(workspace))
@@ -4682,7 +4726,7 @@ export default function App() {
   });
 
   const sharedBundleWorkerOptions = createMemo(() => {
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
     const items = workspaceStore.workspaces().map((workspace) => {
       let disabledReason: string | null = null;
       if (!resolveSharedBundleImportTargetForWorkspace(workspace)) {
@@ -4716,7 +4760,7 @@ export default function App() {
         label,
         detail,
         badge,
-        current: workspace.id === activeWorkspaceId,
+        current: workspace.id === selectedWorkspaceId,
         disabledReason,
       };
     });
@@ -4948,7 +4992,7 @@ export default function App() {
     setOpenworkServerCheckedAt(Date.now());
     const ok = result.status === "connected" || result.status === "limited";
     if (ok && !isTauriRuntime()) {
-      const active = workspaceStore.activeWorkspaceDisplay();
+      const active = workspaceStore.selectedWorkspaceDisplay();
       const shouldAttach = !client() || active.workspaceType !== "remote" || active.remoteType !== "openwork";
       if (shouldAttach) {
         await workspaceStore
@@ -5005,10 +5049,60 @@ export default function App() {
     }
   };
 
+  async function ensureLocalOpenworkServerClient(): Promise<OpenworkServerClient | null> {
+    let hostInfo = openworkServerHostInfo();
+    if (hostInfo?.baseUrl?.trim() && hostInfo.clientToken?.trim()) {
+      const existing = createOpenworkServerClient({
+        baseUrl: hostInfo.baseUrl.trim(),
+        token: hostInfo.clientToken.trim(),
+        hostToken: hostInfo.hostToken?.trim() || undefined,
+      });
+      try {
+        await existing.health();
+        if (startupPreference() !== "server") {
+          await reconnectOpenworkServer();
+        }
+        return existing;
+      } catch {
+        // restart below
+      }
+    }
+
+    if (!isTauriRuntime()) {
+      return null;
+    }
+
+    try {
+      hostInfo = await openworkServerRestart({
+        remoteAccessEnabled: openworkServerSettings().remoteAccessEnabled === true,
+      });
+      setOpenworkServerHostInfo(hostInfo);
+    } catch {
+      return null;
+    }
+
+    const baseUrl = hostInfo?.baseUrl?.trim() ?? "";
+    const token = hostInfo?.clientToken?.trim() ?? "";
+    const hostToken = hostInfo?.hostToken?.trim() ?? "";
+    if (!baseUrl || !token) {
+      return null;
+    }
+
+    if (startupPreference() !== "server") {
+      await reconnectOpenworkServer();
+    }
+
+    return createOpenworkServerClient({
+      baseUrl,
+      token,
+      hostToken: hostToken || undefined,
+    });
+  }
+
   const restartLocalServer = async () => {
-    const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
+    const activeWorkspace = workspaceStore.selectedWorkspaceDisplay();
     const activeLocalPath =
-      activeWorkspace.workspaceType === "local" ? workspaceStore.activeWorkspacePath().trim() : "";
+      activeWorkspace.workspaceType === "local" ? workspaceStore.selectedWorkspacePath().trim() : "";
     const runningProjectDir = workspaceStore.engine()?.projectDir?.trim() ?? "";
     const workspacePath = activeLocalPath || runningProjectDir;
 
@@ -5039,12 +5133,12 @@ export default function App() {
   };
 
   const canReloadLocalEngine = () =>
-    isTauriRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local";
+    isTauriRuntime() && workspaceStore.selectedWorkspaceDisplay().workspaceType === "local";
 
   const canReloadWorkspace = createMemo(() => {
     if (canReloadLocalEngine()) return true;
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") return false;
-    return openworkServerStatus() === "connected" && Boolean(openworkServerClient() && openworkServerWorkspaceId());
+    if (workspaceStore.selectedWorkspaceDisplay().workspaceType !== "remote") return false;
+    return openworkServerStatus() === "connected" && Boolean(openworkServerClient() && runtimeWorkspaceId());
   });
 
   const reloadWorkspaceEngineFromUi = async () => {
@@ -5052,12 +5146,12 @@ export default function App() {
       return workspaceStore.reloadWorkspaceEngine();
     }
 
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") {
+    if (workspaceStore.selectedWorkspaceDisplay().workspaceType !== "remote") {
       return false;
     }
 
     const client = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
+    const workspaceId = runtimeWorkspaceId();
     if (!client || !workspaceId || openworkServerStatus() !== "connected") {
       setError("Connect to this worker before applying runtime changes.");
       return false;
@@ -5065,7 +5159,7 @@ export default function App() {
 
     try {
       await client.reloadEngine(workspaceId);
-      await workspaceStore.activateWorkspace(workspaceStore.activeWorkspaceId());
+      await workspaceStore.activateWorkspace(workspaceStore.selectedWorkspaceId());
       await refreshMcpServers();
       return true;
     } catch (error) {
@@ -5287,7 +5381,7 @@ export default function App() {
   // Scheduler helpers - must be defined after workspaceStore
   const resolveOpenworkScheduler = () => {
     const client = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
+    const workspaceId = runtimeWorkspaceId();
     if (openworkServerStatus() !== "connected" || !client || !workspaceId) return null;
     return { client, workspaceId };
   };
@@ -5299,7 +5393,7 @@ export default function App() {
   const scheduledJobsSourceReady = createMemo(() => {
     if (scheduledJobsSource() !== "remote") return true;
     const client = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
+    const workspaceId = runtimeWorkspaceId();
     return openworkServerStatus() === "connected" && Boolean(client && workspaceId);
   });
 
@@ -5362,7 +5456,7 @@ export default function App() {
     setScheduledJobsStatus(null);
 
     try {
-      const root = workspaceStore.activeWorkspaceRoot().trim();
+      const root = workspaceStore.selectedWorkspaceRoot().trim();
       const jobs = await schedulerListJobs(root || undefined);
       setScheduledJobs(jobs);
       setScheduledJobsUpdatedAt(Date.now());
@@ -5392,7 +5486,7 @@ export default function App() {
     if (isWindowsPlatform()) {
       throw new Error("Scheduler is not supported on Windows yet.");
     }
-  const root = workspaceStore.activeWorkspaceRoot().trim();
+  const root = workspaceStore.selectedWorkspaceRoot().trim();
   const job = await schedulerDeleteJob(name, root || undefined);
   setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
   return;
@@ -5400,13 +5494,13 @@ export default function App() {
 
   createEffect(() => {
     if (!isTauriRuntime()) return;
-    workspaceStore.activeWorkspaceId();
+    workspaceStore.selectedWorkspaceId();
     workspaceProjectDir();
     void refreshMcpServers();
   });
 
   const activeAuthorizedDirs = createMemo(() => workspaceStore.authorizedDirs());
-  const activeWorkspaceDisplay = createMemo(() => workspaceStore.activeWorkspaceDisplay());
+  const selectedWorkspaceDisplay = createMemo(() => workspaceStore.selectedWorkspaceDisplay());
   const resolvedActiveWorkspaceConfig = createMemo(
     () => activeWorkspaceServerConfig() ?? workspaceStore.workspaceConfig(),
   );
@@ -5414,10 +5508,10 @@ export default function App() {
     workspaceIdOverride?: string | null,
   ): Promise<WorkspaceOpenworkConfig | null> => {
     const client = openworkServerClient();
-    const workspaceId = (workspaceIdOverride ?? openworkServerWorkspaceId() ?? "").trim();
+    const workspaceId = (workspaceIdOverride ?? runtimeWorkspaceId() ?? "").trim();
     if (!client || !workspaceId) return null;
 
-    const workspace = activeWorkspaceDisplay();
+    const workspace = selectedWorkspaceDisplay();
     const config = await client.getConfig(workspaceId);
     const normalized = normalizeWorkspaceOpenworkConfig(
       config.openwork,
@@ -5441,11 +5535,11 @@ export default function App() {
       return t("app.migration.desktop_required", currentLocale());
     }
 
-    if (activeWorkspaceDisplay().workspaceType !== "local") {
+    if (selectedWorkspaceDisplay().workspaceType !== "local") {
       return t("app.migration.local_only", currentLocale());
     }
 
-    if (!workspaceStore.activeWorkspacePath().trim()) {
+    if (!workspaceStore.selectedWorkspacePath().trim()) {
       return t("app.migration.workspace_required", currentLocale());
     }
 
@@ -5467,9 +5561,9 @@ export default function App() {
   const [autoConnectAttempted, setAutoConnectAttempted] = createSignal(false);
 
   createEffect(() => {
-    const workspace = activeWorkspaceDisplay();
+    const workspace = selectedWorkspaceDisplay();
     const openworkClient = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
+    const workspaceId = runtimeWorkspaceId();
     const capabilities = resolvedOpenworkCapabilities();
     const canReadConfig =
       openworkServerStatus() === "connected" &&
@@ -5523,14 +5617,19 @@ export default function App() {
     createSignal<Record<string, boolean>>({});
 
   createEffect(() => {
-    const workspaceId = (openworkServerWorkspaceId() ?? "").trim();
+    const workspaceId = (runtimeWorkspaceId() ?? "").trim();
     const client = openworkServerClient();
     const connected = openworkServerStatus() === "connected";
-    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const root = workspaceStore.selectedWorkspaceRoot().trim();
     const config = resolvedActiveWorkspaceConfig();
     const templates = blueprintSessions(config);
     const materialized = blueprintMaterializedSessions(config);
     const currentSessions = sessions();
+    const normalizedRoot = normalizeDirectoryPath(root);
+    const hasWorkspaceSessions = currentSessions.some((session) => {
+      const directory = typeof session.directory === "string" ? session.directory : "";
+      return normalizeDirectoryPath(directory) === normalizedRoot;
+    });
 
     if (!workspaceId || !client || !connected) return;
     if (!root) return;
@@ -5539,7 +5638,7 @@ export default function App() {
     if (selectedSessionId()) return;
     if (!templates.length) return;
     if (materialized.length > 0) return;
-    if (currentSessions.length > 0) return;
+    if (hasWorkspaceSessions) return;
     if (blueprintSessionMaterializeBusyByWorkspaceId()[workspaceId]) return;
     if (blueprintSessionMaterializeAttemptedByWorkspaceId()[workspaceId]) return;
 
@@ -5551,6 +5650,21 @@ export default function App() {
     void (async () => {
       try {
         const result = await client.materializeBlueprintSessions(workspaceId);
+        const templateMessages = new Map(
+          templates.map((template) => [template.id?.trim(), (template.messages ?? []).filter((entry) => entry?.text?.trim())] as const),
+        );
+        if (result.created.length > 0) {
+          setBlueprintSeedMessagesBySessionId((current) => {
+            const next = { ...current };
+            result.created.forEach((entry) => {
+              const messages = templateMessages.get(entry.templateId?.trim());
+              if (messages && messages.length > 0) {
+                next[entry.sessionId] = messages;
+              }
+            });
+            return next;
+          });
+        }
         setBlueprintSessionMaterializeAttemptedByWorkspaceId((current) => ({
           ...current,
           [workspaceId]: true,
@@ -5558,6 +5672,7 @@ export default function App() {
         await refreshActiveWorkspaceServerConfig(workspaceId);
         await loadSessionsWithReady(root || undefined);
         if (result.openSessionId) {
+          setView("session");
           await selectSession(result.openSessionId);
         }
       } catch (error) {
@@ -5855,7 +5970,7 @@ export default function App() {
   }
 
   async function connectNotion() {
-    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
+    if (workspaceStore.selectedWorkspaceDisplay().workspaceType !== "local") {
       setNotionError("Notion connections are only available for local workspaces.");
       return;
     }
@@ -5867,7 +5982,7 @@ export default function App() {
     }
 
     const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     const canUseOpenworkServer =
       openworkServerStatus() === "connected" &&
@@ -5947,10 +6062,10 @@ export default function App() {
     };
 
     const projectDir = workspaceProjectDir().trim();
-    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
+    const isRemoteWorkspace = workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote";
     const isLocalWorkspace = !isRemoteWorkspace;
     const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     const canUseOpenworkServer =
       openworkServerStatus() === "connected" &&
@@ -6084,7 +6199,7 @@ export default function App() {
   const readMcpConfigFile = async (scope: "project" | "global") => {
     const projectDir = workspaceProjectDir().trim();
     const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkWorkspaceId = runtimeWorkspaceId();
     const canUseOpenworkServer =
       openworkServerStatus() === "connected" &&
       openworkClient &&
@@ -6103,7 +6218,7 @@ export default function App() {
   async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
     const startedAt = perfNow();
     const isRemoteWorkspace =
-      workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
+      workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote" ||
       (!isTauriRuntime() && openworkServerStatus() === "connected");
     const projectDir = workspaceProjectDir().trim();
     const entryType = entry.type ?? "remote";
@@ -6116,7 +6231,7 @@ export default function App() {
     });
 
     const openworkClient = openworkServerClient();
-    let openworkWorkspaceId = openworkServerWorkspaceId();
+    let openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
       try {
@@ -6124,7 +6239,7 @@ export default function App() {
         const match = response.items?.[0];
         if (match?.id) {
           openworkWorkspaceId = match.id;
-          setOpenworkServerWorkspaceId(match.id);
+          setRuntimeWorkspaceId(match.id);
         }
       } catch {
         // ignore
@@ -6361,12 +6476,12 @@ export default function App() {
 
   async function logoutMcpAuth(name: string) {
     const isRemoteWorkspace =
-      workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
+      workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote" ||
       (!isTauriRuntime() && openworkServerStatus() === "connected");
     const projectDir = workspaceProjectDir().trim();
 
     const openworkClient = openworkServerClient();
-    let openworkWorkspaceId = openworkServerWorkspaceId();
+    let openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
       try {
@@ -6374,7 +6489,7 @@ export default function App() {
         const match = response.items?.[0];
         if (match?.id) {
           openworkWorkspaceId = match.id;
-          setOpenworkServerWorkspaceId(match.id);
+          setRuntimeWorkspaceId(match.id);
         }
       } catch {
         // ignore
@@ -6464,7 +6579,7 @@ export default function App() {
       setMcpStatus(null);
 
       const openworkClient = openworkServerClient();
-      const openworkWorkspaceId = openworkServerWorkspaceId();
+      const openworkWorkspaceId = runtimeWorkspaceId();
       const canUseOpenworkServer =
         openworkServerStatus() === "connected" &&
         openworkClient &&
@@ -6494,6 +6609,11 @@ export default function App() {
   }
 
   async function createSessionAndOpen() {
+    const ready = await ensureSelectedWorkspaceRuntime();
+    if (!ready) {
+      return;
+    }
+
     const c = client();
     if (!c) {
       return;
@@ -6519,7 +6639,7 @@ export default function App() {
 
     mark("start", {
       baseUrl: baseUrl(),
-      workspace: workspaceStore.activeWorkspaceRoot().trim() || null,
+      workspace: workspaceStore.selectedWorkspaceRoot().trim() || null,
     });
 
     // Abort any in-flight refresh operations to free up connection resources
@@ -6570,7 +6690,7 @@ export default function App() {
 
       let rawResult: Awaited<ReturnType<typeof c.session.create>>;
       try {
-        const directory = toSessionTransportDirectory(workspaceStore.activeWorkspaceRoot().trim()) || undefined;
+        const directory = toSessionTransportDirectory(workspaceStore.selectedWorkspaceRoot().trim()) || undefined;
         logWorkspaceScopeSnapshot("session:create:scope", {
           transportDirectory: directory ?? null,
           transportScope: describeDirectoryScope(directory ?? null),
@@ -6619,7 +6739,7 @@ export default function App() {
         time: session.time,
         directory: session.directory,
       };
-      const wsId = workspaceStore.activeWorkspaceId().trim();
+      const wsId = workspaceStore.selectedWorkspaceId().trim();
       if (wsId) {
         const currentSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
         setSidebarSessionsByWorkspaceId((prev) => ({
@@ -6899,7 +7019,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
+    const workspaceId = workspaceStore.selectedWorkspaceId();
     if (!workspaceId) return;
 
     setSessionModelOverridesReady(false);
@@ -6918,7 +7038,7 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     if (!sessionModelOverridesReady()) return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
+    const workspaceId = workspaceStore.selectedWorkspaceId();
     if (!workspaceId) return;
 
     const payload = serializeSessionModelOverrides(sessionModelOverrideById());
@@ -6935,7 +7055,7 @@ export default function App() {
 
   createEffect(() => {
     const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkWorkspaceId = runtimeWorkspaceId();
     const canReadConfig = openworkServerCanReadConfig();
 
     if (!openworkClient || !openworkWorkspaceId || !canReadConfig) {
@@ -6986,7 +7106,7 @@ export default function App() {
 
   const persistAuthorizedFolders = async (nextFolders: string[]) => {
     const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkWorkspaceId = runtimeWorkspaceId();
     if (!openworkClient || !openworkWorkspaceId || !openworkServerCanWriteConfig()) {
       setAuthorizedFoldersError(
         "A writable OpenWork server workspace is required to update authorized folders.",
@@ -7041,7 +7161,7 @@ export default function App() {
 
   const addAuthorizedFolder = async () => {
     const normalized = normalizeAuthorizedFolderPath(authorizedFolderDraft());
-    const workspaceRoot = normalizeAuthorizedFolderPath(workspaceStore.activeWorkspaceRoot().trim());
+    const workspaceRoot = normalizeAuthorizedFolderPath(workspaceStore.selectedWorkspaceRoot().trim());
     if (!normalized) return;
     if (workspaceRoot && normalized === workspaceRoot) {
       setAuthorizedFolderDraft("");
@@ -7073,7 +7193,7 @@ export default function App() {
       const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
       const folder = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
       const normalized = normalizeAuthorizedFolderPath(folder);
-      const workspaceRoot = normalizeAuthorizedFolderPath(workspaceStore.activeWorkspaceRoot().trim());
+      const workspaceRoot = normalizeAuthorizedFolderPath(workspaceStore.selectedWorkspaceRoot().trim());
       if (!normalized) return;
       setAuthorizedFolderDraft(normalized);
       if (workspaceRoot && normalized === workspaceRoot) {
@@ -7099,15 +7219,15 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
+    const workspaceId = workspaceStore.selectedWorkspaceId();
     if (!workspaceId) return;
 
     setWorkspaceDefaultModelReady(false);
-    const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
-    const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
+    const workspaceType = workspaceStore.selectedWorkspaceDisplay().workspaceType;
+    const workspaceRoot = workspaceStore.selectedWorkspacePath().trim();
     const activeClient = client();
     const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     const canUseOpenworkServer =
       openworkServerStatus() === "connected" &&
@@ -7180,14 +7300,14 @@ export default function App() {
     if (!isTauriRuntime()) return;
     if (!defaultModelExplicit()) return;
 
-    const workspace = workspaceStore.activeWorkspaceDisplay();
+    const workspace = workspaceStore.selectedWorkspaceDisplay();
     if (workspace.workspaceType !== "local") return;
 
-    const root = workspaceStore.activeWorkspacePath().trim();
+    const root = workspaceStore.selectedWorkspacePath().trim();
     if (!root) return;
     const nextModel = defaultModel();
     const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     const canUseOpenworkServer =
       openworkServerStatus() === "connected" &&
@@ -7498,9 +7618,9 @@ export default function App() {
   const workspaceSwitchWorkspace = createMemo(() => {
     const switchingId = workspaceStore.connectingWorkspaceId();
     if (switchingId) {
-      return workspaceStore.workspaces().find((ws) => ws.id === switchingId) ?? activeWorkspaceDisplay();
+      return workspaceStore.workspaces().find((ws) => ws.id === switchingId) ?? selectedWorkspaceDisplay();
     }
-    return activeWorkspaceDisplay();
+    return selectedWorkspaceDisplay();
   });
 
   // Avoid flashing the full-screen switch overlay for fast workspace switches.
@@ -7565,7 +7685,7 @@ export default function App() {
     openworkToken: openworkServerSettings().token ?? "",
     newAuthorizedDir: newAuthorizedDir(),
     authorizedDirs: workspaceStore.authorizedDirs(),
-    activeWorkspacePath: workspaceStore.activeWorkspacePath(),
+    selectedWorkspacePath: workspaceStore.selectedWorkspacePath(),
     workspaces: workspaceStore.workspaces(),
     localHostLabel: localHostLabel(),
     engineRunning: Boolean(engine()?.running),
@@ -7636,7 +7756,7 @@ export default function App() {
   });
 
   const dashboardProps = () => {
-    const workspaceType = activeWorkspaceDisplay().workspaceType;
+    const workspaceType = selectedWorkspaceDisplay().workspaceType;
     const isRemoteWorkspace = workspaceType === "remote";
     const providerAuthWorkerType: "local" | "remote" = isRemoteWorkspace ? "remote" : "local";
     const openworkStatus = openworkServerStatus();
@@ -7711,8 +7831,8 @@ export default function App() {
       saveShareRemoteAccess,
       openworkServerCapabilities: devtoolsCapabilities(),
       openworkServerDiagnostics: openworkServerDiagnostics(),
-      openworkServerWorkspaceId: openworkServerWorkspaceId(),
-      activeWorkspaceType: workspaceStore.activeWorkspaceDisplay().workspaceType,
+      runtimeWorkspaceId: runtimeWorkspaceId(),
+      activeWorkspaceType: workspaceStore.selectedWorkspaceDisplay().workspaceType,
       openworkAuditEntries: openworkAuditEntries(),
       openworkAuditStatus: openworkAuditStatus(),
       openworkAuditError: openworkAuditError(),
@@ -7733,12 +7853,13 @@ export default function App() {
       setWorkspaceAutoReloadEnabled,
       workspaceAutoReloadResumeEnabled: workspaceAutoReloadResumeEnabled(),
       setWorkspaceAutoReloadResumeEnabled,
-      activeWorkspaceDisplay: activeWorkspaceDisplay(),
+      selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
       workspaces: workspaceStore.workspaces(),
-      activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
-      activateWorkspace: workspaceStore.activateWorkspace,
+      selectWorkspace: workspaceStore.selectWorkspace,
+      ensureWorkspaceActivated: workspaceStore.ensureWorkspaceActivated,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
@@ -7770,8 +7891,8 @@ export default function App() {
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(() => undefined),
       deleteScheduledJob,
-      activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-      isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
+      selectedWorkspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
+      isRemoteWorkspace: workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote",
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
       refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
       refreshPlugins: (scopeOverride?: PluginScope) =>
@@ -7957,7 +8078,7 @@ export default function App() {
   };
 
   const sessionProps = () => ({
-    providerAuthWorkerType: (activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local") as
+    providerAuthWorkerType: (selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local") as
       | "remote"
       | "local",
     selectedSessionId: activeSessionId(),
@@ -7967,14 +8088,15 @@ export default function App() {
     setTab,
     setSettingsTab,
     toggleSettings: () => toggleSettingsView("general"),
-    activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+    selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
+    selectedWorkspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
     activeWorkspaceConfig: resolvedActiveWorkspaceConfig(),
     workspaces: workspaceStore.workspaces(),
-    activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+    selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
     workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
-    activateWorkspace: workspaceStore.activateWorkspace,
+    selectWorkspace: workspaceStore.selectWorkspace,
+    ensureWorkspaceActivated: workspaceStore.ensureWorkspaceActivated,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
     recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: openWorkspaceConnectionSettings,
@@ -7996,7 +8118,7 @@ export default function App() {
     shareRemoteAccessBusy: shareRemoteAccessBusy(),
     shareRemoteAccessError: shareRemoteAccessError(),
     saveShareRemoteAccess,
-    openworkServerWorkspaceId: openworkServerWorkspaceId(),
+    runtimeWorkspaceId: runtimeWorkspaceId(),
     engineInfo: workspaceStore.engine(),
     engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
     orchestratorStatus: orchestratorStatusState(),
@@ -8181,7 +8303,7 @@ export default function App() {
         sessionsLoaded() &&
         shouldRedirectMissingSessionAfterScopedLoad({
           loadedScopeRoot: loadedSessionScopeRoot(),
-          workspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          workspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
           hasMatchingSession: sessions().some((session) => session.id === id),
         })
       ) {
@@ -8303,7 +8425,7 @@ export default function App() {
         reloadRequired={mcpAuthNeedsReload()}
         reloadBlocked={activeReloadBlockingSessions().length > 0}
         activeSessions={activeReloadBlockingSessions()}
-        isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
+        isRemoteWorkspace={selectedWorkspaceDisplay().workspaceType === "remote"}
         onForceStopSession={(sessionID) => abortSession(sessionID)}
         onClose={() => {
           setMcpAuthModalOpen(false);
@@ -8366,14 +8488,14 @@ export default function App() {
           const ok = await workspaceStore.createWorkspaceFlow(preset, folder);
           if (!ok || !request) return;
           const imported = await importSharedBundleIntoActiveWorker(request.request, {
-            localRoot: workspaceStore.activeWorkspaceRoot().trim(),
+            localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
           }, request.bundle);
           setSharedBundleCreateWorkerRequest(null);
           if (imported) {
             if (request.bundle.type === "skill") {
               showSharedSkillSuccessToast({
                 title: "Skill added",
-                description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspaceStore.activeWorkspaceDisplay())}.`,
+                description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspaceStore.selectedWorkspaceDisplay())}.`,
               });
             }
             setSharedSkillDestinationRequest(null);
@@ -8389,7 +8511,7 @@ export default function App() {
                   request
                     ? {
                         onReady: async () => {
-                          const active = workspaceStore.activeWorkspaceDisplay();
+                          const active = workspaceStore.selectedWorkspaceDisplay();
                           await importSharedBundleIntoActiveWorker(request.request, {
                             workspaceId:
                               active.openworkWorkspaceId?.trim() ||
@@ -8494,7 +8616,7 @@ export default function App() {
           };
         })()}
         workspaces={sharedSkillDestinationWorkspaces()}
-        activeWorkspaceId={workspaceStore.activeWorkspaceId()}
+        selectedWorkspaceId={workspaceStore.selectedWorkspaceId()}
         busyWorkspaceId={sharedSkillDestinationBusyId()}
         onClose={() => {
           if (sharedSkillDestinationBusyId()) return;

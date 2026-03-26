@@ -111,7 +111,7 @@ Design principles for hot reload:
 * **Session-aware**: when sessions are actively running, queue reload signals. Promote to visible reload (toast or auto-reload) only after all active sessions finish. This avoids interrupting in-flight tool calls.
 * **Auto-reload setting**: each workspace can opt into automatic reload via `.opencode/openwork.json` (`reload.auto`). When enabled, the engine reloads automatically once queued signals are ready and no sessions are active.
 * **Session continuity**: before reload, capture running session IDs, agents, and models. After reload, optionally relaunch those sessions so the user experiences seamless continuity.
-* **Per-workspace isolation**: the desktop file watcher only watches the active workspace root and its `.opencode/` directory. The server reload event store is already keyed by `workspaceId`.
+* **Per-workspace isolation**: the desktop file watcher only watches the runtime-connected workspace root and its `.opencode/` directory. This can differ briefly from the UI-selected workspace while the user browses another workspace. The server reload event store is already keyed by `workspaceId`.
 
 ## Technology Stack
 

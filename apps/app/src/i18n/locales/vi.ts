@@ -65,7 +65,7 @@ export default {
   "dashboard.remote_workspace_title": "Worker từ xa",
   "dashboard.remote_workspace_hint": "Lưu máy chủ OpenWork để kết nối lại bất kỳ lúc nào.",
   "dashboard.remote_base_url_label": "URL máy chủ OpenWork",
-  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:8787",
+  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:<port>",
   "dashboard.remote_base_url_required": "Vui lòng nhập URL máy chủ để tiếp tục.",
   "dashboard.openwork_host_label": "URL máy chủ OpenWork",
   "dashboard.openwork_host_placeholder": "https://your-server.openwork.app",

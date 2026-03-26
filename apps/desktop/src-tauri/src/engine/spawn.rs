@@ -18,23 +18,14 @@ struct DevModePaths {
     opencode_config_dir: PathBuf,
 }
 
-fn workspace_dev_slug(project_dir: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in project_dir.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("ws-{hash:016x}")
-}
+const OPENWORK_DEV_DATA_DIR: &str = "openwork-dev-data";
 
-fn resolve_dev_mode_paths(app: &AppHandle, project_dir: &str) -> Result<DevModePaths, String> {
+fn resolve_dev_mode_paths(app: &AppHandle) -> Result<DevModePaths, String> {
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    let root_dir = app_data_dir
-        .join("opencode-dev")
-        .join(workspace_dev_slug(project_dir));
+    let root_dir = app_data_dir.join(OPENWORK_DEV_DATA_DIR);
 
     let paths = DevModePaths {
         home_dir: root_dir.join("home"),
@@ -104,8 +95,9 @@ pub fn spawn_engine(
     let mut command = command.args(args).current_dir(project_dir);
 
     if dev_mode {
-        let dev_paths = resolve_dev_mode_paths(app, project_dir)?;
+        let dev_paths = resolve_dev_mode_paths(app)?;
         command = command.env("OPENWORK_DEV_MODE", "1");
+        command = command.env("OPENCODE_TEST_HOME", &dev_paths.home_dir);
         command = command.env("HOME", dev_paths.home_dir);
         command = command.env("XDG_CONFIG_HOME", dev_paths.xdg_config_home);
         command = command.env("XDG_DATA_HOME", dev_paths.xdg_data_home);

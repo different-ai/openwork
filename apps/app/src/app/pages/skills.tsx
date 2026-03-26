@@ -1174,7 +1174,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   type="url"
                   value={installLinkUrl()}
                   onInput={(e) => setInstallLinkUrl(e.currentTarget.value)}
-                  placeholder="https://share.openwork.software/b/..."
+                  placeholder="https://share.openworklabs.com/b/..."
                   class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
                   spellcheck={false}
                 />

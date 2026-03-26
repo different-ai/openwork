@@ -19,6 +19,7 @@
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@daytonaio/sdk": "^0.150.0",
+    "better-call": "^1.1.8",
     "better-auth": "^1.4.18",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

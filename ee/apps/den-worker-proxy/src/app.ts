@@ -1,10 +1,9 @@
 import "./load-env.js"
 import { Daytona } from "@daytonaio/sdk"
 import { Hono } from "hono"
-import { createHash } from "node:crypto"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { createDenDb, DaytonaSandboxTable, RateLimitTable, WorkerTokenTable } from "@openwork-ee/den-db"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "./env.js"
 
 const { db } = createDenDb({
@@ -86,10 +85,6 @@ function stripProxyHeaders(input: Headers) {
   return headers
 }
 
-function hashRateLimitId(key: string) {
-  return createHash("sha256").update(key).digest("hex")
-}
-
 function readClientIp(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
   const realIp = request.headers.get("x-real-ip")?.trim()
@@ -120,7 +115,7 @@ async function consumeRateLimit(input: {
   const current = rows[0] ?? null
   if (!current) {
     await db.insert(RateLimitTable).values({
-      id: hashRateLimitId(input.key),
+      id: createDenTypeId("rateLimit"),
       key: input.key,
       count: 1,
       lastRequest: now,

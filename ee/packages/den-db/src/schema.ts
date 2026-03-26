@@ -21,7 +21,6 @@ const timestamps = {
     .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
 }
 
-export const OrgRole = ["owner", "member"] as const
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
 export const TokenScope = ["client", "host", "activity"] as const
@@ -47,6 +46,8 @@ export const AuthSessionTable = mysqlTable(
   {
     id: denTypeIdColumn("session", "id").notNull().primaryKey(),
     userId: denTypeIdColumn("user", "user_id").notNull(),
+    activeOrganizationId: denTypeIdColumn("organization", "active_organization_id"),
+    activeTeamId: denTypeIdColumn("team", "active_team_id"),
     token: varchar("token", { length: 255 }).notNull(),
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     ipAddress: text("ip_address"),
@@ -102,7 +103,7 @@ export const AuthVerificationTable = mysqlTable(
 export const RateLimitTable = mysqlTable(
   "rate_limit",
   {
-    id: varchar("id", { length: 255 }).notNull().primaryKey(),
+    id: denTypeIdColumn("rateLimit", "id").notNull().primaryKey(),
     key: varchar("key", { length: 512 }).notNull(),
     count: int("count").notNull().default(0),
     lastRequest: bigint("last_request", { mode: "number" }).notNull(),
@@ -132,29 +133,140 @@ export const DesktopHandoffGrantTable = mysqlTable(
   ],
 )
 
-export const OrgTable = mysqlTable(
-  "org",
+export const OrganizationTable = mysqlTable(
+  "organization",
   {
-    id: denTypeIdColumn("org", "id").notNull().primaryKey(),
+    id: denTypeIdColumn("organization", "id").notNull().primaryKey(),
     name: varchar("name", { length: 255 }).notNull(),
     slug: varchar("slug", { length: 255 }).notNull(),
-    owner_user_id: denTypeIdColumn("user", "owner_user_id").notNull(),
-    ...timestamps,
+    logo: varchar("logo", { length: 2048 }),
+    metadata: text("metadata"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
-  (table) => [uniqueIndex("org_slug").on(table.slug), index("org_owner_user_id").on(table.owner_user_id)],
+  (table) => [uniqueIndex("organization_slug").on(table.slug)],
 )
 
-export const OrgMembershipTable = mysqlTable(
-  "org_membership",
+export const MemberTable = mysqlTable(
+  "member",
   {
-    id: denTypeIdColumn("orgMembership", "id").notNull().primaryKey(),
-    org_id: denTypeIdColumn("org", "org_id").notNull(),
-    user_id: denTypeIdColumn("user", "user_id").notNull(),
-    role: mysqlEnum("role", OrgRole).notNull(),
-    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    id: denTypeIdColumn("member", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    role: varchar("role", { length: 255 }).notNull().default("member"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
-  (table) => [index("org_membership_org_id").on(table.org_id), index("org_membership_user_id").on(table.user_id)],
+  (table) => [
+    index("member_organization_id").on(table.organizationId),
+    index("member_user_id").on(table.userId),
+    uniqueIndex("member_organization_user").on(table.organizationId, table.userId),
+  ],
 )
+
+export const InvitationTable = mysqlTable(
+  "invitation",
+  {
+    id: denTypeIdColumn("invitation", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    role: varchar("role", { length: 255 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("pending"),
+    teamId: denTypeIdColumn("team", "team_id"),
+    inviterId: denTypeIdColumn("user", "inviter_id").notNull(),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("invitation_organization_id").on(table.organizationId),
+    index("invitation_email").on(table.email),
+    index("invitation_status").on(table.status),
+    index("invitation_team_id").on(table.teamId),
+  ],
+)
+
+export const TeamTable = mysqlTable(
+  "team",
+  {
+    id: denTypeIdColumn("team", "id").notNull().primaryKey(),
+    name: varchar("name", { length: 255 }).notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("team_organization_id").on(table.organizationId),
+    uniqueIndex("team_organization_name").on(table.organizationId, table.name),
+  ],
+)
+
+export const TeamMemberTable = mysqlTable(
+  "team_member",
+  {
+    id: denTypeIdColumn("teamMember", "id").notNull().primaryKey(),
+    teamId: denTypeIdColumn("team", "team_id").notNull(),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("team_member_team_id").on(table.teamId),
+    index("team_member_user_id").on(table.userId),
+    uniqueIndex("team_member_team_user").on(table.teamId, table.userId),
+  ],
+)
+
+export const OrganizationRoleTable = mysqlTable(
+  "organization_role",
+  {
+    id: denTypeIdColumn("organizationRole", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    role: varchar("role", { length: 255 }).notNull(),
+    permission: text("permission").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("organization_role_organization_id").on(table.organizationId),
+    uniqueIndex("organization_role_name").on(table.organizationId, table.role),
+  ],
+)
+
+export const TempTemplateSharingTable = mysqlTable(
+  "temp_template_sharing",
+  {
+    id: denTypeIdColumn("tempTemplateSharing", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    creatorMemberId: denTypeIdColumn("member", "creator_member_id").notNull(),
+    creatorUserId: denTypeIdColumn("user", "creator_user_id").notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    templateJson: text("template_json").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("temp_template_sharing_org_id").on(table.organizationId),
+    index("temp_template_sharing_creator_member_id").on(table.creatorMemberId),
+    index("temp_template_sharing_creator_user_id").on(table.creatorUserId),
+  ],
+)
+
+export const organization = OrganizationTable
+export const member = MemberTable
+export const invitation = InvitationTable
+export const team = TeamTable
+export const teamMember = TeamMemberTable
+export const organizationRole = OrganizationRoleTable
+export const tempTemplateSharing = TempTemplateSharingTable
+
+export const OrgTable = OrganizationTable
+export const OrgMembershipTable = MemberTable
 
 export const AdminAllowlistTable = mysqlTable(
   "admin_allowlist",

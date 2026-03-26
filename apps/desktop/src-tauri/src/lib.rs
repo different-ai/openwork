@@ -24,9 +24,9 @@ use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
 use commands::misc::{
-    app_build_info, nuke_opencode_dev_config_and_exit, obsidian_is_available, open_in_obsidian,
-    opencode_db_migrate, opencode_mcp_auth, read_obsidian_mirror_file, reset_opencode_cache,
-    reset_openwork_state, write_obsidian_mirror_file,
+    app_build_info, nuke_openwork_and_opencode_config_and_exit, obsidian_is_available,
+    open_in_obsidian, opencode_db_migrate, opencode_mcp_auth, read_obsidian_mirror_file,
+    reset_opencode_cache, reset_openwork_state, write_obsidian_mirror_file,
 };
 use commands::opencode_router::{
     opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status,
@@ -48,7 +48,8 @@ use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
     workspace_export_config, workspace_forget, workspace_import_config, workspace_openwork_read,
-    workspace_openwork_write, workspace_set_active, workspace_update_display_name,
+    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active, workspace_set_selected,
+    workspace_update_display_name,
     workspace_update_remote,
 };
 use engine::manager::EngineManager;
@@ -187,6 +188,8 @@ pub fn run() {
             opencodeRouter_status,
             opencodeRouter_config_set,
             workspace_bootstrap,
+            workspace_set_selected,
+            workspace_set_runtime_active,
             workspace_set_active,
             workspace_create,
             workspace_create_remote,
@@ -212,7 +215,7 @@ pub fn run() {
             write_opencode_config,
             updater_environment,
             app_build_info,
-            nuke_opencode_dev_config_and_exit,
+            nuke_openwork_and_opencode_config_and_exit,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,

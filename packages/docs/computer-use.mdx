@@ -1,43 +1,27 @@
 ---
-title: "Computer use with Openwork"
-description: "How to setup the relevant skills for doing computer-use"
+title: "OpenWork Use: Controlling your browser"
+description: "How to use OpenWork to automate your Chrome Browser"
 ---
 
 Computer-Use in OpenWork currently works as a browser automation in Google Chrome. It does not yet mean full desktop control of Ubuntu, macOS, or Windows apps.
 
-With the right skills, your OpenWork agent will be able to runs browser actions and take screnshots as proof of having completed said actions.
-If you connect to a remote OpenWork server, that remote machine also needs to have Chrome installed.
+With the right skills, your OpenWork agent will be able to runs browser actions and take screnshots as proof of having completed said actions. If you connect to a remote OpenWork server, that remote machine also needs to have Chrome installed.
 
 Today, the supported path is `Control Chrome`, which uses Chrome DevTools MCP.
 
 ## Requirements
 
-- A Ow workspace with a connected provider and model that can run long running tasks like OpenAI GPT 5.4.
 - Google Chrome on the machine running the session
 - In `Settings > Extensions > Control Chrome`
-- In `Settings > Skills > enable `chrome-mcp-bootstrap` and `screenpipe`
-- For CLI/web-hosted OpenWork, a runtime that can launch `chrome-devtools-mcp` (typically via Node/npm)
 
-## Run the first task
+<Frame>
+  ![Screenshot 2026 03 25 At 11 47 52](/images/Screenshot2026-03-25at11.47.52.png)
 
-1. Open `Settings > Extensions`.
-2. Add `Control Chrome`.
-3. Start a new chat.
-4. Click `Automate your browser` or run `/browser-setup`.
-5. Ask OpenWork to open `https://example.com` and read the title.
-6. Confirm you see Chrome tool steps and the response `Example Domain`.
+  - Enable it and follow the instructions in the configuration screen _Note_: _do note use "Use my existing Chrome profile". It's currently not well supported._
+    <Frame>
+      ![Image](/images/image.png)
+    </Frame>
+    Go back to the session view and ask it to open a website
 
-Once you've verified this works, OpenWork can open pages, click, type, inspect page text, run small page scripts, and take browser screenshots.
-
-Not supported today:
-
-- arbitrary desktop apps outside Chrome (as restrictions around computer use heavily depends on your OS)
-- OS-level window management or terminal or file-manager automation (again, depends on OS restrictions)
-- a ready-made Docker image with Ubuntu desktop plus OpenWork plus Chrome as a full computer-use worker
-
-## Fix common setup issues
-
-- If the chat says Chrome MCP is not ready, reconnect `Control Chrome` in `Settings > Extensions`.
-- If Chrome tool calls fail before a page opens, confirm Chrome is installed on the machine running the session.
-- If you want OpenWork to attach to the Chrome you already use, enable remote debugging at `chrome://inspect/#remote-debugging` and then turn on `Use my existing Chrome profile`.
-- If the chat fails before any browser tool runs, fix the model/provider first; browser automation only starts after the session can run a normal prompt.
+  ![Image](/images/image-1.png)
+</Frame>

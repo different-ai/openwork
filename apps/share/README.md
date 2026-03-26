@@ -14,7 +14,7 @@ It keeps the existing bundle APIs, but the public share surface now runs as a si
 - `POST /v1/bundles`
   - Accepts JSON bundle payloads.
   - Stores bytes in Vercel Blob.
-  - Returns `{ "url": "https://share.openwork.software/b/<id>" }`.
+  - Returns `{ "url": "https://share.openworklabs.com/b/<id>" }`.
 
 - `POST /v1/package`
   - Accepts `{ files: [{ path, name?, content }], preview?: boolean }`.
@@ -63,7 +63,7 @@ The packager rejects files that appear to contain secrets in shareable config.
 ## Optional Environment Variables
 
 - `PUBLIC_BASE_URL`
-  - Default: `https://share.openwork.software`
+  - Default: `https://share.openworklabs.com`
   - Used to construct the returned share URL.
 
 - `MAX_BYTES`
@@ -75,7 +75,7 @@ The packager rejects files that appear to contain secrets in shareable config.
   - Defaults include the share origin, the hosted OpenWork app origin, and common local dev origins.
 
 - `PUBLIC_OPENWORK_APP_URL`
-  - Default: `https://app.openwork.software`
+  - Default: `https://app.openworklabs.com`
   - Target app URL for the Open in app action on bundle pages.
 
 - `LOCAL_BLOB_DIR`

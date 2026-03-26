@@ -21,10 +21,10 @@ import {
   type OgImageVariant,
 } from "./og-image-variants.ts";
 
-export const OPENWORK_SITE_URL = "https://openwork.software";
-export const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
-export const DEFAULT_PUBLIC_BASE_URL = "https://share.openwork.software";
-export const DEFAULT_OPENWORK_APP_URL = "https://app.openwork.software";
+export const OPENWORK_SITE_URL = "https://openworklabs.com";
+export const OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download";
+export const DEFAULT_PUBLIC_BASE_URL = "https://share.openworklabs.com";
+export const DEFAULT_OPENWORK_APP_URL = "https://app.openworklabs.com";
 export const SHARE_EASE = "cubic-bezier(0.31, 0.325, 0, 0.92)";
 
 export function maybeString(value: unknown): string {
@@ -882,7 +882,7 @@ export function buildStatusMarkup({
   <style>
     @font-face {
       font-family: "FK Raster Roman Compact Smooth";
-      src: url("https://openwork.software/fonts/FKRasterRomanCompact-Smooth.woff2") format("woff2");
+      src: url("https://openworklabs.com/fonts/FKRasterRomanCompact-Smooth.woff2") format("woff2");
       font-weight: 400;
       font-style: normal;
       font-display: swap;

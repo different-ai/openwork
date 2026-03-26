@@ -16,7 +16,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata = {
-  metadataBase: new URL("https://openwork.software"),
+  metadataBase: new URL("https://openworklabs.com"),
   title: "OpenWork — The open source Claude Cowork alternative",
   description:
     "Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across your org — with guardrails built in.",

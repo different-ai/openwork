@@ -347,7 +347,11 @@ pub struct WorkspaceInfo {
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceList {
-    pub active_id: String,
+    // UI-selected workspace persisted by desktop.
+    pub selected_id: String,
+    // Runtime/watch target currently followed by the desktop host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watched_id: Option<String>,
     pub workspaces: Vec<WorkspaceInfo>,
 }
 
@@ -375,7 +379,12 @@ fn default_workspace_state_version() -> u8 {
 pub struct WorkspaceState {
     #[serde(default = "default_workspace_state_version")]
     pub version: u8,
-    pub active_id: String,
+    // Legacy activeId values map to the UI-selected workspace.
+    #[serde(default, alias = "activeId")]
+    pub selected_workspace_id: String,
+    // Legacy watchedWorkspaceId values track the runtime/watch target.
+    #[serde(default, alias = "watchedWorkspaceId")]
+    pub watched_workspace_id: String,
     pub workspaces: Vec<WorkspaceInfo>,
 }
 
@@ -383,10 +392,11 @@ impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
             version: WORKSPACE_STATE_VERSION,
-            active_id: String::new(),
+            selected_workspace_id: String::new(),
+            watched_workspace_id: String::new(),
             workspaces: Vec::new(),
         }
     }
 }
 
-pub const WORKSPACE_STATE_VERSION: u8 = 4;
+pub const WORKSPACE_STATE_VERSION: u8 = 5;

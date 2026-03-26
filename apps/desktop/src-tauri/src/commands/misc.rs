@@ -9,7 +9,7 @@ use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::openwork_server::manager::OpenworkServerManager;
 use crate::orchestrator;
 use crate::orchestrator::manager::OrchestratorManager;
-use crate::paths::home_dir;
+use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, home_dir};
 use crate::platform::command_for_program;
 use crate::types::{ExecResult, WorkspaceOpenworkConfig};
 use crate::workspace::state::load_workspace_state;
@@ -98,6 +98,71 @@ fn opencode_cache_candidates() -> Vec<PathBuf> {
         .into_iter()
         .filter(|path| seen.insert(path.to_string_lossy().to_string()))
         .collect()
+}
+
+fn push_opencode_env_path(candidates: &mut Vec<PathBuf>, key: &str) {
+    let Ok(value) = std::env::var(key) else {
+        return;
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    candidates.push(PathBuf::from(trimmed).join("opencode"));
+}
+
+fn opencode_standard_state_paths() -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    push_opencode_env_path(&mut candidates, "XDG_CONFIG_HOME");
+    push_opencode_env_path(&mut candidates, "XDG_DATA_HOME");
+    push_opencode_env_path(&mut candidates, "XDG_STATE_HOME");
+    candidates.extend(opencode_cache_candidates());
+
+    for dir in candidate_xdg_config_dirs() {
+        candidates.push(dir.join("opencode"));
+    }
+
+    for dir in candidate_xdg_data_dirs() {
+        candidates.push(dir.join("opencode"));
+    }
+
+    if let Some(home) = home_dir() {
+        candidates.push(home.join(".local").join("state").join("opencode"));
+
+        #[cfg(target_os = "macos")]
+        {
+            candidates.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("opencode"),
+            );
+        }
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| seen.insert(path.to_string_lossy().to_string()))
+        .collect()
+}
+
+fn current_openwork_state_paths(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
+    Ok(vec![
+        app.path()
+            .app_cache_dir()
+            .map_err(|e| format!("Failed to resolve app cache dir: {e}"))?,
+        app.path()
+            .app_config_dir()
+            .map_err(|e| format!("Failed to resolve app config dir: {e}"))?,
+        app.path()
+            .app_local_data_dir()
+            .map_err(|e| format!("Failed to resolve app local data dir: {e}"))?,
+        app.path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to resolve app data dir: {e}"))?,
+        PathBuf::from(orchestrator::resolve_orchestrator_data_dir()),
+    ])
 }
 
 fn stop_host_services(
@@ -362,54 +427,36 @@ pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
 }
 
 #[tauri::command]
-pub fn nuke_opencode_dev_config_and_exit(
+pub fn nuke_openwork_and_opencode_config_and_exit(
     app: AppHandle,
     engine_manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
     openwork_manager: State<OpenworkServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<(), String> {
-    if !env_truthy("OPENWORK_DEV_MODE") {
-        return Err("OpenCode dev mode is not enabled.".to_string());
+    stop_host_services(
+        &engine_manager,
+        &orchestrator_manager,
+        &openwork_manager,
+        &opencode_router_manager,
+    );
+
+    let dev_mode = env_truthy("OPENWORK_DEV_MODE");
+    let mut paths = current_openwork_state_paths(&app)?;
+    if dev_mode {
+        // In dev mode, the current app + orchestrator directories are already isolated
+        // by the dev app identity and OPENWORK_DATA_DIR, so only clear those dev paths.
+    } else {
+        // In production, clear the normal app/orchestrator paths plus the standard
+        // user OpenCode config/data/cache/state locations.
+        paths.extend(opencode_standard_state_paths());
     }
 
-    if let Ok(mut engine) = engine_manager.inner.lock() {
-        EngineManager::stop_locked(&mut engine);
-    }
-    if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
-        OrchestratorManager::stop_locked(&mut orchestrator_state);
-    }
-    if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
-        OpenworkServerManager::stop_locked(&mut openwork_state);
-    }
-    if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
-        OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
-    }
-
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    let desktop_dev_dir = app_data_dir.join("opencode-dev");
-    if desktop_dev_dir.exists() {
-        fs::remove_dir_all(&desktop_dev_dir)
-            .map_err(|e| format!("Failed to remove {}: {e}", desktop_dev_dir.display()))?;
-    }
-
-    let orchestrator_data_dir = PathBuf::from(orchestrator::resolve_orchestrator_data_dir());
-    let orchestrator_dev_dir = orchestrator_data_dir.join("opencode-dev");
-    if orchestrator_dev_dir.exists() {
-        fs::remove_dir_all(&orchestrator_dev_dir)
-            .map_err(|e| format!("Failed to remove {}: {e}", orchestrator_dev_dir.display()))?;
-    }
-
-    for path in [
-        orchestrator_data_dir.join("openwork-orchestrator-state.json"),
-        orchestrator_data_dir.join("openwork-orchestrator-auth.json"),
-    ] {
-        if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|e| format!("Failed to remove {}: {e}", path.display()))?;
+    let mut seen = HashSet::new();
+    for path in paths {
+        let key = path.to_string_lossy().to_string();
+        if seen.insert(key) {
+            remove_path_if_exists(&path)?;
         }
     }
 

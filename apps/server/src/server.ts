@@ -32,7 +32,9 @@ import {
   readMaterializedBlueprintSessions,
   sanitizeOpenworkTemplateConfig,
 } from "./blueprint-sessions.js";
+import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
+import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listTemplateFiles, planTemplateFiles, writeTemplateFiles } from "./template-files.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -303,7 +305,7 @@ export function startServer(config: ServerConfig) {
           const workspace = await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -366,7 +368,7 @@ export function startServer(config: ServerConfig) {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ request, url, workspace: config.workspaces[0] });
+          const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -485,8 +487,9 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-async function fetchOpencodeJson(workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
-  const baseUrl = workspace.baseUrl?.trim() ?? "";
+async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
@@ -503,7 +506,7 @@ async function fetchOpencodeJson(workspace: WorkspaceInfo, path: string, init: {
     headers.set("x-opencode-directory", directory);
   }
 
-  const auth = buildOpencodeAuthHeader(workspace);
+  const auth = connection.authHeader ?? null;
   if (auth) {
     headers.set("Authorization", auth);
   }
@@ -541,13 +544,14 @@ function buildOpenCodeRouterProxyUrl(baseUrl: string, path: string, search: stri
 }
 
 async function proxyOpencodeRequest(input: {
+  config: ServerConfig;
   request: Request;
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
 }) {
   const workspace = input.workspace;
-  const baseUrl = workspace?.baseUrl?.trim() ?? "";
+  const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
@@ -566,7 +570,7 @@ async function proxyOpencodeRequest(input: {
     headers.set("x-opencode-directory", directory);
   }
 
-  const auth = workspace ? buildOpencodeAuthHeader(workspace) : null;
+  const auth = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).authHeader ?? null : null;
   if (auth) {
     headers.set("Authorization", auth);
   }
@@ -1464,6 +1468,7 @@ function createRoutes(
       path: workspacePath,
       preset,
       workspaceType: "local",
+      ...inheritWorkspaceOpencodeConnection(config),
     };
 
     config.workspaces = [workspace, ...config.workspaces.filter((entry) => entry.id !== workspace.id)];
@@ -1663,7 +1668,7 @@ function createRoutes(
     }
 
     // OpenCode session deletion via the upstream API.
-    await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}`, {
+        await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     });
 
@@ -2655,7 +2660,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     requireClientScope(ctx, "collaborator");
 
-    await reloadOpencodeEngine(workspace);
+      await reloadOpencodeEngine(config, workspace);
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -3561,13 +3566,13 @@ function createRoutes(
 
     // Best-effort disconnect so any active connection is torn down.
     try {
-      await fetchOpencodeJson(workspace, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" });
+      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" });
     } catch {
       // ignore
     }
 
     try {
-      await fetchOpencodeJson(workspace, `/mcp/${encodeURIComponent(name)}/auth`, { method: "DELETE" });
+      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/auth`, { method: "DELETE" });
     } catch (error) {
       // Treat missing credentials as a successful logout (idempotent).
       if (
@@ -3797,7 +3802,7 @@ function createRoutes(
     }
 
     const now = Date.now();
-    const created = await fetchOpencodeJson(workspace, "/session", {
+    const created = await fetchOpencodeJson(config, workspace, "/session", {
       method: "POST",
       body: { title: `Automation: ${automation.name}` },
     });
@@ -3806,7 +3811,7 @@ function createRoutes(
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }
 
-    await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+    await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
       method: "POST",
       body: {
         parts: [{ type: "text", text: automation.prompt }],
@@ -3940,7 +3945,7 @@ function createRoutes(
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const result = await materializeBlueprintSessions(workspace);
+    const result = await materializeBlueprintSessions(config, workspace);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -5077,13 +5082,6 @@ function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): str
   }
 }
 
-function buildOpencodeAuthHeader(workspace: WorkspaceInfo): string | null {
-  const username = workspace.opencodeUsername?.trim() ?? "";
-  const password = workspace.opencodePassword?.trim() ?? "";
-  if (!username || !password) return null;
-  return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
-}
-
 function parseOpencodeErrorBody(input: string): unknown {
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -5094,8 +5092,9 @@ function parseOpencodeErrorBody(input: string): unknown {
   }
 }
 
-async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
-  const baseUrl = workspace.baseUrl?.trim() ?? "";
+async function reloadOpencodeEngine(config: ServerConfig, workspace: WorkspaceInfo): Promise<void> {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
@@ -5103,7 +5102,7 @@ async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
   const directory = resolveOpencodeDirectory(workspace);
   const targetUrl = buildOpencodeReloadUrl(baseUrl, directory);
   const headers: Record<string, string> = {};
-  const auth = buildOpencodeAuthHeader(workspace);
+  const auth = connection.authHeader ?? null;
   if (auth) headers.Authorization = auth;
 
   const response = await fetch(targetUrl, { method: "POST", headers });
@@ -5244,7 +5243,7 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
   }
 }
 
-async function materializeBlueprintSessions(workspace: WorkspaceInfo): Promise<{
+async function materializeBlueprintSessions(config: ServerConfig, workspace: WorkspaceInfo): Promise<{
   ok: boolean;
   created: Array<{ templateId: string; sessionId: string; title: string }>;
   existing: Array<{ templateId: string; sessionId: string }>;
@@ -5267,7 +5266,7 @@ async function materializeBlueprintSessions(workspace: WorkspaceInfo): Promise<{
 
   const created: Array<{ templateId: string; sessionId: string; title: string }> = [];
   for (const template of templates) {
-    const result = await fetchOpencodeJson(workspace, "/session", {
+    const result = await fetchOpencodeJson(config, workspace, "/session", {
       method: "POST",
       body: template.title ? { title: template.title } : undefined,
     });
@@ -5275,6 +5274,11 @@ async function materializeBlueprintSessions(workspace: WorkspaceInfo): Promise<{
     if (!sessionId) {
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }
+    seedOpencodeSessionMessages({
+      sessionId,
+      workspaceRoot: resolveOpencodeDirectory(workspace) ?? workspace.path,
+      messages: template.messages,
+    });
     created.push({ templateId: template.id, sessionId, title: template.title });
   }
 

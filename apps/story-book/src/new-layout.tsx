@@ -347,7 +347,7 @@ function toMessageParts(id: string, role: "user" | "assistant", text: string): M
 }
 
 export default function NewLayoutApp() {
-  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal(localWorkspace.id);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = createSignal(localWorkspace.id);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sb-session-shell");
 
   const [themeMode] = createSignal<ThemeMode>(getInitialThemeMode());
@@ -511,7 +511,7 @@ export default function NewLayoutApp() {
   const settingsPanelSoftClass = "rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4";
 
   const activeWorkspace = createMemo(
-    () => workspaceSessionGroups.find((group) => group.workspace.id === activeWorkspaceId())?.workspace ?? localWorkspace,
+    () => workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId())?.workspace ?? localWorkspace,
   );
   const shareWorkspace = createMemo(
     () => storyWorkspaces.find((workspace) => workspace.id === shareWorkspaceId()) ?? null,
@@ -525,7 +525,7 @@ export default function NewLayoutApp() {
     if (workspace.workspaceType === "remote") return workspace.baseUrl ?? workspace.path ?? null;
     return workspace.path ?? null;
   });
-  const activeWorkspaceRoot = createMemo(() => activeWorkspace().path?.trim() || "");
+  const selectedWorkspaceRoot = createMemo(() => activeWorkspace().path?.trim() || "");
 
   const openChatWithPrompt = (prompt: string, toast?: string) => {
     setComposerPrompt(prompt);
@@ -781,7 +781,7 @@ export default function NewLayoutApp() {
     ) => ({
       ok: true,
       channel: input.channel,
-      directory: input.directory ?? activeWorkspaceRoot(),
+      directory: input.directory ?? selectedWorkspaceRoot(),
       peerId: input.peerId,
       attempted: 1,
       sent: 1,
@@ -966,7 +966,7 @@ export default function NewLayoutApp() {
   };
 
   const openMockShareModal = (workspaceId?: string | null) => {
-    const nextId = workspaceId?.trim() || activeWorkspaceId();
+    const nextId = workspaceId?.trim() || selectedWorkspaceId();
     setShareWorkspaceId(nextId);
     setShareWorkspaceProfileUrl(null);
     setShareSkillsSetUrl(null);
@@ -1144,7 +1144,7 @@ export default function NewLayoutApp() {
         meta: "Share",
         action: () => {
           closeCommandPalette();
-          openMockShareModal(activeWorkspaceId());
+          openMockShareModal(selectedWorkspaceId());
         },
       },
     ];
@@ -1164,10 +1164,10 @@ export default function NewLayoutApp() {
       id: `session:${item.workspaceId}:${item.sessionId}`,
       title: item.title,
       detail: item.workspaceTitle,
-      meta: item.workspaceId === activeWorkspaceId() ? "Current workspace" : "Switch",
+      meta: item.workspaceId === selectedWorkspaceId() ? "Current workspace" : "Switch",
       action: () => {
         closeCommandPalette();
-        setActiveWorkspaceId(item.workspaceId);
+        setSelectedWorkspaceId(item.workspaceId);
         setSelectedSessionId(item.sessionId);
       },
     }));
@@ -1292,7 +1292,7 @@ export default function NewLayoutApp() {
             <WorkspaceSessionList
               developerMode
               workspaceSessionGroups={workspaceSessionGroups}
-              activeWorkspaceId={activeWorkspaceId()}
+              selectedWorkspaceId={selectedWorkspaceId()}
               selectedSessionId={selectedSessionId()}
               showSessionActions
               sessionStatusById={sessionStatusById}
@@ -1300,16 +1300,16 @@ export default function NewLayoutApp() {
               workspaceConnectionStateById={workspaceConnectionStateById}
               newTaskDisabled={false}
               importingWorkspaceConfig={false}
-              onActivateWorkspace={(workspaceId) => {
-                setActiveWorkspaceId(workspaceId);
+              onSelectWorkspace={(workspaceId) => {
+                setSelectedWorkspaceId(workspaceId);
                 return true;
               }}
               onOpenSession={(workspaceId, sessionId) => {
-                setActiveWorkspaceId(workspaceId);
+                setSelectedWorkspaceId(workspaceId);
                 setSelectedSessionId(sessionId);
               }}
               onCreateTaskInWorkspace={(workspaceId) => {
-                setActiveWorkspaceId(workspaceId);
+                setSelectedWorkspaceId(workspaceId);
               }}
               onOpenRenameSession={() => undefined}
               onOpenDeleteSession={() => undefined}
@@ -1503,7 +1503,7 @@ export default function NewLayoutApp() {
                           refreshJobs={refreshScheduledJobs}
                           deleteJob={deleteScheduledJob}
                           isWindows={false}
-                          activeWorkspaceRoot={activeWorkspaceRoot()}
+                          selectedWorkspaceRoot={selectedWorkspaceRoot()}
                           createSessionAndOpen={createSessionAndOpen}
                           setPrompt={(value) => openChatWithPrompt(value, "Automation draft moved to chat.")}
                           newTaskDisabled={false}
@@ -1563,7 +1563,7 @@ export default function NewLayoutApp() {
                           initialSection="all"
                           setDashboardTab={() => undefined}
                           busy={false}
-                          activeWorkspaceRoot={activeWorkspaceRoot()}
+                          selectedWorkspaceRoot={selectedWorkspaceRoot()}
                           isRemoteWorkspace={activeWorkspace().workspaceType === "remote"}
                           refreshMcpServers={refreshMcpServers}
                           mcpServers={storyMcpServers()}
@@ -1586,7 +1586,7 @@ export default function NewLayoutApp() {
                           accessHint={null}
                           pluginScope={pluginScope()}
                           setPluginScope={setPluginScope}
-                          pluginConfigPath={`${activeWorkspaceRoot() || "."}/opencode.json`}
+                          pluginConfigPath={`${selectedWorkspaceRoot() || "."}/opencode.json`}
                           pluginList={pluginList()}
                           pluginInput={pluginInput()}
                           setPluginInput={setPluginInput}
@@ -1611,21 +1611,21 @@ export default function NewLayoutApp() {
                             openworkReconnectBusy={false}
                             reconnectOpenworkServer={async () => true}
                             restartLocalServer={async () => true}
-                            openworkServerWorkspaceId={activeWorkspaceId()}
-                            activeWorkspaceRoot={activeWorkspaceRoot()}
+                            runtimeWorkspaceId={selectedWorkspaceId()}
+                            selectedWorkspaceRoot={selectedWorkspaceRoot()}
                             developerMode
                           />
-                          <Show when={activeWorkspaceId() === remoteWorkspace.id}>
+                          <Show when={selectedWorkspaceId() === remoteWorkspace.id}>
                             <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
                               <InboxPanel
                                 id="settings-inbox"
                                 client={mockOpenworkServerClient}
-                                workspaceId={activeWorkspaceId()}
+                                workspaceId={selectedWorkspaceId()}
                                 onToast={(message) => setComposerToast(message)}
                               />
                             </div>
                           </Show>
-                          <Show when={activeWorkspaceId() !== remoteWorkspace.id}>
+                          <Show when={selectedWorkspaceId() !== remoteWorkspace.id}>
                             <div class={`${settingsPanelSoftClass} text-sm text-dls-secondary`}>
                               Switch to the remote workspace to preview the inbox panel inside Messaging.
                             </div>
@@ -1743,8 +1743,8 @@ export default function NewLayoutApp() {
                 if (!normalized) return workingFiles.slice(0, 8);
                 return workingFiles.filter((path) => path.toLowerCase().includes(normalized)).slice(0, 8);
               }}
-              isRemoteWorkspace={activeWorkspaceId() === remoteWorkspace.id}
-              isSandboxWorkspace={activeWorkspaceId() === remoteWorkspace.id}
+              isRemoteWorkspace={selectedWorkspaceId() === remoteWorkspace.id}
+              isSandboxWorkspace={selectedWorkspaceId() === remoteWorkspace.id}
               attachmentsEnabled
               attachmentsDisabledReason={null}
               listCommands={async () => commandOptions}

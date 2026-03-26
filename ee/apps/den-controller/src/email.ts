@@ -2,26 +2,26 @@ import { env } from "./env.js"
 
 const LOOPS_TRANSACTIONAL_API_URL = "https://app.loops.so/api/v1/transactional"
 
-export async function sendDenVerificationEmail(input: {
+async function sendLoopsTransactionalEmail(input: {
   email: string
-  verificationCode: string
+  transactionalId: string | undefined
+  dataVariables: Record<string, string>
+  logLabel: string
 }) {
   const apiKey = env.loops.apiKey
-  const transactionalId = env.loops.transactionalIdDenVerifyEmail
   const email = input.email.trim()
-  const verificationCode = input.verificationCode.trim()
 
-  if (!email || !verificationCode) {
+  if (!email) {
     return
   }
 
   if (env.devMode) {
-    console.info(`[auth] dev verification code for ${email}: ${verificationCode}`)
+    console.info(`[auth] dev ${input.logLabel} payload for ${email}: ${JSON.stringify(input.dataVariables)}`)
     return
   }
 
-  if (!apiKey || !transactionalId) {
-    console.warn(`[auth] verification email skipped for ${email}: Loops is not configured`)
+  if (!apiKey || !input.transactionalId) {
+    console.warn(`[auth] ${input.logLabel} skipped for ${email}: Loops is not configured`)
     return
   }
 
@@ -33,11 +33,9 @@ export async function sendDenVerificationEmail(input: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        transactionalId,
+        transactionalId: input.transactionalId,
         email,
-        dataVariables: {
-          verificationCode,
-        },
+        dataVariables: input.dataVariables,
       }),
     })
 
@@ -55,9 +53,51 @@ export async function sendDenVerificationEmail(input: {
       // Ignore invalid upstream payloads.
     }
 
-    console.warn(`[auth] failed to send verification email for ${email}: ${detail}`)
+    console.warn(`[auth] failed to send ${input.logLabel} for ${email}: ${detail}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error"
-    console.warn(`[auth] failed to send verification email for ${email}: ${message}`)
+    console.warn(`[auth] failed to send ${input.logLabel} for ${email}: ${message}`)
   }
+}
+
+export async function sendDenVerificationEmail(input: {
+  email: string
+  verificationCode: string
+}) {
+  const verificationCode = input.verificationCode.trim()
+
+  if (!input.email.trim() || !verificationCode) {
+    return
+  }
+
+  await sendLoopsTransactionalEmail({
+    email: input.email,
+    transactionalId: env.loops.transactionalIdDenVerifyEmail,
+    dataVariables: {
+      verificationCode,
+    },
+    logLabel: "verification email",
+  })
+}
+
+export async function sendDenOrganizationInvitationEmail(input: {
+  email: string
+  inviteLink: string
+  invitedByName: string
+  invitedByEmail: string
+  organizationName: string
+  role: string
+}) {
+  await sendLoopsTransactionalEmail({
+    email: input.email,
+    transactionalId: env.loops.transactionalIdDenOrgInviteEmail,
+    dataVariables: {
+      inviteLink: input.inviteLink,
+      invitedByName: input.invitedByName,
+      invitedByEmail: input.invitedByEmail,
+      organizationName: input.organizationName,
+      role: input.role,
+    },
+    logLabel: "organization invite email",
+  })
 }

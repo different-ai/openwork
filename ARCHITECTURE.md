@@ -362,7 +362,7 @@ workspace C ----/
 
                  +-------------------------------+
                  | opencode-router               |
-                 | root: active workspace        |
+                 | root: runtime active workspace|
                  | clients: many dirs under root |
                  +-------------------------------+
 ```
@@ -373,6 +373,22 @@ Practical consequences:
 - If workspaces live in unrelated roots, directories outside the active router root are rejected.
 - OpenWork server is already multi-workspace aware.
 - Desktop router management is still effectively single-root at a time.
+- On desktop, the file watcher follows the runtime-connected workspace root, not just the workspace currently selected in the UI.
+
+Terminology clarification:
+
+- `selected workspace` is a UI concept: the workspace the user is currently viewing and where compose/config actions should target.
+- `runtime active workspace` is a backend concept: the workspace the local server/orchestrator currently reports as active.
+- `watched workspace` is the desktop-host/runtime concept for which workspace root local file watching is currently attached to.
+- These states must be treated separately. UI selection can change without implying that the backend has switched roots yet.
+- In practice, `selected workspace` and `runtime active workspace` often converge once the user sends work, but they are allowed to diverge briefly while the UI is browsing another workspace.
+
+Desktop local OpenWork server ports:
+
+- Desktop-hosted local OpenWork server instances do not assume a fixed `8787` port.
+- Each workspace gets a persistent preferred localhost port in the `48000-51000` range.
+- On restart, desktop tries to reuse that workspace's saved port first.
+- If that port is unavailable, desktop picks another free port in the same range and avoids ports already reserved by other known workspaces.
 
 ```text
 Shared-root case

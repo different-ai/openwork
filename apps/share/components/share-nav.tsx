@@ -1,4 +1,4 @@
-const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
+const OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download";
 
 function GitHubMark() {
   return (
@@ -23,13 +23,13 @@ export default function ShareNav({ stars = "" }: { stars?: string }) {
         <span style={{ fontWeight: "600", fontSize: "1.2rem" }}>openwork</span>
       </a>
       <div className="nav-links">
-        <a href="https://openwork.software/docs" target="_blank" rel="noreferrer">
+        <a href="https://openworklabs.com/docs" target="_blank" rel="noreferrer">
           Docs
         </a>
         <a href={OPENWORK_DOWNLOAD_URL} target="_blank" rel="noreferrer">
           Download
         </a>
-        <a href="https://openwork.software/enterprise" target="_blank" rel="noreferrer">
+        <a href="https://openworklabs.com/enterprise" target="_blank" rel="noreferrer">
           Enterprise
         </a>
       </div>

@@ -130,7 +130,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
           <McpView
             showHeader={false}
             busy={props.busy}
-            activeWorkspaceRoot={props.activeWorkspaceRoot}
+            selectedWorkspaceRoot={props.selectedWorkspaceRoot}
             isRemoteWorkspace={props.isRemoteWorkspace}
             mcpServers={props.mcpServers}
             mcpStatus={props.mcpStatus}
@@ -159,7 +159,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
           </div>
           <PluginsView
             busy={props.busy}
-            activeWorkspaceRoot={props.activeWorkspaceRoot}
+            selectedWorkspaceRoot={props.selectedWorkspaceRoot}
             canEditPlugins={props.canEditPlugins}
             canUseGlobalScope={props.canUseGlobalScope}
             accessHint={props.accessHint}

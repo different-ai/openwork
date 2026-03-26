@@ -6,6 +6,8 @@ type FixedWindowEntry = {
 };
 
 const defaultAllowedOrigins = [
+  "https://app.openworklabs.com",
+  "https://openworklabs.com",
   "https://app.openwork.software",
   "https://openwork.software",
   "http://localhost:5173",

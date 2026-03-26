@@ -2,7 +2,7 @@ use gethostname::gethostname;
 use local_ip_address::local_ip;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -27,6 +27,8 @@ fn generate_token() -> String {
 }
 
 const OPENWORK_SERVER_TOKEN_STORE_VERSION: u32 = 1;
+const OPENWORK_SERVER_STATE_VERSION: u32 = 3;
+const LEGACY_FIXED_OPENWORK_PORT: u16 = 8787;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedOpenworkServerTokens {
@@ -42,12 +44,29 @@ struct PersistedOpenworkServerTokenStore {
     workspaces: HashMap<String, PersistedOpenworkServerTokens>,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct PersistedOpenworkServerState {
+    version: u32,
+    #[serde(default)]
+    workspace_ports: HashMap<String, u16>,
+    #[serde(default)]
+    preferred_port: Option<u16>,
+}
+
 fn openwork_server_token_store_path(app: &AppHandle) -> Result<PathBuf, String> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
     Ok(data_dir.join("openwork-server-tokens.json"))
+}
+
+fn openwork_server_state_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    Ok(data_dir.join("openwork-server-state.json"))
 }
 
 fn load_openwork_server_token_store(
@@ -81,6 +100,96 @@ fn save_openwork_server_token_store(
     let payload = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
     fs::write(path, payload).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     Ok(())
+}
+
+fn load_openwork_server_state(path: &Path) -> Result<PersistedOpenworkServerState, String> {
+    if !path.exists() {
+        return Ok(PersistedOpenworkServerState {
+            version: OPENWORK_SERVER_STATE_VERSION,
+            workspace_ports: HashMap::new(),
+            preferred_port: None,
+        });
+    }
+
+    let raw =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let mut state: PersistedOpenworkServerState = serde_json::from_str(&raw)
+        .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+    if state.version < OPENWORK_SERVER_STATE_VERSION {
+        if state.version < 2 && state.preferred_port == Some(LEGACY_FIXED_OPENWORK_PORT) {
+            state.preferred_port = None;
+        }
+        if state.version < 3 && state.preferred_port == Some(LEGACY_FIXED_OPENWORK_PORT) {
+            state.preferred_port = None;
+        }
+        state.version = OPENWORK_SERVER_STATE_VERSION;
+    }
+    Ok(state)
+}
+
+fn save_openwork_server_state(
+    path: &Path,
+    state: &PersistedOpenworkServerState,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
+    let payload = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+    fs::write(path, payload).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn read_preferred_openwork_port(app: &AppHandle, workspace_key: &str) -> Result<Option<u16>, String> {
+    let path = openwork_server_state_path(app)?;
+    let state = load_openwork_server_state(&path)?;
+    let trimmed = workspace_key.trim();
+    if !trimmed.is_empty() {
+        if let Some(port) = state.workspace_ports.get(trimmed) {
+            return Ok(Some(*port));
+        }
+    }
+    if !state.workspace_ports.is_empty() {
+        return Ok(None);
+    }
+    Ok(state.preferred_port)
+}
+
+fn reserved_openwork_ports(app: &AppHandle, exclude_workspace_key: &str) -> Result<HashSet<u16>, String> {
+    let path = openwork_server_state_path(app)?;
+    let state = load_openwork_server_state(&path)?;
+    let excluded = exclude_workspace_key.trim();
+    let mut reserved = HashSet::new();
+    for (workspace_key, port) in state.workspace_ports {
+        if workspace_key.trim() == excluded {
+            continue;
+        }
+        reserved.insert(port);
+    }
+    if excluded.is_empty() {
+        if let Some(port) = state.preferred_port {
+            reserved.insert(port);
+        }
+    }
+    Ok(reserved)
+}
+
+fn persist_preferred_openwork_port(
+    app: &AppHandle,
+    workspace_key: &str,
+    port: u16,
+) -> Result<(), String> {
+    let path = openwork_server_state_path(app)?;
+    let mut state = load_openwork_server_state(&path)?;
+    state.version = OPENWORK_SERVER_STATE_VERSION;
+    let trimmed = workspace_key.trim();
+    if trimmed.is_empty() {
+        state.preferred_port = Some(port);
+    } else {
+        state.workspace_ports.insert(trimmed.to_string(), port);
+        state.preferred_port = None;
+    }
+    save_openwork_server_state(&path, &state)
 }
 
 fn load_or_create_workspace_tokens(
@@ -213,11 +322,13 @@ pub fn start_openwork_server(
     } else {
         "127.0.0.1".to_string()
     };
-    let port = resolve_openwork_port(&host)?;
     let active_workspace = workspace_paths
         .first()
         .map(|path| path.as_str())
         .unwrap_or("");
+    let preferred_port = read_preferred_openwork_port(app, active_workspace)?;
+    let reserved_ports = reserved_openwork_ports(app, active_workspace)?;
+    let port = resolve_openwork_port(&host, preferred_port, &reserved_ports)?;
     let workspace_tokens = load_or_create_workspace_tokens(app, active_workspace)?;
     let client_token = workspace_tokens.client_token.clone();
     let host_token = workspace_tokens.host_token.clone();
@@ -271,6 +382,7 @@ pub fn start_openwork_server(
     state.host_token = Some(host_token);
     state.last_stdout = None;
     state.last_stderr = None;
+    let _ = persist_preferred_openwork_port(app, active_workspace, port);
 
     let state_handle = manager.inner.clone();
 
@@ -342,6 +454,23 @@ mod tests {
         assert_eq!(first.client_token, second.client_token);
         assert_eq!(first.host_token, second.host_token);
         assert_eq!(first.owner_token, second.owner_token);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn migrates_legacy_fixed_port_to_no_preference() {
+        let path = unique_temp_path("port-migrate");
+        fs::write(
+            &path,
+            r#"{"version":1,"preferred_port":8787}"#,
+        )
+        .expect("write legacy state");
+
+        let state = load_openwork_server_state(&path).expect("load migrated state");
+        assert_eq!(state.version, OPENWORK_SERVER_STATE_VERSION);
+        assert_eq!(state.preferred_port, None);
+        assert!(state.workspace_ports.is_empty());
 
         let _ = fs::remove_file(path);
     }

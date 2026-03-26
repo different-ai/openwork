@@ -66,7 +66,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     handledReturnRef.current = true;
     setResuming(true);
     void refreshCheckoutReturn(true).then((target) => {
-      if (target === "/dashboard") {
+      if (target !== "/checkout") {
         router.replace(target);
         return;
       }
@@ -93,7 +93,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
     if (!onboardingPending) {
       void resolveUserLandingRoute().then((target) => {
-        if (target === "/dashboard" && !MOCK_BILLING) {
+        if (target && target !== "/checkout" && !MOCK_BILLING) {
           router.replace(target);
         }
       });

@@ -124,7 +124,7 @@ export type DashboardViewProps = {
   saveShareRemoteAccess: (enabled: boolean) => Promise<void>;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkServerWorkspaceId: string | null;
+  runtimeWorkspaceId: string | null;
   activeWorkspaceType: "local" | "remote";
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
@@ -146,12 +146,13 @@ export type DashboardViewProps = {
   setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
   workspaceAutoReloadResumeEnabled: boolean;
   setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
-  activeWorkspaceDisplay: WorkspaceInfo;
+  selectedWorkspaceDisplay: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
-  activeWorkspaceId: string;
+  selectedWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
-  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  selectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  ensureWorkspaceActivated: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
@@ -181,7 +182,7 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
-  activeWorkspaceRoot: string;
+  selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
@@ -413,14 +414,9 @@ export default function DashboardView(props: DashboardViewProps) {
       : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
-    // Route-driven selection: navigate first and let the route effect own selectSession.
-    if (workspaceId === props.activeWorkspaceId) {
-      props.setView("session", sessionId);
-      return;
-    }
-    // For different workspace, activate workspace first
     void (async () => {
-      await Promise.resolve(props.activateWorkspace(workspaceId));
+      const ready = await Promise.resolve(props.ensureWorkspaceActivated(workspaceId));
+      if (!ready) return;
       props.setView("session", sessionId);
     })();
   };
@@ -428,12 +424,9 @@ export default function DashboardView(props: DashboardViewProps) {
   const createTaskInWorkspace = (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
-    if (id === props.activeWorkspaceId) {
-      props.createSessionAndOpen();
-      return;
-    }
     void (async () => {
-      await Promise.resolve(props.activateWorkspace(id));
+      const ready = await Promise.resolve(props.ensureWorkspaceActivated(id));
+      if (!ready) return;
       props.createSessionAndOpen();
     })();
   };
@@ -1105,14 +1098,14 @@ export default function DashboardView(props: DashboardViewProps) {
         <div class="flex min-h-0 flex-1">
           <WorkspaceSessionList
             workspaceSessionGroups={props.workspaceSessionGroups}
-            activeWorkspaceId={props.activeWorkspaceId}
+            selectedWorkspaceId={props.selectedWorkspaceId}
             developerMode={props.developerMode}
             selectedSessionId={props.selectedSessionId}
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
             importingWorkspaceConfig={props.importingWorkspaceConfig}
-            onActivateWorkspace={props.activateWorkspace}
+            onSelectWorkspace={props.selectWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}
             onOpenRenameWorkspace={props.openRenameWorkspace}
@@ -1170,7 +1163,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <h1 class="truncate text-[15px] font-semibold text-dls-text">{title()}</h1>
             <Show when={props.tab === "settings"}>
               <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                {workspaceLabel(props.activeWorkspaceDisplay)}
+                {workspaceLabel(props.selectedWorkspaceDisplay)}
               </span>
             </Show>
             <Show when={props.developerMode}>
@@ -1209,7 +1202,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   refreshJobs={props.refreshScheduledJobs}
                   deleteJob={props.deleteScheduledJob}
                   isWindows={props.isWindows}
-                  activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   createSessionAndOpen={props.createSessionAndOpen}
                   setPrompt={props.setPrompt}
                   newTaskDisabled={props.newTaskDisabled}
@@ -1225,7 +1218,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "skills"}>
               <WebUnavailableSurface unavailable={webDeployment()}>
                 <SkillsView
-                  workspaceName={props.activeWorkspaceDisplay.name}
+                  workspaceName={props.selectedWorkspaceDisplay.name}
                   busy={props.busy}
                   canInstallSkillCreator={props.canInstallSkillCreator}
                   canUseDesktopTools={props.canUseDesktopTools}
@@ -1260,7 +1253,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   initialSection={props.tab === "plugins" ? "plugins" : "mcp"}
                   setDashboardTab={props.setTab}
                   busy={props.busy}
-                  activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   isRemoteWorkspace={props.isRemoteWorkspace}
                   refreshMcpServers={props.refreshMcpServers}
                   mcpServers={props.mcpServers}
@@ -1309,8 +1302,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkReconnectBusy={props.openworkReconnectBusy}
                   reconnectOpenworkServer={props.reconnectOpenworkServer}
                   restartLocalServer={props.restartLocalServer}
-                  openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-                  activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  runtimeWorkspaceId={props.runtimeWorkspaceId}
+                  selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   developerMode={props.developerMode}
                 />
               </WebUnavailableSurface>
@@ -1325,7 +1318,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 openworkServerUrl={props.openworkServerUrl}
                 openworkServerSettings={props.openworkServerSettings}
                 openworkServerHostInfo={props.openworkServerHostInfo}
-                openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                runtimeWorkspaceId={props.runtimeWorkspaceId}
                 updateOpenworkServerSettings={props.updateOpenworkServerSettings}
                 resetOpenworkServerSettings={props.resetOpenworkServerSettings}
                 testOpenworkServerConnection={props.testOpenworkServerConnection}
@@ -1365,8 +1358,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerHostInfo={props.openworkServerHostInfo}
                   openworkServerCapabilities={props.openworkServerCapabilities}
                   openworkServerDiagnostics={props.openworkServerDiagnostics}
-                  openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-                  activeWorkspaceRoot={props.activeWorkspaceRoot}
+                  runtimeWorkspaceId={props.runtimeWorkspaceId}
+                  selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   activeWorkspaceType={props.activeWorkspaceType}
                   openworkAuditEntries={props.openworkAuditEntries}
                   openworkAuditStatus={props.openworkAuditStatus}

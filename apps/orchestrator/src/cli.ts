@@ -144,6 +144,7 @@ const SANDBOX_INTERNAL_OPENWORK_PORT = DEFAULT_OPENWORK_PORT;
 // mode we keep the *internal* port stable and only vary the published host
 // port to avoid collisions.
 const SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT = 3005;
+const OPENWORK_DEV_DATA_DIR = "openwork-dev-data";
 
 const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH =
   "/persist/.config/opencode";
@@ -2909,17 +2910,16 @@ function resolveOpencodeStateLayout(options: {
   workspace: string;
   devMode: boolean;
 }): OpencodeStateLayout {
-  const workspaceId = workspaceIdForLocal(options.workspace);
   if (!options.devMode) {
     return {
       devMode: false,
-      rootDir: join(options.dataDir, "opencode-config", workspaceId),
-      configDir: join(options.dataDir, "opencode-config", workspaceId),
+      rootDir: join(options.dataDir, "opencode-config"),
+      configDir: join(options.dataDir, "opencode-config"),
       env: {},
     };
   }
 
-  const rootDir = join(options.dataDir, "opencode-dev", workspaceId);
+  const rootDir = join(options.dataDir, OPENWORK_DEV_DATA_DIR);
   const homeDir = join(rootDir, "home");
   const xdgConfigHome = join(rootDir, "xdg", "config");
   const xdgDataHome = join(rootDir, "xdg", "data");
@@ -2937,6 +2937,7 @@ function resolveOpencodeStateLayout(options: {
       process.env.OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR?.trim() || undefined,
     env: {
       OPENWORK_DEV_MODE: "1",
+      OPENCODE_TEST_HOME: homeDir,
       HOME: homeDir,
       XDG_CONFIG_HOME: xdgConfigHome,
       XDG_DATA_HOME: xdgDataHome,
@@ -4215,16 +4216,18 @@ async function writeSandboxEntrypoint(options: {
     ? `export OPENCODE_ROUTER_HEALTH_PORT=${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}`
     : "";
   const openworkDevMode = (process.env.OPENWORK_DEV_MODE ?? "").trim() === "1";
+  const sandboxHomeDir = openworkDevMode ? "/persist/openwork-dev-data/home" : "/persist";
 
   const script = [
     "set -eu",
-    `export HOME=${shQuote("/persist")}`,
+    `export HOME=${shQuote(sandboxHomeDir)}`,
+    `export OPENCODE_TEST_HOME=${shQuote(sandboxHomeDir)}`,
     'export XDG_CONFIG_HOME="$HOME/.config"',
     'export XDG_CACHE_HOME="$HOME/.cache"',
     'export XDG_DATA_HOME="$HOME/.local/share"',
     'export XDG_STATE_HOME="$HOME/.local/state"',
     `export PATH=${shQuote(`${options.rootInContainer}/sidecars`)}:"\${PATH:-}"`,
-    'mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"',
+    'mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"',
     // Do not `cd` into the mounted workspace: bun-compiled sidecars read bunfig.toml
     // from cwd, and user workspaces may include preloads that break startup.
     `cd ${shQuote("/persist")}`,

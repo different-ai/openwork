@@ -33,7 +33,7 @@ export type ScheduledTasksViewProps = {
   refreshJobs: (options?: { force?: boolean }) => void;
   deleteJob: (name: string) => Promise<void> | void;
   isWindows: boolean;
-  activeWorkspaceRoot: string;
+  selectedWorkspaceRoot: string;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
   newTaskDisabled: boolean;
@@ -495,7 +495,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = createSignal(false);
   const [automationName, setAutomationName] = createSignal("Daily bug scan");
-  const [automationProject, setAutomationProject] = createSignal(props.activeWorkspaceRoot);
+  const [automationProject, setAutomationProject] = createSignal(props.selectedWorkspaceRoot);
   const [automationPrompt, setAutomationPrompt] = createSignal(
     "Scan recent commits and flag riskier diffs."
   );
@@ -555,7 +555,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
   const openCreateModal = () => {
     if (automationDisabled()) return;
-    const root = props.activeWorkspaceRoot.trim();
+    const root = props.selectedWorkspaceRoot.trim();
     if (!automationProject().trim() && root) {
       setAutomationProject(root);
     }
@@ -564,7 +564,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
   const openCreateModalFromTemplate = (template: (typeof automationTemplates)[number]) => {
     if (automationDisabled()) return;
-    const root = props.activeWorkspaceRoot.trim();
+    const root = props.selectedWorkspaceRoot.trim();
     if (root) {
       setAutomationProject(root);
     }
@@ -591,7 +591,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
   const runAutomationNow = (job: ScheduledJob) => {
     const run = job.run;
-    const workdir = (job.workdir ?? props.activeWorkspaceRoot ?? "").trim();
+    const workdir = (job.workdir ?? props.selectedWorkspaceRoot ?? "").trim();
     const schedule = humanizeCron(job.schedule);
 
     if (run?.prompt || job.prompt) {

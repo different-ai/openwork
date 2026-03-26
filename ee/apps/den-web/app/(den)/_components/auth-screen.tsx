@@ -111,7 +111,10 @@ export function AuthScreen() {
             onSubmit={async (event) => {
               const next = verificationRequired ? await submitVerificationCode(event) : await submitAuth(event);
               if (next === "dashboard") {
-                router.replace("/dashboard");
+                const target = await resolveUserLandingRoute();
+                if (target) {
+                  router.replace(target);
+                }
               } else if (next === "checkout") {
                 router.replace("/checkout");
               }

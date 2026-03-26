@@ -88,7 +88,7 @@ export default {
   "dashboard.remote_workspace_title": "Workspace remoto",
   "dashboard.remote_workspace_hint": "Acompanhe um servidor OpenWork e reconecte a qualquer momento.",
   "dashboard.remote_base_url_label": "URL do servidor OpenWork",
-  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:8787",
+  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:<port>",
   "dashboard.remote_base_url_required": "Adicione uma URL de servidor para continuar.",
   "dashboard.openwork_host_label": "URL do servidor OpenWork",
   "dashboard.openwork_host_placeholder": "https://seu-servidor.openwork.app",

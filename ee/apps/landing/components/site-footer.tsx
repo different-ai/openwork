@@ -19,9 +19,9 @@ export function SiteFooter() {
         </div>
 
         <div className="flex flex-wrap items-center gap-4 md:gap-8">
-          <a href="/docs" target="_blank" rel="noreferrer" className="transition-colors hover:text-gray-800">
+          <Link href="/docs" target="_blank" className="transition-colors hover:text-gray-800">
             Docs
-          </a>
+          </Link>
           <Link href="/download" className="transition-colors hover:text-gray-800">
             Desktop
           </Link>

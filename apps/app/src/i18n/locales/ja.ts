@@ -87,7 +87,7 @@ export default {
   "dashboard.remote_workspace_title": "リモートワーカー",
   "dashboard.remote_workspace_hint": "OpenWorkサーバーを登録して、いつでも再接続できます。",
   "dashboard.remote_base_url_label": "OpenWorkサーバーURL",
-  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:8787",
+  "dashboard.remote_base_url_placeholder": "http://127.0.0.1:<port>",
   "dashboard.remote_base_url_required": "続行するにはサーバーURLを追加してください。",
   "dashboard.openwork_host_label": "OpenWorkサーバーURL",
   "dashboard.openwork_host_placeholder": "https://your-server.openwork.app",

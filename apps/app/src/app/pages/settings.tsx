@@ -83,7 +83,7 @@ import type {
 import {
   appBuildInfo,
   engineRestart,
-  nukeOpencodeDevConfigAndExit,
+  nukeOpenworkAndOpencodeConfigAndExit,
   opencodeRouterRestart,
   opencodeRouterStop,
   openworkServerRestart,
@@ -117,8 +117,8 @@ export type SettingsViewProps = {
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkServerWorkspaceId: string | null;
-  activeWorkspaceRoot: string;
+  runtimeWorkspaceId: string | null;
+  selectedWorkspaceRoot: string;
   activeWorkspaceType: "local" | "remote";
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
@@ -308,7 +308,7 @@ export function OpenCodeRouterSettings(_props: {
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
   openworkServerSettings: OpenworkServerSettings;
-  openworkServerWorkspaceId: string | null;
+  runtimeWorkspaceId: string | null;
   openworkServerHostInfo: OpenworkServerInfo | null;
   developerMode: boolean;
 }) {
@@ -335,7 +335,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const canPickAuthorizedFolder = createMemo(
     () => isTauriRuntime() && props.authorizedFoldersEditable && props.activeWorkspaceType === "local",
   );
-  const workspaceRootFolder = createMemo(() => props.activeWorkspaceRoot.trim());
+  const workspaceRootFolder = createMemo(() => props.selectedWorkspaceRoot.trim());
   const visibleAuthorizedFolders = createMemo(() => {
     const root = workspaceRootFolder();
     return root ? [root, ...props.authorizedFolders] : props.authorizedFolders;
@@ -473,6 +473,11 @@ export default function SettingsView(props: SettingsViewProps) {
     if (state === "checking" || state === "downloading") return true;
     if (state === "ready" && props.anyActiveRuns) return true;
     return props.busy;
+  });
+
+  const updateRestartBlockedMessage = createMemo(() => {
+    if (updateState() !== "ready" || !props.anyActiveRuns) return null;
+    return "OpenWork needs to restart to finish this update. To avoid interrupting your current work, install is paused until your active runs finish or you stop them.";
   });
 
   const handleUpdateToolbarAction = () => {
@@ -888,14 +893,14 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const openworkAuditStatusLabel = createMemo(() => {
-    if (!props.openworkServerWorkspaceId) return "Unavailable";
+    if (!props.runtimeWorkspaceId) return "Unavailable";
     if (props.openworkAuditStatus === "loading") return "Loading";
     if (props.openworkAuditStatus === "error") return "Error";
     return "Ready";
   });
 
   const openworkAuditStatusStyle = createMemo(() => {
-    if (!props.openworkServerWorkspaceId)
+    if (!props.runtimeWorkspaceId)
       return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     if (props.openworkAuditStatus === "loading")
       return "bg-amber-7/10 text-amber-11 border-amber-7/20";
@@ -1106,8 +1111,8 @@ export default function SettingsView(props: SettingsViewProps) {
   >(null);
   const [sandboxProbeResult, setSandboxProbeResult] =
     createSignal<SandboxDebugProbeResult | null>(null);
-  const [nukeDevConfigBusy, setNukeDevConfigBusy] = createSignal(false);
-  const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<
+  const [nukeConfigBusy, setNukeConfigBusy] = createSignal(false);
+  const [nukeConfigStatus, setNukeConfigStatus] = createSignal<
     string | null
   >(null);
   const [debugDeepLinkOpen, setDebugDeepLinkOpen] = createSignal(false);
@@ -1158,7 +1163,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const workspaceConfigPath = createMemo(() => {
-    const root = props.activeWorkspaceRoot.trim();
+    const root = props.selectedWorkspaceRoot.trim();
     if (!root) return "";
     const normalized = root.replace(/[\\/]+$/, "");
     const separator = props.isWindows ? "\\" : "/";
@@ -1171,7 +1176,7 @@ export default function SettingsView(props: SettingsViewProps) {
       version: appVersionLabel(),
       commit: appCommitLabel(),
       startupPreference: props.startupPreference ?? "unset",
-      workspaceRoot: props.activeWorkspaceRoot.trim() || null,
+      workspaceRoot: props.selectedWorkspaceRoot.trim() || null,
       workspaceConfigPath: workspaceConfigPath() || null,
     },
     versions: {
@@ -1330,30 +1335,48 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const handleNukeOpencodeDevConfig = async () => {
-    if (!isTauriRuntime() || !opencodeDevModeEnabled() || nukeDevConfigBusy())
-      return;
+  const handleNukeOpenworkAndOpencodeConfig = async () => {
+    if (!isTauriRuntime() || nukeConfigBusy()) return;
+    const devMode = opencodeDevModeEnabled();
     const confirmed =
       typeof window === "undefined"
         ? true
         : window.confirm(
-            "Delete the isolated OpenCode dev config and auth/data state, then quit OpenWork? This only affects dev-mode state.",
+            devMode
+              ? "This is irreversible. It WILL delete all OpenWork data for this dev build and all isolated OpenCode dev config, auth, cache, data, and state, then quit OpenWork. Continue?"
+              : "This is irreversible. It WILL delete all OpenWork data for this production build and all standard OpenCode config, auth, cache, data, and state, then quit OpenWork. Continue?",
           );
     if (!confirmed) return;
-    setNukeDevConfigBusy(true);
-    setNukeDevConfigStatus(null);
+    setNukeConfigBusy(true);
+    setNukeConfigStatus(null);
     try {
-      await nukeOpencodeDevConfigAndExit();
-      setNukeDevConfigStatus(
-        "Removed OpenCode dev state. OpenWork is closing...",
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.clear();
+        } catch {
+          // ignore
+        }
+      }
+
+      await new Promise<void>((resolve) => {
+        if (typeof window === "undefined") {
+          resolve();
+          return;
+        }
+        window.requestAnimationFrame(() => resolve());
+      });
+
+      await nukeOpenworkAndOpencodeConfigAndExit();
+      setNukeConfigStatus(
+        "Removed OpenWork and OpenCode state. OpenWork is closing...",
       );
     } catch (error) {
-      setNukeDevConfigStatus(
+      setNukeConfigStatus(
         error instanceof Error
           ? error.message
-          : "Failed to nuke OpenCode dev config.",
+          : "Failed to remove OpenWork and OpenCode state.",
       );
-      setNukeDevConfigBusy(false);
+      setNukeConfigBusy(false);
     }
   };
 
@@ -1434,7 +1457,7 @@ export default function SettingsView(props: SettingsViewProps) {
       case "debug":
         return "Review runtime diagnostics, logs, and low-level debugging utilities.";
       default:
-        return "Connect providers, choose the default model, authorize folders, and control the active OpenWork workspace.";
+        return "Connect providers, choose the default model, authorize folders, and control the selected OpenWork workspace plus its runtime connection.";
     }
   };
 
@@ -1503,32 +1526,35 @@ export default function SettingsView(props: SettingsViewProps) {
             </p>
           </div>
           <Show when={showUpdateToolbar() && activeTab() === "general"}>
-            <div class="mt-4 flex flex-wrap items-center gap-2 md:mt-0 md:justify-end">
-              <div
-                class={`rounded-full border px-3 py-1.5 text-xs shadow-sm flex items-center gap-2 ${updateToolbarTone()}`}
-                title={updateToolbarTitle()}
-              >
-                <Show when={updateToolbarSpinning()}>
-                  <RefreshCcw size={12} class="animate-spin" />
-                </Show>
-                <span class="tabular-nums whitespace-nowrap">
-                  {updateToolbarLabel()}
-                </span>
-              </div>
-              <Show when={updateToolbarActionLabel()}>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
-                  onClick={handleUpdateToolbarAction}
-                  disabled={updateToolbarDisabled()}
-                  title={
-                    updateState() === "ready" && props.anyActiveRuns
-                      ? "Stop active runs to update"
-                      : ""
-                  }
+            <div class="mt-4 space-y-2 md:mt-0 md:max-w-sm md:text-right">
+              <div class="flex flex-wrap items-center gap-2 md:justify-end">
+                <div
+                  class={`rounded-full border px-3 py-1.5 text-xs shadow-sm flex items-center gap-2 ${updateToolbarTone()}`}
+                  title={updateToolbarTitle()}
                 >
-                  {updateToolbarActionLabel()}
-                </Button>
+                  <Show when={updateToolbarSpinning()}>
+                    <RefreshCcw size={12} class="animate-spin" />
+                  </Show>
+                  <span class="tabular-nums whitespace-nowrap">
+                    {updateToolbarLabel()}
+                  </span>
+                </div>
+                <Show when={updateToolbarActionLabel()}>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
+                    onClick={handleUpdateToolbarAction}
+                    disabled={updateToolbarDisabled()}
+                    title={updateRestartBlockedMessage() ?? ""}
+                  >
+                    {updateToolbarActionLabel()}
+                  </Button>
+                </Show>
+              </div>
+              <Show when={updateRestartBlockedMessage()}>
+                <div class="text-xs leading-relaxed text-amber-11/90 md:max-w-sm">
+                  {updateRestartBlockedMessage()}
+                </div>
               </Show>
             </div>
           </Show>
@@ -2081,7 +2107,7 @@ export default function SettingsView(props: SettingsViewProps) {
               refreshJobs={props.refreshScheduledJobs}
               deleteJob={props.deleteScheduledJob}
               isWindows={props.isWindows}
-              activeWorkspaceRoot={props.activeWorkspaceRoot}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               createSessionAndOpen={props.createSessionAndOpen}
               setPrompt={props.setPrompt}
               newTaskDisabled={props.newTaskDisabled}
@@ -2098,7 +2124,7 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "skills"}>
           <WebUnavailableSurface unavailable={webDeployment()}>
             <SkillsView
-              workspaceName={props.activeWorkspaceRoot.trim() || "Workspace"}
+              workspaceName={props.selectedWorkspaceRoot.trim() || "Workspace"}
               busy={props.busy}
               showHeader={false}
               canInstallSkillCreator={props.canInstallSkillCreator}
@@ -2134,7 +2160,7 @@ export default function SettingsView(props: SettingsViewProps) {
               initialSection="all"
               showHeader={false}
               busy={props.busy}
-              activeWorkspaceRoot={props.activeWorkspaceRoot}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               isRemoteWorkspace={props.activeWorkspaceType === "remote"}
               refreshMcpServers={props.refreshMcpServers}
               mcpServers={props.mcpServers}
@@ -2184,8 +2210,8 @@ export default function SettingsView(props: SettingsViewProps) {
               openworkReconnectBusy={props.openworkReconnectBusy}
               reconnectOpenworkServer={props.reconnectOpenworkServer}
               restartLocalServer={props.restartLocalServer}
-              openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-              activeWorkspaceRoot={props.activeWorkspaceRoot}
+              runtimeWorkspaceId={props.runtimeWorkspaceId}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               developerMode={props.developerMode}
             />
           </WebUnavailableSurface>
@@ -2322,95 +2348,73 @@ export default function SettingsView(props: SettingsViewProps) {
                     : "Enable this to access the Developer panel."}
                 </div>
               </div>
-              <Show when={isTauriRuntime() && opencodeDevModeEnabled()}>
-                <div class="pt-1 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    class={compactDangerActionClass}
-                    onClick={() => void handleNukeOpencodeDevConfig()}
-                    disabled={props.busy || nukeDevConfigBusy()}
-                  >
-                    <CircleAlert size={14} />
-                    {nukeDevConfigBusy()
-                      ? "Nuking OpenCode Dev Config..."
-                      : "Nuke Opencode Dev Config"}
-                  </button>
-                  <div class="text-xs text-gray-10">
-                    Deletes isolated OpenCode dev state and then quits OpenWork.
-                  </div>
-                </div>
-                <Show when={nukeDevConfigStatus()}>
-                  {(value) => <div class="text-xs text-red-11">{value()}</div>}
-                </Show>
-
-                <Show when={props.developerMode}>
-                  <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
-                    <div class="flex items-start justify-between gap-3">
-                      <div>
-                          <div class="text-sm font-medium text-gray-12">
-                          Open Deeplink
-                          </div>
-                          <div class="text-xs text-gray-9">
-                          Paste any supported <span class="font-mono">openwork://</span> deeplink and route it through the dev app.
-                          </div>
-                        </div>
-                      <button
-                        type="button"
-                        class={compactOutlineActionClass}
-                        onClick={() => {
-                          setDebugDeepLinkOpen((value) => !value);
-                          setDebugDeepLinkStatus(null);
-                        }}
-                        disabled={props.busy || debugDeepLinkBusy()}
-                      >
-                        {debugDeepLinkOpen() ? "Hide" : "Open Deeplink"}
-                      </button>
+              <Show when={isTauriRuntime() && opencodeDevModeEnabled() && props.developerMode}>
+                <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">
+                        Open Deeplink
+                      </div>
+                      <div class="text-xs text-gray-9">
+                        Paste any supported <span class="font-mono">openwork://</span> deeplink and route it through the dev app.
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      class={compactOutlineActionClass}
+                      onClick={() => {
+                        setDebugDeepLinkOpen((value) => !value);
+                        setDebugDeepLinkStatus(null);
+                      }}
+                      disabled={props.busy || debugDeepLinkBusy()}
+                    >
+                      {debugDeepLinkOpen() ? "Hide" : "Open Deeplink"}
+                    </button>
+                  </div>
 
-                    <Show when={debugDeepLinkOpen()}>
-                      <div class="space-y-3">
-                        <textarea
-                          value={debugDeepLinkInput()}
-                          onInput={(event) =>
-                            setDebugDeepLinkInput(event.currentTarget.value)
+                  <Show when={debugDeepLinkOpen()}>
+                    <div class="space-y-3">
+                      <textarea
+                        value={debugDeepLinkInput()}
+                        onInput={(event) =>
+                          setDebugDeepLinkInput(event.currentTarget.value)
+                        }
+                        rows={3}
+                        placeholder="openwork://..."
+                        class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
+                      />
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          class="text-xs h-8 py-0 px-3"
+                          onClick={() => void submitDebugDeepLink()}
+                          disabled={
+                            props.busy ||
+                            debugDeepLinkBusy() ||
+                            !debugDeepLinkInput().trim()
                           }
-                          rows={3}
-                          placeholder="openwork://..."
-                          class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
-                        />
-                        <div class="flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="secondary"
-                            class="text-xs h-8 py-0 px-3"
-                            onClick={() => void submitDebugDeepLink()}
-                            disabled={
-                              props.busy ||
-                              debugDeepLinkBusy() ||
-                              !debugDeepLinkInput().trim()
-                            }
-                          >
-                            {debugDeepLinkBusy() ? "Opening..." : "Open deeplink"}
-                          </Button>
-                          <div class="text-[11px] text-gray-8">
-                            Accepts <span class="font-mono">openwork://</span>,{" "}
-                            <span class="font-mono">openwork-dev://</span>, or a
-                            raw supported{" "}
-                            <span class="font-mono">
-                              https://share.openwork.software/b/...
-                            </span>{" "}
-                            URL.
-                          </div>
+                        >
+                          {debugDeepLinkBusy() ? "Opening..." : "Open deeplink"}
+                        </Button>
+                        <div class="text-[11px] text-gray-8">
+                          Accepts <span class="font-mono">openwork://</span>,{" "}
+                          <span class="font-mono">openwork-dev://</span>, or a
+                          raw supported{" "}
+                          <span class="font-mono">
+                            https://share.openworklabs.com/b/...
+                          </span>{" "}
+                          URL.
                         </div>
                       </div>
-                    </Show>
+                    </div>
+                  </Show>
 
-                    <Show when={debugDeepLinkStatus()}>
-                      {(value) => (
-                        <div class="text-xs text-gray-10">{value()}</div>
-                      )}
-                    </Show>
-                  </div>
-                </Show>
+                  <Show when={debugDeepLinkStatus()}>
+                    {(value) => (
+                      <div class="text-xs text-gray-10">{value()}</div>
+                    )}
+                  </Show>
+                </div>
               </Show>
             </div>
 
@@ -2567,111 +2571,115 @@ export default function SettingsView(props: SettingsViewProps) {
                           </button>
                         </div>
 
-                        <div class="flex items-center justify-between gap-3 bg-gray-1 p-3 rounded-xl border border-gray-6">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">
-                              <Switch>
-                                <Match when={updateState() === "checking"}>
-                                  Checking...
-                                </Match>
-                                <Match when={updateState() === "available"}>
-                                  Update available: v{updateVersion()}
-                                </Match>
-                                <Match when={updateState() === "downloading"}>
-                                  Downloading...
-                                </Match>
-                                <Match when={updateState() === "ready"}>
-                                  Ready to install: v{updateVersion()}
-                                </Match>
-                                <Match when={updateState() === "error"}>
-                                  Update check failed
-                                </Match>
-                                <Match when={true}>Up to date</Match>
-                              </Switch>
+                        <div class="bg-gray-1 p-3 rounded-xl border border-gray-6 space-y-3">
+                          <div class="flex items-center justify-between gap-3">
+                            <div class="space-y-0.5">
+                              <div class="text-sm text-gray-12">
+                                <Switch>
+                                  <Match when={updateState() === "checking"}>
+                                    Checking...
+                                  </Match>
+                                  <Match when={updateState() === "available"}>
+                                    Update available: v{updateVersion()}
+                                  </Match>
+                                  <Match when={updateState() === "downloading"}>
+                                    Downloading...
+                                  </Match>
+                                  <Match when={updateState() === "ready"}>
+                                    Ready to install: v{updateVersion()}
+                                  </Match>
+                                  <Match when={updateState() === "error"}>
+                                    Update check failed
+                                  </Match>
+                                  <Match when={true}>Up to date</Match>
+                                </Switch>
+                              </div>
+                              <Show
+                                when={
+                                  updateState() === "idle" &&
+                                  updateLastCheckedAt()
+                                }
+                              >
+                                <div class="text-xs text-gray-7">
+                                  Last checked{" "}
+                                  {formatRelativeTime(
+                                    updateLastCheckedAt() as number,
+                                  )}
+                                </div>
+                              </Show>
+                              <Show
+                                when={
+                                  updateState() === "available" && updateDate()
+                                }
+                              >
+                                <div class="text-xs text-gray-7">
+                                  Published {updateDate()}
+                                </div>
+                              </Show>
+                              <Show when={updateState() === "downloading"}>
+                                <div class="text-xs text-gray-7">
+                                  {formatBytes(
+                                    (updateDownloadedBytes() as number) ?? 0,
+                                  )}
+                                  <Show when={updateTotalBytes() != null}>
+                                    {` / ${formatBytes(updateTotalBytes() as number)}`}
+                                  </Show>
+                                </div>
+                              </Show>
+                              <Show when={updateState() === "error"}>
+                                <div class="text-xs text-red-11">
+                                  {updateErrorMessage()}
+                                </div>
+                              </Show>
                             </div>
-                            <Show
-                              when={
-                                updateState() === "idle" &&
-                                updateLastCheckedAt()
-                              }
-                            >
-                              <div class="text-xs text-gray-7">
-                                Last checked{" "}
-                                {formatRelativeTime(
-                                  updateLastCheckedAt() as number,
-                                )}
-                              </div>
-                            </Show>
-                            <Show
-                              when={
-                                updateState() === "available" && updateDate()
-                              }
-                            >
-                              <div class="text-xs text-gray-7">
-                                Published {updateDate()}
-                              </div>
-                            </Show>
-                            <Show when={updateState() === "downloading"}>
-                              <div class="text-xs text-gray-7">
-                                {formatBytes(
-                                  (updateDownloadedBytes() as number) ?? 0,
-                                )}
-                                <Show when={updateTotalBytes() != null}>
-                                  {` / ${formatBytes(updateTotalBytes() as number)}`}
-                                </Show>
-                              </div>
-                            </Show>
-                            <Show when={updateState() === "error"}>
-                              <div class="text-xs text-red-11">
-                                {updateErrorMessage()}
-                              </div>
-                            </Show>
+
+                            <div class="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                class="text-xs h-9 py-0 px-4 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
+                                onClick={props.checkForUpdates}
+                                disabled={
+                                  props.busy ||
+                                  updateState() === "checking" ||
+                                  updateState() === "downloading"
+                                }
+                              >
+                                Check
+                              </Button>
+
+                              <Show when={updateState() === "available"}>
+                                <Button
+                                  variant="secondary"
+                                  class="text-xs h-9 py-0 px-4 rounded-full"
+                                  onClick={props.downloadUpdate}
+                                  disabled={
+                                    props.busy || updateState() === "downloading"
+                                  }
+                                >
+                                  Download
+                                </Button>
+                              </Show>
+
+                              <Show when={updateState() === "ready"}>
+                                <Button
+                                  variant="secondary"
+                                  class="text-xs h-9 py-0 px-4 rounded-full"
+                                  onClick={props.installUpdateAndRestart}
+                                  disabled={props.busy || props.anyActiveRuns}
+                                  title={updateRestartBlockedMessage() ?? ""}
+                                >
+                                  Install & Restart
+                                </Button>
+                              </Show>
+                            </div>
                           </div>
 
-                          <div class="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              class="text-xs h-9 py-0 px-4 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
-                              onClick={props.checkForUpdates}
-                              disabled={
-                                props.busy ||
-                                updateState() === "checking" ||
-                                updateState() === "downloading"
-                              }
-                            >
-                              Check
-                            </Button>
-
-                            <Show when={updateState() === "available"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-9 py-0 px-4 rounded-full"
-                                onClick={props.downloadUpdate}
-                                disabled={
-                                  props.busy || updateState() === "downloading"
-                                }
-                              >
-                                Download
-                              </Button>
-                            </Show>
-
-                            <Show when={updateState() === "ready"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-9 py-0 px-4 rounded-full"
-                                onClick={props.installUpdateAndRestart}
-                                disabled={props.busy || props.anyActiveRuns}
-                                title={
-                                  props.anyActiveRuns
-                                    ? "Stop active runs to update"
-                                    : ""
-                                }
-                              >
-                                Install & Restart
-                              </Button>
-                </Show>
-              </div>
-            </div>
+                          <Show when={updateRestartBlockedMessage()}>
+                            <div class="rounded-xl border border-amber-7/25 bg-amber-3/10 px-3 py-2 text-xs leading-relaxed text-amber-11">
+                              {updateRestartBlockedMessage()}
+                            </div>
+                          </Show>
+                        </div>
 
                         <Show
                           when={updateState() === "available" && updateNotes()}
@@ -3491,7 +3499,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           )}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          Active workspace:{" "}
+                          Runtime workspace:{" "}
                           {props.orchestratorStatus?.activeId ?? "—"}
                         </div>
                       </div>
@@ -3759,7 +3767,10 @@ export default function SettingsView(props: SettingsViewProps) {
                           </div>
                           <div>Workspaces: {diag().workspaceCount}</div>
                           <div>
-                            Active workspace: {diag().activeWorkspaceId ?? "—"}
+                            Selected workspace: {diag().selectedWorkspaceId ?? "—"}
+                          </div>
+                          <div>
+                            Runtime workspace: {diag().activeWorkspaceId ?? "—"}
                           </div>
                           <div>
                             Config path: {diag().server.configPath ?? "default"}
@@ -3779,8 +3790,8 @@ export default function SettingsView(props: SettingsViewProps) {
                         OpenWork server capabilities
                       </div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
-                        {props.openworkServerWorkspaceId
-                          ? `Worker ${props.openworkServerWorkspaceId}`
+                        {props.runtimeWorkspaceId
+                          ? `Worker ${props.runtimeWorkspaceId}`
                           : "Worker unresolved"}
                       </div>
                     </div>
@@ -3925,6 +3936,61 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                     </Show>
                   </div>
+
+                  <Show when={isTauriRuntime()}>
+                    <div class="rounded-2xl border border-red-7/30 bg-red-3/10 p-5 space-y-4">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <div class="text-sm font-medium text-gray-12">
+                            Reset OpenWork + OpenCode state
+                          </div>
+                          <div class="text-xs text-gray-10">
+                            This is irreversible and deletes all local OpenWork data for the current app mode. {opencodeDevModeEnabled()
+                              ? "With dev mode active, it only clears the isolated OpenCode dev state inside openwork-dev-data."
+                              : "With production mode active, it only clears the standard OpenCode config, auth, cache, data, and state paths."}
+                          </div>
+                        </div>
+                        <div
+                          class={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${opencodeDevModeEnabled()
+                            ? "border-blue-7/35 bg-blue-3/25 text-blue-11"
+                            : "border-gray-6 bg-gray-2 text-gray-10"}`}
+                        >
+                          {opencodeDevModeEnabled()
+                            ? "Dev mode"
+                            : "Production mode"}
+                        </div>
+                      </div>
+
+                      <div class="text-[11px] text-gray-8">
+                        OpenWork quits immediately after cleanup so the next launch starts from a blank local state for this mode.
+                      </div>
+
+                      <div class="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          class={compactDangerActionClass}
+                          onClick={() =>
+                            void handleNukeOpenworkAndOpencodeConfig()
+                          }
+                          disabled={props.busy || nukeConfigBusy()}
+                        >
+                          <CircleAlert size={14} />
+                          {nukeConfigBusy()
+                            ? "Removing local state..."
+                            : "Delete local config and quit"}
+                        </button>
+                        <div class="text-xs text-gray-10">
+                          Use this only when you want to fully reset the desktop app and its OpenCode runtime state.
+                        </div>
+                      </div>
+
+                      <Show when={nukeConfigStatus()}>
+                        {(value) => (
+                          <div class="text-xs text-red-11">{value()}</div>
+                        )}
+                      </Show>
+                    </div>
+                  </Show>
                 </div>
               </div>
             </section>

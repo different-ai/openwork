@@ -7,7 +7,7 @@ export type PublishBundleResult = {
 const ENV_OPENWORK_PUBLISHER_BASE_URL = String(import.meta.env.VITE_OPENWORK_PUBLISHER_BASE_URL ?? "").trim();
 
 export const DEFAULT_OPENWORK_PUBLISHER_BASE_URL =
-  ENV_OPENWORK_PUBLISHER_BASE_URL || "https://share.openwork.software";
+  ENV_OPENWORK_PUBLISHER_BASE_URL || "https://share.openworklabs.com";
 
 function normalizeBaseUrl(input: string): string {
   const trimmed = String(input ?? "").trim();

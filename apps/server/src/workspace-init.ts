@@ -143,6 +143,13 @@ function buildDefaultWorkspaceBlueprint(_preset: string): Record<string, unknown
       body: "Pick a starting point or just type below.",
       starters: [
         {
+          id: "csv-help",
+          kind: "prompt",
+          title: "Work on a CSV",
+          description: "Clean up or generate spreadsheet data.",
+          prompt: "Help me create or edit CSV files on this computer.",
+        },
+        {
           id: "starter-connect-openai",
           kind: "action",
           title: "Connect ChatGPT",
@@ -150,11 +157,11 @@ function buildDefaultWorkspaceBlueprint(_preset: string): Record<string, unknown
           action: "connect-openai",
         },
         {
-          id: "starter-browser",
+          id: "browser-automation",
           kind: "session",
-          title: "Automate your browser",
-          description: "Set up browser actions and run reliable web tasks from OpenWork.",
-          prompt: "Set up browser actions and show me how to automate repetitive work in OpenWork.",
+          title: "Automate Chrome",
+          description: "Start a browser automation conversation right away.",
+          prompt: "Help me connect to Chrome and automate a repetitive task.",
         },
       ],
     },
@@ -167,7 +174,21 @@ function buildDefaultWorkspaceBlueprint(_preset: string): Record<string, unknown
           {
             role: "assistant",
             text:
-              "Hi welcome to OpenWork!\n\nPeople use us to write .csv files on their computer, connect to their chrome and automate repetitive tasks, sync contacts to notion.\n\nBut the only limit is your imagniation.\n\nWhat would you want to do?",
+              "Hi welcome to OpenWork!\n\nPeople use us to write .csv files on their computer, connect to Chrome and automate repetitive tasks, and sync contacts to Notion.\n\nBut the only limit is your imagination.\n\nWhat would you want to do?",
+          },
+        ],
+      },
+      {
+        id: "csv-playbook",
+        title: "CSV workflow ideas",
+        messages: [
+          {
+            role: "assistant",
+            text: "I can help you generate, clean, merge, and summarize CSV files. What kind of CSV work do you want to automate?",
+          },
+          {
+            role: "user",
+            text: "I want to combine exports from multiple tools into one clean CSV.",
           },
         ],
       },

@@ -24,7 +24,7 @@ const DEFAULT_WELCOME_BLUEPRINT_MESSAGES: WorkspaceBlueprintSessionMessage[] = [
   {
     role: "assistant",
     text:
-      "Hi welcome to OpenWork!\n\nPeople use us to write .csv files on their computer, connect to their chrome and automate repetitive tasks, sync contacts to notion.\n\nBut the only limit is your imagniation.\n\nWhat would you want to do?",
+      "Hi welcome to OpenWork!\n\nPeople use us to write .csv files on their computer, connect to Chrome and automate repetitive tasks, and sync contacts to Notion.\n\nBut the only limit is your imagination.\n\nWhat would you want to do?",
   },
 ];
 
@@ -35,6 +35,21 @@ export function defaultBlueprintSessionsForPreset(_preset: string): WorkspaceBlu
       title: "Welcome to OpenWork",
       messages: DEFAULT_WELCOME_BLUEPRINT_MESSAGES,
       openOnFirstLoad: true,
+    },
+    {
+      id: "csv-playbook",
+      title: "CSV workflow ideas",
+      messages: [
+        {
+          role: "assistant",
+          text: "I can help you generate, clean, merge, and summarize CSV files. What kind of CSV work do you want to automate?",
+        },
+        {
+          role: "user",
+          text: "I want to combine exports from multiple tools into one clean CSV.",
+        },
+      ],
+      openOnFirstLoad: false,
     },
   ];
 }
@@ -141,6 +156,13 @@ export function defaultBlueprintStartersForPreset(preset: string): WorkspaceBlue
     default:
       return [
         {
+          id: "csv-help",
+          kind: "prompt",
+          title: "Work on a CSV",
+          description: "Clean up or generate spreadsheet data.",
+          prompt: "Help me create or edit CSV files on this computer.",
+        },
+        {
           id: "starter-connect-openai",
           kind: "action",
           title: "Connect ChatGPT",
@@ -148,11 +170,11 @@ export function defaultBlueprintStartersForPreset(preset: string): WorkspaceBlue
           action: "connect-openai",
         },
         {
-          id: "starter-browser",
+          id: "browser-automation",
           kind: "session",
-          title: "Automate your browser",
-          description: "Set up browser actions and run reliable web tasks from OpenWork.",
-          prompt: BROWSER_AUTOMATION_QUICKSTART_PROMPT,
+          title: "Automate Chrome",
+          description: "Start a browser automation conversation right away.",
+          prompt: "Help me connect to Chrome and automate a repetitive task.",
         },
       ];
   }

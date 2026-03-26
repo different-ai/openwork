@@ -40,7 +40,7 @@ import { currentLocale, t, type Language } from "../../i18n";
 
 export type McpViewProps = {
   busy: boolean;
-  activeWorkspaceRoot: string;
+  selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
   showHeader?: boolean;
@@ -166,7 +166,7 @@ export default function McpView(props: McpViewProps) {
 
   let configRequestId = 0;
   createEffect(() => {
-    const root = props.activeWorkspaceRoot.trim();
+    const root = props.selectedWorkspaceRoot.trim();
     const nextId = (configRequestId += 1);
     const readConfig = props.readConfigFile;
 
@@ -207,13 +207,13 @@ export default function McpView(props: McpViewProps) {
 
   const canRevealConfig = () => {
     if (!isTauriRuntime() || revealBusy()) return false;
-    if (configScope() === "project" && !props.activeWorkspaceRoot.trim()) return false;
+    if (configScope() === "project" && !props.selectedWorkspaceRoot.trim()) return false;
     return Boolean(activeConfig()?.exists);
   };
 
   const revealConfig = async () => {
     if (!isTauriRuntime() || revealBusy()) return;
-    const root = props.activeWorkspaceRoot.trim();
+    const root = props.selectedWorkspaceRoot.trim();
 
     if (configScope() === "project" && !root) {
       setConfigError(tr("mcp.pick_workspace_error"));

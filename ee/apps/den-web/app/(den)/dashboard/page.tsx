@@ -1,5 +1,5 @@
-import { DashboardScreen } from "../_components/dashboard-screen";
+import { DashboardRedirectScreen } from "../_components/dashboard-redirect-screen";
 
 export default function DashboardPage() {
-  return <DashboardScreen />;
+  return <DashboardRedirectScreen />;
 }

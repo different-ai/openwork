@@ -32,10 +32,10 @@ export function SiteNav(props: Props) {
   const downloadExternal = /^https?:\/\//.test(downloadHref);
   const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
   const navItems = [
-    { href: "/docs", label: "Docs", key: "docs", external: true },
-    { href: "/download", label: "Desktop", key: "download", external: false },
-    { href: "/den", label: "Cloud", key: "den", external: false },
-    { href: "/enterprise", label: "Enterprise", key: "enterprise", external: false }
+    { href: "/docs", label: "Docs", key: "docs" },
+    { href: "/download", label: "Desktop", key: "download" },
+    { href: "/den", label: "Cloud", key: "den" },
+    { href: "/enterprise", label: "Enterprise", key: "enterprise" }
   ] as const;
 
   const navLink = (isActive: boolean) =>
@@ -59,27 +59,16 @@ export function SiteNav(props: Props) {
           </Link>
 
           <nav className="hidden items-center justify-center gap-8 text-[15px] font-medium md:flex">
-            {navItems.map(item =>
-              item.external ? (
-                <a
-                  key={item.key}
-                  href={item.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={navLink(props.active === item.key)}
-                >
-                  {item.label}
-                </a>
-              ) : (
-                <Link
-                  key={item.key}
-                  href={item.href}
-                  className={navLink(props.active === item.key)}
-                >
-                  {item.label}
-                </Link>
-              )
-            )}
+            {navItems.map(item => (
+              <Link
+                key={item.key}
+                href={item.href}
+                {...(item.key === "docs" ? { target: "_blank" } : {})}
+                className={navLink(props.active === item.key)}
+              >
+                {item.label}
+              </Link>
+            ))}
           </nav>
 
           <div className="flex items-center gap-4">
@@ -125,33 +114,19 @@ export function SiteNav(props: Props) {
         {mobileOpen ? (
           <div className="landing-shell mb-8 rounded-xl p-4 md:hidden">
             <div className="flex flex-col gap-1 text-[15px] font-medium text-gray-700">
-              {navItems.map(item =>
-                item.external ? (
-                  <a
-                    key={item.key}
-                    href={item.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`rounded-2xl px-4 py-3 ${navLink(
-                      props.active === item.key
-                    )}`}
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    {item.label}
-                  </a>
-                ) : (
-                  <Link
-                    key={item.key}
-                    href={item.href}
-                    className={`rounded-2xl px-4 py-3 ${navLink(
-                      props.active === item.key
-                    )}`}
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    {item.label}
-                  </Link>
-                )
-              )}
+              {navItems.map(item => (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  {...(item.key === "docs" ? { target: "_blank" } : {})}
+                  className={`rounded-2xl px-4 py-3 ${navLink(
+                    props.active === item.key
+                  )}`}
+                  onClick={() => setMobileOpen(false)}
+                >
+                  {item.label}
+                </Link>
+              ))}
             </div>
 
             <div className="mt-4 flex flex-col gap-3">
