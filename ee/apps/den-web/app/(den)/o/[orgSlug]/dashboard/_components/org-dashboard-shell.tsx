@@ -11,6 +11,7 @@ import {
   getMembersRoute,
   getOrgDashboardRoute,
   getSharedSetupsRoute,
+  getWorkersRoute,
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -62,6 +63,7 @@ export function OrgDashboardShell({ children }: { children: ReactNode }) {
 
   const navItems = [
     { href: activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#", label: "Dashboard" },
+    { href: activeOrg ? getWorkersRoute(activeOrg.slug) : "#", label: "Workers" },
     { href: activeOrg ? getSharedSetupsRoute(activeOrg.slug) : "#", label: "Shared setups" },
     { href: activeOrg ? getMembersRoute(activeOrg.slug) : "#", label: "Members" },
     { href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#", label: "Background agents", badge: "Alpha" },

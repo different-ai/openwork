@@ -6,6 +6,7 @@ import {
   getCustomLlmProvidersRoute,
   getMembersRoute,
   getSharedSetupsRoute,
+  getWorkersRoute,
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { OPENWORK_DOCS_URL, useOrgTemplates } from "./shared-setup-data";
@@ -30,6 +31,9 @@ export function DashboardOverviewScreen() {
           <div className="flex flex-wrap gap-3">
             <Link href={getMembersRoute(orgSlug)} className="den-button-secondary">
               Add member
+            </Link>
+            <Link href={getWorkersRoute(orgSlug)} className="den-button-secondary">
+              Open workers
             </Link>
             <a href={OPENWORK_DOCS_URL} target="_blank" rel="noreferrer" className="den-button-secondary">
               Learn how

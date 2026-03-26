@@ -54,7 +54,7 @@ import {
 } from "../_lib/den-flow";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
-  getOrgDashboardRoute,
+  getWorkersRoute,
   parseOrgListPayload,
 } from "../_lib/den-org";
 
@@ -977,7 +977,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     const acceptedOrgSlug = await acceptPendingInvitationIfNeeded();
     const orgDirectory = await loadOrgDirectory();
     const activeOrgSlug = acceptedOrgSlug ?? orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
-    return activeOrgSlug ? getOrgDashboardRoute(activeOrgSlug) : null;
+    return activeOrgSlug ? getWorkersRoute(activeOrgSlug) : null;
   }
 
   async function completeDesktopAuthHandoff() {

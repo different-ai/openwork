@@ -140,6 +140,10 @@ export function getOrgDashboardRoute(orgSlug: string): string {
   return `/o/${encodeURIComponent(orgSlug)}/dashboard`;
 }
 
+export function getWorkersRoute(orgSlug: string): string {
+  return `${getOrgDashboardRoute(orgSlug)}/workers`;
+}
+
 export function getManageMembersRoute(orgSlug: string): string {
   return `${getOrgDashboardRoute(orgSlug)}/manage-members`;
 }
