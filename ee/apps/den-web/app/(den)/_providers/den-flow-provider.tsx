@@ -101,6 +101,7 @@ type DenFlowContextValue = {
   workers: WorkerListItem[];
   filteredWorkers: WorkerListItem[];
   workersBusy: boolean;
+  workersLoadedOnce: boolean;
   workersError: string | null;
   workerQuery: string;
   setWorkerQuery: (value: string) => void;
@@ -117,6 +118,7 @@ type DenFlowContextValue = {
   actionBusy: "status" | "token" | null;
   deleteBusyWorkerId: string | null;
   redeployBusyWorkerId: string | null;
+  renameBusyWorkerId: string | null;
   runtimeSnapshot: WorkerRuntimeSnapshot | null;
   runtimeBusy: boolean;
   runtimeError: string | null;
@@ -134,6 +136,7 @@ type DenFlowContextValue = {
   launchWorker: (options?: { source?: "manual" | "signup_auto"; workerNameOverride?: string }) => Promise<LaunchWorkerResult>;
   checkWorkerStatus: (options?: { workerId?: string; quiet?: boolean; background?: boolean }) => Promise<void>;
   generateWorkerToken: () => Promise<void>;
+  renameWorker: (workerId: string, name: string) => Promise<boolean>;
   deleteWorker: (workerId: string) => Promise<void>;
   redeployWorker: (workerId: string) => Promise<void>;
   refreshRuntime: (workerId?: string, options?: { quiet?: boolean }) => Promise<WorkerRuntimeSnapshot | null>;
@@ -202,6 +205,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [workerLookupId, setWorkerLookupId] = useState("");
   const [workers, setWorkers] = useState<WorkerListItem[]>([]);
   const [workersBusy, setWorkersBusy] = useState(false);
+  const [workersLoadedOnce, setWorkersLoadedOnce] = useState(false);
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [workerQuery, setWorkerQuery] = useState("");
   const [workerStatusFilter, setWorkerStatusFilter] = useState<WorkerStatusBucket | "all">("all");
@@ -214,6 +218,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [tokenFetchedForWorkerId, setTokenFetchedForWorkerId] = useState<string | null>(null);
   const [deleteBusyWorkerId, setDeleteBusyWorkerId] = useState<string | null>(null);
   const [redeployBusyWorkerId, setRedeployBusyWorkerId] = useState<string | null>(null);
+  const [renameBusyWorkerId, setRenameBusyWorkerId] = useState<string | null>(null);
   const [pendingRestoredWorkerId, setPendingRestoredWorkerId] = useState<string | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<WorkerRuntimeSnapshot | null>(null);
   const [runtimeBusy, setRuntimeBusy] = useState(false);
@@ -563,15 +568,18 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     };
   }
 
-  async function refreshWorkers(options: { keepSelection?: boolean } = {}) {
+  async function refreshWorkers(options: { keepSelection?: boolean; quiet?: boolean } = {}) {
     if (!user) {
       setWorkers([]);
+      setWorkersLoadedOnce(false);
       setWorkersError(null);
       return;
     }
 
-    setWorkersBusy(true);
-    setWorkersError(null);
+    if (!options.quiet) {
+      setWorkersBusy(true);
+      setWorkersError(null);
+    }
 
     try {
       const { response, payload } = await requestJson("/v1/workers?limit=20", {
@@ -580,12 +588,16 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        setWorkersError(getErrorMessage(payload, `Failed to load workers (${response.status}).`));
+        if (!options.quiet) {
+          setWorkersError(getErrorMessage(payload, `Failed to load workers (${response.status}).`));
+        }
+        setWorkersLoadedOnce(true);
         return;
       }
 
       const nextWorkers = getWorkersList(payload);
       setWorkers(nextWorkers);
+      setWorkersLoadedOnce(true);
 
       const restoredWorkerStillExists =
         pendingRestoredWorkerId && nextWorkers.some((item) => item.workerId === pendingRestoredWorkerId);
@@ -622,9 +634,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (error) {
-      setWorkersError(error instanceof Error ? error.message : "Unknown network error");
+      if (!options.quiet) {
+        setWorkersError(error instanceof Error ? error.message : "Unknown network error");
+      }
+      setWorkersLoadedOnce(true);
     } finally {
-      setWorkersBusy(false);
+      if (!options.quiet) {
+        setWorkersBusy(false);
+      }
     }
   }
 
@@ -1554,6 +1571,50 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  async function renameWorker(workerId: string, name: string) {
+    if (!user) {
+      setLaunchError("Sign in before renaming a worker.");
+      return false;
+    }
+
+    const nextName = name.trim();
+    if (!nextName) {
+      setLaunchError("Enter a worker name.");
+      return false;
+    }
+
+    setRenameBusyWorkerId(workerId);
+    setLaunchError(null);
+
+    try {
+      const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(workerId)}`, {
+        method: "PATCH",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        body: JSON.stringify({ name: nextName })
+      });
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Rename failed with ${response.status}.`);
+        setLaunchError(message);
+        appendEvent("error", "Rename failed", message);
+        return false;
+      }
+
+      setWorkers((current) => current.map((entry) => entry.workerId === workerId ? { ...entry, workerName: nextName } : entry));
+      setWorker((current) => current && current.workerId === workerId ? { ...current, workerName: nextName } : current);
+      setLaunchStatus(`Renamed worker to ${nextName}.`);
+      appendEvent("success", "Worker renamed", nextName);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setLaunchError(message);
+      appendEvent("error", "Rename failed", message);
+      return false;
+    } finally {
+      setRenameBusyWorkerId(null);
+    }
+  }
+
   async function deleteWorker(workerId: string) {
     if (!user) {
       setLaunchError("Sign in before deleting a worker.");
@@ -1739,6 +1800,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) {
       setWorkers([]);
+      setWorkersLoadedOnce(false);
       setWorkersError(null);
       return;
     }
@@ -1904,7 +1966,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      await refreshWorkers({ keepSelection: true });
+      await refreshWorkers({ keepSelection: true, quiet: true });
     };
 
     void poll();
@@ -2035,6 +2097,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     workers,
     filteredWorkers,
     workersBusy,
+    workersLoadedOnce,
     workersError,
     workerQuery,
     setWorkerQuery,
@@ -2051,6 +2114,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     actionBusy,
     deleteBusyWorkerId,
     redeployBusyWorkerId,
+    renameBusyWorkerId,
     runtimeSnapshot,
     runtimeBusy,
     runtimeError,
@@ -2068,6 +2132,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     launchWorker,
     checkWorkerStatus,
     generateWorkerToken,
+    renameWorker,
     deleteWorker,
     redeployWorker,
     refreshRuntime,

@@ -791,6 +791,14 @@ workersRouter.patch("/:id", asyncRoute(async (req, res) => {
     return
   }
 
+  if (rows[0].created_by_user_id !== session.user.id) {
+    res.status(403).json({
+      error: "forbidden",
+      message: "Only the worker owner can rename this sandbox.",
+    })
+    return
+  }
+
   await db
     .update(WorkerTable)
     .set({ name: parsed.data.name })
