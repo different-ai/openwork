@@ -14,6 +14,7 @@ import type {
   PlaceholderAssistantMessage,
   ReloadReason,
   ReloadTrigger,
+  SessionCompactionState,
   SessionErrorTurn,
   TodoItem,
 } from "../types";
@@ -49,6 +50,7 @@ type StoreState = {
   pendingPermissions: PendingPermission[];
   pendingQuestions: PendingQuestion[];
   events: OpencodeEvent[];
+  sessionCompaction: Record<string, SessionCompactionState>;
 };
 
 const sortById = <T extends { id: string }>(list: T[]) =>
@@ -198,6 +200,7 @@ export function createSessionStore(options: {
     pendingPermissions: [],
     pendingQuestions: [],
     events: [],
+    sessionCompaction: {},
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
@@ -206,6 +209,7 @@ export function createSessionStore(options: {
   const [loadedScopeRoot, setLoadedScopeRoot] = createSignal("");
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
+  const pendingCompactionModeBySession = new Map<string, "auto" | "manual">();
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticTaskSummaryEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
@@ -1183,6 +1187,68 @@ export function createSessionStore(options: {
     });
   };
 
+  const setSessionCompaction = (sessionID: string, next: SessionCompactionState) => {
+    setStore("sessionCompaction", sessionID, next);
+  };
+
+  const stopSessionCompaction = (sessionID: string) => {
+    const current = store.sessionCompaction[sessionID];
+    pendingCompactionModeBySession.delete(sessionID);
+    if (!current?.running) return;
+    setSessionCompaction(sessionID, {
+      ...current,
+      running: false,
+      messageID: null,
+    });
+  };
+
+  const startSessionCompaction = (sessionID: string, messageID: string) => {
+    const current = store.sessionCompaction[sessionID];
+    if (current?.running && current.messageID === messageID) return;
+    const startedAt = Date.now();
+    const mode = pendingCompactionModeBySession.get(sessionID) ?? current?.mode ?? null;
+    pendingCompactionModeBySession.delete(sessionID);
+    setSessionCompaction(sessionID, {
+      running: true,
+      startedAt,
+      finishedAt: null,
+      mode,
+      messageID,
+    });
+    if (options.developerMode()) {
+      appendDebugEvent({
+        type: "session.compaction.started",
+        properties: { sessionID, messageID, mode, startedAt },
+      });
+    }
+  };
+
+  const finishSessionCompaction = (sessionID: string) => {
+    const current = store.sessionCompaction[sessionID];
+    const finishedAt = Date.now();
+    pendingCompactionModeBySession.delete(sessionID);
+    setSessionCompaction(sessionID, {
+      running: false,
+      startedAt: current?.startedAt ?? null,
+      finishedAt,
+      mode: current?.mode ?? null,
+      messageID: null,
+    });
+    if (options.developerMode()) {
+      appendDebugEvent({
+        type: "session.compaction.finished",
+        properties: {
+          sessionID,
+          mode: current?.mode ?? null,
+          startedAt: current?.startedAt ?? null,
+          finishedAt,
+          durationMs:
+            typeof current?.startedAt === "number" ? Math.max(0, finishedAt - current.startedAt) : null,
+        },
+      });
+    }
+  };
+
   const compactDebugEvent = (event: OpencodeEvent) => {
     if (event.type === "message.part.updated") {
       const record = event.properties as Record<string, unknown> | undefined;
@@ -1281,9 +1347,11 @@ export function createSessionStore(options: {
           syntheticContinueLoopLastWarnAtBySession.delete(info.id);
           syntheticLoopLastAbortAtByKey.delete(`task-summary:${info.id}`);
           syntheticLoopLastAbortAtByKey.delete(`compaction-continue:${info.id}`);
+          pendingCompactionModeBySession.delete(info.id);
           setStore(
             produce((draft: StoreState) => {
               delete draft.sessionInfoById[info.id];
+              delete draft.sessionCompaction[info.id];
             }),
           );
           setStore("sessions", (current) => removeSession(current, info.id));
@@ -1303,6 +1371,9 @@ export function createSessionStore(options: {
         if (sessionID) {
           const normalized = normalizeSessionStatus(record.status);
           setStore("sessionStatus", sessionID, normalized);
+          if (normalized === "idle") {
+            stopSessionCompaction(sessionID);
+          }
           if (sessionID === options.selectedSessionId() && normalized !== "idle") {
             options.setError(null);
           }
@@ -1316,6 +1387,7 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
+          stopSessionCompaction(sessionID);
           const c = options.client();
           if (c) {
             try {
@@ -1340,6 +1412,7 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
+          stopSessionCompaction(sessionID);
         }
         const errorObj = record.error as Record<string, unknown> | undefined;
         if (errorObj) {
@@ -1374,6 +1447,7 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
+          const messageRecord = info as Message & Record<string, unknown>;
           const model = modelFromUserMessage(info as MessageInfo);
           if (model) {
             options.setSessionModelState((current) => ({
@@ -1390,6 +1464,14 @@ export function createSessionStore(options: {
           }
 
           setStore("messages", info.sessionID, (current = []) => upsertMessageInfo(current, info));
+
+          if (
+            messageRecord.role === "assistant" &&
+            messageRecord.mode === "compaction" &&
+            messageRecord.summary === true
+          ) {
+            startSessionCompaction(info.sessionID, info.id);
+          }
         }
       }
     }
@@ -1413,6 +1495,13 @@ export function createSessionStore(options: {
           const part = record.part as Part;
           const delta = typeof record.delta === "string" ? record.delta : null;
           const partUpdatedStartedAt = perfNow();
+
+          if (part.type === "compaction") {
+            pendingCompactionModeBySession.set(
+              part.sessionID,
+              (part as Part & { auto?: unknown }).auto === true ? "auto" : "manual",
+            );
+          }
 
           setStore(
             produce((draft: StoreState) => {
@@ -1507,6 +1596,16 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID && Array.isArray(record.todos)) {
           setStore("todos", sessionID, record.todos as TodoItem[]);
+        }
+      }
+    }
+
+    if (event.type === "session.compacted") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+        if (sessionID) {
+          finishSessionCompaction(sessionID);
         }
       }
     }
@@ -1747,8 +1846,13 @@ export function createSessionStore(options: {
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,
+    selectedSessionCompactionState: createMemo(() => {
+      const sessionID = options.selectedSessionId();
+      return sessionID ? store.sessionCompaction[sessionID] ?? null : null;
+    }),
     messages,
     messagesBySessionId,
+    sessionCompactionById: (sessionID: string | null) => (sessionID ? store.sessionCompaction[sessionID] ?? null : null),
     todos,
     pendingPermissions,
     permissionReplyBusy,

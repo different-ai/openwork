@@ -270,6 +270,7 @@ export type DashboardViewProps = {
   toggleShowThinking: () => void;
   autoCompactContext: boolean;
   toggleAutoCompactContext: () => void;
+  autoCompactContextBusy: boolean;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   opencodeEnableExa: boolean;
@@ -1512,6 +1513,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleShowThinking={props.toggleShowThinking}
                   autoCompactContext={props.autoCompactContext}
                   toggleAutoCompactContext={props.toggleAutoCompactContext}
+                  autoCompactContextBusy={props.autoCompactContextBusy}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
                   modelVariantLabel={props.modelVariantLabel}

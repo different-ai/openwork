@@ -19,6 +19,7 @@ import type {
   PendingPermission,
   PendingQuestion,
   ProviderListItem,
+  SessionCompactionState,
   SettingsTab,
   SkillCard,
   TodoItem,
@@ -191,6 +192,7 @@ export type SessionViewProps = {
   busyLabel: string | null;
   developerMode: boolean;
   showThinking: boolean;
+  sessionCompactionState: SessionCompactionState | null;
   groupMessageParts: (parts: Part[], messageId: string) => MessageGroup[];
   summarizeStep: (part: Part) => { title: string; detail?: string };
   expandedStepIds: Set<string>;
@@ -1914,6 +1916,37 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
+  const showCompactionIndicator = createMemo(
+    () => props.sessionCompactionState?.running === true,
+  );
+  const compactionStatusDetail = createMemo(() => {
+    if (!showCompactionIndicator()) return "";
+    return props.sessionCompactionState?.mode === "auto"
+      ? "OpenCode is auto-compacting this session"
+      : "OpenCode is compacting this session";
+  });
+
+  createEffect(
+    on(
+      () => props.sessionCompactionState?.startedAt ?? null,
+      (startedAt, previous) => {
+        if (!startedAt || startedAt === previous) return;
+        if (props.sessionCompactionState?.mode === "manual") return;
+        setToastMessage("OpenCode started compacting the session context.");
+      },
+    ),
+  );
+
+  createEffect(
+    on(
+      () => props.sessionCompactionState?.finishedAt ?? null,
+      (finishedAt, previous) => {
+        if (!finishedAt || finishedAt === previous) return;
+        if (props.sessionCompactionState?.mode === "manual") return;
+        setToastMessage("OpenCode finished compacting the session context.");
+      },
+    ),
+  );
 
   const latestRunPart = createMemo<Part | null>(() => {
     if (!showRunIndicator()) return null;
@@ -4711,25 +4744,32 @@ export default function SessionView(props: SessionViewProps) {
             providerConnectedIds={props.providerConnectedIds}
             mcpStatuses={props.mcpStatuses}
             statusLabel={
-              showRunIndicator()
+              showCompactionIndicator()
+                ? "Compacting Context"
+                : showRunIndicator()
                 ? "Session Active"
                 : props.selectedSessionId
                   ? "Session Ready"
                   : "Ready"
             }
+            statusDetail={showCompactionIndicator() ? compactionStatusDetail() : undefined}
             statusDotClass={
-              showRunIndicator()
+              showCompactionIndicator()
+                ? "bg-blue-9"
+                : showRunIndicator()
                 ? "bg-green-9"
                 : props.selectedSessionId
                   ? "bg-green-9"
                   : "bg-gray-8"
             }
             statusPingClass={
-              showRunIndicator()
+              showCompactionIndicator()
+                ? "bg-blue-9/35 animate-ping"
+                : showRunIndicator()
                 ? "bg-green-9/45 animate-ping"
                 : "bg-green-9/35"
             }
-            statusPulse={showRunIndicator()}
+            statusPulse={showCompactionIndicator() || showRunIndicator()}
           />
         </main>
       </div>

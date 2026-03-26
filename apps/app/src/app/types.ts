@@ -142,6 +142,14 @@ export type OpencodeEvent = {
   properties?: unknown;
 };
 
+export type SessionCompactionState = {
+  running: boolean;
+  startedAt: number | null;
+  finishedAt: number | null;
+  mode: "auto" | "manual" | null;
+  messageID: string | null;
+};
+
 export type View = "onboarding" | "dashboard" | "session" | "proto";
 
 export type StartupPreference = "local" | "server";

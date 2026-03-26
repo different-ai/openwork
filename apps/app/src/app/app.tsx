@@ -58,7 +58,6 @@ import {
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
 import {
-  AUTO_COMPACT_CONTEXT_PREF_KEY,
   CHROME_DEVTOOLS_MCP_ID,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
@@ -1494,6 +1493,10 @@ export default function App() {
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
+  const [autoCompactContextReady, setAutoCompactContextReady] = createSignal(false);
+  const [autoCompactContextDirty, setAutoCompactContextDirty] = createSignal(false);
+  const [autoCompactContextApplied, setAutoCompactContextApplied] = createSignal(true);
+  const [autoCompactContextSaving, setAutoCompactContextSaving] = createSignal(false);
   type PromptFocusReturnTarget = "none" | "composer";
 
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
@@ -1589,6 +1592,7 @@ export default function App() {
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,
+    selectedSessionCompactionState,
     messages,
     messagesBySessionId,
     todos,
@@ -2050,34 +2054,6 @@ export default function App() {
       throw error;
     }
   }
-
-  const triggerAutoCompaction = async (sessionID: string) => {
-    if (!autoCompactContext()) return;
-    if (autoCompactingSessionId() === sessionID) return;
-
-    setAutoCompactingSessionId(sessionID);
-    try {
-      await compactCurrentSession(sessionID);
-    } catch {
-      // ignore auto-compaction failures; manual compact remains available
-    } finally {
-      setAutoCompactingSessionId((current) => (current === sessionID ? null : current));
-    }
-  };
-
-  const [lastSessionStatus, setLastSessionStatus] = createSignal<string | null>(null);
-  createEffect(() => {
-    const sessionID = selectedSessionId();
-    const status = sessionID ? sessionStatusById()[sessionID] ?? null : null;
-    const previous = lastSessionStatus();
-    setLastSessionStatus(status);
-
-    if (!sessionID) return;
-    if (!autoCompactContext()) return;
-    if (status !== "idle") return;
-    if (!previous || previous === "idle") return;
-    void triggerAutoCompaction(sessionID);
-  });
 
   const messageIdFromInfo = (message: MessageWithParts) => {
     const id = (message.info as { id?: string | number }).id;
@@ -3113,6 +3089,52 @@ export default function App() {
     return `${JSON.stringify(config, null, 2)}\n`;
   };
 
+  const parseAutoCompactContextFromConfig = (content: string | null) => {
+    if (!content) return null;
+    try {
+      const parsed = parse(content) as Record<string, unknown> | undefined;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return null;
+      }
+      const compaction = parsed.compaction;
+      if (!compaction || typeof compaction !== "object" || Array.isArray(compaction)) {
+        return null;
+      }
+      return typeof (compaction as Record<string, unknown>).auto === "boolean"
+        ? ((compaction as Record<string, unknown>).auto as boolean)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const formatConfigWithAutoCompactContext = (content: string | null, enabled: boolean) => {
+    let config: Record<string, unknown> = {};
+    if (content?.trim()) {
+      try {
+        const parsed = parse(content) as Record<string, unknown> | undefined;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          config = { ...parsed };
+        }
+      } catch {
+        config = {};
+      }
+    }
+
+    if (!config["$schema"]) {
+      config["$schema"] = "https://opencode.ai/config.json";
+    }
+
+    const compaction =
+      typeof config.compaction === "object" && config.compaction && !Array.isArray(config.compaction)
+        ? { ...(config.compaction as Record<string, unknown>) }
+        : {};
+
+    compaction.auto = enabled;
+    config.compaction = compaction;
+    return `${JSON.stringify(config, null, 2)}\n`;
+  };
+
   const getConfigSnapshot = (content: string | null) => {
     if (!content?.trim()) return "";
     try {
@@ -3131,6 +3153,11 @@ export default function App() {
   const ensureRecord = (value: unknown): Record<string, unknown> => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return value as Record<string, unknown>;
+  };
+
+  const readAutoCompactContextFromRecord = (value: unknown) => {
+    const compaction = ensureRecord(ensureRecord(value).compaction);
+    return typeof compaction.auto === "boolean" ? compaction.auto : null;
   };
 
   const normalizeAuthorizedFolderPath = (input: string | null | undefined) => {
@@ -3206,8 +3233,8 @@ export default function App() {
     createSignal<PromptFocusReturnTarget>("none");
 
   const [showThinking, setShowThinking] = createSignal(false);
+  const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  const [autoCompactContext, setAutoCompactContext] = createSignal(false);
   const [modelVariantMap, setModelVariantMap] = createSignal<Record<string, string>>({});
   const modelVariant = () => getVariantFor(selectedSessionModel());
   const getVariantFor = (ref: ModelRef) => modelVariantMap()[`${ref.providerID}/${ref.modelID}`] ?? null;
@@ -3221,7 +3248,11 @@ export default function App() {
     });
   };
   const setModelVariant = (value: string | null) => updateModelVariant(selectedSessionModel(), value);
-  const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
+  const toggleAutoCompactContext = () => {
+    if (autoCompactContextSaving()) return;
+    setAutoCompactContext((value) => !value);
+    setAutoCompactContextDirty(true);
+  };
   const [authorizedFolders, setAuthorizedFolders] = createSignal<string[]>([]);
   const [authorizedFolderDraft, setAuthorizedFolderDraft] = createSignal("");
   const [, setAuthorizedFolderHiddenEntries] = createSignal<Record<string, unknown>>({});
@@ -7035,18 +7066,6 @@ export default function App() {
           }
         }
 
-        const storedAutoCompactContext = window.localStorage.getItem(AUTO_COMPACT_CONTEXT_PREF_KEY);
-        if (storedAutoCompactContext != null) {
-          try {
-            const parsed = JSON.parse(storedAutoCompactContext);
-            if (typeof parsed === "boolean") {
-              setAutoCompactContext(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
           try {
@@ -7491,6 +7510,153 @@ export default function App() {
   });
 
   createEffect(() => {
+    const workspaceId = workspaceStore.selectedWorkspaceId();
+    if (!workspaceId) {
+      setAutoCompactContext(true);
+      setAutoCompactContextApplied(true);
+      setAutoCompactContextDirty(false);
+      setAutoCompactContextReady(false);
+      return;
+    }
+
+    const workspace = workspaceStore.selectedWorkspaceDisplay();
+    const root = workspaceStore.selectedWorkspacePath().trim();
+    const activeClient = client();
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = runtimeWorkspaceId();
+    const openworkCapabilities = resolvedOpenworkCapabilities();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.config?.read;
+
+    let cancelled = false;
+    setAutoCompactContextReady(false);
+    setAutoCompactContextDirty(false);
+
+    const loadAutoCompactContext = async () => {
+      let nextValue = true;
+
+      if (canUseOpenworkServer) {
+        try {
+          const config = await openworkClient.getConfig(openworkWorkspaceId);
+          nextValue = readAutoCompactContextFromRecord(config.opencode) ?? true;
+        } catch {
+          // ignore
+        }
+      } else if (workspace.workspaceType === "local" && root && isTauriRuntime()) {
+        try {
+          const configFile = await readOpencodeConfig("project", root);
+          nextValue = parseAutoCompactContextFromConfig(configFile.content) ?? true;
+        } catch {
+          // ignore
+        }
+      } else if (activeClient) {
+        try {
+          const config = unwrap(await activeClient.config.get({ directory: root || undefined }));
+          nextValue = readAutoCompactContextFromRecord(config) ?? true;
+        } catch {
+          // ignore
+        }
+      }
+
+      if (cancelled) return;
+      setAutoCompactContext(nextValue);
+      setAutoCompactContextApplied(nextValue);
+      setAutoCompactContextReady(true);
+    };
+
+    void loadAutoCompactContext();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  createEffect(() => {
+    if (!autoCompactContextReady()) return;
+    if (!autoCompactContextDirty()) return;
+
+    const nextValue = autoCompactContext();
+    const appliedValue = autoCompactContextApplied();
+    const workspace = workspaceStore.selectedWorkspaceDisplay();
+    const root = workspaceStore.selectedWorkspacePath().trim();
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = runtimeWorkspaceId();
+    const openworkCapabilities = resolvedOpenworkCapabilities();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.config?.write;
+
+    let cancelled = false;
+    setAutoCompactContextSaving(true);
+
+    const persistAutoCompactContext = async () => {
+      try {
+        if (canUseOpenworkServer) {
+          const config = await openworkClient.getConfig(openworkWorkspaceId);
+          const currentValue = readAutoCompactContextFromRecord(config.opencode) ?? true;
+          if (currentValue !== nextValue) {
+            await openworkClient.patchConfig(openworkWorkspaceId, {
+              opencode: {
+                compaction: {
+                  auto: nextValue,
+                },
+              },
+            });
+            markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+          }
+          if (cancelled) return;
+          setAutoCompactContextApplied(nextValue);
+          setAutoCompactContextDirty(false);
+          return;
+        }
+
+        if (workspace.workspaceType !== "local" || !root || !isTauriRuntime()) {
+          throw new Error(
+            "Auto context compaction can only be changed for a local workspace or a writable OpenWork server workspace.",
+          );
+        }
+
+        const configFile = await readOpencodeConfig("project", root);
+        const currentValue = parseAutoCompactContextFromConfig(configFile.content) ?? true;
+        if (currentValue !== nextValue) {
+          const content = formatConfigWithAutoCompactContext(configFile.content, nextValue);
+          const result = await writeOpencodeConfig("project", root, content);
+          if (!result.ok) {
+            throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+          }
+          setLastKnownConfigSnapshot(getConfigSnapshot(content));
+          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+        }
+
+        if (cancelled) return;
+        setAutoCompactContextApplied(nextValue);
+        setAutoCompactContextDirty(false);
+      } catch (error) {
+        if (cancelled) return;
+        setAutoCompactContext(appliedValue);
+        setAutoCompactContextDirty(false);
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+      } finally {
+        if (!cancelled) {
+          setAutoCompactContextSaving(false);
+        }
+      }
+    };
+
+    void persistAutoCompactContext();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  createEffect(() => {
     if (!isTauriRuntime()) return;
     if (onboardingStep() !== "local") return;
     void workspaceStore.refreshEngineDoctor();
@@ -7633,15 +7799,6 @@ export default function App() {
       setWindowDecorations(!hide).catch(() => {
         // ignore errors (e.g., window not ready)
       });
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(autoCompactContext()));
-    } catch {
-      // ignore
     }
   });
 
@@ -8077,7 +8234,8 @@ export default function App() {
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v) => !v),
       autoCompactContext: autoCompactContext(),
-      toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
+      toggleAutoCompactContext,
+      autoCompactContextBusy: autoCompactContextSaving(),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       modelVariantLabel: getModelBehaviorCopy(defaultModel(), getVariantFor(defaultModel())).label,
@@ -8314,8 +8472,7 @@ export default function App() {
     busyLabel: busyLabel(),
     developerMode: developerMode(),
     showThinking: showThinking(),
-    autoCompactContext: autoCompactContext(),
-    toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
+    sessionCompactionState: selectedSessionCompactionState(),
     groupMessageParts,
     summarizeStep,
     expandedStepIds: expandedStepIds(),
