@@ -11,7 +11,7 @@ const steps = [
   },
   {
     title: "2. Event Trigger",
-    body: "Den workers wake up on webhooks or scheduled polling intervals.",
+    body: "Cloud workers wake up on webhooks or scheduled polling intervals.",
     icon: Zap,
     accent: "bg-orange-500/10 text-orange-600",
   },
@@ -40,7 +40,7 @@ export function DenHowItWorks() {
           From trigger to completion.
         </h3>
         <p className="text-[16px] leading-8 text-gray-600">
-          We turn your defined skills into an automated workflow. Den workers operate independently in the cloud, unblocking your team.
+          We turn your defined skills into an automated workflow. Cloud workers operate independently in the cloud, unblocking your team.
         </p>
       </div>
 

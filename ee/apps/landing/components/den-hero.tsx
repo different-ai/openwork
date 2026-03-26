@@ -14,7 +14,7 @@ export function DenHero(props: DenHeroProps) {
           <span className="block lg:whitespace-nowrap">Agents that never sleep</span>
         </h2>
         <p className="mt-5 max-w-[35rem] text-lg leading-relaxed text-gray-700 md:text-[1rem] md:leading-8 lg:text-[1.02rem]">
-          Den gives you a personal cloud workspace for long-running tasks, background automation, and the same agent workflows you already use locally in OpenWork, without keeping your own machine awake.
+          Cloud gives you a personal cloud workspace for long-running tasks, background automation, and the same agent workflows you already use locally in OpenWork, without keeping your own machine awake.
         </p>
 
         <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-5">

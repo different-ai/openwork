@@ -28,7 +28,7 @@ Best`;
             Replace repetitive work with a $50 worker.
           </p>
           <p className="mt-4 text-[16px] leading-7 text-[#5f6b7a]">
-            Den is priced like a utility, not a headcount bet. Keep your team on
+            Cloud is priced like a utility, not a headcount bet. Keep your team on
             the critical decisions and let the worker own the repetitive queue.
           </p>
         </div>
@@ -77,7 +77,7 @@ Best`;
             <article className="relative flex h-full flex-col rounded-[1.6rem] border border-[#c4cbd5] bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.08),transparent_45%),linear-gradient(180deg,#fbfbfc,#eef1f4)] px-4 py-4 shadow-[0_20px_44px_-28px_rgba(15,23,42,0.28)] ring-1 ring-[#0f172a]/5 md:px-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#111827] sm:whitespace-nowrap">
-                  Den worker
+                  Cloud worker
                 </div>
                 <div className="inline-flex items-center gap-1 rounded-full bg-[#111827] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white shadow-[0_10px_24px_-18px_rgba(15,23,42,0.5)]">
                   <CheckCircle2 size={12} strokeWidth={2.4} />

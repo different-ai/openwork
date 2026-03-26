@@ -1,14 +1,27 @@
-import { Check, Shield } from "lucide-react";
-
 type Props = {
   className?: string;
+};
+
+const items = [
+  { name: "Meeting Brief Generator", type: "Skill", tone: "skill" },
+  { name: "Contract Reviewer", type: "Skill", tone: "skill" },
+  { name: "Outreach CRM", type: "Skill", tone: "skill" },
+  { name: "Notion", type: "MCP", tone: "mcp" },
+  { name: "HubSpot", type: "MCP", tone: "mcp" },
+  { name: "Chrome MCP", type: "MCP", tone: "mcp" },
+] as const;
+
+const dotClass: Record<string, string> = {
+  skill: "bg-gradient-to-br from-amber-400 to-orange-400",
+  command: "bg-gradient-to-br from-violet-400 to-purple-500",
+  mcp: "bg-gradient-to-br from-teal-400 to-cyan-500",
 };
 
 function LinkIcon() {
   return (
     <svg
-      width="18"
-      height="18"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -27,62 +40,69 @@ export function LandingSharePackageCard(props: Props) {
   return (
     <div
       className={[
-        "landing-shell-soft flex w-full max-w-md flex-col gap-6 rounded-[2rem] p-6 text-center md:p-8",
-        props.className
+        "flex w-full max-w-lg flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm",
+        props.className,
       ]
         .filter(Boolean)
         .join(" ")}
     >
-      <div>
-        <h3 className="text-xl font-semibold tracking-tight text-[#011627]">Package Your Worker</h3>
-        <p className="mt-1 text-sm text-gray-500">
-          Drag and drop skills, agents, or MCPs here to bundle them.
-        </p>
-      </div>
-
-      <div className="group flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50/50 p-8 transition-colors hover:bg-gray-50">
-        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-[#1a44f2] transition-transform group-hover:scale-105">
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="17 8 12 3 7 8"></polyline>
-            <line x1="12" y1="3" x2="12" y2="15"></line>
-          </svg>
+      {/* App chrome */}
+      <div className="flex items-center gap-3 border-b border-gray-100 bg-gray-50/80 px-4 py-2.5">
+        <div className="flex gap-1.5">
+          <div className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
+          <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
+          <div className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
         </div>
-        <div className="text-[15px] font-medium text-[#011627]">Drop OpenWork files here</div>
-        <div className="mt-1 text-[13px] text-gray-400">or click to browse local files</div>
+        <div className="text-[12px] font-medium text-gray-500">OpenWork</div>
       </div>
 
-      <div className="flex flex-col gap-2 text-left">
-        <div className="mb-1 px-1 text-xs font-bold uppercase tracking-wider text-gray-400">Included</div>
-        <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f97316] text-white">
-            <Shield size={16} />
+      <div className="flex flex-1 flex-col gap-3 p-4 text-left md:p-5">
+        <div>
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-500">
+            Workspace Template
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-[#011627]">Sales Inbound</div>
-            <div className="text-[12px] text-gray-500">Agent · v1.2.0</div>
-          </div>
-          <Check size={16} className="shrink-0 text-green-500" />
+          <h3 className="text-lg font-medium tracking-tight text-[#011627]">
+            SDR for Acme Company
+          </h3>
         </div>
-      </div>
 
-      <button
-        type="button"
-        className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#011627] py-3.5 text-[15px] font-medium text-white shadow-md transition-colors hover:bg-black"
-      >
-        <LinkIcon />
-        Generate Share Link
-      </button>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
+          Included
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          {items.map((item, i) => (
+            <div
+              key={item.name}
+              className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 transition-all ${
+                i === 0
+                  ? "border-blue-300 bg-blue-50/60 shadow-sm"
+                  : "border-gray-100 bg-white"
+              }`}
+            >
+              <span
+                className={`h-6 w-6 shrink-0 rounded-full ${dotClass[item.tone]}`}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium text-[#011627]">
+                  {item.name}
+                </span>
+                <span className="block text-[11px] text-gray-500">
+                  {item.type}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#011627] py-2 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(17,24,39,0.12)] transition-colors hover:bg-black"
+        >
+          <LinkIcon />
+          Generate Share Link
+        </button>
+      </div>
     </div>
   );
 }

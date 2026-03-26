@@ -17,7 +17,7 @@ export function LandingAppDemoPanel(props: Props) {
 
   return (
     <div className={["relative z-10 flex flex-col gap-4 md:flex-row", props.className].filter(Boolean).join(" ")}>
-      <div className="flex w-full flex-col gap-1 rounded-2xl border border-gray-100 bg-gray-50 p-2 md:w-1/3">
+      <div className="flex w-full flex-col gap-1 rounded-xl border border-gray-100 bg-gray-50 p-2 md:w-1/3">
         <div className="flex items-center justify-between rounded-xl bg-gray-100/90 p-3">
           <div className="flex items-center gap-3">
             <div className={`h-6 w-6 rounded-full ${activeFlow.activeAgent.color}`}></div>
@@ -70,7 +70,7 @@ export function LandingAppDemoPanel(props: Props) {
         </div>
       </div>
 
-      <div className="flex min-h-[400px] w-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm md:w-2/3">
+      <div className="flex min-h-[400px] w-full flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm md:w-2/3">
         <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6 text-[13px]">
           {activeFlow.chatHistory.map((message, index) => {
             if (message.role === "user") {
@@ -121,7 +121,7 @@ export function LandingAppDemoPanel(props: Props) {
           <div className="mt-3 flex items-center justify-end px-1">
             <button
               type="button"
-              className="rounded-full bg-[#011627] px-6 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:bg-black"
+              className="rounded-lg bg-[#011627] px-4 py-2 text-xs font-medium text-white shadow-[0_1px_2px_rgba(17,24,39,0.12)] transition-colors hover:bg-black"
             >
               Run Task
             </button>

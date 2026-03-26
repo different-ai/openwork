@@ -19,17 +19,17 @@ export function SiteFooter() {
         </div>
 
         <div className="flex flex-wrap items-center gap-4 md:gap-8">
-          <Link href="/docs" className="transition-colors hover:text-gray-800">
+          <a href="/docs" target="_blank" rel="noreferrer" className="transition-colors hover:text-gray-800">
             Docs
-          </Link>
+          </a>
           <Link href="/download" className="transition-colors hover:text-gray-800">
-            Download
+            Desktop
+          </Link>
+          <Link href="/den" className="transition-colors hover:text-gray-800">
+            Cloud
           </Link>
           <Link href="/enterprise" className="transition-colors hover:text-gray-800">
             Enterprise
-          </Link>
-          <Link href="/den" className="transition-colors hover:text-gray-800">
-            Den
           </Link>
           <div>© 2026 OpenWork Project.</div>
         </div>

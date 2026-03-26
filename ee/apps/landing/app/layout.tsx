@@ -59,7 +59,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased">
+      <body className="overflow-x-hidden antialiased">
         {children}
       </body>
     </html>

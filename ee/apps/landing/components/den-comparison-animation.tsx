@@ -275,7 +275,7 @@ export function DenComparisonAnimation() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", marginBottom: "22px", alignItems: "flex-start" }}>
           <div>
             <h3 style={{ fontSize: "16px", fontWeight: 700, color: comparisonTheme.ink, margin: 0, letterSpacing: "-0.02em" }}>
-              Always-on Den Worker
+              Always-on Cloud Worker
             </h3>
             <p style={{ fontSize: "13px", color: comparisonTheme.muted, margin: "4px 0 0" }}>Autonomous, sandboxed execution.</p>
           </div>
