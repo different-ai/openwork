@@ -3657,6 +3657,18 @@ export default function SessionView(props: SessionViewProps) {
         },
       },
       {
+        id: "compact-session",
+        title: "Compact Conversation",
+        detail: canCompactSession()
+          ? "Send a compact instruction to OpenCode for this session"
+          : "No user messages to compact yet",
+        meta: "Compact",
+        action: () => {
+          closeCommandPalette();
+          void compactSessionHistory();
+        },
+      },
+      {
         id: "sessions",
         title: "Search sessions",
         detail: `${totalSessionCount().toLocaleString()} available across workspaces`,
