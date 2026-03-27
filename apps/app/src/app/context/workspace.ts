@@ -2206,6 +2206,7 @@ export function createWorkspaceStore(options: {
     }
 
     try {
+      let createdWorkspaceId: string | null = null;
       if (isTauriRuntime()) {
         const ws = await workspaceCreateRemote({
           baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
@@ -2226,10 +2227,12 @@ export function createWorkspaceStore(options: {
         });
         setWorkspaces(ws.workspaces);
         const nextSelectedId = pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws);
+        createdWorkspaceId = nextSelectedId;
         syncSelectedWorkspaceId(nextSelectedId);
         console.log("[workspace] create remote complete:", nextSelectedId || "none");
       } else {
         const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
+        createdWorkspaceId = workspaceId;
         const nextWorkspace: WorkspaceInfo = {
           id: workspaceId,
           name: displayName ?? openworkWorkspace?.name ?? resolvedHostUrl ?? resolvedBaseUrl,
@@ -2261,6 +2264,10 @@ export function createWorkspaceStore(options: {
         console.log("[workspace] create remote complete:", workspaceId);
       }
 
+      if (createdWorkspaceId) {
+        setConnectedWorkspaceId(createdWorkspaceId);
+      }
+
       setProjectDir(finalDirectory);
       setWorkspaceConfig(null);
       setWorkspaceConfigLoaded(true);
@@ -2271,9 +2278,8 @@ export function createWorkspaceStore(options: {
         setCreateWorkspaceOpen(false);
         setCreateRemoteWorkspaceOpen(false);
       }
-      const activeId = selectedWorkspaceId();
-      if (activeId) {
-        updateWorkspaceConnectionState(activeId, { status: "connected", message: null });
+      if (createdWorkspaceId) {
+        updateWorkspaceConnectionState(createdWorkspaceId, { status: "connected", message: null });
       }
 
       await openEmptySession(selectedWorkspaceRoot().trim() || finalDirectory);
