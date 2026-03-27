@@ -45,6 +45,7 @@ const port = process.env.WEB_PORT;
 const origins = new Set([
   `http://localhost:${port}`,
   `http://127.0.0.1:${port}`,
+  `http://0.0.0.0:${port}`,
 ]);
 
 for (const entries of Object.values(os.networkInterfaces())) {

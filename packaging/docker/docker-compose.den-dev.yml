@@ -70,7 +70,7 @@ services:
       BETTER_AUTH_URL: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}
       DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-}
       PORT: "8788"
-      CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://localhost:8788,http://127.0.0.1:8788}
+      CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://0.0.0.0:3005,http://localhost:8788,http://127.0.0.1:8788}
       PROVISIONER_MODE: ${DEN_PROVISIONER_MODE:-stub}
       WORKER_URL_TEMPLATE: ${DEN_WORKER_URL_TEMPLATE:-}
       POLAR_FEATURE_GATE_ENABLED: "false"

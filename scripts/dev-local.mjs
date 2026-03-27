@@ -19,6 +19,7 @@ function detectWebOrigins() {
   const origins = new Set([
     `http://localhost:${webPort}`,
     `http://127.0.0.1:${webPort}`,
+    `http://0.0.0.0:${webPort}`,
   ])
 
   for (const entries of Object.values(os.networkInterfaces())) {
