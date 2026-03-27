@@ -743,6 +743,18 @@ export function createWorkspaceStore(options: {
     return client;
   };
 
+  const resolveLocalOpenworkServer = async () => {
+    if (!isTauriRuntime()) return null;
+    try {
+      return (await options.ensureLocalOpenworkServerClient?.()) ?? null;
+    } catch (error) {
+      wsDebug("openwork:local-host:unavailable", {
+        message: error instanceof Error ? error.message : safeStringify(error),
+      });
+      return null;
+    }
+  };
+
   const resolveActiveOpenworkWorkspace = () => {
     const client = resolveConnectedOpenworkServer();
     const workspaceId = options.runtimeWorkspaceId?.()?.trim() ?? "";
@@ -1771,7 +1783,7 @@ export function createWorkspaceStore(options: {
       }
 
       const name = deriveWorkspaceName(resolvedFolder, preset);
-      const openworkServer = resolveConnectedOpenworkServer();
+      const openworkServer = await resolveLocalOpenworkServer();
       const ws = openworkServer
         ? await openworkServer.createLocalWorkspace({ folderPath: resolvedFolder, name, preset })
         : await workspaceCreate({ folderPath: resolvedFolder, name, preset });
@@ -1901,7 +1913,7 @@ export function createWorkspaceStore(options: {
       pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
 
       // Ensure the workspace folder has baseline OpenWork/OpenCode files.
-      const openworkServer = resolveConnectedOpenworkServer();
+      const openworkServer = await resolveLocalOpenworkServer();
       const created = openworkServer
         ? await openworkServer.createLocalWorkspace({ folderPath: resolvedFolder, name, preset })
         : await workspaceCreate({ folderPath: resolvedFolder, name, preset });
