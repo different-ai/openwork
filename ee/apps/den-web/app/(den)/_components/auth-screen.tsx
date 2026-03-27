@@ -1,7 +1,10 @@
 "use client";
 
+import { Dithering, MeshGradient } from "@paper-design/shaders-react";
+import { ArrowRight, CheckCircle2 } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { isSamePathname } from "../_lib/client-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 function getDesktopGrant(url: string | null) {
@@ -37,8 +40,56 @@ function GoogleLogo() {
   );
 }
 
+function FeatureCard({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-2xl border border-gray-100 bg-white p-5">
+      <p className="mb-2 text-[14px] font-medium text-gray-900">{title}</p>
+      <p className="text-[13px] leading-[1.6] text-gray-500">{body}</p>
+    </div>
+  );
+}
+
+function SocialButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className="flex w-full items-center justify-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LoadingPanel({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-[28px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-7">
+      <div className="grid gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+          OpenWork Cloud
+        </p>
+        <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-gray-900">{title}</h2>
+        <p className="text-[14px] leading-relaxed text-gray-500">{body}</p>
+      </div>
+      <div className="mt-6 h-2 overflow-hidden rounded-full bg-gray-100">
+        <div className="h-full w-1/3 animate-pulse rounded-full bg-gray-900/80" />
+      </div>
+    </div>
+  );
+}
+
 export function AuthScreen() {
   const router = useRouter();
+  const pathname = usePathname();
   const routingRef = useRef(false);
   const [copiedDesktopField, setCopiedDesktopField] = useState<"link" | "code" | null>(null);
   const {
@@ -65,9 +116,10 @@ export function AuthScreen() {
     resendVerificationCode,
     cancelVerification,
     beginSocialAuth,
-    resolveUserLandingRoute
+    resolveUserLandingRoute,
   } = useDenFlow();
   const desktopGrant = getDesktopGrant(desktopRedirectUrl);
+  const hasResolvedSession = sessionHydrated && Boolean(user) && !desktopAuthRequested;
 
   const copyDesktopValue = async (field: "link" | "code", value: string | null) => {
     if (!value) return;
@@ -79,18 +131,21 @@ export function AuthScreen() {
   };
 
   useEffect(() => {
-    if (!sessionHydrated || !user || desktopAuthRequested || routingRef.current) {
+    if (!hasResolvedSession || routingRef.current) {
       return;
     }
 
     routingRef.current = true;
-    void resolveUserLandingRoute().then((target) => {
-      if (target) {
-        router.replace(target);
-      }
-      routingRef.current = false;
-    });
-  }, [desktopAuthRequested, resolveUserLandingRoute, router, sessionHydrated, user]);
+    void resolveUserLandingRoute()
+      .then((target) => {
+        if (target && !isSamePathname(pathname, target)) {
+          router.replace(target);
+        }
+      })
+      .finally(() => {
+        routingRef.current = false;
+      });
+  }, [hasResolvedSession, pathname, resolveUserLandingRoute, router]);
 
   const panelTitle = verificationRequired
     ? "Verify your email."
@@ -104,61 +159,111 @@ export function AuthScreen() {
       ? "Start with email, GitHub, or Google."
       : "Welcome back. Keep your team setup in sync across Cloud and desktop.";
 
+  if (!sessionHydrated) {
+    return (
+      <section className="den-page flex w-full items-center py-4 lg:min-h-[calc(100vh-2.5rem)]">
+        <LoadingPanel title="Checking your session." body="Loading your Cloud account state..." />
+      </section>
+    );
+  }
+
   return (
     <section className="den-page flex w-full items-center py-4 lg:min-h-[calc(100vh-2.5rem)]">
-      {sessionHydrated ? (
-        <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
-          <div className="den-frame-soft flex flex-col justify-between gap-10 p-7 md:p-10 lg:p-12">
-            <div className="grid gap-6">
-              <span className="den-kicker w-fit">OpenWork Cloud</span>
-              <div className="grid gap-4">
-                <h1 className="den-title-xl max-w-[12ch]">Share your OpenWork setup with your team.</h1>
-                <p className="den-copy max-w-[40rem]">
-                  Provision shared setups, invite your org, and keep background agents available when you need them.
-                </p>
-              </div>
+      <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
+        <div className="flex flex-col gap-6">
+          <div className="relative min-h-[300px] overflow-hidden rounded-[32px] border border-gray-100 px-7 py-8 md:px-10 md:py-10">
+            <div className="absolute inset-0 z-0">
+              <Dithering
+                speed={0}
+                shape="warp"
+                type="4x4"
+                size={2.5}
+                scale={1}
+                frame={30214.2}
+                colorBack="#00000000"
+                colorFront="#FEFEFE"
+                style={{ backgroundColor: "#142033", width: "100%", height: "100%" }}
+              >
+                <MeshGradient
+                  speed={0.7}
+                  distortion={0.8}
+                  swirl={0.1}
+                  grainMixer={0}
+                  grainOverlay={0}
+                  frame={176868.9}
+                  colors={["#E0FCFF", "#3B82F6", "#7C3AED", "#50F7D4"]}
+                  style={{ width: "100%", height: "100%" }}
+                />
+              </Dithering>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-3 lg:grid-cols-1">
-              <div className="grid gap-1 border-t border-gray-200 pt-4">
-                <p className="text-base font-medium text-[var(--dls-text-primary)]">Share setup across your team and org</p>
-                <p className="den-copy text-sm">Package skills, MCPs, plugins, and config once.</p>
+            <div className="relative z-10 flex h-full flex-col justify-between gap-10">
+              <div className="flex items-center gap-3">
+                <img src="/openwork-mark.svg" alt="OpenWork" className="h-9 w-auto" />
+                <span className="text-[13px] font-medium text-white/80">OpenWork Cloud</span>
               </div>
-              <div className="grid gap-1 border-t border-gray-200 pt-4">
-                <p className="text-base font-medium text-[var(--dls-text-primary)]">Background agents</p>
-                <p className="den-copy text-sm">Keep selected workflows running in the cloud. Alpha.</p>
-              </div>
-              <div className="grid gap-1 border-t border-gray-200 pt-4">
-                <p className="text-base font-medium text-[var(--dls-text-primary)]">Custom LLM providers</p>
-                <p className="den-copy text-sm">Standardize provider access for your team. Coming soon.</p>
+
+              <div className="grid gap-4">
+                <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
+                  Shared setups
+                </span>
+                <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white md:text-[3rem]">
+                  Share your OpenWork setup with your team.
+                </h1>
+                <p className="max-w-[34rem] text-[15px] leading-7 text-white/80">
+                  Provision shared setups, invite your org, and keep background workspaces available across Cloud and desktop.
+                </p>
               </div>
             </div>
           </div>
 
-          <div className="den-frame grid h-fit gap-5 p-6 md:p-7 lg:mt-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            <FeatureCard
+              title="Team sharing"
+              body="Package skills, MCPs, plugins, and config once so the whole org can use the same setup."
+            />
+            <FeatureCard
+              title="Shared workspaces"
+              body="Keep selected workflows running in the cloud without asking each teammate to run them locally."
+            />
+            <FeatureCard
+              title="Provider control"
+              body="Roll into standardized model access and billing controls as your team grows into Cloud."
+            />
+          </div>
+        </div>
+
+        {hasResolvedSession ? (
+          <LoadingPanel
+            title="Redirecting to your workspace."
+            body="We found your account and are sending you to the right Cloud destination now."
+          />
+        ) : (
+          <div className="rounded-[28px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-7">
             <div className="grid gap-2">
-              <p className="den-eyebrow">Account</p>
-              <h2 className="den-title-lg">{panelTitle}</h2>
-              <p className="den-copy text-sm">{panelCopy}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+                Account
+              </p>
+              <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-gray-900">{panelTitle}</h2>
+              <p className="text-[14px] leading-relaxed text-gray-500">{panelCopy}</p>
             </div>
 
             {desktopAuthRequested ? (
-              <div className="den-notice is-info">
-                Finish auth here and we&apos;ll send you back into the OpenWork
-                desktop app.
+              <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-[13px] text-sky-900">
+                Finish auth here and we&apos;ll send you back into the OpenWork desktop app.
                 {desktopRedirectUrl ? (
                   <div className="mt-4 grid gap-2">
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        className="den-button-secondary text-xs"
+                        className="rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100"
                         onClick={() => window.location.assign(desktopRedirectUrl)}
                       >
                         Open OpenWork
                       </button>
                       <button
                         type="button"
-                        className="den-button-secondary text-xs"
+                        className="rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100"
                         onClick={() => void copyDesktopValue("link", desktopRedirectUrl)}
                       >
                         {copiedDesktopField === "link" ? "Copied link" : "Copy sign-in link"}
@@ -166,16 +271,15 @@ export function AuthScreen() {
                       {desktopGrant ? (
                         <button
                           type="button"
-                          className="den-button-secondary text-xs"
+                          className="rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100"
                           onClick={() => void copyDesktopValue("code", desktopGrant)}
                         >
                           {copiedDesktopField === "code" ? "Copied code" : "Copy one-time code"}
                         </button>
                       ) : null}
                     </div>
-                    <p className="text-xs leading-5 opacity-80">
-                      If OpenWork does not open automatically, copy the sign-in
-                      link or one-time code and paste it into the OpenWork desktop app.
+                    <p className="text-xs leading-5 text-sky-800/80">
+                      If OpenWork does not open automatically, copy the sign-in link or one-time code and paste it into the OpenWork desktop app.
                     </p>
                   </div>
                 ) : null}
@@ -183,53 +287,56 @@ export function AuthScreen() {
             ) : null}
 
             <form
-              className="grid gap-3"
+              className="mt-5 grid gap-3"
               onSubmit={async (event) => {
-                const next = verificationRequired ? await submitVerificationCode(event) : await submitAuth(event);
+                const next = verificationRequired
+                  ? await submitVerificationCode(event)
+                  : await submitAuth(event);
                 if (next === "dashboard") {
                   const target = await resolveUserLandingRoute();
-                  if (target) {
+                  if (target && !isSamePathname(pathname, target)) {
                     router.replace(target);
                   }
-                } else if (next === "checkout") {
+                } else if (next === "checkout" && !isSamePathname(pathname, "/checkout")) {
                   router.replace("/checkout");
                 }
               }}
             >
               {!verificationRequired ? (
                 <>
-                  <button
-                    type="button"
-                    className="den-button-secondary w-full gap-3"
+                  <SocialButton
                     onClick={() => void beginSocialAuth("github")}
                     disabled={authBusy || desktopRedirectBusy}
                   >
                     <GitHubLogo />
                     <span>Continue with GitHub</span>
-                  </button>
+                  </SocialButton>
 
-                  <button
-                    type="button"
-                    className="den-button-secondary w-full gap-3"
+                  <SocialButton
                     onClick={() => void beginSocialAuth("google")}
                     disabled={authBusy || desktopRedirectBusy}
                   >
                     <GoogleLogo />
                     <span>Continue with Google</span>
-                  </button>
+                  </SocialButton>
 
-                  <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
-                    <span className="h-px flex-1 bg-slate-200" />
+                  <div
+                    className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400"
+                    aria-hidden="true"
+                  >
+                    <span className="h-px flex-1 bg-gray-200" />
                     <span>or</span>
-                    <span className="h-px flex-1 bg-slate-200" />
+                    <span className="h-px flex-1 bg-gray-200" />
                   </div>
                 </>
               ) : null}
 
               <label className="grid gap-2">
-                <span className="den-label">Email</span>
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                  Email
+                </span>
                 <input
-                  className="den-input"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-[14px] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
@@ -240,9 +347,11 @@ export function AuthScreen() {
 
               {!verificationRequired ? (
                 <label className="grid gap-2">
-                  <span className="den-label">Password</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    Password
+                  </span>
                   <input
-                    className="den-input"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-[14px] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
@@ -252,14 +361,18 @@ export function AuthScreen() {
                 </label>
               ) : (
                 <label className="grid gap-2">
-                  <span className="den-label">Verification code</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    Verification code
+                  </span>
                   <input
-                    className="den-input text-center text-[18px] font-semibold tracking-[0.35em]"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-center text-[18px] font-semibold tracking-[0.35em] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
                     type="text"
                     inputMode="numeric"
                     pattern="[0-9]*"
                     value={verificationCode}
-                    onChange={(event) => setVerificationCode(event.target.value.replace(/\D+/g, "").slice(0, 6))}
+                    onChange={(event) =>
+                      setVerificationCode(event.target.value.replace(/\D+/g, "").slice(0, 6))
+                    }
                     autoComplete="one-time-code"
                     required
                   />
@@ -268,7 +381,7 @@ export function AuthScreen() {
 
               <button
                 type="submit"
-                className="den-button-primary w-full"
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-[14px] font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={authBusy || desktopRedirectBusy}
               >
                 {authBusy || desktopRedirectBusy
@@ -278,13 +391,14 @@ export function AuthScreen() {
                     : authMode === "sign-in"
                       ? "Sign in to Cloud"
                       : "Create Cloud account"}
+                {!authBusy && !desktopRedirectBusy ? <ArrowRight className="h-4 w-4" /> : null}
               </button>
 
               {verificationRequired ? (
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <button
                     type="button"
-                    className="den-button-secondary w-full"
+                    className="w-full rounded-full border border-gray-200 bg-white px-4 py-3 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => void resendVerificationCode()}
                     disabled={authBusy || desktopRedirectBusy}
                   >
@@ -292,7 +406,7 @@ export function AuthScreen() {
                   </button>
                   <button
                     type="button"
-                    className="den-button-secondary w-full"
+                    className="w-full rounded-full border border-gray-200 bg-white px-4 py-3 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => cancelVerification()}
                     disabled={authBusy || desktopRedirectBusy}
                   >
@@ -303,11 +417,11 @@ export function AuthScreen() {
             </form>
 
             {!verificationRequired ? (
-              <div className="flex items-center justify-between gap-3 border-t border-gray-200 pt-1 text-sm text-[var(--dls-text-secondary)]">
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-gray-200 pt-4 text-sm text-gray-500">
                 <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
                 <button
                   type="button"
-                  className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                  className="font-medium text-gray-900 transition hover:opacity-70"
                   onClick={() => setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in")}
                 >
                   {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
@@ -316,18 +430,23 @@ export function AuthScreen() {
             ) : null}
 
             {showAuthFeedback ? (
-              <div className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
+              <div
+                className="mt-4 grid gap-1 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-center text-[13px] text-gray-500"
+                aria-live="polite"
+              >
                 <p>{authInfo}</p>
                 {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+                {!authError && verificationRequired ? (
+                  <div className="mt-1 inline-flex items-center justify-center gap-1 text-emerald-600">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Waiting for your verification code</span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
-        </div>
-      ) : (
-        <div className="den-frame-soft grid w-full max-w-[28rem] gap-3 px-6 py-8 text-center">
-          <p className="text-sm text-slate-500">Checking your session...</p>
-        </div>
-      )}
+        )}
+      </div>
     </section>
   );
 }

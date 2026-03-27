@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 
-export default function ManageMembersRedirectPage({
+export default async function ManageMembersRedirectPage({
   params,
 }: {
-  params: { orgSlug: string };
+  params: Promise<{ orgSlug: string }>;
 }) {
-  redirect(`/o/${encodeURIComponent(params.orgSlug)}/dashboard/members`);
+  const { orgSlug } = await params;
+
+  redirect(`/o/${encodeURIComponent(orgSlug)}/dashboard/members`);
 }
