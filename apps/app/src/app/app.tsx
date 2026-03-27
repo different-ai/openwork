@@ -31,6 +31,7 @@ import { parse } from "jsonc-parser";
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
+import AddWorkspaceModal from "./components/add-workspace-modal";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import SharedSkillDestinationModal from "./components/shared-skill-destination-modal";
@@ -4506,6 +4507,7 @@ export default function App() {
   const [editRemoteWorkspaceOpen, setEditRemoteWorkspaceOpen] = createSignal(false);
   const [editRemoteWorkspaceId, setEditRemoteWorkspaceId] = createSignal<string | null>(null);
   const [editRemoteWorkspaceError, setEditRemoteWorkspaceError] = createSignal<string | null>(null);
+  const [addWorkspaceModalOpen, setAddWorkspaceModalOpen] = createSignal(false);
   const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [autoConnectRemoteWorkspaceOverlayOpen, setAutoConnectRemoteWorkspaceOverlayOpen] = createSignal(false);
@@ -4564,6 +4566,11 @@ export default function App() {
     const request = sharedTemplateStartRequest();
     return request ? describeSharedBundleImport(request.bundle).items : [];
   });
+
+  const openAddWorkspaceModal = () => {
+    setError(null);
+    setAddWorkspaceModalOpen(true);
+  };
 
   const sharedSkillDestinationWorkspaces = createMemo(() => {
     const activeId = workspaceStore.selectedWorkspaceId();
@@ -8220,6 +8227,7 @@ export default function App() {
       ensureWorkspaceActivated: workspaceStore.ensureWorkspaceActivated,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
+      openAddWorkspace: openAddWorkspaceModal,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
       getStartedWorkspace: workspaceStore.quickStartWorkspaceFlow,
       pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
@@ -8456,6 +8464,7 @@ export default function App() {
     recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
+    openAddWorkspace: openAddWorkspaceModal,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
     getStartedWorkspace: workspaceStore.quickStartWorkspaceFlow,
     pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
@@ -8815,6 +8824,31 @@ export default function App() {
         onConfirm={(folder) => {
           void startWorkspaceFromTemplate(folder);
         }}
+      />
+
+      <AddWorkspaceModal
+        open={addWorkspaceModalOpen()}
+        onClose={() => setAddWorkspaceModalOpen(false)}
+        onPickFolder={workspaceStore.pickWorkspaceFolder}
+        onCreateLocalWorkspace={async (preset, folder) => {
+          const ok = await workspaceStore.createWorkspaceFlow(preset, folder);
+          if (ok) {
+            setAddWorkspaceModalOpen(false);
+          }
+          return ok;
+        }}
+        onConnectRemoteWorkspace={async (input) => {
+          const ok = await workspaceStore.createRemoteWorkspaceFlow({
+            ...input,
+            closeModal: false,
+          });
+          if (ok) {
+            setAddWorkspaceModalOpen(false);
+          }
+          return ok;
+        }}
+        error={error()}
+        onClearError={() => setError(null)}
       />
 
       <CreateWorkspaceModal

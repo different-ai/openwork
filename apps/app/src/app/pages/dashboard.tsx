@@ -156,6 +156,7 @@ export type DashboardViewProps = {
   ensureWorkspaceActivated: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
+  openAddWorkspace: () => void;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   connectRemoteWorkspace: (input: {
@@ -1225,7 +1226,6 @@ export default function DashboardView(props: DashboardViewProps) {
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
-            importingWorkspaceConfig={props.importingWorkspaceConfig}
             onSelectWorkspace={props.selectWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}
@@ -1236,9 +1236,7 @@ export default function DashboardView(props: DashboardViewProps) {
             onTestWorkspaceConnection={props.testWorkspaceConnection}
             onEditWorkspaceConnection={props.editWorkspaceConnection}
             onForgetWorkspace={props.forgetWorkspace}
-            onOpenCreateWorkspace={props.openCreateWorkspace}
-            onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-            onImportWorkspaceConfig={props.importWorkspaceConfig}
+            onOpenAddWorkspace={props.openAddWorkspace}
           />
         </div>
         <div

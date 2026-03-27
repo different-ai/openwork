@@ -14,8 +14,6 @@ import {
   Plus,
 } from "lucide-solid";
 
-import DesktopOnlyBadge from "../desktop-only-badge";
-import { getOpenWorkDeployment } from "../../lib/openwork-deployment";
 import { DEFAULT_SESSION_TITLE, getDisplaySessionTitle } from "../../lib/session-title";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type {
@@ -38,7 +36,6 @@ type Props = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
-  importingWorkspaceConfig: boolean;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
@@ -55,9 +52,7 @@ type Props = {
   ) => Promise<boolean> | boolean | void;
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
-  onOpenCreateWorkspace: () => void;
-  onOpenCreateRemoteWorkspace: () => void;
-  onImportWorkspaceConfig: () => void;
+  onOpenAddWorkspace: () => void;
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
@@ -191,7 +186,6 @@ export default function WorkspaceSessionList(props: Props) {
   const revealLabel = isWindowsPlatform()
     ? "Reveal in Explorer"
     : "Reveal in Finder";
-  const newWorkspaceDesktopOnly = getOpenWorkDeployment() === "web";
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<
     Set<string>
   >(new Set());
@@ -200,13 +194,11 @@ export default function WorkspaceSessionList(props: Props) {
   const [workspaceMenuId, setWorkspaceMenuId] = createSignal<string | null>(
     null,
   );
-  const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
   const [expandedSessionIds, setExpandedSessionIds] = createSignal<Set<string>>(
     new Set(),
   );
   let workspaceMenuRef: HTMLDivElement | undefined;
-  let addWorkspaceMenuRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
 
   const isWorkspaceExpanded = (workspaceId: string) =>
@@ -304,18 +296,6 @@ export default function WorkspaceSessionList(props: Props) {
       const target = event.target as Node | null;
       if (target && workspaceMenuRef.contains(target)) return;
       setWorkspaceMenuId(null);
-    };
-    window.addEventListener("pointerdown", closeMenu);
-    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
-  });
-
-  createEffect(() => {
-    if (!addWorkspaceMenuOpen()) return;
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target))
-        return;
-      setAddWorkspaceMenuOpen(false);
     };
     window.addEventListener("pointerdown", closeMenu);
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
@@ -877,70 +857,15 @@ export default function WorkspaceSessionList(props: Props) {
         </div>
       </div>
 
-      <div
-        class="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3"
-        ref={(el) => (addWorkspaceMenuRef = el)}
-      >
+      <div class="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3">
         <button
           type="button"
           class="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"
-          onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
+          onClick={props.onOpenAddWorkspace}
         >
           <Plus size={14} />
           Add workspace
         </button>
-
-        <Show when={addWorkspaceMenuOpen()}>
-          <div class="absolute left-0 right-0 bottom-full z-20 mb-2 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]">
-            <button
-              type="button"
-              class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs transition-colors ${
-                newWorkspaceDesktopOnly
-                  ? "cursor-not-allowed text-gray-9 opacity-70"
-                  : "text-gray-11 hover:bg-gray-2 hover:text-gray-12"
-              }`}
-              disabled={newWorkspaceDesktopOnly}
-              title={
-                newWorkspaceDesktopOnly
-                  ? "Create local workspaces in the desktop app."
-                  : undefined
-              }
-              onClick={() => {
-                props.onOpenCreateWorkspace();
-                setAddWorkspaceMenuOpen(false);
-              }}
-            >
-              <Plus size={12} />
-              <span class="flex-1 text-left">New workspace</span>
-              <Show when={newWorkspaceDesktopOnly}>
-                <DesktopOnlyBadge />
-              </Show>
-            </button>
-            <button
-              type="button"
-              class="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-2 hover:text-gray-12"
-              onClick={() => {
-                props.onOpenCreateRemoteWorkspace();
-                setAddWorkspaceMenuOpen(false);
-              }}
-            >
-              <Plus size={12} />
-              Connect remote workspace
-            </button>
-            <button
-              type="button"
-              class="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={props.importingWorkspaceConfig}
-              onClick={() => {
-                props.onImportWorkspaceConfig();
-                setAddWorkspaceMenuOpen(false);
-              }}
-            >
-              <Plus size={12} />
-              Import config
-            </button>
-          </div>
-        </Show>
       </div>
     </div>
   );

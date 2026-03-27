@@ -130,6 +130,7 @@ export type SessionViewProps = {
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
+  openAddWorkspace: () => void;
   openCreateWorkspace: () => void;
   getStartedWorkspace: () => Promise<boolean>;
   pickFolderWorkspace: () => Promise<boolean>;
@@ -4050,7 +4051,6 @@ export default function SessionView(props: SessionViewProps) {
               connectingWorkspaceId={props.connectingWorkspaceId}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
               newTaskDisabled={props.newTaskDisabled}
-              importingWorkspaceConfig={props.importingWorkspaceConfig}
               onSelectWorkspace={props.selectWorkspace}
               onOpenSession={openSessionFromList}
               onCreateTaskInWorkspace={createTaskInWorkspace}
@@ -4065,9 +4065,7 @@ export default function SessionView(props: SessionViewProps) {
               onTestWorkspaceConnection={props.testWorkspaceConnection}
               onEditWorkspaceConnection={props.editWorkspaceConnection}
               onForgetWorkspace={props.forgetWorkspace}
-              onOpenCreateWorkspace={props.openCreateWorkspace}
-              onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-              onImportWorkspaceConfig={props.importWorkspaceConfig}
+              onOpenAddWorkspace={props.openAddWorkspace}
             />
           </div>
           <div
