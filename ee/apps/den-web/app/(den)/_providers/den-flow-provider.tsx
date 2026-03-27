@@ -133,7 +133,7 @@ type DenFlowContextValue = {
   selectedStatusMeta: { label: string; bucket: WorkerStatusBucket };
   isSelectedWorkerFailed: boolean;
   ownedWorkerCount: number;
-  refreshWorkers: (options?: { keepSelection?: boolean }) => Promise<void>;
+  refreshWorkers: (options?: { keepSelection?: boolean; quiet?: boolean }) => Promise<void>;
   launchWorker: (options?: { source?: "manual" | "signup_auto"; workerNameOverride?: string }) => Promise<LaunchWorkerResult>;
   checkWorkerStatus: (options?: { workerId?: string; quiet?: boolean; background?: boolean }) => Promise<void>;
   generateWorkerToken: () => Promise<void>;
@@ -229,6 +229,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [onboardingIntent, setOnboardingIntent] = useState<OnboardingIntent | null>(() => readLocalStorage<OnboardingIntent>(ONBOARDING_INTENT_STORAGE_KEY));
   const onboardingAutoLaunchKeyRef = useRef<string | null>(null);
   const socialSignupHandledRef = useRef<string | null>(null);
+  const pendingWorkersRequestRef = useRef<Promise<{ response: Response; payload: unknown }> | null>(null);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker =
@@ -583,10 +584,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const { response, payload } = await requestJson("/v1/workers?limit=20", {
-        method: "GET",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
-      });
+      if (!pendingWorkersRequestRef.current) {
+        pendingWorkersRequestRef.current = requestJson("/v1/workers?limit=20", {
+          method: "GET",
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+        });
+      }
+
+      const { response, payload } = await pendingWorkersRequestRef.current;
 
       if (!response.ok) {
         if (!options.quiet) {
@@ -640,6 +645,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
       setWorkersLoadedOnce(true);
     } finally {
+      pendingWorkersRequestRef.current = null;
       if (!options.quiet) {
         setWorkersBusy(false);
       }
@@ -1583,7 +1589,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       setPendingRestoredWorkerId(null);
       setLaunchStatus("Worker is ready to connect.");
       appendEvent("success", "Owner token ready", `Worker ID ${id}`);
-      void refreshWorkers({ keepSelection: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setLaunchError(message);

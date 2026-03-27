@@ -197,13 +197,16 @@ export function BackgroundAgentsScreen() {
 
       <div className="den-list-shell">
         <div className="px-5 py-5">
-          <p className="den-eyebrow">{workers.length > 0 ? "Current sandboxes" : "Example workflows"}</p>
+          <div className="flex items-center gap-3">
+            <p className="den-eyebrow">{workers.length > 0 ? "Current sandboxes" : "Example workflows"}</p>
+            {workersLoadedOnce && workersBusy ? <span className="text-xs text-[var(--dls-text-secondary)]">Refreshing...</span> : null}
+          </div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">
             Background workflows
           </h2>
         </div>
 
-        {!workersLoadedOnce || workersBusy ? (
+        {!workersLoadedOnce ? (
           <div className="den-list-row text-sm text-[var(--dls-text-secondary)]">Loading sandboxes...</div>
         ) : workers.length > 0 ? (
           workers.map((worker) => {

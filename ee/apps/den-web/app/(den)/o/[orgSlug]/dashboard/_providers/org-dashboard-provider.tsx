@@ -49,7 +49,7 @@ export function OrgDashboardProvider({
   children: ReactNode;
 }) {
   const router = useRouter();
-  const { user, sessionHydrated, signOut, refreshWorkers } = useDenFlow();
+  const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce } = useDenFlow();
   const [orgDirectory, setOrgDirectory] = useState<DenOrgSummary[]>([]);
   const [orgContext, setOrgContext] = useState<DenOrgContext | null>(null);
   const [orgBusy, setOrgBusy] = useState(false);
@@ -103,7 +103,7 @@ export function OrgDashboardProvider({
 
       setOrgDirectory(directory.map((entry) => ({ ...entry, isActive: entry.slug === context.organization.slug })));
       setOrgContext(context);
-      await refreshWorkers({ keepSelection: false });
+      await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
     } catch (error) {
       setOrgError(error instanceof Error ? error.message : "Failed to load organization details.");
     } finally {
