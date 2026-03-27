@@ -1,7 +1,5 @@
 "use client";
 
-import { Dithering, MeshGradient } from "@paper-design/shaders-react";
-import { ArrowRight, CheckCircle2, Monitor } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { isSamePathname } from "../_lib/client-route";
@@ -26,28 +24,11 @@ function formatSubscriptionStatus(value: string | null | undefined) {
 function LoadingPanel({ title, body }: { title: string; body: string }) {
   return (
     <section className="den-page py-4">
-      <div className="rounded-[28px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-8">
-        <div className="grid gap-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
-            OpenWork Cloud
-          </p>
-          <h1 className="text-[30px] font-semibold tracking-[-0.05em] text-gray-900">{title}</h1>
-          <p className="text-[14px] leading-relaxed text-gray-500">{body}</p>
-        </div>
-        <div className="mt-6 h-2 overflow-hidden rounded-full bg-gray-100">
-          <div className="h-full w-1/3 animate-pulse rounded-full bg-gray-900/80" />
-        </div>
+      <div className="den-frame-soft grid max-w-[44rem] gap-4 p-6">
+        <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{title}</h1>
+        <p className="text-sm text-[var(--dls-text-secondary)]">{body}</p>
       </div>
     </section>
-  );
-}
-
-function BenefitCard({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-5">
-      <p className="mb-2 text-[14px] font-medium text-gray-900">{title}</p>
-      <p className="text-[13px] leading-[1.6] text-gray-500">{body}</p>
-    </div>
   );
 }
 
@@ -168,8 +149,8 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   if (!sessionHydrated || (!user && !mockMode)) {
     return (
       <LoadingPanel
-        title="Checking billing access."
-        body="Loading your account and billing state before we continue."
+        title="Checking your billing session..."
+        body="Loading your account and billing state before continuing."
       />
     );
   }
@@ -190,86 +171,49 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
   return (
     <section className="den-page grid gap-6 py-4 lg:py-6">
-      <div className="relative overflow-hidden rounded-[32px] border border-gray-100 px-7 py-8 md:px-10 md:py-10">
-        <div className="absolute inset-0 z-0">
-          <Dithering
-            speed={0}
-            shape="warp"
-            type="4x4"
-            size={2.5}
-            scale={1}
-            frame={27618.9}
-            colorBack="#00000000"
-            colorFront="#FEFEFE"
-            style={{ backgroundColor: "#18222F", width: "100%", height: "100%" }}
-          >
-            <MeshGradient
-              speed={0.65}
-              distortion={0.8}
-              swirl={0.1}
-              grainMixer={0}
-              grainOverlay={0}
-              frame={176868.9}
-              colors={["#E0FCFF", "#1D7B9A", "#50F7D4", "#518EF0"]}
-              style={{ width: "100%", height: "100%" }}
-            />
-          </Dithering>
-        </div>
-
-        <div className="relative z-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-          <div className="grid gap-4 lg:max-w-3xl">
-            <div className="flex items-center gap-3">
-              <img src="/openwork-mark.svg" alt="OpenWork" className="h-9 w-auto" />
-              <span className="text-[13px] font-medium text-white/80">OpenWork Cloud</span>
-            </div>
-
-            <div className="grid gap-3">
-              <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
-                {TRIAL_DAYS}-day free trial
-              </span>
-              <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white md:text-[3rem]">
-                Provision shared setups for your team.
-              </h1>
-              <p className="max-w-2xl text-[15px] leading-7 text-white/80">
-                Share your setup across your org, launch background workspaces in alpha, and prepare for team-wide provider provisioning.
-              </p>
-            </div>
+      <div className="den-frame grid gap-6 p-6 md:p-8 lg:p-10">
+        <div className="flex flex-col gap-4 lg:max-w-3xl">
+          <div className="grid gap-3">
+            <p className="den-eyebrow">OpenWork Cloud</p>
+            <h1 className="den-title-xl max-w-[12ch]">Provision shared setups for your team.</h1>
+            <p className="den-copy max-w-2xl">
+              Share your setup across your org, launch background agents in alpha, and prepare for team-wide provider provisioning.
+            </p>
           </div>
 
-          <div className="flex flex-wrap gap-3 lg:justify-end">
+          <div className="flex flex-wrap gap-3">
             {checkoutHref ? (
-              <a
-                href={checkoutHref}
-                rel="noreferrer"
-                className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-[14px] font-medium text-gray-900 transition-colors hover:bg-gray-100"
-              >
+              <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
                 Start free trial
-                <ArrowRight className="h-4 w-4" />
               </a>
             ) : (
               <button
                 type="button"
-                className="inline-flex min-h-[48px] items-center justify-center rounded-full bg-white px-5 py-3 text-[14px] font-medium text-gray-900 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="den-button-primary w-full sm:w-auto"
                 onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
                 disabled={billingBusy || billingCheckoutBusy}
               >
                 Refresh trial link
               </button>
             )}
-            <a
-              href="https://openworklabs.com/download"
-              className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-[14px] font-medium text-white backdrop-blur-md transition-colors hover:bg-white/15"
-            >
-              <Monitor className="h-4 w-4" />
+            <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
               Use desktop only
             </a>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
+            <span>{TRIAL_DAYS}-day free trial</span>
+            <span aria-hidden="true">•</span>
+            <span>{planAmountLabel} after trial</span>
+            <span aria-hidden="true">•</span>
+            <span>{user?.email ?? "Signed in"}</span>
           </div>
         </div>
       </div>
 
       {billingError ? <div className="den-notice is-error">{billingError}</div> : null}
       {showLoading ? (
-        <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-sm text-gray-500">
+        <div className="den-frame-soft px-5 py-4 text-sm text-[var(--dls-text-secondary)]">
           Refreshing access state...
         </div>
       ) : null}
@@ -277,136 +221,100 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
       {billingSummary ? (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_320px]">
           <div className="grid gap-6">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <BenefitCard title="Cloud sharing" body="Share setup across your team and org without reconfiguring every machine." />
-              <BenefitCard title="Shared workspaces" body="Keep selected workflows running in the background for high-leverage team flows." />
-              <BenefitCard title="Provider rollout" body="Prepare for team-wide LLM provider control and more consistent shared setups." />
-            </div>
-
-            <article className="rounded-[28px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.18)] md:p-7">
+            <article className="den-frame grid gap-6 p-6 md:p-7">
               <div className="grid gap-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Plan summary</p>
-                <h2 className="text-[30px] font-semibold tracking-[-0.05em] text-gray-900">
-                  {billingSummary.hasActivePlan ? "Your Cloud plan is active." : `Start with a ${TRIAL_DAYS}-day trial.`}
-                </h2>
-                <p className="text-[14px] leading-relaxed text-gray-500">
-                  {billingSummary.hasActivePlan
-                    ? "Your team can keep using shared setups and cloud workflows without interruption."
-                    : `Try OpenWork Cloud for ${TRIAL_DAYS} days, then continue at ${planAmountLabel}.`}
+                <span className="den-kicker w-fit">OpenWork Cloud</span>
+                <h2 className="den-title-lg">Share your setup across your team.</h2>
+                <p className="den-copy">
+                  Manage your team&apos;s setup, invite teammates, and keep everything in sync.
                 </p>
               </div>
 
-              <div className="mt-6 grid gap-3 text-sm text-gray-500">
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-gray-300" />Share setup across your team and org</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-gray-300" />Background workspaces in alpha for selected workflows</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-gray-300" />Custom LLM providers for teams, coming soon</div>
+              <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Share setup across your team and org</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background agents in alpha for selected workflows</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers for teams, coming soon</div>
               </div>
 
-              <div className="mt-6 flex flex-wrap gap-3">
-                {checkoutHref && !billingSummary.hasActivePlan ? (
-                  <a
-                    href={checkoutHref}
-                    rel="noreferrer"
-                    className="inline-flex items-center justify-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-[14px] font-medium text-white transition-colors hover:bg-gray-800"
-                  >
-                    Start free trial
-                    <ArrowRight className="h-4 w-4" />
-                  </a>
-                ) : null}
-                {billingSummary.portalUrl ? (
-                  <a
-                    href={billingSummary.portalUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                    className="inline-flex items-center justify-center rounded-full border border-gray-200 bg-white px-5 py-3 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-                  >
-                    Open billing portal
-                  </a>
-                ) : null}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="den-frame-inset rounded-[1.5rem] p-4">
+                  <p className="den-stat-label">Background agents</p>
+                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
+                    Keep selected workflows running in the background. Alpha.
+                  </p>
+                </div>
+                <div className="den-frame-inset rounded-[1.5rem] p-4">
+                  <p className="den-stat-label">Custom LLM providers</p>
+                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
+                    Standardize provider access for your team. Coming soon.
+                  </p>
+                </div>
               </div>
             </article>
 
-            <article className="rounded-[28px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.18)] md:p-7">
+            <article className="den-frame-soft grid gap-5 p-6 md:p-7">
               <div className="grid gap-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Desktop app</p>
-                <h2 className="text-[30px] font-semibold tracking-[-0.05em] text-gray-900">
-                  Stay local when you need to.
-                </h2>
-                <p className="text-[14px] leading-relaxed text-gray-500">
+                <span className="den-kicker w-fit">Desktop app</span>
+                <h2 className="den-title-lg">Stay local when you need to.</h2>
+                <p className="den-copy">
                   Run locally for free, keep your data on your machine, and add OpenWork Cloud when your team is ready.
                 </p>
               </div>
 
-              <div className="mt-5 grid gap-3 text-sm text-gray-500">
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-gray-300" />Run locally for free</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-gray-300" />Keep data on your machine</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-gray-300" />Move into OpenWork Cloud later</div>
+              <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Run locally for free</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Keep data on your machine</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Move into OpenWork Cloud later</div>
               </div>
 
-              <div className="mt-6 pt-1">
-                <a
-                  href="https://openworklabs.com/download"
-                  className="inline-flex items-center justify-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-3 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-                >
-                  <Monitor className="h-4 w-4" />
+              <div className="mt-auto pt-2">
+                <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
                   Use desktop only
                 </a>
               </div>
             </article>
           </div>
 
-          <aside className="grid h-fit gap-4 rounded-[28px] border border-gray-100 bg-white p-5 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.18)] md:p-6">
+          <aside className="den-frame-soft grid h-fit gap-4 p-5 md:p-6">
             <div className="grid gap-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Billing status</p>
-              <h2 className="text-2xl font-semibold tracking-tight text-gray-900">{subscriptionStatus}</h2>
-              <p className="text-sm leading-relaxed text-gray-500">
-                {billingSummary.hasActivePlan
-                  ? "Your Cloud plan is active."
-                  : `${TRIAL_DAYS}-day free trial before billing starts.`}
+              <p className="den-eyebrow">Billing status</p>
+              <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
+              <p className="den-copy text-sm">
+                {billingSummary.hasActivePlan ? "Your Cloud plan is active." : `${TRIAL_DAYS}-day free trial before billing starts.`}
               </p>
             </div>
 
-            <div className="grid gap-3 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-4">
+            <div className="den-frame-inset grid gap-3 rounded-[1.5rem] px-4 py-4">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium text-gray-900">Plan</span>
+                <span className="text-sm font-medium text-[var(--dls-text-primary)]">Plan</span>
                 <span className={`den-status-pill ${billingSummary.hasActivePlan ? "is-positive" : "is-neutral"}`}>
                   {subscriptionStatus}
                 </span>
               </div>
-              <div className="flex items-center justify-between gap-3 text-sm text-gray-500">
+              <div className="flex items-center justify-between gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <span>Price</span>
-                <span className="font-medium text-gray-900">{planAmountLabel}</span>
+                <span className="font-medium text-[var(--dls-text-primary)]">{planAmountLabel}</span>
               </div>
-              <div className="flex items-center justify-between gap-3 text-sm text-gray-500">
+              <div className="flex items-center justify-between gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <span>Invoices</span>
-                <span className="font-medium text-gray-900">{billingSummary.invoices.length}</span>
+                <span className="font-medium text-[var(--dls-text-primary)]">{billingSummary.invoices.length}</span>
               </div>
             </div>
 
             <div className="grid gap-3">
               {checkoutHref && !billingSummary.hasActivePlan ? (
-                <a
-                  href={checkoutHref}
-                  rel="noreferrer"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-[14px] font-medium text-white transition-colors hover:bg-gray-800"
-                >
+                <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
                   Start free trial
-                  <ArrowRight className="h-4 w-4" />
                 </a>
               ) : null}
               {billingSummary.portalUrl ? (
-                <a
-                  href={billingSummary.portalUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                  className="inline-flex w-full items-center justify-center rounded-full border border-gray-200 bg-white px-5 py-3 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-                >
+                <a href={billingSummary.portalUrl} rel="noreferrer" target="_blank" className="den-button-secondary w-full">
                   Open billing portal
                 </a>
               ) : null}
               <button
                 type="button"
-                className="inline-flex w-full items-center justify-center rounded-full border border-gray-200 bg-white px-5 py-3 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="den-button-secondary w-full"
                 onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
                 disabled={billingBusy || billingCheckoutBusy}
               >
@@ -414,17 +322,14 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               </button>
             </div>
 
-            <div className="flex flex-wrap gap-2 text-sm text-gray-500">
+            <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-[var(--dls-text-secondary)]">
               {billingSummary.portalUrl ? (
-                <a href={billingSummary.portalUrl} rel="noreferrer" target="_blank" className="font-medium text-gray-900 transition hover:opacity-70">
+                <a href={billingSummary.portalUrl} rel="noreferrer" target="_blank" className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70">
                   Billing portal
                 </a>
               ) : null}
               <span>Invoices {billingSummary.invoices.length > 0 ? `(${billingSummary.invoices.length})` : ""}</span>
-              <span className="inline-flex items-center gap-1 text-emerald-600">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Cancel anytime
-              </span>
+              <span>Cancel anytime</span>
             </div>
           </aside>
         </div>
