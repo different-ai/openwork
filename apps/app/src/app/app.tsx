@@ -1494,6 +1494,9 @@ export default function App() {
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
+  const [pendingDefaultModelByWorkspace, setPendingDefaultModelByWorkspace] = createSignal<
+    Record<string, string>
+  >({});
   const [autoCompactContextReady, setAutoCompactContextReady] = createSignal(false);
   const [autoCompactContextDirty, setAutoCompactContextDirty] = createSignal(false);
   const [autoCompactContextApplied, setAutoCompactContextApplied] = createSignal(true);
@@ -5395,6 +5398,7 @@ export default function App() {
       setDefaultModel(DEFAULT_MODEL);
       setLegacyDefaultModel(DEFAULT_MODEL);
       setDefaultModelExplicit(false);
+      setPendingDefaultModelByWorkspace({});
       setShowThinking(false);
       setHideTitlebar(false);
       setAutoCompactContext(false);
@@ -6174,28 +6178,55 @@ export default function App() {
     setModelPickerOpen(true);
   }
 
-  function applyModelSelection(next: ModelRef) {
-    const restorePromptFocus = modelPickerTarget() === "session";
+  function setPendingDefaultModelForWorkspace(workspaceId: string, model: ModelRef | null) {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setPendingDefaultModelByWorkspace((current) => {
+      const next = { ...current };
+      if (model) {
+        next[id] = formatModelRef(model);
+      } else {
+        delete next[id];
+      }
+      return next;
+    });
+  }
 
-    if (modelPickerTarget() === "default") {
-      setDefaultModelExplicit(true);
-      setDefaultModel(next);
-      closeModelPicker({ restorePromptFocus: false });
+  function pendingDefaultModelForWorkspace(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return null;
+    return pendingDefaultModelByWorkspace()[id] ?? null;
+  }
+
+  function applyDefaultModelChoice(next: ModelRef) {
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    if (workspaceId) {
+      setPendingDefaultModelForWorkspace(workspaceId, next);
+    }
+    setDefaultModelExplicit(true);
+    setDefaultModel(next);
+    setLegacyDefaultModel(next);
+  }
+
+  function applyModelSelection(next: ModelRef) {
+    const target = modelPickerTarget();
+    const restorePromptFocus = target === "session";
+
+    if (target === "default") {
+      applyDefaultModelChoice(next);
       return;
     }
 
     const id = selectedSessionId();
     if (!id) {
       setPendingSessionModel(next);
-      setDefaultModelExplicit(true);
-      setDefaultModel(next);
+      applyDefaultModelChoice(next);
       closeModelPicker({ restorePromptFocus });
       return;
     }
 
     setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
-    setDefaultModelExplicit(true);
-    setDefaultModel(next);
+    applyDefaultModelChoice(next);
     closeModelPicker({ restorePromptFocus });
   }
 
@@ -7493,11 +7524,33 @@ export default function App() {
         }
       }
 
+      const pendingModelRef = pendingDefaultModelForWorkspace(workspaceId);
+      const loadedModelRef = configDefault ? formatModelRef(configDefault) : null;
+
+      if (pendingModelRef && pendingModelRef !== loadedModelRef) {
+        if (workspaceType === "local" && workspaceRoot) {
+          setLastKnownConfigSnapshot(getConfigSnapshot(configFileContent));
+        }
+
+        if (!cancelled) {
+          setWorkspaceDefaultModelReady(true);
+        }
+        return;
+      }
+
+      if (pendingModelRef && loadedModelRef === pendingModelRef) {
+        setPendingDefaultModelForWorkspace(workspaceId, null);
+      }
+
       setDefaultModelExplicit(Boolean(configDefault));
       const nextDefault = configDefault ?? legacyDefaultModel();
       const currentDefault = untrack(defaultModel);
       if (nextDefault && !modelEquals(currentDefault, nextDefault)) {
         setDefaultModel(nextDefault);
+      }
+      const currentLegacyDefault = untrack(legacyDefaultModel);
+      if (nextDefault && !modelEquals(currentLegacyDefault, nextDefault)) {
+        setLegacyDefaultModel(nextDefault);
       }
 
       if (workspaceType === "local" && workspaceRoot) {
@@ -7522,6 +7575,7 @@ export default function App() {
     if (!defaultModelExplicit()) return;
 
     const workspace = workspaceStore.selectedWorkspaceDisplay();
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
     if (workspace.workspaceType !== "local") return;
 
     const root = workspaceStore.selectedWorkspacePath().trim();
@@ -7542,18 +7596,31 @@ export default function App() {
         if (canUseOpenworkServer) {
           const config = await openworkClient.getConfig(openworkWorkspaceId);
           const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
-          if (currentModel && modelEquals(currentModel, nextModel)) return;
+          if (currentModel && modelEquals(currentModel, nextModel)) {
+            if (workspaceId) {
+              setPendingDefaultModelForWorkspace(workspaceId, null);
+            }
+            return;
+          }
 
           await openworkClient.patchConfig(openworkWorkspaceId, {
             opencode: { model: formatModelRef(nextModel) },
           });
+          if (workspaceId) {
+            setPendingDefaultModelForWorkspace(workspaceId, null);
+          }
           markOpencodeConfigReloadRequired();
           return;
         }
 
         const configFile = await readOpencodeConfig("project", root);
         const existingModel = parseDefaultModelFromConfig(configFile.content);
-        if (existingModel && modelEquals(existingModel, nextModel)) return;
+        if (existingModel && modelEquals(existingModel, nextModel)) {
+          if (workspaceId) {
+            setPendingDefaultModelForWorkspace(workspaceId, null);
+          }
+          return;
+        }
 
         const content = formatConfigWithDefaultModel(configFile.content, nextModel);
         const result = await writeOpencodeConfig("project", root, content);
@@ -7561,6 +7628,9 @@ export default function App() {
           throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
         }
         setLastKnownConfigSnapshot(getConfigSnapshot(content));
+        if (workspaceId) {
+          setPendingDefaultModelForWorkspace(workspaceId, null);
+        }
         markOpencodeConfigReloadRequired();
       } catch (error) {
         if (cancelled) return;

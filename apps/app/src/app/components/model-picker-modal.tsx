@@ -328,7 +328,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                 </h3>
                 <p class="text-sm text-gray-11 mt-1">
                   {props.target === "default"
-                    ? "Choose the default model for new chats. If a model supports reasoning profiles, configure them on its card."
+                    ? "Choose the default model for new chats, then fine-tune reasoning profiles on its card before pressing Done."
                     : "Choose the model for this chat. If a model supports reasoning profiles, configure them on its card."}
                 </p>
               </div>
