@@ -46,8 +46,8 @@ import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 
 import {
+  ArrowDownToLine,
   Check,
-  Circle,
   FolderOpen,
   HardDrive,
   ListTodo,
@@ -3821,7 +3821,7 @@ export default function SessionView(props: SessionViewProps) {
     if (state === "downloading") {
       return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
     }
-    return "text-dls-secondary hover:text-emerald-11 hover:bg-emerald-3/25";
+    return "text-dls-secondary hover:text-dls-secondary hover:bg-lime-3/15";
   });
 
   const updatePillBorderTone = createMemo(() => {
@@ -3832,7 +3832,7 @@ export default function SessionView(props: SessionViewProps) {
     if (state === "downloading") {
       return "border-blue-7/35";
     }
-    return "border-dls-border";
+    return "border-lime-8/60";
   });
 
   const updatePillDotTone = createMemo(() => {
@@ -3845,7 +3845,7 @@ export default function SessionView(props: SessionViewProps) {
     if (state === "downloading") {
       return "text-blue-10";
     }
-    return "text-emerald-10 fill-emerald-10";
+    return "text-lime-11 fill-lime-11";
   });
 
   const updatePillVersionTone = createMemo(() => {
@@ -4007,7 +4007,7 @@ export default function SessionView(props: SessionViewProps) {
             <Show when={showUpdatePill()}>
               <button
                 type="button"
-                class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillButtonTone()}`}
+                class={`group relative mb-3 flex w-full items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
                 onClick={handleUpdatePillClick}
                 title={updatePillTitle()}
                 aria-label={updatePillTitle()}
@@ -4015,9 +4015,10 @@ export default function SessionView(props: SessionViewProps) {
                 <Show
                   when={props.updateStatus?.state === "downloading"}
                   fallback={
-                    <Circle
-                      size={8}
-                      class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "group-hover:animate-pulse" : ""}`}
+                    <ArrowDownToLine
+                      size={12}
+                      class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "animate-pulse" : ""}`}
+                      style={props.updateStatus?.state === "available" ? { "animation-duration": "3.5s" } : undefined}
                     />
                   }
                 >
@@ -4026,11 +4027,11 @@ export default function SessionView(props: SessionViewProps) {
                     class={`animate-spin shrink-0 ${updatePillDotTone()}`}
                   />
                 </Show>
-                <span class="flex-1 text-left">{updatePillLabel()}</span>
+                <span class="min-w-0 flex-1 truncate whitespace-nowrap text-left">{updatePillLabel()}</span>
                 <Show when={props.updateStatus?.version}>
                   {(version) => (
                     <span
-                      class={`ml-auto font-mono text-[10px] ${updatePillVersionTone()}`}
+                      class={`ml-auto shrink-0 font-mono text-[10px] ${updatePillVersionTone()}`}
                     >
                       v{version()}
                     </span>
@@ -4092,9 +4093,10 @@ export default function SessionView(props: SessionViewProps) {
                   <Show
                     when={props.updateStatus?.state === "downloading"}
                     fallback={
-                      <Circle
-                        size={8}
+                      <ArrowDownToLine
+                        size={12}
                         class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "animate-pulse" : ""}`}
+                        style={props.updateStatus?.state === "available" ? { "animation-duration": "3.5s" } : undefined}
                       />
                     }
                   >

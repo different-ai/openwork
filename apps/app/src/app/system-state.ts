@@ -16,7 +16,7 @@ import type {
 } from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { filterProviderList, mapConfigProvidersToList } from "./utils/providers";
-import { createUpdaterState } from "./context/updater";
+import { createUpdaterState, type UpdateStatus } from "./context/updater";
 import {
   resetOpenworkState,
   resetOpencodeCache,
@@ -47,6 +47,21 @@ function throttle<T extends (...args: any[]) => any>(
       }, delayMs - (now - lastCall));
     }
   }
+}
+
+function forcedDevUpdateStatus(): UpdateStatus | null {
+  if (!import.meta.env.DEV) return null;
+
+  const forcedState = String(import.meta.env.VITE_FORCE_UPDATE_STATUS ?? "").trim().toLowerCase();
+  if (forcedState !== "available") return null;
+
+  const version = String(import.meta.env.VITE_FORCE_UPDATE_VERSION ?? "0.11.999").trim() || "0.11.999";
+  return {
+    state: "available",
+    lastCheckedAt: Date.now(),
+    version,
+    notes: "Dev-only forced update state",
+  };
 }
 
 export type NotionState = {
@@ -469,6 +484,13 @@ export function createSystemState(options: {
 
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {
     if (!isTauriRuntime()) return;
+
+    const forcedStatus = forcedDevUpdateStatus();
+    if (forcedStatus) {
+      setPendingUpdate(null);
+      setUpdateStatus(forcedStatus);
+      return;
+    }
 
     const env = updateEnv();
     if (env && !env.supported) {
