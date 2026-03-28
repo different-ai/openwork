@@ -4305,66 +4305,6 @@ export default function SessionView(props: SessionViewProps) {
                 }}
               >
                 <div class="mx-auto w-full max-w-[800px]">
-                  <Show when={showWorkspaceSetupEmptyState()}>
-                    <div class="mx-auto max-w-2xl rounded-[32px] border border-dls-border bg-dls-sidebar/95 p-5 shadow-[var(--dls-shell-shadow)] sm:p-8">
-                      <div class="rounded-[28px] border border-dls-border bg-dls-surface p-6 sm:p-8">
-                        <div class="flex flex-col gap-6">
-                          <div class="flex flex-col items-center text-center">
-                            <div class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-sidebar text-gray-11 shadow-[var(--dls-card-shadow)]">
-                              <HardDrive size={24} />
-                            </div>
-                            <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">
-                              Workspace setup
-                            </div>
-                            <h3 class="mt-3 text-3xl font-semibold tracking-tight text-gray-12">
-                              Set up your first workspace
-                            </h3>
-                            <p class="mt-3 max-w-xl text-sm leading-6 text-dls-secondary sm:text-[15px]">
-                              Start with a guided OpenWork workspace, or choose an existing folder you want to work in.
-                            </p>
-                          </div>
-
-                          <div class="grid gap-3 sm:grid-cols-[1.2fr_1fr]">
-                            <button
-                              type="button"
-                              class="group rounded-[24px] border border-transparent bg-dls-accent px-5 py-5 text-left text-white shadow-[var(--dls-card-shadow)] transition-all hover:-translate-y-0.5 hover:bg-[var(--dls-accent-hover)]"
-                              onClick={() => void props.getStartedWorkspace()}
-                            >
-                              <div class="flex items-start gap-4">
-                                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-white/10">
-                                  <HardDrive size={18} />
-                                </div>
-                                <div class="min-w-0">
-                                  <div class="text-base font-semibold">Get Started</div>
-                                  <div class="mt-1 text-sm leading-6 text-white/80">
-                                    Start working right away in a new OpenWork folder.
-                                  </div>
-                                </div>
-                              </div>
-                            </button>
-
-                            <button
-                              type="button"
-                              class="group rounded-[24px] border border-dls-border bg-dls-sidebar px-5 py-5 text-left text-gray-12 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:bg-gray-2/80"
-                              onClick={() => void props.pickFolderWorkspace()}
-                            >
-                              <div class="flex items-start gap-4">
-                                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-gray-11">
-                                  <FolderOpen size={18} />
-                                </div>
-                                <div class="min-w-0">
-                                  <div class="text-base font-semibold">Pick a folder you want to work in</div>
-                                  <div class="mt-1 text-sm leading-6 text-dls-secondary">
-                                    Choose an existing project or notes folder and OpenWork will use it as your workspace.
-                                  </div>
-                                </div>
-                              </div>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </Show>
                   <Show
                     when={
                       props.messages.length === 0 &&

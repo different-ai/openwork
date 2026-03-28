@@ -40,11 +40,8 @@ import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import StatusToast from "./components/status-toast";
-import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
-import ProtoWorkspacesView from "./pages/proto-workspaces";
-import ProtoV1UxView from "./pages/proto-v1-ux";
 import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
 import { createDenClient, normalizeDenBaseUrl, writeDenSettings, DEFAULT_DEN_BASE_URL } from "./lib/den";
 import {
@@ -8551,7 +8548,6 @@ export default function App() {
     <>
       <Switch>
         <Match when={currentView() === "onboarding"}>
-          <OnboardingView {...onboardingProps()} />
         </Match>
         <Match when={currentView() === "session"}>
           <SessionView {...sessionProps()} />
