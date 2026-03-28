@@ -84,8 +84,6 @@ import {
 import {
   blueprintMaterializedSessions,
   blueprintSessions,
-  buildDefaultWorkspaceBlueprint,
-  normalizeWorkspaceOpenworkConfig,
 } from "./lib/workspace-blueprints";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
@@ -121,7 +119,6 @@ import type {
   OpencodeConnectStatus,
   ScheduledJob,
   WorkspacePreset,
-  WorkspaceOpenworkConfig,
 } from "./types";
 import {
   clearStartupPreference,
@@ -1017,7 +1014,6 @@ export default function App() {
   const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
   const [openworkServerCapabilities, setOpenworkServerCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
   const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
-  const [runtimeWorkspaceId, setRuntimeWorkspaceId] = createSignal<string | null>(null);
   const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
   const [openworkServerDiagnostics, setOpenworkServerDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
   const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
@@ -1027,8 +1023,6 @@ export default function App() {
   const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
-  const [activeWorkspaceServerConfig, setActiveWorkspaceServerConfig] =
-    createSignal<WorkspaceOpenworkConfig | null>(null);
 
   const openworkServerBaseUrl = createMemo(() => {
     const pref = startupPreference();
@@ -2938,7 +2932,7 @@ export default function App() {
     openworkServerClient,
     openworkServerStatus,
     openworkServerCapabilities,
-    runtimeWorkspaceId,
+    runtimeWorkspaceId: () => workspaceStore.runtimeWorkspaceId(),
     setBusy,
     setBusyLabel,
     setBusyStartedAt,
@@ -3323,12 +3317,16 @@ export default function App() {
     updateOpenworkServerSettings,
     openworkServerClient,
     openworkServerStatus,
+    openworkServerCapabilities,
+    openworkEnvWorkspaceId: envOpenworkWorkspaceId,
     ensureLocalOpenworkServerClient,
-    runtimeWorkspaceId,
     onEngineStable: () => {},
     engineRuntime,
     developerMode,
   });
+
+  const runtimeWorkspaceId = createMemo(() => workspaceStore.runtimeWorkspaceId());
+  const activeWorkspaceServerConfig = createMemo(() => workspaceStore.runtimeWorkspaceConfig());
 
   type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
   const [sidebarSessionsByWorkspaceId, setSidebarSessionsByWorkspaceId] = createSignal<
@@ -3847,88 +3845,6 @@ export default function App() {
     return;
   });
 
-  createEffect(() => {
-    const connectedWorkspaceId = workspaceStore.connectedWorkspaceId()?.trim() ?? "";
-    const connectedWorkspace = workspaceStore.workspaces().find((workspace) => workspace.id === connectedWorkspaceId)
-      ?? null;
-    const client = openworkServerClient();
-
-    if (!client || openworkServerStatus() !== "connected") {
-      setRuntimeWorkspaceId(null);
-      return;
-    }
-
-    if (!connectedWorkspace) {
-      setRuntimeWorkspaceId(null);
-      return;
-    }
-
-    if (connectedWorkspace.workspaceType === "remote" && connectedWorkspace.remoteType === "openwork") {
-      const inferredWorkspaceId =
-        parseOpenworkWorkspaceIdFromUrl(connectedWorkspace.openworkHostUrl ?? "") ??
-        parseOpenworkWorkspaceIdFromUrl(connectedWorkspace.baseUrl ?? "") ??
-        envOpenworkWorkspaceId;
-      const storedId = connectedWorkspace.openworkWorkspaceId?.trim() || inferredWorkspaceId || null;
-      if (storedId) {
-        setRuntimeWorkspaceId(storedId);
-        return;
-      }
-
-      let cancelled = false;
-      const resolveWorkspace = async () => {
-        try {
-          const response = await client.listWorkspaces();
-          if (cancelled) return;
-          const items = Array.isArray(response.items) ? response.items : [];
-          const directoryHint = normalizeDirectoryPath(
-            connectedWorkspace.directory?.trim() ?? connectedWorkspace.path?.trim() ?? "",
-          );
-          const match = directoryHint
-            ? items.find((entry) => {
-                const entryPath = normalizeDirectoryPath((entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim());
-                return Boolean(entryPath && entryPath === directoryHint);
-              })
-            : (response.activeId ? items.find((entry) => entry.id === response.activeId) : null) ?? items[0];
-          setRuntimeWorkspaceId(match?.id ?? response.activeId ?? null);
-        } catch {
-          if (!cancelled) setRuntimeWorkspaceId(null);
-        }
-      };
-
-      void resolveWorkspace();
-      onCleanup(() => {
-        cancelled = true;
-      });
-      return;
-    }
-
-    if (connectedWorkspace.workspaceType === "local") {
-      let cancelled = false;
-      const resolveWorkspace = async () => {
-        try {
-          const response = await client.listWorkspaces();
-          if (cancelled) return;
-          const items = Array.isArray(response.items) ? response.items : [];
-          const activeMatch = response.activeId ? items.find((entry) => entry.id === response.activeId) : null;
-          const pathMatch = items.find(
-            (entry) => normalizeDirectoryPath(entry.path) === normalizeDirectoryPath(connectedWorkspace.path),
-          );
-          setRuntimeWorkspaceId(activeMatch?.id ?? pathMatch?.id ?? response.activeId ?? null);
-        } catch {
-          if (!cancelled) setRuntimeWorkspaceId(null);
-        }
-      };
-
-      void resolveWorkspace();
-      onCleanup(() => {
-        cancelled = true;
-      });
-      return;
-    }
-
-    setRuntimeWorkspaceId(null);
-  });
-
   const resolveSharedBundleWorkerTarget = () => {
     const pref = startupPreference();
     const hostInfo = openworkServerHostInfo();
@@ -4002,34 +3918,6 @@ export default function App() {
     return undefined;
   };
 
-  const findSharedBundleImportWorkspaceId = (
-    items: Array<{ id: string; path?: string | null; directory?: string | null; opencode?: { directory?: string | null } }>,
-    target?: SharedBundleImportTarget,
-  ) => {
-    const explicitId = target?.workspaceId?.trim() ?? "";
-    if (explicitId) {
-      const match = items.find((entry) => entry.id === explicitId);
-      if (match?.id) return match.id;
-    }
-
-    const localRoot = normalizeDirectoryPath(target?.localRoot?.trim() ?? "");
-    if (localRoot) {
-      const match = items.find((entry) => normalizeDirectoryPath(entry.path ?? "") === localRoot);
-      if (match?.id) return match.id;
-    }
-
-    const directoryHint = normalizeDirectoryPath(target?.directoryHint?.trim() ?? "");
-    if (directoryHint) {
-      const match = items.find((entry) => {
-        const entryPath = normalizeDirectoryPath((entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim());
-        return Boolean(entryPath && entryPath === directoryHint);
-      });
-      if (match?.id) return match.id;
-    }
-
-    return null;
-  };
-
   const resolveActiveSharedBundleImportTarget = (): SharedBundleImportTarget => {
     const active = workspaceStore.selectedWorkspaceDisplay();
     if (active.workspaceType === "local") {
@@ -4053,11 +3941,13 @@ export default function App() {
       if (client && openworkServerStatus() === "connected") {
         if (target?.workspaceId?.trim() || target?.localRoot?.trim() || target?.directoryHint?.trim()) {
           try {
-            const response = await client.listWorkspaces();
-            const items = Array.isArray(response.items) ? response.items : [];
-            const matchId = findSharedBundleImportWorkspaceId(items, target);
+            const matchId = await workspaceStore.ensureRuntimeWorkspaceId({
+              workspaceId: target.workspaceId,
+              localRoot: target.localRoot,
+              directoryHint: target.directoryHint,
+              strictMatch: true,
+            });
             if (matchId) {
-              setRuntimeWorkspaceId(matchId);
               return { client, workspaceId: matchId };
             }
           } catch {
@@ -5743,30 +5633,7 @@ export default function App() {
   const resolvedActiveWorkspaceConfig = createMemo(
     () => activeWorkspaceServerConfig() ?? workspaceStore.workspaceConfig(),
   );
-  const refreshActiveWorkspaceServerConfig = async (
-    workspaceIdOverride?: string | null,
-  ): Promise<WorkspaceOpenworkConfig | null> => {
-    const client = openworkServerClient();
-    const workspaceId = (workspaceIdOverride ?? runtimeWorkspaceId() ?? "").trim();
-    if (!client || !workspaceId) return null;
-
-    const workspace = selectedWorkspaceDisplay();
-    const config = await client.getConfig(workspaceId);
-    const normalized = normalizeWorkspaceOpenworkConfig(
-      config.openwork,
-      workspace.preset,
-    );
-    const next = normalized.blueprint
-      ? normalized
-      : {
-          ...normalized,
-          blueprint: buildDefaultWorkspaceBlueprint(
-            normalized.workspace?.preset ?? workspace.preset ?? "starter",
-          ),
-        };
-    setActiveWorkspaceServerConfig(next);
-    return next;
-  };
+  const refreshActiveWorkspaceServerConfig = workspaceStore.refreshRuntimeWorkspaceConfig;
   const activePermissionMemo = createMemo(() => activePermission());
   const migrationRepairUnavailableReason = createMemo<string | null>(() => {
     if (workspaceStore.canRepairOpencodeMigration()) return null;
@@ -5798,57 +5665,6 @@ export default function App() {
     authorizedFolders: false,
   });
   const [autoConnectAttempted, setAutoConnectAttempted] = createSignal(false);
-
-  createEffect(() => {
-    const workspace = selectedWorkspaceDisplay();
-    const openworkClient = openworkServerClient();
-    const workspaceId = runtimeWorkspaceId();
-    const capabilities = resolvedOpenworkCapabilities();
-    const canReadConfig =
-      openworkServerStatus() === "connected" &&
-      Boolean(openworkClient && workspaceId && capabilities?.config?.read);
-
-    if (!canReadConfig || !openworkClient || !workspaceId) {
-      setActiveWorkspaceServerConfig(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadWorkspaceConfig = async () => {
-      try {
-        const config = await openworkClient.getConfig(workspaceId);
-        if (cancelled) return;
-
-        const normalized = normalizeWorkspaceOpenworkConfig(
-          config.openwork,
-          workspace.preset,
-        );
-
-        if (!normalized.blueprint) {
-          setActiveWorkspaceServerConfig({
-            ...normalized,
-            blueprint: buildDefaultWorkspaceBlueprint(
-              normalized.workspace?.preset ?? workspace.preset ?? "starter",
-            ),
-          });
-          return;
-        }
-
-        setActiveWorkspaceServerConfig(normalized);
-      } catch {
-        if (!cancelled) {
-          setActiveWorkspaceServerConfig(null);
-        }
-      }
-    };
-
-    void loadWorkspaceConfig();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
 
   const [blueprintSessionMaterializeBusyByWorkspaceId, setBlueprintSessionMaterializeBusyByWorkspaceId] =
     createSignal<Record<string, boolean>>({});
@@ -6502,16 +6318,7 @@ export default function App() {
     let openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
-      try {
-        const response = await openworkClient.listWorkspaces();
-        const match = response.items?.[0];
-        if (match?.id) {
-          openworkWorkspaceId = match.id;
-          setRuntimeWorkspaceId(match.id);
-        }
-      } catch {
-        // ignore
-      }
+      openworkWorkspaceId = await workspaceStore.ensureRuntimeWorkspaceId();
     }
     const canUseOpenworkServer =
       openworkServerStatus() === "connected" &&
@@ -6752,16 +6559,7 @@ export default function App() {
     let openworkWorkspaceId = runtimeWorkspaceId();
     const openworkCapabilities = resolvedOpenworkCapabilities();
     if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
-      try {
-        const response = await openworkClient.listWorkspaces();
-        const match = response.items?.[0];
-        if (match?.id) {
-          openworkWorkspaceId = match.id;
-          setRuntimeWorkspaceId(match.id);
-        }
-      } catch {
-        // ignore
-      }
+      openworkWorkspaceId = await workspaceStore.ensureRuntimeWorkspaceId();
     }
     const canUseOpenworkServer =
       openworkServerStatus() === "connected" &&
@@ -8051,25 +7849,8 @@ export default function App() {
     return selectedWorkspaceDisplay();
   });
 
-  // Avoid flashing the full-screen switch overlay for fast workspace switches.
-  // Only show it if a switch is still in progress after a short delay.
-  const [workspaceSwitchDelayElapsed, setWorkspaceSwitchDelayElapsed] = createSignal(false);
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const switchingId = workspaceStore.connectingWorkspaceId();
-    if (!switchingId) {
-      setWorkspaceSwitchDelayElapsed(false);
-      return;
-    }
-
-    setWorkspaceSwitchDelayElapsed(false);
-    const timer = window.setTimeout(() => setWorkspaceSwitchDelayElapsed(true), 250);
-    onCleanup(() => window.clearTimeout(timer));
-  });
-
   const workspaceSwitchOpen = createMemo(() => {
     if (booting()) return true;
-    if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
     if (!busy() || !busyLabel()) return false;
     const label = busyLabel();
     return (
@@ -8769,16 +8550,6 @@ export default function App() {
   return (
     <>
       <Switch>
-        <Match when={currentView() === "proto"}>
-          <Switch>
-            <Match when={isProtoV1Ux()}>
-              <ProtoV1UxView />
-            </Match>
-            <Match when={true}>
-              <ProtoWorkspacesView />
-            </Match>
-          </Switch>
-        </Match>
         <Match when={currentView() === "onboarding"}>
           <OnboardingView {...onboardingProps()} />
         </Match>
