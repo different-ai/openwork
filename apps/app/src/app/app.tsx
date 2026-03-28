@@ -8490,12 +8490,17 @@ export default function App() {
 
       // If the URL points at a session that no longer exists (e.g. after deletion),
       // route back to /session so the app can fall back safely.
+      const selectedWorkspaceRoot = normalizeDirectoryPath(workspaceStore.selectedWorkspaceRoot().trim());
+      const matchingSession = sessions().find((session) => session.id === id) ?? null;
+      const hasMatchingSessionInScope = matchingSession
+        ? !selectedWorkspaceRoot || normalizeDirectoryPath(matchingSession.directory) === selectedWorkspaceRoot
+        : false;
       if (
         sessionsLoaded() &&
         shouldRedirectMissingSessionAfterScopedLoad({
           loadedScopeRoot: loadedSessionScopeRoot(),
           workspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-          hasMatchingSession: sessions().some((session) => session.id === id),
+          hasMatchingSession: hasMatchingSessionInScope,
         })
       ) {
         if (selectedSessionId() === id) {
@@ -8547,8 +8552,6 @@ export default function App() {
   return (
     <>
       <Switch>
-        <Match when={currentView() === "onboarding"}>
-        </Match>
         <Match when={currentView() === "session"}>
           <SessionView {...sessionProps()} />
         </Match>
