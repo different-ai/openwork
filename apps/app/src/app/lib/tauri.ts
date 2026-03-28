@@ -693,11 +693,20 @@ export type LocalSkillCard = {
   path: string;
   description?: string;
   trigger?: string;
+  protected?: boolean;
+  version?: string;
+  publishedAt?: string;
+  checksum?: string;
 };
 
 export type LocalSkillContent = {
   path: string;
   content: string;
+};
+
+export type ProtectedSkillExecution = {
+  name: string;
+  prompt: string;
 };
 
 export async function listLocalSkills(projectDir: string): Promise<LocalSkillCard[]> {
@@ -706,6 +715,18 @@ export async function listLocalSkills(projectDir: string): Promise<LocalSkillCar
 
 export async function readLocalSkill(projectDir: string, name: string): Promise<LocalSkillContent> {
   return invoke<LocalSkillContent>("read_local_skill", { projectDir, name });
+}
+
+export async function resolveProtectedSkill(
+  projectDir: string,
+  name: string,
+  argumentsText = "",
+): Promise<ProtectedSkillExecution> {
+  return invoke<ProtectedSkillExecution>("resolve_protected_skill", {
+    projectDir,
+    name,
+    arguments: argumentsText,
+  });
 }
 
 export async function writeLocalSkill(projectDir: string, name: string, content: string): Promise<ExecResult> {

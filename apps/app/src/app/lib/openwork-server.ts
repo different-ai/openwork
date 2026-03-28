@@ -118,6 +118,10 @@ export type OpenworkSkillItem = {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  protected?: boolean;
+  version?: string;
+  publishedAt?: string;
+  checksum?: string;
 };
 
 export type OpenworkSkillContent = {

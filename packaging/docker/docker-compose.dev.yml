@@ -25,9 +25,20 @@ x-shared: &shared
   image: node:22-bookworm-slim
   working_dir: /app
   volumes:
-    # Mount the entire repo so both services share node_modules + source
+    # Mount the repo source, but keep dependency trees inside Docker volumes so
+    # Linux container installs do not overwrite host macOS node_modules.
     - ../../:/app
-    - pnpm-store:/root/.local/share/pnpm/store
+    - repo-node-modules:/app/node_modules
+    - app-node-modules:/app/apps/app/node_modules
+    - desktop-node-modules:/app/apps/desktop/node_modules
+    - opencode-router-node-modules:/app/apps/opencode-router/node_modules
+    - orchestrator-node-modules:/app/apps/orchestrator/node_modules
+    - server-node-modules:/app/apps/server/node_modules
+    - share-node-modules:/app/apps/share/node_modules
+    - story-book-node-modules:/app/apps/story-book/node_modules
+    # pnpm resolves its store to /app/.pnpm-store in this bind-mounted dev setup.
+    # Mount that path as a named volume so Docker does not write the store into the host repo.
+    - pnpm-store:/app/.pnpm-store
     - bun-install:/root/.bun
     - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
     - ${OPENWORK_HOST_OPENCODE_CONFIG_DIR:-./workspace/.openwork-host-opencode-config}:/persist/.config/opencode:ro
@@ -59,9 +70,25 @@ services:
         # --- Enable pnpm via corepack ---
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Install deps ---
-        echo "[orchestrator] Installing dependencies..."
-        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+        # --- Install deps once for the shared bind-mounted workspace ---
+        export PNPM_STORE_DIR="/app/.pnpm-store"
+        export PNPM_INSTALL_LOCK_DIR="/app/tmp/.docker-pnpm-install.lock"
+        export PNPM_INSTALL_STAMP="/app/tmp/.docker-pnpm-install-$$(sha256sum /app/pnpm-lock.yaml | awk '{print $$1}')"
+        mkdir -p /app/tmp
+
+        if [ ! -f "$$PNPM_INSTALL_STAMP" ] || [ ! -f "/app/node_modules/.modules.yaml" ]; then
+          if mkdir "$$PNPM_INSTALL_LOCK_DIR" 2>/dev/null; then
+            trap 'rmdir "$$PNPM_INSTALL_LOCK_DIR" 2>/dev/null || true' EXIT
+            echo "[orchestrator] Installing dependencies..."
+            pnpm install --store-dir "$$PNPM_STORE_DIR" --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+            touch "$$PNPM_INSTALL_STAMP"
+            rmdir "$$PNPM_INSTALL_LOCK_DIR"
+            trap - EXIT
+          else
+            echo "[orchestrator] Waiting for shared dependency install..."
+            while [ ! -f "$$PNPM_INSTALL_STAMP" ] || [ ! -f "/app/node_modules/.modules.yaml" ]; do sleep 2; done
+          fi
+        fi
 
         # --- Use source entrypoints for the dev stack ---
         # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
@@ -189,8 +216,24 @@ services:
 
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        echo "[share] Installing dependencies..."
-        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+        export PNPM_STORE_DIR="/app/.pnpm-store"
+        export PNPM_INSTALL_LOCK_DIR="/app/tmp/.docker-pnpm-install.lock"
+        export PNPM_INSTALL_STAMP="/app/tmp/.docker-pnpm-install-$$(sha256sum /app/pnpm-lock.yaml | awk '{print $$1}')"
+        mkdir -p /app/tmp
+
+        if [ ! -f "$$PNPM_INSTALL_STAMP" ] || [ ! -f "/app/node_modules/.modules.yaml" ]; then
+          if mkdir "$$PNPM_INSTALL_LOCK_DIR" 2>/dev/null; then
+            trap 'rmdir "$$PNPM_INSTALL_LOCK_DIR" 2>/dev/null || true' EXIT
+            echo "[share] Installing dependencies..."
+            pnpm install --store-dir "$$PNPM_STORE_DIR" --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+            touch "$$PNPM_INSTALL_STAMP"
+            rmdir "$$PNPM_INSTALL_LOCK_DIR"
+            trap - EXIT
+          else
+            echo "[share] Waiting for shared dependency install..."
+            while [ ! -f "$$PNPM_INSTALL_STAMP" ] || [ ! -f "/app/node_modules/.modules.yaml" ]; do sleep 2; done
+          fi
+        fi
 
         mkdir -p /app/tmp/share-service-blobs
 
@@ -221,6 +264,22 @@ services:
       PUBLIC_OPENWORK_APP_URL: http://${OPENWORK_PUBLIC_HOST:-localhost}:${WEB_PORT:-5173}
 
 volumes:
+  repo-node-modules:
+    name: openwork-dev-repo-node-modules
+  app-node-modules:
+    name: openwork-dev-app-node-modules
+  desktop-node-modules:
+    name: openwork-dev-desktop-node-modules
+  opencode-router-node-modules:
+    name: openwork-dev-opencode-router-node-modules
+  orchestrator-node-modules:
+    name: openwork-dev-orchestrator-node-modules
+  server-node-modules:
+    name: openwork-dev-server-node-modules
+  share-node-modules:
+    name: openwork-dev-share-node-modules
+  story-book-node-modules:
+    name: openwork-dev-story-book-node-modules
   pnpm-store:
     name: openwork-dev-pnpm-store
   bun-install:

@@ -3,12 +3,13 @@ import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises
 import { createHash, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
+import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, SkillItem, TokenScope } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
+import { listProtectedSkills } from "./protected-skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
@@ -3344,7 +3345,16 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const items = await listSkills(workspace.path, includeGlobal);
+    const items = await listWorkspaceSkills(workspace.path, includeGlobal);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.list",
+      target: "skills",
+      summary: `Listed ${items.length} skills`,
+      timestamp: Date.now(),
+    });
     return jsonResponse({ items });
   });
 
@@ -3355,6 +3365,10 @@ function createRoutes(
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const existingProtected = (await listProtectedSkills(workspace.path)).find((skill) => skill.name === name);
+    if (existingProtected) {
+      throw new ApiError(403, "skill_protected", `Protected skill cannot be replaced: ${name}`);
     }
     const body = await readJsonBody(ctx.request);
     const overwrite = body?.overwrite === true;
@@ -3401,12 +3415,33 @@ function createRoutes(
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
-    const items = await listSkills(workspace.path, includeGlobal);
+    const items = await listWorkspaceSkills(workspace.path, includeGlobal);
     const item = items.find((skill) => skill.name === name);
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
     }
+    if (item.protected) {
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "skills.view.denied",
+        target: item.name,
+        summary: `Denied protected skill view for ${item.name}`,
+        timestamp: Date.now(),
+      });
+      throw new ApiError(403, "skill_protected", "This protected skill cannot be viewed");
+    }
     const content = await readFile(item.path, "utf8");
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.view",
+      target: item.name,
+      summary: `Viewed skill ${item.name}`,
+      timestamp: Date.now(),
+    });
     return jsonResponse({ item, content });
   });
 
@@ -3418,6 +3453,10 @@ function createRoutes(
     const name = String(body.name ?? "");
     const content = String(body.content ?? "");
     const description = body.description ? String(body.description) : undefined;
+    const existingProtected = (await listProtectedSkills(workspace.path)).find((skill) => skill.name === name.trim());
+    if (existingProtected) {
+      throw new ApiError(403, "skill_protected", `Protected skill cannot be edited here: ${name}`);
+    }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "skills.upsert",
@@ -3440,7 +3479,7 @@ function createRoutes(
       action: result.action,
       path: result.path,
     });
-    return jsonResponse({ name, path: result.path, description: description ?? "", scope: "project" });
+    return jsonResponse({ name, path: result.path, description: description ?? "", scope: "project", protected: false });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/skills/:name", "client", async (ctx) => {
@@ -3450,6 +3489,10 @@ function createRoutes(
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
+    }
+    const existingProtected = (await listProtectedSkills(workspace.path)).find((skill) => skill.name === name);
+    if (existingProtected) {
+      throw new ApiError(403, "skill_protected", `Protected skill cannot be removed here: ${name}`);
     }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -3997,6 +4040,19 @@ function createRoutes(
   });
 
   return routes;
+}
+
+async function listWorkspaceSkills(workspaceRoot: string, includeGlobal: boolean): Promise<SkillItem[]> {
+  const [regular, protectedItems] = await Promise.all([
+    listSkills(workspaceRoot, includeGlobal),
+    listProtectedSkills(workspaceRoot),
+  ]);
+  const seen = new Set<string>();
+  return [...regular, ...protectedItems].filter((item) => {
+    if (seen.has(item.name)) return false;
+    seen.add(item.name);
+    return true;
+  });
 }
 
 async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
@@ -5138,13 +5194,14 @@ async function requireApproval(
 async function exportWorkspace(workspace: WorkspaceInfo) {
   const opencode = sanitizePortableOpencodeConfig(await readOpencodeConfig(workspace.path));
   const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
-  const skills = await listSkills(workspace.path, false);
+  const skills = (await listWorkspaceSkills(workspace.path, false)).filter((skill) => !skill.protected);
   const commands = await listCommands(workspace.path, "workspace");
   const files = await listTemplateFiles(workspace.path);
   const skillContents = await Promise.all(
     skills.map(async (skill) => ({
       name: skill.name,
       description: skill.description,
+      trigger: skill.trigger,
       content: await readFile(skill.path, "utf8"),
     })),
   );

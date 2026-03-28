@@ -18,6 +18,7 @@ import {
   installSkillTemplate,
   listLocalSkills,
   readLocalSkill,
+  resolveProtectedSkill,
   uninstallSkill as uninstallSkillCommand,
   writeLocalSkill,
   pickDirectory,
@@ -110,6 +111,9 @@ export function createExtensionsStore(options: {
 
   const [sidebarPluginList, setSidebarPluginList] = createSignal<string[]>([]);
   const [sidebarPluginStatus, setSidebarPluginStatus] = createSignal<string | null>(null);
+
+  const skillByName = (name: string) =>
+    skills().find((skill) => skill.name.trim() === name.trim()) ?? null;
 
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
@@ -413,6 +417,10 @@ export function createExtensionsStore(options: {
               description: entry.description,
               path: entry.path,
               trigger: entry.trigger,
+              protected: entry.protected === true,
+              version: entry.version,
+              publishedAt: entry.publishedAt,
+              checksum: entry.checksum,
             }))
           : [];
         setSkills(next);
@@ -461,6 +469,10 @@ export function createExtensionsStore(options: {
               description: entry.description,
               path: entry.path,
               trigger: entry.trigger,
+              protected: entry.protected === true,
+              version: entry.version,
+              publishedAt: entry.publishedAt,
+              checksum: entry.checksum,
             }))
           : [];
 
@@ -533,6 +545,7 @@ export function createExtensionsStore(options: {
             name: entry.name,
             description: entry.description,
             path: formatSkillPath(entry.location),
+            protected: false,
           }))
         : [];
 
@@ -1086,6 +1099,10 @@ export function createExtensionsStore(options: {
     if (!trimmed) {
       return;
     }
+    if (skillByName(trimmed)?.protected) {
+      setSkillsStatus(`Protected skill cannot be removed here: ${trimmed}`);
+      return;
+    }
 
     options.setBusy(true);
     options.setError(null);
@@ -1112,6 +1129,10 @@ export function createExtensionsStore(options: {
   async function readSkill(name: string): Promise<{ name: string; path: string; content: string } | null> {
     const trimmed = name.trim();
     if (!trimmed) return null;
+    if (skillByName(trimmed)?.protected) {
+      setSkillsStatus(`Protected skill body is hidden. Use /${trimmed} in chat instead.`);
+      return null;
+    }
 
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
@@ -1178,6 +1199,10 @@ export function createExtensionsStore(options: {
   async function saveSkill(input: { name: string; content: string; description?: string }) {
     const trimmed = input.name.trim();
     if (!trimmed) return;
+    if (skillByName(trimmed)?.protected) {
+      setSkillsStatus(`Protected skill cannot be edited here: ${trimmed}`);
+      return;
+    }
 
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
@@ -1259,6 +1284,31 @@ export function createExtensionsStore(options: {
     refreshHubSkillsAborted = true;
   }
 
+  async function resolveProtectedSkillExecution(name: string, argumentsText = ""): Promise<{ name: string; prompt: string } | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    if (!skillByName(trimmed)?.protected) return null;
+
+    const root = options.selectedWorkspaceRoot().trim();
+    if (!root) {
+      setSkillsStatus(translate("skills.pick_workspace_first"));
+      return null;
+    }
+
+    if (!isTauriRuntime()) {
+      setSkillsStatus("Protected repo skills currently require the desktop app.");
+      return null;
+    }
+
+    try {
+      setSkillsStatus(null);
+      return await resolveProtectedSkill(root, trimmed, argumentsText);
+    } catch (e) {
+      setSkillsStatus(e instanceof Error ? e.message : "Failed to load protected skill.");
+      return null;
+    }
+  }
+
   return {
     skills,
     skillsStatus,
@@ -1293,6 +1343,7 @@ export function createExtensionsStore(options: {
     revealSkillsFolder,
     uninstallSkill,
     readSkill,
+    resolveProtectedSkillExecution,
     saveSkill,
     abortRefreshes,
   };

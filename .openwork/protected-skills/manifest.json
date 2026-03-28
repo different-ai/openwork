@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "name": "h1b-employee-docs-review",
+      "description": "Review H-1B employee document packets, flag missing or risky items, and prepare internal/client-facing outputs. / 审阅 H-1B 员工材料、标注缺失或风险项，并准备律所内部及客户版输出。",
+      "trigger": "Manual selection via /h1b-employee-docs-review for H-1B employee document reviews. / 通过 /h1b-employee-docs-review 手动选择以审阅 H-1B 员工材料。",
+      "bundlePath": ".openwork/protected-skills/h1b-employee-docs-review.bundle.json",
+      "version": "20260327-061040",
+      "publishedAt": "2026-03-27T06:10:40.075Z",
+      "checksum": "99387ff858c73b266c3db3098a4eec2b2b868563a154903ca2f5ccdc55fafd03"
+    }
+  ]
+}

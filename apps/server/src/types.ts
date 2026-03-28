@@ -177,6 +177,10 @@ export interface SkillItem {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  protected?: boolean;
+  version?: string;
+  publishedAt?: string;
+  checksum?: string;
 }
 
 export interface HubSkillItem {

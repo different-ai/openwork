@@ -41,7 +41,8 @@ use commands::orchestrator::{
 };
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::skills::{
-    install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
+    install_skill_template, list_local_skills, read_local_skill, resolve_protected_skill,
+    uninstall_skill, write_local_skill,
 };
 use commands::updater::updater_environment;
 use commands::window::set_window_decorations;
@@ -209,6 +210,7 @@ pub fn run() {
             install_skill_template,
             list_local_skills,
             read_local_skill,
+            resolve_protected_skill,
             uninstall_skill,
             write_local_skill,
             read_opencode_config,

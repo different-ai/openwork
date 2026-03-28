@@ -256,6 +256,10 @@ export type SkillCard = {
   path: string;
   description?: string;
   trigger?: string;
+  protected?: boolean;
+  version?: string;
+  publishedAt?: string;
+  checksum?: string;
 };
 
 export type HubSkillRepo = {

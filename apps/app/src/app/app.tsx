@@ -1852,7 +1852,29 @@ export default function App() {
 
     const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(content);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
-    const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
+    const protectedSkillInvocation = (() => {
+      const explicitName = resolvedDraft.command?.name?.trim() ?? "";
+      if (explicitName && skills().some((skill) => skill.protected && skill.name === explicitName)) {
+        return {
+          name: explicitName,
+          argumentsText: resolvedDraft.command?.arguments ?? "",
+        };
+      }
+      if (compactCommand) return null;
+      const match = content.match(/^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/);
+      if (!match) return null;
+      const name = match[1]?.trim() ?? "";
+      if (!name || !skills().some((skill) => skill.protected && skill.name === name)) {
+        return null;
+      }
+      return {
+        name,
+        argumentsText: match[2] ?? "",
+      };
+    })();
+    const commandName = compactCommand
+      ? "compact"
+      : (protectedSkillInvocation?.name ?? resolvedDraft.command?.name ?? null);
     if (compactCommand && !selectedSessionId()) {
       setError("Select a session with messages before running /compact.");
       return;
@@ -1894,16 +1916,64 @@ export default function App() {
 
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
-      const parts = await buildPromptParts(resolvedDraft);
       const selectedVariant = sanitizeModelVariantForRef(model, getVariantFor(model)) ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = reasoningEffort
         ? ({ reasoning_effort: reasoningEffort } as const)
         : undefined;
+      const protectedExecution = protectedSkillInvocation
+        ? await resolveProtectedSkillExecution(
+            protectedSkillInvocation.name,
+            protectedSkillInvocation.argumentsText,
+          )
+        : null;
+      if (protectedSkillInvocation && !protectedExecution) {
+        throw new Error(`Failed to load protected skill ${protectedSkillInvocation.name}.`);
+      }
+      const effectiveDraft: ComposerDraft = protectedExecution
+        ? {
+            mode: "prompt",
+            parts: [
+              { type: "text", text: protectedExecution.prompt } as ComposerPart,
+              ...resolvedDraft.parts.filter((part) => part.type !== "text"),
+            ],
+            attachments: resolvedDraft.attachments,
+            text: protectedExecution.prompt,
+            resolvedText: protectedExecution.prompt,
+          }
+        : resolvedDraft;
+      const parts = await buildPromptParts(effectiveDraft);
+      const runPromptAsync = async (
+        promptParts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>,
+      ) => {
+        const result = await c.session.promptAsync({
+          sessionID,
+          model,
+          agent: agent ?? undefined,
+          variant: requestVariant,
+          ...(promptOverrides ?? {}),
+          parts: promptParts,
+        });
+        assertNoClientError(result);
+
+        setSessionModelById((current) => ({
+          ...current,
+          [sessionID]: model,
+        }));
+
+        setSessionModelOverrideById((current) => {
+          if (!current[sessionID]) return current;
+          const copy = { ...current };
+          delete copy[sessionID];
+          return copy;
+        });
+      };
 
       if (resolvedDraft.mode === "shell") {
         await shellInSession(c, sessionID, content);
+      } else if (protectedExecution) {
+        await runPromptAsync(parts);
       } else if (resolvedDraft.command || compactCommand) {
         if (compactCommand) {
           await compactCurrentSession(sessionID);
@@ -1939,27 +2009,7 @@ export default function App() {
         );
 
       } else {
-        const result = await c.session.promptAsync({
-          sessionID,
-          model,
-          agent: agent ?? undefined,
-          variant: requestVariant,
-          ...(promptOverrides ?? {}),
-          parts,
-        });
-        assertNoClientError(result);
-
-        setSessionModelById((current) => ({
-          ...current,
-          [sessionID]: model,
-        }));
-
-        setSessionModelOverrideById((current) => {
-          if (!current[sessionID]) return current;
-          const copy = { ...current };
-          delete copy[sessionID];
-          return copy;
-        });
+        await runPromptAsync(parts);
       }
 
       finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
@@ -2442,10 +2492,23 @@ export default function App() {
     const c = client();
     if (!c) return [];
     const list = await listCommandsTyped(c, workspaceStore.selectedWorkspaceRoot().trim() || undefined);
-    if (list.some((entry) => entry.name === "compact")) {
-      return list;
+    const protectedSkillCommands = skills()
+      .filter((skill) => skill.protected)
+      .map((skill) => ({
+        id: `protected-skill:${skill.name}`,
+        name: skill.name,
+        description: skill.description,
+        source: "skill" as const,
+      }));
+    const merged = [...list];
+    for (const entry of protectedSkillCommands) {
+      if (merged.some((candidate) => candidate.name === entry.name)) continue;
+      merged.push(entry);
     }
-    return [BUILTIN_COMPACT_COMMAND, ...list];
+    if (merged.some((entry) => entry.name === "compact")) {
+      return merged;
+    }
+    return [BUILTIN_COMPACT_COMMAND, ...merged];
   }
 
   function setSessionAgent(sessionID: string, agent: string | null) {
@@ -3010,6 +3073,7 @@ export default function App() {
     revealSkillsFolder,
     uninstallSkill,
     readSkill,
+    resolveProtectedSkillExecution,
     saveSkill,
     abortRefreshes,
   } = extensionsStore;

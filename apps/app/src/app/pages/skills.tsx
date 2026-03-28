@@ -3,7 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import type { HubSkillCard, HubSkillRepo, SkillCard } from "../types";
 
 import Button from "../components/button";
-import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
+import { Copy, Edit2, FolderOpen, Link2, Loader2, Lock, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
 
@@ -284,6 +284,10 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const openShareLink = (skill: SkillCard) => {
     if (props.busy) return;
+    if (skill.protected) {
+      setToast(`Protected skill body is hidden. Use /${skill.name} in chat.`);
+      return;
+    }
     setShareTarget(skill);
     setShareBusy(false);
     setShareUrl(null);
@@ -470,6 +474,10 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const openSkill = async (skill: SkillCard) => {
     if (props.busy) return;
+    if (skill.protected) {
+      setToast(`Protected skill body is hidden. Use /${skill.name} in chat.`);
+      return;
+    }
     setSelectedSkill(skill);
     setSelectedContent("");
     setSelectedDirty(false);
@@ -535,6 +543,8 @@ export default function SkillsView(props: SkillsViewProps) {
     if (!inProjectSkillPath) return false;
     return OPENWORK_DEFAULT_SKILL_NAMES.has(normalizedName) || normalizedName.endsWith("-creator");
   };
+
+  const isProtectedSkill = (skill: SkillCard) => skill.protected === true;
 
   return (
     <section class="space-y-8">
@@ -669,11 +679,19 @@ export default function SkillsView(props: SkillsViewProps) {
             <For each={filteredSkills()}>
               {(skill) => (
                 <div
-                  role="button"
-                  tabindex="0"
-                  class="bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group hover:border-dls-border hover:bg-dls-hover transition-all text-left cursor-pointer"
-                  onClick={() => void openSkill(skill)}
+                  role={isProtectedSkill(skill) ? "group" : "button"}
+                  tabindex={isProtectedSkill(skill) ? -1 : 0}
+                  class={`bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group transition-all text-left ${
+                    isProtectedSkill(skill)
+                      ? "cursor-default"
+                      : "hover:border-dls-border hover:bg-dls-hover cursor-pointer"
+                  }`}
+                  onClick={() => {
+                    if (isProtectedSkill(skill)) return;
+                    void openSkill(skill);
+                  }}
                   onKeyDown={(e) => {
+                    if (isProtectedSkill(skill)) return;
                     if (e.key === "Enter" || e.key === " ") {
                       if (e.isComposing || e.keyCode === 229) return;
                       e.preventDefault();
@@ -688,6 +706,12 @@ export default function SkillsView(props: SkillsViewProps) {
                     <div class="min-w-0">
                       <div class="flex items-center gap-2 mb-0.5">
                         <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
+                        <Show when={isProtectedSkill(skill)}>
+                          <span class="inline-flex items-center gap-1 rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-dls-secondary">
+                            <Lock size={10} />
+                            Protected
+                          </span>
+                        </Show>
                         <Show when={isOpenworkInjectedSkill(skill)}>
                           <span class="rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-dls-secondary">
                             OpenWork
@@ -699,51 +723,63 @@ export default function SkillsView(props: SkillsViewProps) {
                           {skill.description}
                         </p>
                       </Show>
-                      <div class="mt-1 text-[11px] font-mono text-dls-secondary truncate">{skill.path}</div>
+                      <div class="mt-1 text-[11px] font-mono text-dls-secondary truncate">
+                        {isProtectedSkill(skill) ? "Protected repo skill" : skill.path}
+                      </div>
                     </div>
                   </div>
                   <div class="flex items-center gap-1">
                     <button
                       type="button"
-                      class="p-1.5 text-dls-secondary hover:text-dls-text hover:bg-dls-active rounded-md transition-colors"
+                      class={`p-1.5 rounded-md transition-colors ${
+                        props.busy || isProtectedSkill(skill)
+                          ? "text-dls-secondary opacity-40"
+                          : "text-dls-secondary hover:text-dls-text hover:bg-dls-active"
+                      }`}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        if (isProtectedSkill(skill)) return;
                         openShareLink(skill);
                       }}
-                      disabled={props.busy}
-                      title="Share"
+                      disabled={props.busy || isProtectedSkill(skill)}
+                      title={isProtectedSkill(skill) ? "Protected skill cannot be shared" : "Share"}
                     >
                       <Share2 size={14} />
                     </button>
                     <button
                       type="button"
-                      class="p-1.5 text-dls-secondary hover:text-dls-text hover:bg-dls-active rounded-md transition-colors"
+                      class={`p-1.5 rounded-md transition-colors ${
+                        props.busy || isProtectedSkill(skill)
+                          ? "text-dls-secondary opacity-40"
+                          : "text-dls-secondary hover:text-dls-text hover:bg-dls-active"
+                      }`}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        if (isProtectedSkill(skill)) return;
                         void openSkill(skill);
                       }}
-                      disabled={props.busy}
-                      title="Edit"
+                      disabled={props.busy || isProtectedSkill(skill)}
+                      title={isProtectedSkill(skill) ? "Protected skill body is hidden" : "Edit"}
                     >
                       <Edit2 size={14} />
                     </button>
                     <button
                       type="button"
                       class={`p-1.5 rounded-md transition-colors ${
-                        props.busy || !props.canUseDesktopTools
+                        props.busy || !props.canUseDesktopTools || isProtectedSkill(skill)
                           ? "text-dls-secondary opacity-40"
                           : "text-dls-secondary hover:text-red-11 hover:bg-red-3/10"
                       }`}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        if (props.busy || !props.canUseDesktopTools) return;
+                        if (props.busy || !props.canUseDesktopTools || isProtectedSkill(skill)) return;
                         setUninstallTarget(skill);
                       }}
-                      disabled={props.busy || !props.canUseDesktopTools}
-                      title={translate("skills.uninstall")}
+                      disabled={props.busy || !props.canUseDesktopTools || isProtectedSkill(skill)}
+                      title={isProtectedSkill(skill) ? "Protected skill cannot be removed here" : translate("skills.uninstall")}
                     >
                       <Trash2 size={14} />
                     </button>
