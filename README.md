@@ -43,6 +43,7 @@ OpenWork is designed to be:
 
 - **Host mode**: runs opencode locally on your computer
 - **Client mode**: connect to an existing OpenCode server by URL.
+- **Workspaces**: create local workspaces from the desktop app or connect remote workers from the same sidebar flow.
 - **Sessions**: create/select sessions and send prompts.
 - **Live streaming**: SSE `/event` subscription for realtime updates.
 - **Execution plan**: render OpenCode todos as a timeline.
