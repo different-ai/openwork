@@ -30,7 +30,6 @@ type ComposerProps = {
   onSend: (draft: ComposerDraft) => void;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
-  selectedProviderID?: string | null;
   selectedModelLabel: string;
   onModelClick: () => void;
   modelVariantLabel: string;

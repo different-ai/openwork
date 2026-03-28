@@ -125,7 +125,6 @@ import {
   formatModelLabel,
   formatModelRef,
   formatRelativeTime,
-  groupMessageParts,
   isVisibleTextPart,
   isTauriRuntime,
   modelEquals,
@@ -140,7 +139,6 @@ import {
   parseModelRef,
   readStartupPreference,
   safeStringify,
-  summarizeStep,
   addOpencodeCacheHint,
 } from "./utils";
 import {
@@ -8335,7 +8333,6 @@ export default function App() {
     anyActiveRuns: anyActiveRuns(),
     installUpdateAndRestart,
     selectedSessionModelLabel: selectedSessionModelLabel(),
-    selectedProviderID: selectedSessionModel().providerID,
     openSessionModelPicker: openSessionModelPicker,
     modelVariantLabel: getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).label,
     modelVariant: getVariantFor(selectedSessionModel()),
@@ -8371,8 +8368,6 @@ export default function App() {
     developerMode: developerMode(),
     showThinking: showThinking(),
     sessionCompactionState: selectedSessionCompactionState(),
-    groupMessageParts,
-    summarizeStep,
     expandedStepIds: expandedStepIds(),
     setExpandedStepIds: setExpandedStepIds,
     expandedSidebarSections: expandedSidebarSections(),

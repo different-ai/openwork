@@ -12,7 +12,6 @@ import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   DashboardTab,
   ComposerDraft,
-  MessageGroup,
   MessageWithParts,
   McpServerEntry,
   McpStatusMap,
@@ -192,8 +191,6 @@ export type SessionViewProps = {
   developerMode: boolean;
   showThinking: boolean;
   sessionCompactionState: SessionCompactionState | null;
-  groupMessageParts: (parts: Part[], messageId: string) => MessageGroup[];
-  summarizeStep: (part: Part) => { title: string; detail?: string };
   expandedStepIds: Set<string>;
   setExpandedStepIds: (
     updater: (current: Set<string>) => Set<string>,
