@@ -2749,6 +2749,10 @@ export default function SessionView(props: SessionViewProps) {
     if (!id) return "";
     return sessionTitleForId(id);
   });
+  const [pendingSessionTransition, setPendingSessionTransition] = createSignal<{
+    workspaceId: string;
+    sessionId: string;
+  } | null>(null);
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
   const showWorkspaceSetupEmptyState = createMemo(
     () =>
@@ -2756,6 +2760,51 @@ export default function SessionView(props: SessionViewProps) {
       !props.selectedSessionId &&
       props.messages.length === 0,
   );
+  const showPendingSessionTransition = createMemo(() => {
+    const pending = pendingSessionTransition();
+    if (!pending) return false;
+    return pending.sessionId !== props.selectedSessionId;
+  });
+  const showSessionLoadingState = createMemo(() => {
+    if (showPendingSessionTransition()) return true;
+    const sessionId = props.selectedSessionId;
+    if (!sessionId) return false;
+    if (props.messages.length > 0) return false;
+    return props.sessionLoadingById(sessionId);
+  });
+  const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = createSignal(false);
+  const pendingSessionTransitionTitle = createMemo(() => {
+    const pending = pendingSessionTransition();
+    if (!pending) return "";
+    return sessionTitleForId(pending.sessionId);
+  });
+  const sessionHeaderTitle = createMemo(() => {
+    if (showWorkspaceSetupEmptyState()) return "Create or connect a workspace";
+    if (showPendingSessionTransition()) {
+      return pendingSessionTransitionTitle() || "Loading session";
+    }
+    return selectedSessionTitle() || DEFAULT_SESSION_TITLE;
+  });
+
+  createEffect(() => {
+    const pending = pendingSessionTransition();
+    if (!pending) return;
+    if (props.selectedSessionId === pending.sessionId) {
+      setPendingSessionTransition(null);
+    }
+  });
+
+  createEffect(() => {
+    if (!showSessionLoadingState()) {
+      setShowDelayedSessionLoadingState(false);
+      return;
+    }
+
+    const id = window.setTimeout(() => {
+      setShowDelayedSessionLoadingState(true);
+    }, 1000);
+    onCleanup(() => window.clearTimeout(id));
+  });
 
   const renameCanSave = createMemo(() => {
     if (renameBusy()) return false;
@@ -3597,10 +3646,18 @@ export default function SessionView(props: SessionViewProps) {
     options?: { focusComposer?: boolean },
   ) => {
     if (!sessionId) return;
+    setPendingSessionTransition({ workspaceId, sessionId });
     const shouldFocusComposer = options?.focusComposer === true;
     void (async () => {
       const ready = await Promise.resolve(props.ensureWorkspaceActivated(workspaceId));
-      if (!ready) return;
+      if (!ready) {
+        setPendingSessionTransition((current) =>
+          current?.workspaceId === workspaceId && current?.sessionId === sessionId
+            ? null
+            : current,
+        );
+        return;
+      }
       props.setView("session", sessionId);
       if (shouldFocusComposer) {
         focusComposer();
@@ -4116,9 +4173,7 @@ export default function SessionView(props: SessionViewProps) {
               </Show>
 
               <h1 class="truncate text-[15px] font-semibold text-dls-text">
-                {showWorkspaceSetupEmptyState()
-                  ? "Create or connect a workspace"
-                  : selectedSessionTitle() || DEFAULT_SESSION_TITLE}
+                {sessionHeaderTitle()}
               </h1>
               <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
                 {props.selectedWorkspaceDisplay.displayName || props.selectedWorkspaceDisplay.name || "Workspace"}
@@ -4302,10 +4357,31 @@ export default function SessionView(props: SessionViewProps) {
                 }}
               >
                 <div class="mx-auto w-full max-w-[800px]">
+                  <Show when={showDelayedSessionLoadingState()}>
+                    <div class="px-6 py-24">
+                      <div
+                        class="mx-auto flex max-w-sm flex-col items-center gap-4 rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface">
+                          <Loader2 size={20} class="animate-spin text-dls-secondary" />
+                        </div>
+                        <div class="space-y-1">
+                          <h3 class="text-base font-medium text-dls-text">Loading session</h3>
+                          <p class="text-sm text-dls-secondary">
+                            Pulling in the latest messages for this task.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
+
                   <Show
                     when={
                       props.messages.length === 0 &&
-                      !showWorkspaceSetupEmptyState()
+                      !showWorkspaceSetupEmptyState() &&
+                      !showSessionLoadingState()
                     }
                   >
                     <div class="text-center py-16 px-6 space-y-6">
@@ -4345,92 +4421,94 @@ export default function SessionView(props: SessionViewProps) {
                     </div>
                   </Show>
 
-                  <Show
-                    when={
-                      hiddenMessageCount() > 0 || hasServerEarlierMessages()
-                    }
-                  >
-                    <div class="mb-4 flex justify-center">
-                      <button
-                        type="button"
-                        class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
-                        onClick={() => {
-                          void revealEarlierMessages();
-                        }}
-                        disabled={props.loadingEarlierMessages}
-                      >
-                        {props.loadingEarlierMessages
-                          ? "Loading earlier messages..."
-                          : hiddenMessageCount() > 0
-                            ? `Show ${nextRevealCount().toLocaleString()} earlier message${nextRevealCount() === 1 ? "" : "s"}`
-                            : "Load earlier messages"}
-                      </button>
-                    </div>
-                  </Show>
+                  <Show when={!showDelayedSessionLoadingState()}>
+                    <Show
+                      when={
+                        hiddenMessageCount() > 0 || hasServerEarlierMessages()
+                      }
+                    >
+                      <div class="mb-4 flex justify-center">
+                        <button
+                          type="button"
+                          class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
+                          onClick={() => {
+                            void revealEarlierMessages();
+                          }}
+                          disabled={props.loadingEarlierMessages}
+                        >
+                          {props.loadingEarlierMessages
+                            ? "Loading earlier messages..."
+                            : hiddenMessageCount() > 0
+                              ? `Show ${nextRevealCount().toLocaleString()} earlier message${nextRevealCount() === 1 ? "" : "s"}`
+                              : "Load earlier messages"}
+                        </button>
+                      </div>
+                    </Show>
 
-                  <MessageList
-                    messages={batchedRenderedMessages()}
-                    isStreaming={showRunIndicator()}
-                    developerMode={props.developerMode}
-                    showThinking={props.showThinking}
-                    getSessionById={props.getSessionById}
-                    getMessagesBySessionId={props.getMessagesBySessionId}
-                    ensureSessionLoaded={props.ensureSessionLoaded}
-                    sessionLoadingById={props.sessionLoadingById}
-                    workspaceRoot={props.selectedWorkspaceRoot}
-                    expandedStepIds={props.expandedStepIds}
-                    setExpandedStepIds={props.setExpandedStepIds}
-                    openSessionById={(sessionId) =>
-                      props.setView("session", sessionId)
-                    }
-                    searchMatchMessageIds={searchMatchMessageIds()}
-                    activeSearchMessageId={activeSearchHit()?.messageId ?? null}
-                    searchHighlightQuery={searchQueryDebounced().trim()}
-                    scrollElement={() => chatContainerEl}
-                    setScrollToMessageById={(handler) => {
-                      scrollMessageIntoViewById = handler;
-                    }}
-                    footer={
-                      showRunIndicator() && showFooterRunStatus() ? (
-                        <div class="flex justify-start">
-                          <div class="w-full max-w-[760px]">
-                            <div
-                              class={`mt-3 flex items-center gap-2 py-1 text-xs ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
-                              role="status"
-                              aria-live="polite"
-                            >
-                              <span
-                                class={`truncate ${
-                                  runPhase() === "thinking" ||
-                                  runPhase() === "responding"
-                                    ? "animate-pulse"
-                                    : ""
-                                }`}
+                    <MessageList
+                      messages={batchedRenderedMessages()}
+                      isStreaming={showRunIndicator()}
+                      developerMode={props.developerMode}
+                      showThinking={props.showThinking}
+                      getSessionById={props.getSessionById}
+                      getMessagesBySessionId={props.getMessagesBySessionId}
+                      ensureSessionLoaded={props.ensureSessionLoaded}
+                      sessionLoadingById={props.sessionLoadingById}
+                      workspaceRoot={props.selectedWorkspaceRoot}
+                      expandedStepIds={props.expandedStepIds}
+                      setExpandedStepIds={props.setExpandedStepIds}
+                      openSessionById={(sessionId) =>
+                        props.setView("session", sessionId)
+                      }
+                      searchMatchMessageIds={searchMatchMessageIds()}
+                      activeSearchMessageId={activeSearchHit()?.messageId ?? null}
+                      searchHighlightQuery={searchQueryDebounced().trim()}
+                      scrollElement={() => chatContainerEl}
+                      setScrollToMessageById={(handler) => {
+                        scrollMessageIntoViewById = handler;
+                      }}
+                      footer={
+                        showRunIndicator() && showFooterRunStatus() ? (
+                          <div class="flex justify-start">
+                            <div class="w-full max-w-[760px]">
+                              <div
+                                class={`mt-3 flex items-center gap-2 py-1 text-xs ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
+                                role="status"
+                                aria-live="polite"
                               >
-                                {thinkingStatus() || runLabel()}
-                              </span>
-                              <Show when={props.developerMode}>
-                                <span class="text-[10px] text-gray-8 ml-auto shrink-0">
-                                  {runElapsedLabel()}
+                                <span
+                                  class={`truncate ${
+                                    runPhase() === "thinking" ||
+                                    runPhase() === "responding"
+                                      ? "animate-pulse"
+                                      : ""
+                                  }`}
+                                >
+                                  {thinkingStatus() || runLabel()}
                                 </span>
-                              </Show>
+                                <Show when={props.developerMode}>
+                                  <span class="text-[10px] text-gray-8 ml-auto shrink-0">
+                                    {runElapsedLabel()}
+                                  </span>
+                                </Show>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ) : undefined
-                    }
-                  />
+                        ) : undefined
+                      }
+                    />
 
-                  <div
-                    ref={(el) => {
-                      messagesEndEl = el;
-                      bottomVisibilityEl = el;
-                    }}
-                  />
+                    <div
+                      ref={(el) => {
+                        messagesEndEl = el;
+                        bottomVisibilityEl = el;
+                      }}
+                    />
+                  </Show>
                 </div>
               </div>
 
-              <Show when={props.messages.length > 0 && !jumpControlsSuppressed() && (!isViewingLatest() || Boolean(topClippedMessageId()))}>
+              <Show when={!showDelayedSessionLoadingState() && props.messages.length > 0 && !jumpControlsSuppressed() && (!isViewingLatest() || Boolean(topClippedMessageId()))}>
                 <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
                   <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
                     <Show when={Boolean(topClippedMessageId())}>

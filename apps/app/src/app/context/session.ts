@@ -934,8 +934,11 @@ export function createSessionStore(options: {
     if (!c) return;
 
     const perfEnabled = options.developerMode();
-    options.setSelectedSessionId(sessionID);
-    options.setError(null);
+    batch(() => {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+      options.setSelectedSessionId(sessionID);
+      options.setError(null);
+    });
 
     const existing = selectInFlightBySession.get(sessionID);
     if (existing) {
@@ -981,7 +984,6 @@ export function createSessionStore(options: {
 
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
-      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
       mark("calling session.messages", { limit: requestLimit });
       const msgs = unwrap(
         await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),
