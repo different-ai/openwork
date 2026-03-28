@@ -75,21 +75,22 @@ body {
 }
 
 .ow-soft-shell {
-  border: 1px solid #eceef1;
-  background: #fbfbfc;
+  border: 1px solid var(--dls-border);
+  background: var(--dls-surface);
   border-radius: 2rem;
+  box-shadow: var(--dls-shell-shadow);
 }
 
 .ow-soft-card {
-  border: 1px solid #eceef1;
-  background: #ffffff;
+  border: 1px solid var(--dls-border);
+  background: var(--dls-surface);
   border-radius: 1.5rem;
-  box-shadow: 0 10px 24px -22px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--dls-card-shadow);
 }
 
 .ow-soft-card-quiet {
-  border: 1px solid #eceef1;
-  background: #f8fafc;
+  border: 1px solid var(--dls-border);
+  background: var(--dls-sidebar);
   border-radius: 1.5rem;
 }
 
@@ -99,13 +100,13 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
-  background: #011627;
+  background: var(--dls-accent);
   color: #ffffff;
-  box-shadow: 0 8px 20px -16px rgba(1, 22, 39, 0.45);
+  box-shadow: 0 8px 20px -16px rgba(var(--dls-accent-rgb), 0.45);
 }
 
 .ow-button-primary:hover:not(:disabled) {
-  background: #000000;
+  background: var(--dls-accent-hover);
 }
 
 .ow-button-secondary {
@@ -114,14 +115,14 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
-  color: #011627;
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.04), 0 1px 2px 0 rgba(0,0,0,0.04);
+  border: 1px solid var(--dls-border);
+  background: var(--dls-surface);
+  color: var(--dls-text-primary);
+  box-shadow: var(--dls-card-shadow);
 }
 
 .ow-button-secondary:hover:not(:disabled) {
-  background: #f9fafb;
+  background: var(--dls-hover);
 }
 
 .ow-button-primary,
