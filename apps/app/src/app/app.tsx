@@ -1757,12 +1757,11 @@ export default function App() {
     const params = directory ? { sessionID: trimmed, directory } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
 
-    // Remove the deleted session from the store and sidebar locally.
-    // SSE will handle any further sync — calling loadSessions/refreshSidebarWorkspaceSessions
-    // here races with SSE and can wipe unrelated sessions from the store.
+    // Remove the deleted session from the store locally, then refetch the
+    // workspace-scoped sidebar session list from the server source of truth.
     setSessions(sessions().filter((s) => s.id !== trimmed));
     const activeWsId = workspaceStore.selectedWorkspaceId();
-    removeSidebarSession(activeWsId, trimmed);
+    await refreshSidebarWorkspaceSessions(activeWsId).catch(() => undefined);
 
     // If we're currently routed to the deleted session, navigate away immediately.
     // (Otherwise the route effect can try to re-select a session that no longer exists.)
@@ -2694,6 +2693,7 @@ export default function App() {
     setOpencodeConnectStatus,
     loadSessions: loadSessionsWithReady,
     refreshPendingPermissions,
+    refreshWorkspaceSessions: (workspaceId: string) => refreshSidebarWorkspaceSessions(workspaceId),
     selectedSessionId,
     selectSession,
     setSelectedSessionId,
@@ -2760,8 +2760,6 @@ export default function App() {
   const {
     workspaceGroups: rawSidebarWorkspaceGroups,
     refreshWorkspaceSessions: refreshSidebarWorkspaceSessions,
-    prependSession: prependSidebarSession,
-    removeSession: removeSidebarSession,
   } = sidebarSessionsStore;
 
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
@@ -5749,28 +5747,16 @@ export default function App() {
         setSessions([session, ...currentStoreSessions]);
       }
 
-      const newItem: SidebarSessionItem = {
-        id: session.id,
-        title: session.title,
-        slug: session.slug,
-        parentID: session.parentID,
-        time: session.time,
-        directory: session.directory,
-      };
       const wsId = workspaceStore.selectedWorkspaceId().trim();
       if (wsId) {
-        prependSidebarSession(wsId, newItem);
+        await refreshSidebarWorkspaceSessions(wsId).catch(() => undefined);
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
       goToSession(session.id);
 
-      // The new session is already in the sessions() store (injected above)
-      // and in the sidebar signal. SSE session.created events will handle
-      // any further syncing. Calling loadSessionsWithReady() here would
-      // race with the store injection — the server may not have indexed the
-      // session yet, so reconcile() would wipe it from the store, causing
-      // the sidebar to flash and the route guard to bounce back.
+      // The new session is already in the sessions() store (injected above).
+      // Sidebar state now refreshes from the server-scoped workspace list.
       finishPerf(perfEnabled, "session.create", "done", startedAt, {
         runId,
         sessionID: session.id,

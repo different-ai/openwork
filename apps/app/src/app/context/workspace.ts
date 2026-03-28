@@ -139,6 +139,7 @@ export function createWorkspaceStore(options: {
   setBusyStartedAt: (value: number | null) => void;
   loadSessions: (scopeRoot?: string) => Promise<void>;
   refreshPendingPermissions: () => Promise<void>;
+  refreshWorkspaceSessions?: (workspaceId: string) => Promise<void>;
   selectedSessionId: () => string | null;
   selectSession: (id: string) => Promise<void>;
   setSelectedSessionId: (value: string | null) => void;
@@ -2101,6 +2102,9 @@ export function createWorkspaceStore(options: {
         const sessionsReady = await waitForWorkspaceSessionsReady(resolvedFolder);
         if (!sessionsReady) {
           throw new Error("Starter sessions did not finish loading for the new workspace.");
+        }
+        if (nextSelectedId) {
+          await options.refreshWorkspaceSessions?.(nextSelectedId);
         }
         const openSessionId = materialized?.openSessionId?.trim() || "";
         if (openSessionId) {

@@ -176,30 +176,6 @@ export function createSidebarSessionsStore(options: {
     }
   };
 
-  const prependSession = (workspaceId: string, item: SidebarSessionItem) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setSessionsByWorkspaceId((prev) => {
-      const current = prev[id] ?? [];
-      const deduped = current.filter((entry) => entry.id !== item.id);
-      return {
-        ...prev,
-        [id]: [item, ...deduped],
-      };
-    });
-    setStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" }));
-  };
-
-  const removeSession = (workspaceId: string, sessionId: string) => {
-    const id = workspaceId.trim();
-    const target = sessionId.trim();
-    if (!id || !target) return;
-    setSessionsByWorkspaceId((prev) => ({
-      ...prev,
-      [id]: (prev[id] ?? []).filter((entry) => entry.id !== target),
-    }));
-  };
-
   let lastFingerprintByWorkspaceId: Record<string, string> = {};
   createEffect(() => {
     const engineInfo = options.engine();
@@ -245,7 +221,5 @@ export function createSidebarSessionsStore(options: {
   return {
     workspaceGroups,
     refreshWorkspaceSessions,
-    prependSession,
-    removeSession,
   };
 }
