@@ -176,6 +176,7 @@ const fileToDataUrl = (file: File) =>
   });
 import { createExtensionsStore } from "./context/extensions";
 import { createAutomationsStore } from "./context/automations";
+import { createSidebarSessionsStore } from "./context/sidebar-sessions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
@@ -1761,10 +1762,7 @@ export default function App() {
     // here races with SSE and can wipe unrelated sessions from the store.
     setSessions(sessions().filter((s) => s.id !== trimmed));
     const activeWsId = workspaceStore.selectedWorkspaceId();
-    setSidebarSessionsByWorkspaceId((prev) => ({
-      ...prev,
-      [activeWsId]: (prev[activeWsId] ?? []).filter((s) => s.id !== trimmed),
-    }));
+    removeSidebarSession(activeWsId, trimmed);
 
     // If we're currently routed to the deleted session, navigate away immediately.
     // (Otherwise the route effect can try to re-select a session that no longer exists.)
@@ -2730,17 +2728,6 @@ export default function App() {
   const runtimeWorkspaceId = createMemo(() => workspaceStore.runtimeWorkspaceId());
   const activeWorkspaceServerConfig = createMemo(() => workspaceStore.runtimeWorkspaceConfig());
 
-  type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
-  const [sidebarSessionsByWorkspaceId, setSidebarSessionsByWorkspaceId] = createSignal<
-    Record<string, SidebarSessionItem[]>
-  >({});
-  const [sidebarSessionStatusByWorkspaceId, setSidebarSessionStatusByWorkspaceId] = createSignal<
-    Record<string, SidebarWorkspaceSessionsStatus>
-  >({});
-  const [sidebarSessionErrorByWorkspaceId, setSidebarSessionErrorByWorkspaceId] = createSignal<
-    Record<string, string | null>
-  >({});
-
   const logWorkspaceScopeSnapshot = (label: string, extra?: Record<string, unknown>) => {
     if (!developerMode()) return;
     const activeWorkspace = workspaceStore.selectedWorkspaceInfo();
@@ -2765,251 +2752,28 @@ export default function App() {
     });
   };
 
-  const pruneSidebarSessionState = (workspaceIds: Set<string>) => {
-    setSidebarSessionsByWorkspaceId((prev) => {
-      let changed = false;
-      const next: Record<string, SidebarSessionItem[]> = {};
-      for (const [id, list] of Object.entries(prev)) {
-        if (!workspaceIds.has(id)) {
-          changed = true;
-          continue;
-        }
-        next[id] = list;
-      }
-      return changed ? next : prev;
-    });
-    setSidebarSessionStatusByWorkspaceId((prev) => {
-      let changed = false;
-      const next: Record<string, SidebarWorkspaceSessionsStatus> = {};
-      for (const [id, status] of Object.entries(prev)) {
-        if (!workspaceIds.has(id)) {
-          changed = true;
-          continue;
-        }
-        next[id] = status;
-      }
-      return changed ? next : prev;
-    });
-    setSidebarSessionErrorByWorkspaceId((prev) => {
-      let changed = false;
-      const next: Record<string, string | null> = {};
-      for (const [id, error] of Object.entries(prev)) {
-        if (!workspaceIds.has(id)) {
-          changed = true;
-          continue;
-        }
-        next[id] = error;
-      }
-      return changed ? next : prev;
-    });
-  };
-
-  const resolveSidebarClientConfig = (workspaceId: string) => {
-    const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
-    if (!workspace) return null;
-
-    if (workspace.workspaceType === "local") {
-      const info = workspaceStore.engine();
-      const baseUrl = info?.baseUrl?.trim() ?? "";
-      const directory = toSessionTransportDirectory(workspace.path?.trim() ?? "");
-      const username = info?.opencodeUsername?.trim() ?? "";
-      const password = info?.opencodePassword?.trim() ?? "";
-      const auth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
-      return {
-        baseUrl,
-        directory,
-        auth,
-      };
-    }
-
-    const baseUrl = workspace.baseUrl?.trim() ?? "";
-    const directory = workspace.directory?.trim() ?? "";
-    if (workspace.remoteType === "openwork") {
-      // Sidebar session listing should be per-workspace and should not implicitly depend on
-      // global OpenWork server settings, otherwise switching between remotes can cause other
-      // workspace task lists to appear/disappear.
-      const token = workspace.openworkToken?.trim() ?? "";
-      const auth: OpencodeAuth | undefined = token ? { token, mode: "openwork" } : undefined;
-      return {
-        baseUrl,
-        directory,
-        auth,
-      };
-    }
-    return {
-      baseUrl,
-      directory,
-      auth: undefined as OpencodeAuth | undefined,
-    };
-  };
-
-  const sidebarRefreshSeqByWorkspaceId: Record<string, number> = {};
-  const SIDEBAR_SESSION_LIMIT = 200;
-  const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-
-    const config = resolveSidebarClientConfig(id);
-    if (!config) return;
-
-    // For local workspaces, avoid thrashing UI with errors if the engine is offline.
-    if (!config.baseUrl) {
-      let changed = false;
-      setSidebarSessionStatusByWorkspaceId((prev) => {
-        if (prev[id] === "idle") return prev;
-        changed = true;
-        return { ...prev, [id]: "idle" };
-      });
-      setSidebarSessionErrorByWorkspaceId((prev) => {
-        if ((prev[id] ?? null) === null) return prev;
-        changed = true;
-        return { ...prev, [id]: null };
-      });
-      if (changed) {
-        wsDebug("sidebar:skip", { id, reason: "no-baseUrl" });
-      }
-      return;
-    }
-
-    sidebarRefreshSeqByWorkspaceId[id] = (sidebarRefreshSeqByWorkspaceId[id] ?? 0) + 1;
-    const seq = sidebarRefreshSeqByWorkspaceId[id];
-
-    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "loading" }));
-    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
-
-    try {
-      const start = Date.now();
-      let directory = config.directory;
-      let c = createClient(config.baseUrl, directory || undefined, config.auth);
-      wsDebug("sidebar:list:start", {
-        id,
-        directory: directory || null,
-        directoryScope: describeDirectoryScope(directory),
-        workspacePath: workspaceStore.workspaces().find((entry) => entry.id === id)?.path?.trim() ?? null,
-      });
-
-      if (!directory) {
-        try {
-          const pathInfo = unwrap(await c.path.get());
-          const discovered = toSessionTransportDirectory(pathInfo.directory ?? "");
-          if (discovered) {
-            directory = discovered;
-            c = createClient(config.baseUrl, directory, config.auth);
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
-
-      // Fetch sessions scoped to the workspace directory to avoid loading the
-      // full global session list for every workspace.
-      const list = unwrap(
-        await c.session.list({ directory: queryDirectory, roots: false, limit: SIDEBAR_SESSION_LIMIT }),
-      );
-      wsDebug("sidebar:list", {
-        id,
-        baseUrl: config.baseUrl,
-        directory: directory || null,
-        directoryScope: describeDirectoryScope(directory),
-        queryDirectory: queryDirectory ?? null,
-        queryScope: describeDirectoryScope(queryDirectory),
-        count: list.length,
-        ms: Date.now() - start,
-        sessionDirectories: list.slice(0, 10).map((session) => ({
-          id: session.id,
-          directory: session.directory,
-          directoryScope: describeDirectoryScope(session.directory),
-        })),
-      });
-      if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
-
-      // Defensive client-side filter in case upstream ignores the directory query.
-      const root = normalizeDirectoryPath(directory);
-      const filtered = root ? list.filter((session) => normalizeDirectoryPath(session.directory) === root) : list;
-
-      const sorted = sortSessionsByActivity(filtered);
-      const items: SidebarSessionItem[] = sorted.map((session) => ({
-        id: session.id,
-        title: session.title,
-        slug: session.slug,
-        parentID: session.parentID,
-        time: session.time,
-        directory: session.directory,
-      }));
-
-      setSidebarSessionsByWorkspaceId((prev) => ({
-        ...prev,
-        [id]: items,
-      }));
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" }));
-    } catch (error) {
-      if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      wsDebug("sidebar:error", { id, message });
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" }));
-      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: message }));
-    }
-  };
-
-  const refreshAllSidebarWorkspaceSessions = async () => {
-    const list = workspaceStore.workspaces();
-    if (!list.length) return;
-    await Promise.allSettled(list.map((ws) => refreshSidebarWorkspaceSessions(ws.id)));
-  };
-
-  let lastSidebarEngineKey = "";
-  let lastSidebarWorkspaceKey = "";
-  createEffect(() => {
-    const engineInfo = workspaceStore.engine();
-    const engineBaseUrl = engineInfo?.baseUrl?.trim() ?? "";
-    const engineUser = engineInfo?.opencodeUsername?.trim() ?? "";
-    const enginePass = engineInfo?.opencodePassword?.trim() ?? "";
-
-    const engineKey = [engineBaseUrl, engineUser, enginePass].join("::");
-    const workspaceKey = workspaceStore
-      .workspaces()
-      .map((ws) => {
-        const root = ws.workspaceType === "local" ? ws.path?.trim() ?? "" : ws.directory?.trim() ?? "";
-        const base = ws.workspaceType === "local" ? "" : ws.baseUrl?.trim() ?? "";
-        const remoteType = ws.workspaceType === "remote" ? (ws.remoteType ?? "") : "";
-        const token = ws.remoteType === "openwork" ? (ws.openworkToken?.trim() ?? "") : "";
-        return [ws.id, ws.workspaceType, remoteType, root, base, token].join("|");
-      })
-      .join(";");
-
-    // Sidebar session refreshes should only be driven by the engine auth/baseUrl or the workspace
-    // definitions themselves. Global OpenWork server settings are intentionally excluded so that
-    // connecting/activating a remote does not cause other workspace task lists to refresh (and
-    // potentially disappear) due to auth fallback changes.
-    if (engineKey === lastSidebarEngineKey && workspaceKey === lastSidebarWorkspaceKey) return;
-
-    lastSidebarEngineKey = engineKey;
-    lastSidebarWorkspaceKey = workspaceKey;
-
-    pruneSidebarSessionState(new Set(workspaceStore.workspaces().map((ws) => ws.id)));
-
-    wsDebug("sidebar:refresh", {
-      selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
-      engineBaseUrl,
-    });
-
-    void refreshAllSidebarWorkspaceSessions().catch(() => undefined);
+  const sidebarSessionsStore = createSidebarSessionsStore({
+    workspaces: () => workspaceStore.workspaces(),
+    engine: () => workspaceStore.engine(),
   });
 
+  const {
+    workspaceGroups: rawSidebarWorkspaceGroups,
+    refreshWorkspaceSessions: refreshSidebarWorkspaceSessions,
+    prependSession: prependSidebarSession,
+    removeSession: removeSidebarSession,
+  } = sidebarSessionsStore;
+
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
-    const workspaces = workspaceStore.workspaces();
+    const groups = rawSidebarWorkspaceGroups();
     const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
     const connectingWorkspaceId = workspaceStore.connectingWorkspaceId()?.trim() ?? "";
-    const sessionsById = sidebarSessionsByWorkspaceId();
-    const statusById = sidebarSessionStatusByWorkspaceId();
-    const errorById = sidebarSessionErrorByWorkspaceId();
-    const dedupedWorkspaces: typeof workspaces = [];
+    const dedupedGroups: typeof groups = [];
     const dedupeKeyToIndex = new Map<string, number>();
-    for (const workspace of workspaces) {
+    for (const group of groups) {
+      const workspace = group.workspace;
       if (workspace.workspaceType !== "remote") {
-        dedupedWorkspaces.push(workspace);
+        dedupedGroups.push(group);
         continue;
       }
       const hostKey =
@@ -3024,27 +2788,28 @@ export default function App() {
       const directoryKey = normalizeDirectoryPath(workspace.directory?.trim() ?? workspace.path?.trim() ?? "");
       const identityKey = workspaceIdKey ? `id:${workspaceIdKey}` : (directoryKey ? `dir:${directoryKey}` : "");
       if (!hostKey || !identityKey) {
-        dedupedWorkspaces.push(workspace);
+        dedupedGroups.push(group);
         continue;
       }
       const dedupeKey = `${workspace.remoteType ?? ""}|${hostKey}|${identityKey}`;
       const existingIndex = dedupeKeyToIndex.get(dedupeKey);
       if (existingIndex === undefined) {
-        dedupeKeyToIndex.set(dedupeKey, dedupedWorkspaces.length);
-        dedupedWorkspaces.push(workspace);
+        dedupeKeyToIndex.set(dedupeKey, dedupedGroups.length);
+        dedupedGroups.push(group);
         continue;
       }
-      const existingWorkspace = dedupedWorkspaces[existingIndex];
+      const existingWorkspace = dedupedGroups[existingIndex].workspace;
       const existingIsPriority =
         existingWorkspace.id === selectedWorkspaceId || existingWorkspace.id === connectingWorkspaceId;
       const currentIsPriority =
         workspace.id === selectedWorkspaceId || workspace.id === connectingWorkspaceId;
       if (currentIsPriority && !existingIsPriority) {
-        dedupedWorkspaces[existingIndex] = workspace;
+        dedupedGroups[existingIndex] = group;
       }
     }
-    return dedupedWorkspaces.map((workspace) => {
-      const groupSessions = sessionsById[workspace.id] ?? [];
+    return dedupedGroups.map((group) => {
+      const workspace = group.workspace;
+      const groupSessions = group.sessions;
       if (developerMode()) {
         console.log("[sidebar-groups] workspace group", {
           workspaceId: workspace.id,
@@ -3064,8 +2829,8 @@ export default function App() {
       return {
         workspace,
         sessions: groupSessions,
-        status: statusById[workspace.id] ?? "idle",
-        error: errorById[workspace.id] ?? null,
+        status: group.status,
+        error: group.error,
       };
     });
   });
@@ -5994,15 +5759,7 @@ export default function App() {
       };
       const wsId = workspaceStore.selectedWorkspaceId().trim();
       if (wsId) {
-        const currentSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
-        setSidebarSessionsByWorkspaceId((prev) => ({
-          ...prev,
-          [wsId]: [newItem, ...currentSessions],
-        }));
-        setSidebarSessionStatusByWorkspaceId((prev) => ({
-          ...prev,
-          [wsId]: "ready",
-        }));
+        prependSidebarSession(wsId, newItem);
       }
 
       // setSessionViewLockUntil(Date.now() + 1200);
