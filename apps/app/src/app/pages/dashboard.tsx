@@ -50,7 +50,7 @@ import Button from "../components/button";
 import ExtensionsView from "./extensions";
 import ScheduledTasksView from "./scheduled";
 import ConfigView from "./config";
-import SettingsView from "./settings";
+import SettingsView, { type SettingsViewProps } from "./settings";
 import SkillsView from "./skills";
 import IdentitiesView from "./identities";
 import StatusBar from "../components/status-bar";
@@ -1177,6 +1177,190 @@ export default function DashboardView(props: DashboardViewProps) {
     openSettings("general");
   };
 
+  const settingsViewProps = (): SettingsViewProps => ({
+    startupPreference: props.startupPreference,
+    baseUrl: props.baseUrl,
+    headerStatus: props.headerStatus,
+    busy: props.busy,
+    clientConnected: props.clientConnected,
+    settingsTab: props.settingsTab,
+    setSettingsTab: props.setSettingsTab,
+    providers: props.providers,
+    providerConnectedIds: props.providerConnectedIds,
+    providerAuthBusy: props.providerAuthBusy,
+    openProviderAuthModal: props.openProviderAuthModal,
+    disconnectProvider: props.disconnectProvider,
+    openworkServerStatus: props.openworkServerStatus,
+    openworkServerUrl: props.openworkServerUrl,
+    openworkServerClient: props.openworkServerClient,
+    openworkReconnectBusy: props.openworkReconnectBusy,
+    reconnectOpenworkServer: props.reconnectOpenworkServer,
+    openworkServerSettings: props.openworkServerSettings,
+    openworkServerHostInfo: props.openworkServerHostInfo,
+    openworkServerCapabilities: props.openworkServerCapabilities,
+    openworkServerDiagnostics: props.openworkServerDiagnostics,
+    runtimeWorkspaceId: props.runtimeWorkspaceId,
+    selectedWorkspaceRoot: props.selectedWorkspaceRoot,
+    activeWorkspaceType: props.activeWorkspaceType,
+    openworkAuditEntries: props.openworkAuditEntries,
+    openworkAuditStatus: props.openworkAuditStatus,
+    openworkAuditError: props.openworkAuditError,
+    opencodeConnectStatus: props.opencodeConnectStatus,
+    engineInfo: props.engineInfo,
+    orchestratorStatus: props.orchestratorStatus,
+    opencodeRouterInfo: props.opencodeRouterInfo,
+    engineDoctorVersion: props.engineDoctorVersion,
+    developerMode: props.developerMode,
+    toggleDeveloperMode: props.toggleDeveloperMode,
+    stopHost: props.stopHost,
+    restartLocalServer: props.restartLocalServer,
+    engineSource: props.engineSource,
+    setEngineSource: props.setEngineSource,
+    engineCustomBinPath: props.engineCustomBinPath,
+    setEngineCustomBinPath: props.setEngineCustomBinPath,
+    engineRuntime: props.engineRuntime,
+    setEngineRuntime: props.setEngineRuntime,
+    opencodeEnableExa: props.opencodeEnableExa,
+    toggleOpencodeEnableExa: props.toggleOpencodeEnableExa,
+    isWindows: props.isWindows,
+    defaultModelLabel: props.defaultModelLabel,
+    defaultModelRef: props.defaultModelRef,
+    openDefaultModelPicker: props.openDefaultModelPicker,
+    showThinking: props.showThinking,
+    toggleShowThinking: props.toggleShowThinking,
+    autoCompactContext: props.autoCompactContext,
+    toggleAutoCompactContext: props.toggleAutoCompactContext,
+    autoCompactContextBusy: props.autoCompactContextBusy,
+    hideTitlebar: props.hideTitlebar,
+    toggleHideTitlebar: props.toggleHideTitlebar,
+    modelVariantLabel: props.modelVariantLabel,
+    editModelVariant: props.editModelVariant,
+    language: props.language,
+    setLanguage: props.setLanguage,
+    themeMode: props.themeMode,
+    setThemeMode: props.setThemeMode,
+    updateAutoCheck: props.updateAutoCheck,
+    toggleUpdateAutoCheck: props.toggleUpdateAutoCheck,
+    updateAutoDownload: props.updateAutoDownload,
+    toggleUpdateAutoDownload: props.toggleUpdateAutoDownload,
+    updateStatus: props.updateStatus,
+    updateEnv: props.updateEnv,
+    appVersion: props.appVersion,
+    checkForUpdates: props.checkForUpdates,
+    downloadUpdate: props.downloadUpdate,
+    installUpdateAndRestart: props.installUpdateAndRestart,
+    anyActiveRuns: props.anyActiveRuns,
+    canReloadWorkspace: props.canReloadWorkspace,
+    reloadWorkspaceEngine: props.reloadWorkspaceEngine,
+    reloadBusy: props.reloadBusy,
+    onResetStartupPreference: props.onResetStartupPreference,
+    openResetModal: props.openResetModal,
+    resetModalBusy: props.resetModalBusy,
+    pendingPermissions: props.pendingPermissions,
+    events: props.events,
+    workspaceDebugEvents: props.workspaceDebugEvents,
+    sandboxCreateProgress: props.sandboxCreateProgress,
+    sandboxCreateProgressLast: props.sandboxCreateProgressLast,
+    clearWorkspaceDebugEvents: props.clearWorkspaceDebugEvents,
+    safeStringify: props.safeStringify,
+    repairOpencodeMigration: props.repairOpencodeMigration,
+    migrationRepairBusy: props.migrationRepairBusy,
+    migrationRepairResult: props.migrationRepairResult,
+    migrationRepairAvailable: props.migrationRepairAvailable,
+    migrationRepairUnavailableReason: props.migrationRepairUnavailableReason,
+    repairOpencodeCache: props.repairOpencodeCache,
+    cacheRepairBusy: props.cacheRepairBusy,
+    cacheRepairResult: props.cacheRepairResult,
+    cleanupOpenworkDockerContainers: props.cleanupOpenworkDockerContainers,
+    dockerCleanupBusy: props.dockerCleanupBusy,
+    dockerCleanupResult: props.dockerCleanupResult,
+    authorizedFolders: props.authorizedFolders,
+    authorizedFolderDraft: props.authorizedFolderDraft,
+    setAuthorizedFolderDraft: props.setAuthorizedFolderDraft,
+    authorizedFoldersLoading: props.authorizedFoldersLoading,
+    authorizedFoldersSaving: props.authorizedFoldersSaving,
+    authorizedFoldersError: props.authorizedFoldersError,
+    authorizedFoldersStatus: props.authorizedFoldersStatus,
+    authorizedFoldersAvailable: props.authorizedFoldersAvailable,
+    authorizedFoldersEditable: props.authorizedFoldersEditable,
+    authorizedFoldersHint: props.authorizedFoldersHint,
+    addAuthorizedFolder: props.addAuthorizedFolder,
+    pickAuthorizedFolder: props.pickAuthorizedFolder,
+    removeAuthorizedFolder: props.removeAuthorizedFolder,
+    resetAppConfigDefaults: props.resetAppConfigDefaults,
+    notionStatus: props.notionStatus,
+    notionStatusDetail: props.notionStatusDetail,
+    notionError: props.notionError,
+    notionBusy: props.notionBusy,
+    connectNotion: props.connectNotion,
+    openDebugDeepLink: props.openDebugDeepLink,
+    scheduledJobs: props.scheduledJobs,
+    scheduledJobsSource: props.scheduledJobsSource,
+    scheduledJobsSourceReady: props.scheduledJobsSourceReady,
+    scheduledJobsStatus: props.scheduledJobsStatus,
+    scheduledJobsBusy: props.scheduledJobsBusy,
+    scheduledJobsUpdatedAt: props.scheduledJobsUpdatedAt,
+    refreshScheduledJobs: props.refreshScheduledJobs,
+    deleteScheduledJob: props.deleteScheduledJob,
+    newTaskDisabled: props.newTaskDisabled,
+    schedulerPluginInstalled: props.schedulerPluginInstalled,
+    refreshSkills: props.refreshSkills,
+    refreshHubSkills: props.refreshHubSkills,
+    skills: props.skills,
+    skillsStatus: props.skillsStatus,
+    hubSkills: props.hubSkills,
+    hubSkillsStatus: props.hubSkillsStatus,
+    hubRepo: props.hubRepo,
+    hubRepos: props.hubRepos,
+    skillsAccessHint: props.skillsAccessHint,
+    canInstallSkillCreator: props.canInstallSkillCreator,
+    canUseDesktopTools: props.canUseDesktopTools,
+    importLocalSkill: props.importLocalSkill,
+    installSkillCreator: props.installSkillCreator,
+    installHubSkill: props.installHubSkill,
+    setHubRepo: props.setHubRepo,
+    addHubRepo: props.addHubRepo,
+    removeHubRepo: props.removeHubRepo,
+    revealSkillsFolder: props.revealSkillsFolder,
+    uninstallSkill: props.uninstallSkill,
+    readSkill: props.readSkill,
+    saveSkill: props.saveSkill,
+    refreshPlugins: props.refreshPlugins,
+    refreshMcpServers: props.refreshMcpServers,
+    pluginsAccessHint: props.pluginsAccessHint,
+    canEditPlugins: props.canEditPlugins,
+    canUseGlobalPluginScope: props.canUseGlobalPluginScope,
+    pluginScope: props.pluginScope,
+    setPluginScope: props.setPluginScope,
+    pluginConfigPath: props.pluginConfigPath,
+    pluginList: props.pluginList,
+    pluginInput: props.pluginInput,
+    setPluginInput: props.setPluginInput,
+    pluginStatus: props.pluginStatus,
+    activePluginGuide: props.activePluginGuide,
+    setActivePluginGuide: props.setActivePluginGuide,
+    isPluginInstalled: props.isPluginInstalled,
+    suggestedPlugins: props.suggestedPlugins,
+    addPlugin: props.addPlugin,
+    removePlugin: props.removePlugin,
+    mcpServers: props.mcpServers,
+    mcpStatus: props.mcpStatus,
+    mcpLastUpdatedAt: props.mcpLastUpdatedAt,
+    mcpStatuses: props.mcpStatuses,
+    mcpConnectingName: props.mcpConnectingName,
+    selectedMcp: props.selectedMcp,
+    setSelectedMcp: props.setSelectedMcp,
+    quickConnect: props.quickConnect,
+    connectMcp: props.connectMcp,
+    authorizeMcp: props.authorizeMcp,
+    logoutMcpAuth: props.logoutMcpAuth,
+    removeMcp: props.removeMcp,
+    createSessionAndOpen: props.createSessionAndOpen,
+    setPrompt: props.setPrompt,
+    connectRemoteWorkspace: props.connectRemoteWorkspace,
+    openCloudTemplate: props.openCloudTemplate,
+  });
+
   return (
     <div class="h-[100dvh] min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] p-3 md:p-4 text-dls-text font-sans">
       <div class="flex h-full w-full gap-3 md:gap-4">
@@ -1456,189 +1640,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
 
             <Match when={props.tab === "settings"}>
-              <SettingsView
-                  startupPreference={props.startupPreference}
-                  baseUrl={props.baseUrl}
-                  headerStatus={props.headerStatus}
-                  busy={props.busy}
-                  clientConnected={props.clientConnected}
-                  settingsTab={props.settingsTab}
-                  setSettingsTab={props.setSettingsTab}
-                  providers={props.providers}
-                  providerConnectedIds={props.providerConnectedIds}
-                  providerAuthBusy={props.providerAuthBusy}
-                  openProviderAuthModal={props.openProviderAuthModal}
-                  disconnectProvider={props.disconnectProvider}
-                  openworkServerStatus={props.openworkServerStatus}
-                  openworkServerUrl={props.openworkServerUrl}
-                  openworkServerClient={props.openworkServerClient}
-                  openworkReconnectBusy={props.openworkReconnectBusy}
-                  reconnectOpenworkServer={props.reconnectOpenworkServer}
-                  openworkServerSettings={props.openworkServerSettings}
-                  openworkServerHostInfo={props.openworkServerHostInfo}
-                  openworkServerCapabilities={props.openworkServerCapabilities}
-                  openworkServerDiagnostics={props.openworkServerDiagnostics}
-                  runtimeWorkspaceId={props.runtimeWorkspaceId}
-                  selectedWorkspaceRoot={props.selectedWorkspaceRoot}
-                  activeWorkspaceType={props.activeWorkspaceType}
-                  openworkAuditEntries={props.openworkAuditEntries}
-                  openworkAuditStatus={props.openworkAuditStatus}
-                  openworkAuditError={props.openworkAuditError}
-                  opencodeConnectStatus={props.opencodeConnectStatus}
-                  engineInfo={props.engineInfo}
-                  orchestratorStatus={props.orchestratorStatus}
-                  opencodeRouterInfo={props.opencodeRouterInfo}
-                  engineDoctorVersion={props.engineDoctorVersion}
-                  developerMode={props.developerMode}
-                  toggleDeveloperMode={props.toggleDeveloperMode}
-                  stopHost={props.stopHost}
-                  restartLocalServer={props.restartLocalServer}
-                  engineSource={props.engineSource}
-                  setEngineSource={props.setEngineSource}
-                  engineCustomBinPath={props.engineCustomBinPath}
-                  setEngineCustomBinPath={props.setEngineCustomBinPath}
-                  engineRuntime={props.engineRuntime}
-                  setEngineRuntime={props.setEngineRuntime}
-                  opencodeEnableExa={props.opencodeEnableExa}
-                  toggleOpencodeEnableExa={props.toggleOpencodeEnableExa}
-                  isWindows={props.isWindows}
-                  defaultModelLabel={props.defaultModelLabel}
-                  defaultModelRef={props.defaultModelRef}
-                  openDefaultModelPicker={props.openDefaultModelPicker}
-                  showThinking={props.showThinking}
-                  toggleShowThinking={props.toggleShowThinking}
-                  autoCompactContext={props.autoCompactContext}
-                  toggleAutoCompactContext={props.toggleAutoCompactContext}
-                  autoCompactContextBusy={props.autoCompactContextBusy}
-                  hideTitlebar={props.hideTitlebar}
-                  toggleHideTitlebar={props.toggleHideTitlebar}
-                  modelVariantLabel={props.modelVariantLabel}
-                  editModelVariant={props.editModelVariant}
-                  language={props.language}
-                  setLanguage={props.setLanguage}
-                  updateAutoCheck={props.updateAutoCheck}
-                  toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
-                  updateAutoDownload={props.updateAutoDownload}
-                  toggleUpdateAutoDownload={props.toggleUpdateAutoDownload}
-                  themeMode={props.themeMode}
-                  setThemeMode={props.setThemeMode}
-                  updateStatus={props.updateStatus}
-                  updateEnv={props.updateEnv}
-                  appVersion={props.appVersion}
-                  checkForUpdates={props.checkForUpdates}
-                  downloadUpdate={props.downloadUpdate}
-                  installUpdateAndRestart={props.installUpdateAndRestart}
-                  anyActiveRuns={props.anyActiveRuns}
-                  onResetStartupPreference={props.onResetStartupPreference}
-                  openResetModal={props.openResetModal}
-                  resetModalBusy={props.resetModalBusy}
-                  pendingPermissions={props.pendingPermissions}
-                  events={props.events}
-                  workspaceDebugEvents={props.workspaceDebugEvents}
-                  sandboxCreateProgress={props.sandboxCreateProgress}
-                  sandboxCreateProgressLast={props.sandboxCreateProgressLast}
-                  clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
-                  safeStringify={props.safeStringify}
-                  repairOpencodeMigration={props.repairOpencodeMigration}
-                  migrationRepairBusy={props.migrationRepairBusy}
-                  migrationRepairResult={props.migrationRepairResult}
-                  migrationRepairAvailable={props.migrationRepairAvailable}
-                  migrationRepairUnavailableReason={props.migrationRepairUnavailableReason}
-                  repairOpencodeCache={props.repairOpencodeCache}
-                  cacheRepairBusy={props.cacheRepairBusy}
-                  cacheRepairResult={props.cacheRepairResult}
-                  cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
-                  dockerCleanupBusy={props.dockerCleanupBusy}
-                  dockerCleanupResult={props.dockerCleanupResult}
-                  authorizedFolders={props.authorizedFolders}
-                  authorizedFolderDraft={props.authorizedFolderDraft}
-                  setAuthorizedFolderDraft={props.setAuthorizedFolderDraft}
-                  authorizedFoldersLoading={props.authorizedFoldersLoading}
-                  authorizedFoldersSaving={props.authorizedFoldersSaving}
-                  authorizedFoldersError={props.authorizedFoldersError}
-                  authorizedFoldersStatus={props.authorizedFoldersStatus}
-                  authorizedFoldersAvailable={props.authorizedFoldersAvailable}
-                  authorizedFoldersEditable={props.authorizedFoldersEditable}
-                  authorizedFoldersHint={props.authorizedFoldersHint}
-                  addAuthorizedFolder={props.addAuthorizedFolder}
-                  pickAuthorizedFolder={props.pickAuthorizedFolder}
-                  removeAuthorizedFolder={props.removeAuthorizedFolder}
-                  resetAppConfigDefaults={props.resetAppConfigDefaults}
-                  notionStatus={props.notionStatus}
-                  notionStatusDetail={props.notionStatusDetail}
-                  notionError={props.notionError}
-                  notionBusy={props.notionBusy}
-                  connectNotion={props.connectNotion}
-                  openDebugDeepLink={props.openDebugDeepLink}
-                  scheduledJobs={props.scheduledJobs}
-                  scheduledJobsSource={props.scheduledJobsSource}
-                  scheduledJobsSourceReady={props.scheduledJobsSourceReady}
-                  scheduledJobsStatus={props.scheduledJobsStatus}
-                  scheduledJobsBusy={props.scheduledJobsBusy}
-                  scheduledJobsUpdatedAt={props.scheduledJobsUpdatedAt}
-                  refreshScheduledJobs={props.refreshScheduledJobs}
-                  deleteScheduledJob={props.deleteScheduledJob}
-                  newTaskDisabled={props.newTaskDisabled}
-                  schedulerPluginInstalled={props.schedulerPluginInstalled}
-                  refreshSkills={props.refreshSkills}
-                  refreshHubSkills={props.refreshHubSkills}
-                  skills={props.skills}
-                  skillsStatus={props.skillsStatus}
-                  hubSkills={props.hubSkills}
-                  hubSkillsStatus={props.hubSkillsStatus}
-                  hubRepo={props.hubRepo}
-                  hubRepos={props.hubRepos}
-                  skillsAccessHint={props.skillsAccessHint}
-                  canInstallSkillCreator={props.canInstallSkillCreator}
-                  canUseDesktopTools={props.canUseDesktopTools}
-                  importLocalSkill={props.importLocalSkill}
-                  installSkillCreator={props.installSkillCreator}
-                  installHubSkill={props.installHubSkill}
-                  setHubRepo={props.setHubRepo}
-                  addHubRepo={props.addHubRepo}
-                  removeHubRepo={props.removeHubRepo}
-                  revealSkillsFolder={props.revealSkillsFolder}
-                  uninstallSkill={props.uninstallSkill}
-                  readSkill={props.readSkill}
-                  saveSkill={props.saveSkill}
-                  refreshPlugins={props.refreshPlugins}
-                  refreshMcpServers={props.refreshMcpServers}
-                  pluginsAccessHint={props.pluginsAccessHint}
-                  canEditPlugins={props.canEditPlugins}
-                  canUseGlobalPluginScope={props.canUseGlobalPluginScope}
-                  pluginScope={props.pluginScope}
-                  setPluginScope={props.setPluginScope}
-                  pluginConfigPath={props.pluginConfigPath}
-                  pluginList={props.pluginList}
-                  pluginInput={props.pluginInput}
-                  setPluginInput={props.setPluginInput}
-                  pluginStatus={props.pluginStatus}
-                  activePluginGuide={props.activePluginGuide}
-                  setActivePluginGuide={props.setActivePluginGuide}
-                  isPluginInstalled={props.isPluginInstalled}
-                  suggestedPlugins={props.suggestedPlugins}
-                  addPlugin={props.addPlugin}
-                  removePlugin={props.removePlugin}
-                  mcpServers={props.mcpServers}
-                  mcpStatus={props.mcpStatus}
-                  mcpLastUpdatedAt={props.mcpLastUpdatedAt}
-                  mcpStatuses={props.mcpStatuses}
-                  mcpConnectingName={props.mcpConnectingName}
-                  selectedMcp={props.selectedMcp}
-                  setSelectedMcp={props.setSelectedMcp}
-                  quickConnect={props.quickConnect}
-                   connectMcp={props.connectMcp}
-                   authorizeMcp={props.authorizeMcp}
-                   logoutMcpAuth={props.logoutMcpAuth}
-                   removeMcp={props.removeMcp}
-                   createSessionAndOpen={props.createSessionAndOpen}
-                  setPrompt={props.setPrompt}
-                  canReloadWorkspace={props.canReloadWorkspace}
-                  reloadWorkspaceEngine={props.reloadWorkspaceEngine}
-                  reloadBusy={props.reloadBusy}
-                  connectRemoteWorkspace={props.connectRemoteWorkspace}
-                  openCloudTemplate={props.openCloudTemplate}
-              />
+              <SettingsView {...settingsViewProps()} />
 
             </Match>
           </Switch>
