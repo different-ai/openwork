@@ -928,12 +928,8 @@ export default function App() {
     const path = location.pathname.toLowerCase();
     if (path.startsWith("/onboarding")) return "onboarding";
     if (path.startsWith("/session")) return "session";
-    if (path.startsWith("/proto")) return "proto";
     return "dashboard";
   });
-  const isProtoV1Ux = createMemo(() =>
-    location.pathname.toLowerCase().startsWith("/proto-v1-ux")
-  );
 
   const [tab, setTabState] = createSignal<DashboardTab>("scheduled");
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
@@ -956,10 +952,6 @@ export default function App() {
       return;
     }
     if (next === "dashboard" && Date.now() < sessionViewLockUntil()) {
-      return;
-    }
-    if (next === "proto") {
-      navigate("/proto/workspaces");
       return;
     }
     if (next === "onboarding") {
@@ -1526,10 +1518,6 @@ export default function App() {
     }
     if (target.view === "onboarding") {
       navigate("/onboarding");
-      return;
-    }
-    if (target.view === "proto") {
-      navigate("/proto/workspaces");
       return;
     }
     goToDashboard(target.tab);
@@ -8516,23 +8504,13 @@ export default function App() {
       return;
     }
 
-    if (path.startsWith("/proto-v1-ux")) {
-      if (isTauriRuntime()) {
-        navigate("/dashboard/scheduled", { replace: true });
-      }
-      return;
-    }
-
-    if (path.startsWith("/proto")) {
+    if (path.startsWith("/proto-v1-ux") || path.startsWith("/proto")) {
       if (isTauriRuntime()) {
         navigate("/dashboard/scheduled", { replace: true });
         return;
       }
 
-      const [, , protoSegment] = rawPath.split("/");
-      if (!protoSegment) {
-        navigate("/proto/workspaces", { replace: true });
-      }
+      navigate("/dashboard/scheduled", { replace: true });
       return;
     }
 
