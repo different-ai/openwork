@@ -1212,7 +1212,11 @@ export default function App() {
   const ensureSelectedWorkspaceRuntime = async () => {
     const workspaceId = workspaceStore.selectedWorkspaceId().trim();
     if (!workspaceId) return false;
-    return await workspaceStore.switchWorkspace(workspaceId);
+    const ready = await workspaceStore.switchWorkspace(workspaceId);
+    if (ready) {
+      await refreshSidebarWorkspaceSessions(workspaceId).catch(() => undefined);
+    }
+    return ready;
   };
 
   async function sendPrompt(draft?: ComposerDraft) {
@@ -2932,31 +2936,10 @@ export default function App() {
     }
   };
 
-  const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
+  const refreshAllSidebarWorkspaceSessions = async () => {
     const list = workspaceStore.workspaces();
     if (!list.length) return;
-    const prioritize = (prioritizeWorkspaceId ?? "").trim();
-    const ordered = prioritize
-      ? [...list.filter((ws) => ws.id === prioritize), ...list.filter((ws) => ws.id !== prioritize)]
-      : list;
-    for (const ws of ordered) {
-      await refreshSidebarWorkspaceSessions(ws.id);
-      // Yield so long refresh passes don't block UI / timers.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-  };
-
-  const refreshLocalSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
-    const list = workspaceStore.workspaces().filter((ws) => ws.workspaceType === "local");
-    if (!list.length) return;
-    const prioritize = (prioritizeWorkspaceId ?? "").trim();
-    const ordered = prioritize
-      ? [...list.filter((ws) => ws.id === prioritize), ...list.filter((ws) => ws.id !== prioritize)]
-      : list;
-    for (const ws of ordered) {
-      await refreshSidebarWorkspaceSessions(ws.id);
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
+    await Promise.allSettled(list.map((ws) => refreshSidebarWorkspaceSessions(ws.id)));
   };
 
   let lastSidebarEngineKey = "";
@@ -2985,146 +2968,17 @@ export default function App() {
     // potentially disappear) due to auth fallback changes.
     if (engineKey === lastSidebarEngineKey && workspaceKey === lastSidebarWorkspaceKey) return;
 
-    const engineChanged = engineKey !== lastSidebarEngineKey;
-    const workspacesChanged = workspaceKey !== lastSidebarWorkspaceKey;
-
     lastSidebarEngineKey = engineKey;
     lastSidebarWorkspaceKey = workspaceKey;
 
     pruneSidebarSessionState(new Set(workspaceStore.workspaces().map((ws) => ws.id)));
 
     wsDebug("sidebar:refresh", {
-      engineChanged,
-      workspacesChanged,
       selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
       engineBaseUrl,
     });
 
-    // Avoid refreshing remote workspace sessions when only the local engine auth/baseUrl changes.
-    // Remote->local switches commonly change engineBaseUrl, and refreshing every remote workspace
-    // at the same time can trigger large /session responses and UI hangs.
-    if (engineChanged && !workspacesChanged) {
-      void refreshLocalSidebarWorkspaceSessions(workspaceStore.selectedWorkspaceId()).catch(() => undefined);
-      return;
-    }
-
-    void refreshAllSidebarWorkspaceSessions(workspaceStore.selectedWorkspaceId()).catch(() => undefined);
-  });
-
-  createEffect(() => {
-    const id = workspaceStore.selectedWorkspaceId().trim();
-    if (!id) return;
-    const status = sidebarSessionStatusByWorkspaceId()[id] ?? "idle";
-    // Only auto-load once per workspace activation.
-    // If a remote is offline, repeated retries here can create an endless refresh loop.
-    if (status !== "idle") return;
-    refreshSidebarWorkspaceSessions(id).catch(() => undefined);
-  });
-
-  createEffect(() => {
-    const allSessions = sessions(); // reactive dependency on session store
-    // When switching workers, the session store can update before the selectedWorkspaceId flips.
-    // Use connectingWorkspaceId as the authoritative target during the switch so we don't
-    // accidentally overwrite another worker's sidebar sessions.
-    const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.selectedWorkspaceId()).trim();
-    if (!wsId) return;
-    const status = sidebarSessionStatusByWorkspaceId()[wsId];
-
-    // Only sync if sidebar is already in 'ready' state (not during initial load)
-    if (status === "ready") {
-      const activeWorkspace = workspaceStore.workspaces().find((workspace) => workspace.id === wsId) ?? null;
-      const selectedWorkspaceRoot = normalizeDirectoryPath(
-        activeWorkspace?.workspaceType === "local"
-          ? activeWorkspace.path
-          : activeWorkspace?.directory ?? activeWorkspace?.path,
-      );
-      if (
-        !shouldApplyScopedSessionLoad({
-          loadedScopeRoot: loadedSessionScopeRoot(),
-          workspaceRoot: selectedWorkspaceRoot,
-        })
-      ) {
-        if (developerMode()) {
-          console.log("[sidebar-sync] skip stale session scope", {
-            wsId,
-            loadedScopeRoot: loadedSessionScopeRoot(),
-            selectedWorkspaceRoot,
-          });
-        }
-        return;
-      }
-      const scopedSessions = selectedWorkspaceRoot
-        ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === selectedWorkspaceRoot)
-        : allSessions;
-      const sorted = sortSessionsByActivity(scopedSessions);
-      if (developerMode()) {
-        console.log("[sidebar-sync] workspace session scope", {
-          wsId,
-          status,
-          activeWorkspace,
-          selectedWorkspaceRoot,
-          allSessions: allSessions.map((session) => ({
-            id: session.id,
-            title: session.title,
-            directory: session.directory,
-            parentID: session.parentID,
-          })),
-          scopedSessions: scopedSessions.map((session) => ({
-            id: session.id,
-            title: session.title,
-            directory: session.directory,
-            parentID: session.parentID,
-          })),
-        });
-      }
-      const rootItems: SidebarSessionItem[] = sorted.map((s) => ({
-        id: s.id,
-        title: s.title,
-        slug: s.slug,
-        parentID: s.parentID,
-        time: s.time,
-        directory: s.directory,
-      }));
-      setSidebarSessionsByWorkspaceId((prev) => {
-        const current = prev[wsId] ?? [];
-        const hasCurrentChildren = current.some((item) => Boolean(item.parentID?.trim()));
-        const incomingAreRootsOnly = rootItems.every((item) => !item.parentID?.trim());
-        if (!hasCurrentChildren || !incomingAreRootsOnly) {
-          return {
-            ...prev,
-            [wsId]: rootItems,
-          };
-        }
-
-        const byId = new Map(current.map((item) => [item.id, item] as const));
-        for (const item of rootItems) {
-          byId.set(item.id, {
-            ...(byId.get(item.id) ?? {}),
-            ...item,
-          });
-        }
-
-        const rootIDs = new Set(rootItems.map((item) => item.id));
-        const keepChild = (item: SidebarSessionItem, seen = new Set<string>()) => {
-          const parentID = item.parentID?.trim() ?? "";
-          if (!parentID) return false;
-          if (rootIDs.has(parentID)) return true;
-          if (seen.has(parentID)) return false;
-          const parent = byId.get(parentID);
-          if (!parent) return false;
-          seen.add(parentID);
-          return keepChild(parent, seen);
-        };
-
-        return {
-          ...prev,
-          [wsId]: [
-            ...rootItems,
-            ...current.filter((item) => !rootIDs.has(item.id) && keepChild(item)),
-          ],
-        };
-      });
-    }
+    void refreshAllSidebarWorkspaceSessions().catch(() => undefined);
   });
 
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
