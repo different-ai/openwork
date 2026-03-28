@@ -7,6 +7,8 @@ Frontend for `app.openwork.software`.
 - Signs up / signs in users against Den service auth.
 - Launches cloud workers via `POST /v1/workers`.
 - Handles paywall responses (`402 payment_required`) and shows Polar checkout links.
+- Routes users through the current cloud onboarding flow, including auth, checkout, organization profile, and dashboard redirects.
+- Exposes the current organization dashboard surfaces for overview, billing, members, templates, providers, and organization profile.
 - Uses a Next.js proxy route (`/api/den/*`) to reach `api.openwork.software` without browser CORS issues.
 - Uses a same-origin auth proxy (`/api/auth/*`) so GitHub OAuth callbacks can land on `app.openwork.software`.
 
