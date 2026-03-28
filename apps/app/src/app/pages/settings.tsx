@@ -221,7 +221,6 @@ export type SettingsViewProps = {
   ) => Promise<{ ok: boolean; message: string }>;
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
-  scheduledJobsSourceReady: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
@@ -2100,13 +2099,11 @@ export default function SettingsView(props: SettingsViewProps) {
               showHeader: false,
               jobs: props.scheduledJobs,
               source: props.scheduledJobsSource,
-              sourceReady: props.scheduledJobsSourceReady,
               status: props.scheduledJobsStatus,
               busy: props.scheduledJobsBusy,
               lastUpdatedAt: props.scheduledJobsUpdatedAt,
               refreshJobs: props.refreshScheduledJobs,
               deleteJob: props.deleteScheduledJob,
-              isWindows: props.isWindows,
               selectedWorkspaceRoot: props.selectedWorkspaceRoot,
               createSessionAndOpen: props.createSessionAndOpen,
               setPrompt: props.setPrompt,

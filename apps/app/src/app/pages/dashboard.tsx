@@ -177,7 +177,6 @@ export type DashboardViewProps = {
   stopSandbox: (workspaceId: string) => void;
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
-  scheduledJobsSourceReady: boolean;
   schedulerPluginInstalled: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
@@ -1315,13 +1314,11 @@ export default function DashboardView(props: DashboardViewProps) {
                 scheduled={{
                   jobs: props.scheduledJobs,
                   source: props.scheduledJobsSource,
-                  sourceReady: props.scheduledJobsSourceReady,
                   status: props.scheduledJobsStatus,
                   busy: props.scheduledJobsBusy,
                   lastUpdatedAt: props.scheduledJobsUpdatedAt,
                   refreshJobs: props.refreshScheduledJobs,
                   deleteJob: props.deleteScheduledJob,
-                  isWindows: props.isWindows,
                   selectedWorkspaceRoot: props.selectedWorkspaceRoot,
                   createSessionAndOpen: props.createSessionAndOpen,
                   setPrompt: props.setPrompt,
@@ -1573,7 +1570,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   openDebugDeepLink={props.openDebugDeepLink}
                   scheduledJobs={props.scheduledJobs}
                   scheduledJobsSource={props.scheduledJobsSource}
-                  scheduledJobsSourceReady={props.scheduledJobsSourceReady}
                   scheduledJobsStatus={props.scheduledJobsStatus}
                   scheduledJobsBusy={props.scheduledJobsBusy}
                   scheduledJobsUpdatedAt={props.scheduledJobsUpdatedAt}

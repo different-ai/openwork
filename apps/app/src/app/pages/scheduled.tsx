@@ -26,13 +26,11 @@ import {
 export type ScheduledTasksViewProps = {
   jobs: ScheduledJob[];
   source: "local" | "remote";
-  sourceReady: boolean;
   status: string | null;
   busy: boolean;
   lastUpdatedAt: number | null;
   refreshJobs: (options?: { force?: boolean }) => void;
   deleteJob: (name: string) => Promise<void> | void;
-  isWindows: boolean;
   selectedWorkspaceRoot: string;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
@@ -440,7 +438,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const [installingScheduler, setInstallingScheduler] = createSignal(false);
   const [schedulerInstallRequested, setSchedulerInstallRequested] = createSignal(false);
   const supported = createMemo(() => {
-    if (props.source === "remote") return props.sourceReady;
+    if (props.source === "remote") return true;
     return isTauriRuntime() && props.schedulerInstalled && !schedulerInstallRequested();
   });
   const schedulerGateActive = createMemo(() => {
@@ -452,7 +450,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const automationDisabled = createMemo(() => props.newTaskDisabled || schedulerGateActive());
   const supportNote = createMemo(() => {
     if (props.source === "remote") {
-      return props.sourceReady ? null : "OpenWork server unavailable. Connect to sync scheduled tasks.";
+      return null;
     }
     if (!isTauriRuntime()) return "Scheduled tasks require the desktop app.";
     if (!props.schedulerInstalled || schedulerInstallRequested()) return null;

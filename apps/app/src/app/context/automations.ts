@@ -11,7 +11,6 @@ export type AutomationsStore = ReturnType<typeof createAutomationsStore>;
 export function createAutomationsStore(options: {
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
-  selectedWorkspaceType: () => "local" | "remote";
   runtimeWorkspaceId: () => string | null;
   openworkServerClient: () => OpenworkServerClient | null;
   openworkServerStatus: () => OpenworkServerStatus;
@@ -23,8 +22,14 @@ export function createAutomationsStore(options: {
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
   const [pendingRefreshContextKey, setPendingRefreshContextKey] = createSignal<string | null>(null);
 
+  const serverBacked = createMemo(() => {
+    const client = options.openworkServerClient();
+    const runtimeWorkspaceId = (options.runtimeWorkspaceId() ?? "").trim();
+    return options.openworkServerStatus() === "connected" && Boolean(client && runtimeWorkspaceId);
+  });
+
   const scheduledJobsSource = createMemo<"local" | "remote">(() =>
-    options.selectedWorkspaceType() === "remote" ? "remote" : "local",
+    serverBacked() ? "remote" : "local",
   );
 
   const scheduledJobsContextKey = createWorkspaceContextKey({
@@ -34,19 +39,8 @@ export function createAutomationsStore(options: {
     workspaceType: scheduledJobsSource,
   });
 
-  const scheduledJobsSourceReady = createMemo(() => {
-    if (scheduledJobsSource() !== "remote") return true;
-    const client = options.openworkServerClient();
-    const runtimeWorkspaceId = (options.runtimeWorkspaceId() ?? "").trim();
-    const selectedWorkspaceId = options.selectedWorkspaceId().trim();
-    return (
-      options.openworkServerStatus() === "connected" &&
-      Boolean(client && runtimeWorkspaceId && runtimeWorkspaceId === selectedWorkspaceId)
-    );
-  });
-
   const scheduledJobsPollingAvailable = createMemo(() => {
-    if (scheduledJobsSource() === "remote") return scheduledJobsSourceReady();
+    if (scheduledJobsSource() === "remote") return true;
     return isTauriRuntime() && options.schedulerPluginInstalled();
   });
 
@@ -149,9 +143,7 @@ export function createAutomationsStore(options: {
 
   createEffect(() => {
     const key = scheduledJobsContextKey();
-    const ready = scheduledJobsSourceReady();
     if (!key) return;
-    if (scheduledJobsSource() === "remote" && !ready) return;
     if (scheduledJobsBusy()) return;
     if (scheduledJobsUpdatedAt()) return;
     void refreshScheduledJobs();
@@ -175,7 +167,6 @@ export function createAutomationsStore(options: {
     scheduledJobsBusy,
     scheduledJobsUpdatedAt,
     scheduledJobsSource,
-    scheduledJobsSourceReady,
     scheduledJobsPollingAvailable,
     scheduledJobsContextKey,
     refreshScheduledJobs,
