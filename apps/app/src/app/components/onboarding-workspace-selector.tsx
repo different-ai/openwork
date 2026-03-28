@@ -6,19 +6,14 @@ import Button from "./button";
 
 export default function OnboardingWorkspaceSelector(props: {
   defaultPath: string;
-  onConfirm: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
+  onConfirm: (preset: "automation" | "minimal", folder: string | null) => void;
   onPickFolder: () => Promise<string | null>;
 }) {
-  const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
+  const [preset, setPreset] = createSignal<"automation" | "minimal">("minimal");
   const [selectedFolder, setSelectedFolder] = createSignal(props.defaultPath);
   const [pickingFolder, setPickingFolder] = createSignal(false);
 
   const options = () => [
-    {
-      id: "starter" as const,
-      name: "Starter worker",
-      desc: "Preconfigured to show you how to use plugins, commands, and skills.",
-    },
     {
       id: "minimal" as const,
       name: "Empty worker",

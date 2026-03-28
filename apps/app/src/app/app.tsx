@@ -283,6 +283,12 @@ type SettingsReturnTarget = {
   sessionId: string | null;
 };
 
+type PendingInitialSessionSelection = {
+  workspaceId: string;
+  title: string | null;
+  readyAt: number;
+};
+
 export default function App() {
   const envOpenworkWorkspaceId =
     typeof import.meta.env?.VITE_OPENWORK_WORKSPACE_ID === "string"
@@ -329,6 +335,8 @@ export default function App() {
 
   const [tab, setTabState] = createSignal<DashboardTab>("scheduled");
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
+  const [pendingInitialSessionSelection, setPendingInitialSessionSelection] =
+    createSignal<PendingInitialSessionSelection | null>(null);
 
   const goToDashboard = (nextTab: DashboardTab, options?: { replace?: boolean }) => {
     setTabState(nextTab);
@@ -1006,7 +1014,15 @@ export default function App() {
     deriveArtifacts(messages(), { maxMessages: ARTIFACT_SCAN_MESSAGE_WINDOW }),
   );
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
-  const activeSessionId = createMemo(() => selectedSessionId());
+  const activeSessionId = createMemo(() => {
+    const path = location.pathname.trim();
+    const [, sessionSegment, idSegment] = path.split("/");
+    if (sessionSegment?.toLowerCase() === "session") {
+      const routeId = (idSegment ?? "").trim();
+      if (routeId) return routeId;
+    }
+    return selectedSessionId();
+  });
   const activeSessions = createMemo(() => sessions());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const activeMessages = createMemo(() => messages());
@@ -2704,6 +2720,7 @@ export default function App() {
     onEngineStable: () => {},
     engineRuntime,
     developerMode,
+    setPendingInitialSessionSelection,
   });
 
   const runtimeWorkspaceId = createMemo(() => workspaceStore.runtimeWorkspaceId());
@@ -3211,8 +3228,61 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (typeof window === "undefined") return;
+    const pending = pendingInitialSessionSelection();
+    if (!pending) return;
+    const delayMs = pending.readyAt - Date.now();
+    if (delayMs <= 0) return;
+    const timer = window.setTimeout(() => {
+      setPendingInitialSessionSelection((current) =>
+        current && current.workspaceId === pending.workspaceId && current.readyAt === pending.readyAt
+          ? { ...current }
+          : current,
+      );
+    }, delayMs);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
+  createEffect(() => {
+    const pending = pendingInitialSessionSelection();
+    if (!pending) return;
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    if (!workspaceId || pending.workspaceId !== workspaceId) return;
+    const path = location.pathname.trim().toLowerCase();
+    if (path.startsWith("/session/") || !!selectedSessionId()) {
+      setPendingInitialSessionSelection(null);
+    }
+  });
+
+  createEffect(() => {
     // Only auto-select on bare /session. If the URL already includes /session/:id,
     // let the route-driven selector own the fetch to avoid duplicate selection runs.
+    const pending = pendingInitialSessionSelection();
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    if (pending && pending.workspaceId === workspaceId) {
+      if (Date.now() < pending.readyAt) return;
+      if (!sessionsLoaded()) return;
+      if (sessions().length === 0) return;
+      const workspaceRoot = normalizeDirectoryPath(workspaceStore.selectedWorkspaceRoot().trim());
+      const normalizedTitle = pending.title?.trim().toLowerCase() ?? "";
+      const match = normalizedTitle
+        ? sessions().find((session) => {
+            const sessionTitle = session.title?.trim().toLowerCase() ?? "";
+            if (sessionTitle !== normalizedTitle) return false;
+            if (!workspaceRoot) return true;
+            const sessionRoot = normalizeDirectoryPath(typeof session.directory === "string" ? session.directory : "");
+            return sessionRoot === workspaceRoot;
+          })
+        : null;
+      if (match) {
+        goToSession(match.id, { replace: true });
+        return;
+      }
+      setPendingInitialSessionSelection(null);
+      setView("session");
+      return;
+    }
+
     if (currentView() !== "session") return;
     const normalizedPath = location.pathname.toLowerCase().replace(/\/+$/, "");
     if (normalizedPath !== "/session") return;
@@ -4989,8 +5059,10 @@ export default function App() {
         }));
         await refreshActiveWorkspaceServerConfig(workspaceId);
         await loadSessionsWithReady(root || undefined);
-        if (result.openSessionId) {
-          setView("session");
+        const pending = pendingInitialSessionSelection();
+        const shouldDeferInitialOpen = pending && pending.workspaceId === workspaceId;
+        if (result.openSessionId && !shouldDeferInitialOpen) {
+          goToSession(result.openSessionId, { replace: true });
           await selectSession(result.openSessionId);
         }
       } catch (error) {
@@ -7105,8 +7177,26 @@ export default function App() {
     return selectedWorkspaceDisplay();
   });
 
+  // Avoid flashing the full-screen switch overlay for fast workspace switches.
+  // Only show it if a switch is still in progress after a short delay.
+  const [workspaceSwitchDelayElapsed, setWorkspaceSwitchDelayElapsed] = createSignal(false);
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const switchingId = workspaceStore.connectingWorkspaceId();
+    if (!switchingId) {
+      setWorkspaceSwitchDelayElapsed(false);
+      return;
+    }
+
+    setWorkspaceSwitchDelayElapsed(false);
+    const timer = window.setTimeout(() => setWorkspaceSwitchDelayElapsed(true), 250);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
   const workspaceSwitchOpen = createMemo(() => {
     if (booting()) return true;
+    if (pendingInitialSessionSelection()) return true;
+    if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
     if (!busy() || !busyLabel()) return false;
     const label = busyLabel();
     return (
@@ -7116,6 +7206,7 @@ export default function App() {
   });
 
   const workspaceSwitchStatusKey = createMemo(() => {
+    if (pendingInitialSessionSelection()) return "workspace.switching_status_loading";
     const label = busyLabel();
     if (label === "status.connecting") return "workspace.switching_status_connecting";
     if (label === "status.starting_engine" || label === "status.restarting_engine") {
@@ -7327,7 +7418,6 @@ export default function App() {
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-      getStartedWorkspace: workspaceStore.quickStartWorkspaceFlow,
       pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
@@ -7563,7 +7653,6 @@ export default function App() {
     editWorkspaceConnection: openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-    getStartedWorkspace: workspaceStore.quickStartWorkspaceFlow,
     pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
     openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
@@ -7704,7 +7793,10 @@ export default function App() {
   };
 
   const initialRoute = () => {
-    if (typeof window === "undefined") return "/session";
+    if (typeof window === "undefined") return "/onboarding";
+    if (booting() || pendingInitialSessionSelection() || workspaceStore.workspaces().length === 0) {
+      return "/onboarding";
+    }
     return "/session";
   };
 
@@ -7743,6 +7835,7 @@ export default function App() {
 
       // If the URL points at a session that no longer exists (e.g. after deletion),
       // route back to /session so the app can fall back safely.
+      const pendingInitialSelection = pendingInitialSessionSelection();
       const selectedWorkspaceRoot = normalizeDirectoryPath(workspaceStore.selectedWorkspaceRoot().trim());
       const matchingSession = sessions().find((session) => session.id === id) ?? null;
       const hasMatchingSessionInScope = matchingSession
@@ -7750,6 +7843,7 @@ export default function App() {
         : false;
       if (
         sessionsLoaded() &&
+        !pendingInitialSelection &&
         shouldRedirectMissingSessionAfterScopedLoad({
           loadedScopeRoot: loadedSessionScopeRoot(),
           workspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
@@ -7764,6 +7858,7 @@ export default function App() {
       }
 
       if (selectedSessionId() !== id) {
+        setSelectedSessionId(id);
         void selectSession(id);
       }
       return;
@@ -7780,13 +7875,16 @@ export default function App() {
     }
 
     if (path.startsWith("/onboarding")) {
-      navigate("/session", { replace: true });
       return;
     }
 
     const fallback = activeSessionId();
     if (fallback) {
       goToSession(fallback, { replace: true });
+      return;
+    }
+    if (booting() || pendingInitialSessionSelection() || workspaceStore.workspaces().length === 0) {
+      navigate("/onboarding", { replace: true });
       return;
     }
     navigate("/session", { replace: true });
@@ -7805,7 +7903,10 @@ export default function App() {
 
       <WorkspaceSwitchOverlay
         open={workspaceSwitchOpen()}
-        workspace={workspaceSwitchWorkspace()}
+        workspace={pendingInitialSessionSelection()
+          ? (workspaceStore.workspaces().find((ws) => ws.id === pendingInitialSessionSelection()!.workspaceId)
+            ?? workspaceSwitchWorkspace())
+          : workspaceSwitchWorkspace()}
         statusKey={workspaceSwitchStatusKey()}
       />
 
@@ -8069,7 +8170,7 @@ export default function App() {
                 setSharedBundleCreateWorkerRequest({
                   request: request.request,
                   bundle: request.bundle,
-                  defaultPreset: "starter",
+                  defaultPreset: "minimal",
                 });
                 workspaceStore.setCreateWorkspaceOpen(true);
               }

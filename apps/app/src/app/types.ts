@@ -156,7 +156,7 @@ export type StartupPreference = "local" | "server";
 
 export type EngineRuntime = "direct" | "openwork-orchestrator";
 
-export type OnboardingStep = "welcome" | "local" | "server" | "connecting" | "bootstrap";
+export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
 export type DashboardTab =
   | "scheduled"

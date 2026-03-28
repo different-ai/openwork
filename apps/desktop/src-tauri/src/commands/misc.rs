@@ -148,7 +148,7 @@ fn opencode_standard_state_paths() -> Vec<PathBuf> {
 }
 
 fn current_openwork_state_paths(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
-    Ok(vec![
+    let mut paths = vec![
         app.path()
             .app_cache_dir()
             .map_err(|e| format!("Failed to resolve app cache dir: {e}"))?,
@@ -162,7 +162,18 @@ fn current_openwork_state_paths(app: &AppHandle) -> Result<Vec<PathBuf>, String>
             .app_data_dir()
             .map_err(|e| format!("Failed to resolve app data dir: {e}"))?,
         PathBuf::from(orchestrator::resolve_orchestrator_data_dir()),
-    ])
+    ];
+
+    if let Some(home) = home_dir() {
+        paths.push(
+            home.join("OpenWork")
+                .join("Welcome")
+                .join(".opencode")
+                .join("openwork.json"),
+        );
+    }
+
+    Ok(paths)
 }
 
 fn stop_host_services(
