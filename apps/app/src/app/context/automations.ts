@@ -36,7 +36,6 @@ export function createAutomationsStore(options: {
     selectedWorkspaceId: options.selectedWorkspaceId,
     selectedWorkspaceRoot: options.selectedWorkspaceRoot,
     runtimeWorkspaceId: options.runtimeWorkspaceId,
-    workspaceType: scheduledJobsSource,
   });
 
   const scheduledJobsPollingAvailable = createMemo(() => {
