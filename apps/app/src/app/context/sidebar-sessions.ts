@@ -176,12 +176,6 @@ export function createSidebarSessionsStore(options: {
     }
   };
 
-  const refreshAllWorkspaceSessions = async () => {
-    const list = options.workspaces();
-    if (!list.length) return;
-    await Promise.allSettled(list.map((workspace) => refreshWorkspaceSessions(workspace.id)));
-  };
-
   const prependSession = (workspaceId: string, item: SidebarSessionItem) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -206,32 +200,33 @@ export function createSidebarSessionsStore(options: {
     }));
   };
 
-  let lastEngineKey = "";
-  let lastWorkspaceKey = "";
+  let lastFingerprintByWorkspaceId: Record<string, string> = {};
   createEffect(() => {
     const engineInfo = options.engine();
     const engineBaseUrl = engineInfo?.baseUrl?.trim() ?? "";
     const engineUser = engineInfo?.opencodeUsername?.trim() ?? "";
     const enginePass = engineInfo?.opencodePassword?.trim() ?? "";
-    const engineKey = [engineBaseUrl, engineUser, enginePass].join("::");
-    const workspaceKey = options
-      .workspaces()
-      .map((workspace) => {
-        const root = workspace.workspaceType === "local" ? workspace.path?.trim() ?? "" : workspace.directory?.trim() ?? "";
-        const base = workspace.workspaceType === "local" ? "" : workspace.baseUrl?.trim() ?? "";
-        const remoteType = workspace.workspaceType === "remote" ? (workspace.remoteType ?? "") : "";
-        const token = workspace.remoteType === "openwork" ? (workspace.openworkToken?.trim() ?? "") : "";
-        return [workspace.id, workspace.workspaceType, remoteType, root, base, token].join("|");
-      })
-      .join(";");
+    const workspaces = options.workspaces();
+    const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+    pruneState(workspaceIds);
 
-    if (engineKey === lastEngineKey && workspaceKey === lastWorkspaceKey) return;
+    const nextFingerprintByWorkspaceId: Record<string, string> = {};
+    for (const workspace of workspaces) {
+      const root = workspace.workspaceType === "local" ? workspace.path?.trim() ?? "" : workspace.directory?.trim() ?? "";
+      const base = workspace.workspaceType === "local" ? engineBaseUrl : workspace.baseUrl?.trim() ?? "";
+      const remoteType = workspace.workspaceType === "remote" ? (workspace.remoteType ?? "") : "";
+      const token = workspace.remoteType === "openwork" ? (workspace.openworkToken?.trim() ?? "") : "";
+      const authKey = workspace.workspaceType === "local" ? `${engineUser}:${enginePass}` : token;
+      nextFingerprintByWorkspaceId[workspace.id] = [workspace.workspaceType, remoteType, root, base, authKey].join("|");
+    }
 
-    lastEngineKey = engineKey;
-    lastWorkspaceKey = workspaceKey;
+    for (const workspace of workspaces) {
+      const nextFingerprint = nextFingerprintByWorkspaceId[workspace.id];
+      if (lastFingerprintByWorkspaceId[workspace.id] === nextFingerprint) continue;
+      void refreshWorkspaceSessions(workspace.id).catch(() => undefined);
+    }
 
-    pruneState(new Set(options.workspaces().map((workspace) => workspace.id)));
-    void refreshAllWorkspaceSessions().catch(() => undefined);
+    lastFingerprintByWorkspaceId = nextFingerprintByWorkspaceId;
   });
 
   const workspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
@@ -250,7 +245,6 @@ export function createSidebarSessionsStore(options: {
   return {
     workspaceGroups,
     refreshWorkspaceSessions,
-    refreshAllWorkspaceSessions,
     prependSession,
     removeSession,
   };
