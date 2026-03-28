@@ -20,15 +20,11 @@ import Button from "../components/button";
 import ProviderIcon from "../components/provider-icon";
 import DenSettingsPanel from "../components/den-settings-panel";
 import TextInput from "../components/text-input";
-import WebUnavailableSurface from "../components/web-unavailable-surface";
 import type { McpDirectoryInfo } from "../constants";
 import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
-import ExtensionsView from "./extensions";
-import IdentitiesView from "./identities";
-import ScheduledTasksView from "./scheduled";
-import SkillsView from "./skills";
+import WorkspaceToolsPanel from "./workspace-tools-panel";
 import {
   ArrowUpRight,
   CircleAlert,
@@ -2097,123 +2093,127 @@ export default function SettingsView(props: SettingsViewProps) {
         </Match>
 
         <Match when={activeTab() === "automations"}>
-          <WebUnavailableSurface unavailable={webDeployment()}>
-            <ScheduledTasksView
-              showHeader={false}
-              jobs={props.scheduledJobs}
-              source={props.scheduledJobsSource}
-              sourceReady={props.scheduledJobsSourceReady}
-              status={props.scheduledJobsStatus}
-              busy={props.scheduledJobsBusy}
-              lastUpdatedAt={props.scheduledJobsUpdatedAt}
-              refreshJobs={props.refreshScheduledJobs}
-              deleteJob={props.deleteScheduledJob}
-              isWindows={props.isWindows}
-              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
-              createSessionAndOpen={props.createSessionAndOpen}
-              setPrompt={props.setPrompt}
-              newTaskDisabled={props.newTaskDisabled}
-              schedulerInstalled={props.schedulerPluginInstalled}
-              canEditPlugins={props.canEditPlugins}
-              addPlugin={props.addPlugin}
-              reloadWorkspaceEngine={props.reloadWorkspaceEngine}
-              reloadBusy={props.reloadBusy}
-              canReloadWorkspace={props.canReloadWorkspace}
-            />
-          </WebUnavailableSurface>
+          <WorkspaceToolsPanel
+            section="scheduled"
+            scheduled={{
+              showHeader: false,
+              jobs: props.scheduledJobs,
+              source: props.scheduledJobsSource,
+              sourceReady: props.scheduledJobsSourceReady,
+              status: props.scheduledJobsStatus,
+              busy: props.scheduledJobsBusy,
+              lastUpdatedAt: props.scheduledJobsUpdatedAt,
+              refreshJobs: props.refreshScheduledJobs,
+              deleteJob: props.deleteScheduledJob,
+              isWindows: props.isWindows,
+              selectedWorkspaceRoot: props.selectedWorkspaceRoot,
+              createSessionAndOpen: props.createSessionAndOpen,
+              setPrompt: props.setPrompt,
+              newTaskDisabled: props.newTaskDisabled,
+              schedulerInstalled: props.schedulerPluginInstalled,
+              canEditPlugins: props.canEditPlugins,
+              addPlugin: props.addPlugin,
+              reloadWorkspaceEngine: props.reloadWorkspaceEngine,
+              reloadBusy: props.reloadBusy,
+              canReloadWorkspace: props.canReloadWorkspace,
+            }}
+          />
         </Match>
 
         <Match when={activeTab() === "skills"}>
-          <WebUnavailableSurface unavailable={webDeployment()}>
-            <SkillsView
-              workspaceName={props.selectedWorkspaceRoot.trim() || "Workspace"}
-              busy={props.busy}
-              showHeader={false}
-              canInstallSkillCreator={props.canInstallSkillCreator}
-              canUseDesktopTools={props.canUseDesktopTools}
-              accessHint={props.skillsAccessHint}
-              refreshSkills={props.refreshSkills}
-              refreshHubSkills={props.refreshHubSkills}
-              skills={props.skills}
-              skillsStatus={props.skillsStatus}
-              hubSkills={props.hubSkills}
-              hubSkillsStatus={props.hubSkillsStatus}
-              hubRepo={props.hubRepo}
-              hubRepos={props.hubRepos}
-              importLocalSkill={props.importLocalSkill}
-              installSkillCreator={props.installSkillCreator}
-              installHubSkill={props.installHubSkill}
-              setHubRepo={props.setHubRepo}
-              addHubRepo={props.addHubRepo}
-              removeHubRepo={props.removeHubRepo}
-              revealSkillsFolder={props.revealSkillsFolder}
-              uninstallSkill={props.uninstallSkill}
-              readSkill={props.readSkill}
-              saveSkill={props.saveSkill}
-              createSessionAndOpen={props.createSessionAndOpen}
-              setPrompt={props.setPrompt}
-            />
-          </WebUnavailableSurface>
+          <WorkspaceToolsPanel
+            section="skills"
+            skills={{
+              workspaceName: props.selectedWorkspaceRoot.trim() || "Workspace",
+              busy: props.busy,
+              showHeader: false,
+              canInstallSkillCreator: props.canInstallSkillCreator,
+              canUseDesktopTools: props.canUseDesktopTools,
+              accessHint: props.skillsAccessHint,
+              refreshSkills: props.refreshSkills,
+              refreshHubSkills: props.refreshHubSkills,
+              skills: props.skills,
+              skillsStatus: props.skillsStatus,
+              hubSkills: props.hubSkills,
+              hubSkillsStatus: props.hubSkillsStatus,
+              hubRepo: props.hubRepo,
+              hubRepos: props.hubRepos,
+              importLocalSkill: props.importLocalSkill,
+              installSkillCreator: props.installSkillCreator,
+              installHubSkill: props.installHubSkill,
+              setHubRepo: props.setHubRepo,
+              addHubRepo: props.addHubRepo,
+              removeHubRepo: props.removeHubRepo,
+              revealSkillsFolder: props.revealSkillsFolder,
+              uninstallSkill: props.uninstallSkill,
+              readSkill: props.readSkill,
+              saveSkill: props.saveSkill,
+              createSessionAndOpen: props.createSessionAndOpen,
+              setPrompt: props.setPrompt,
+            }}
+          />
         </Match>
 
         <Match when={activeTab() === "extensions"}>
-          <WebUnavailableSurface unavailable={webDeployment()}>
-            <ExtensionsView
-              initialSection="all"
-              showHeader={false}
-              busy={props.busy}
-              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
-              isRemoteWorkspace={props.activeWorkspaceType === "remote"}
-              refreshMcpServers={props.refreshMcpServers}
-              mcpServers={props.mcpServers}
-              mcpStatus={props.mcpStatus}
-              mcpLastUpdatedAt={props.mcpLastUpdatedAt}
-              mcpStatuses={props.mcpStatuses}
-              mcpConnectingName={props.mcpConnectingName}
-              selectedMcp={props.selectedMcp}
-              setSelectedMcp={props.setSelectedMcp}
-              quickConnect={props.quickConnect}
-              connectMcp={props.connectMcp}
-              authorizeMcp={props.authorizeMcp}
-              logoutMcpAuth={props.logoutMcpAuth}
-              removeMcp={props.removeMcp}
-              canEditPlugins={props.canEditPlugins}
-              canUseGlobalScope={props.canUseGlobalPluginScope}
-              accessHint={props.pluginsAccessHint}
-              pluginScope={props.pluginScope}
-              setPluginScope={props.setPluginScope}
-              pluginConfigPath={props.pluginConfigPath}
-              pluginList={props.pluginList}
-              pluginInput={props.pluginInput}
-              setPluginInput={props.setPluginInput}
-              pluginStatus={props.pluginStatus}
-              activePluginGuide={props.activePluginGuide}
-              setActivePluginGuide={props.setActivePluginGuide}
-              isPluginInstalled={props.isPluginInstalled}
-              suggestedPlugins={props.suggestedPlugins}
-              refreshPlugins={props.refreshPlugins}
-              addPlugin={props.addPlugin}
-              removePlugin={props.removePlugin}
-            />
-          </WebUnavailableSurface>
+          <WorkspaceToolsPanel
+            section="extensions"
+            extensions={{
+              initialSection: "all",
+              showHeader: false,
+              busy: props.busy,
+              selectedWorkspaceRoot: props.selectedWorkspaceRoot,
+              isRemoteWorkspace: props.activeWorkspaceType === "remote",
+              refreshMcpServers: props.refreshMcpServers,
+              mcpServers: props.mcpServers,
+              mcpStatus: props.mcpStatus,
+              mcpLastUpdatedAt: props.mcpLastUpdatedAt,
+              mcpStatuses: props.mcpStatuses,
+              mcpConnectingName: props.mcpConnectingName,
+              selectedMcp: props.selectedMcp,
+              setSelectedMcp: props.setSelectedMcp,
+              quickConnect: props.quickConnect,
+              connectMcp: props.connectMcp,
+              authorizeMcp: props.authorizeMcp,
+              logoutMcpAuth: props.logoutMcpAuth,
+              removeMcp: props.removeMcp,
+              canEditPlugins: props.canEditPlugins,
+              canUseGlobalScope: props.canUseGlobalPluginScope,
+              accessHint: props.pluginsAccessHint,
+              pluginScope: props.pluginScope,
+              setPluginScope: props.setPluginScope,
+              pluginConfigPath: props.pluginConfigPath,
+              pluginList: props.pluginList,
+              pluginInput: props.pluginInput,
+              setPluginInput: props.setPluginInput,
+              pluginStatus: props.pluginStatus,
+              activePluginGuide: props.activePluginGuide,
+              setActivePluginGuide: props.setActivePluginGuide,
+              isPluginInstalled: props.isPluginInstalled,
+              suggestedPlugins: props.suggestedPlugins,
+              refreshPlugins: props.refreshPlugins,
+              addPlugin: props.addPlugin,
+              removePlugin: props.removePlugin,
+            }}
+          />
         </Match>
 
         <Match when={activeTab() === "messaging"}>
-          <WebUnavailableSurface unavailable={webDeployment()}>
-            <IdentitiesView
-              busy={props.busy}
-              showHeader={false}
-              openworkServerStatus={props.openworkServerStatus}
-              openworkServerUrl={props.openworkServerUrl}
-              openworkServerClient={props.openworkServerClient}
-              openworkReconnectBusy={props.openworkReconnectBusy}
-              reconnectOpenworkServer={props.reconnectOpenworkServer}
-              restartLocalServer={props.restartLocalServer}
-              runtimeWorkspaceId={props.runtimeWorkspaceId}
-              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
-              developerMode={props.developerMode}
-            />
-          </WebUnavailableSurface>
+          <WorkspaceToolsPanel
+            section="identities"
+            identities={{
+              busy: props.busy,
+              showHeader: false,
+              openworkServerStatus: props.openworkServerStatus,
+              openworkServerUrl: props.openworkServerUrl,
+              openworkServerClient: props.openworkServerClient,
+              openworkReconnectBusy: props.openworkReconnectBusy,
+              reconnectOpenworkServer: props.reconnectOpenworkServer,
+              restartLocalServer: props.restartLocalServer,
+              runtimeWorkspaceId: props.runtimeWorkspaceId,
+              selectedWorkspaceRoot: props.selectedWorkspaceRoot,
+              developerMode: props.developerMode,
+            }}
+          />
         </Match>
 
         <Match when={activeTab() === "den"}>
