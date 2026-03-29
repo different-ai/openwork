@@ -762,63 +762,6 @@ export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
 }
 
-export async function obsidianIsAvailable(): Promise<boolean> {
-  return invoke<boolean>("obsidian_is_available");
-}
-
-export async function openInObsidian(filePath: string): Promise<void> {
-  const safePath = filePath.trim();
-  if (!safePath) {
-    throw new Error("filePath is required");
-  }
-  return invoke<void>("open_in_obsidian", { filePath: safePath });
-}
-
-export async function writeObsidianMirrorFile(
-  workspaceId: string,
-  filePath: string,
-  content: string,
-): Promise<string> {
-  const safeWorkspaceId = workspaceId.trim();
-  const safePath = filePath.trim();
-  if (!safeWorkspaceId) {
-    throw new Error("workspaceId is required");
-  }
-  if (!safePath) {
-    throw new Error("filePath is required");
-  }
-  return invoke<string>("write_obsidian_mirror_file", {
-    workspaceId: safeWorkspaceId,
-    filePath: safePath,
-    content,
-  });
-}
-
-export type ObsidianMirrorFileContent = {
-  exists: boolean;
-  path: string;
-  content: string | null;
-  updatedAtMs: number | null;
-};
-
-export async function readObsidianMirrorFile(
-  workspaceId: string,
-  filePath: string,
-): Promise<ObsidianMirrorFileContent> {
-  const safeWorkspaceId = workspaceId.trim();
-  const safePath = filePath.trim();
-  if (!safeWorkspaceId) {
-    throw new Error("workspaceId is required");
-  }
-  if (!safePath) {
-    throw new Error("filePath is required");
-  }
-  return invoke<ObsidianMirrorFileContent>("read_obsidian_mirror_file", {
-    workspaceId: safeWorkspaceId,
-    filePath: safePath,
-  });
-}
-
 export async function schedulerListJobs(scopeRoot?: string): Promise<ScheduledJob[]> {
   return invoke<ScheduledJob[]>("scheduler_list_jobs", { scopeRoot });
 }
