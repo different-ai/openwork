@@ -20,6 +20,7 @@ import Button from "../components/button";
 import ProviderIcon from "../components/provider-icon";
 import DenSettingsPanel from "../components/den-settings-panel";
 import TextInput from "../components/text-input";
+import { useSessionDisplayPreferences } from "../app-settings/session-display-preferences";
 import type { McpDirectoryInfo } from "../constants";
 import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
@@ -139,8 +140,6 @@ export type SettingsViewProps = {
   defaultModelLabel: string;
   defaultModelRef: string;
   openDefaultModelPicker: () => void;
-  showThinking: boolean;
-  toggleShowThinking: () => void;
   autoCompactContext: boolean;
   toggleAutoCompactContext: () => void;
   autoCompactContextBusy: boolean;
@@ -322,6 +321,7 @@ export function OpenCodeRouterSettings(_props: {
 }
 
 export default function SettingsView(props: SettingsViewProps) {
+  const { showThinking, toggleShowThinking } = useSessionDisplayPreferences();
   const platform = usePlatform();
   const webDeployment = createMemo(() => getOpenWorkDeployment() === "web");
   const translate = (key: string) => t(key, currentLocale());
@@ -1842,10 +1842,10 @@ export default function SettingsView(props: SettingsViewProps) {
                 <Button
                   variant="outline"
                   class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.toggleShowThinking}
+                  onClick={toggleShowThinking}
                   disabled={props.busy}
                 >
-                  {props.showThinking ? "On" : "Off"}
+                  {showThinking() ? "On" : "Off"}
                 </Button>
               </div>
 

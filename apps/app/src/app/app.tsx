@@ -60,7 +60,6 @@ import {
   MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
-  THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "./constants";
 import {
@@ -137,6 +136,7 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import { createProvidersStore } from "./context/providers";
+import { useSessionDisplayPreferences } from "./app-settings/session-display-preferences";
 import {
   formatGenericBehaviorLabel,
   getModelBehaviorSummary,
@@ -275,6 +275,7 @@ type PendingInitialSessionSelection = {
 };
 
 export default function App() {
+  const { resetSessionDisplayPreferences } = useSessionDisplayPreferences();
   const envOpenworkWorkspaceId =
     typeof import.meta.env?.VITE_OPENWORK_WORKSPACE_ID === "string"
       ? import.meta.env.VITE_OPENWORK_WORKSPACE_ID.trim() || null
@@ -2127,7 +2128,6 @@ export default function App() {
   const [modelPickerReturnFocusTarget, setModelPickerReturnFocusTarget] =
     createSignal<PromptFocusReturnTarget>("none");
 
-  const [showThinking, setShowThinking] = createSignal(false);
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
   const [modelVariantMap, setModelVariantMap] = createSignal<Record<string, string>>({});
@@ -3884,7 +3884,7 @@ export default function App() {
       setLegacyDefaultModel(DEFAULT_MODEL);
       setDefaultModelExplicit(false);
       setPendingDefaultModelByWorkspace({});
-      setShowThinking(false);
+      resetSessionDisplayPreferences();
       setHideTitlebar(false);
       setAutoCompactContext(false);
       updateModelVariant(selectedSessionModel(), null);
@@ -5399,18 +5399,6 @@ export default function App() {
           }
         }
 
-        const storedThinking = window.localStorage.getItem(THINKING_PREF_KEY);
-        if (storedThinking != null) {
-          try {
-            const parsed = JSON.parse(storedThinking);
-            if (typeof parsed === "boolean") {
-              setShowThinking(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
         const storedHideTitlebar = window.localStorage.getItem(HIDE_TITLEBAR_PREF_KEY);
         if (storedHideTitlebar != null) {
           try {
@@ -6157,18 +6145,6 @@ export default function App() {
     }
   });
 
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        THINKING_PREF_KEY,
-        JSON.stringify(showThinking())
-      );
-    } catch {
-      // ignore
-    }
-  });
-
   // Persist and apply hideTitlebar setting
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -6472,8 +6448,6 @@ export default function App() {
       defaultModelLabel: formatModelLabel(defaultModel(), providers()),
       defaultModelRef: formatModelRef(defaultModel()),
       openDefaultModelPicker,
-      showThinking: showThinking(),
-      toggleShowThinking: () => setShowThinking((v) => !v),
       autoCompactContext: autoCompactContext(),
       toggleAutoCompactContext,
       autoCompactContextBusy: autoCompactContextSaving(),
@@ -6692,7 +6666,6 @@ export default function App() {
     todos: activeTodos(),
     busyLabel: busyLabel(),
     developerMode: developerMode(),
-    showThinking: showThinking(),
     sessionCompactionState: selectedSessionCompactionState(),
     expandedStepIds: expandedStepIds(),
     setExpandedStepIds: setExpandedStepIds,

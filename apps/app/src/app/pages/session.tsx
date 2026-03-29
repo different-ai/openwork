@@ -97,6 +97,7 @@ import {
   defaultBlueprintStartersForPreset,
 } from "../lib/workspace-blueprints";
 import { DEFAULT_SESSION_TITLE, getDisplaySessionTitle } from "../lib/session-title";
+import { useSessionDisplayPreferences } from "../app-settings/session-display-preferences";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
@@ -186,7 +187,6 @@ export type SessionViewProps = {
   todos: TodoItem[];
   busyLabel: string | null;
   developerMode: boolean;
-  showThinking: boolean;
   sessionCompactionState: SessionCompactionState | null;
   expandedStepIds: Set<string>;
   setExpandedStepIds: (
@@ -364,6 +364,7 @@ function describePermissionRequest(permission: PendingPermission | null) {
 }
 
 export default function SessionView(props: SessionViewProps) {
+  const { showThinking } = useSessionDisplayPreferences();
   const platform = usePlatform();
   let chatContainerEl: HTMLDivElement | undefined;
   let chatContentEl: HTMLDivElement | undefined;
@@ -1382,7 +1383,7 @@ export default function SessionView(props: SessionViewProps) {
   const showFooterRunStatus = createMemo(() => {
     if (!showRunIndicator()) return false;
     const part = latestRunPart();
-    if (part?.type === "reasoning" && props.showThinking) {
+    if (part?.type === "reasoning" && showThinking()) {
       return false;
     }
     return true;
@@ -3774,7 +3775,7 @@ export default function SessionView(props: SessionViewProps) {
                         messages={batchedRenderedMessages()}
                         isStreaming={showRunIndicator()}
                         developerMode={props.developerMode}
-                        showThinking={props.showThinking}
+                        showThinking={showThinking()}
                         getSessionById={props.getSessionById}
                         getMessagesBySessionId={props.getMessagesBySessionId}
                         ensureSessionLoaded={props.ensureSessionLoaded}

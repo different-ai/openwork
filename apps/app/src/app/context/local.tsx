@@ -1,6 +1,7 @@
-import { createContext, useContext, type ParentProps } from "solid-js";
+import { createContext, createEffect, useContext, type ParentProps } from "solid-js";
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store";
 
+import { THINKING_PREF_KEY } from "../constants";
 import type { DashboardTab, ModelRef, View } from "../types";
 import { Persist, persisted } from "../utils/persist";
 
@@ -44,6 +45,29 @@ export function LocalProvider(props: ParentProps) {
   );
 
   const ready = () => uiReady() && prefsReady();
+
+  createEffect(() => {
+    if (!prefsReady()) return;
+    if (typeof window === "undefined") return;
+
+    const raw = window.localStorage.getItem(THINKING_PREF_KEY);
+    if (raw == null) return;
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "boolean") {
+        setPrefs("showThinking", parsed);
+      }
+    } catch {
+      // ignore invalid legacy values
+    }
+
+    try {
+      window.localStorage.removeItem(THINKING_PREF_KEY);
+    } catch {
+      // ignore
+    }
+  });
 
   const value: LocalContextValue = {
     ui,

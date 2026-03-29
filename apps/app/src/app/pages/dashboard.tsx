@@ -258,8 +258,6 @@ export type DashboardViewProps = {
   defaultModelLabel: string;
   defaultModelRef: string;
   openDefaultModelPicker: () => void;
-  showThinking: boolean;
-  toggleShowThinking: () => void;
   autoCompactContext: boolean;
   toggleAutoCompactContext: () => void;
   autoCompactContextBusy: boolean;
@@ -1498,8 +1496,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   defaultModelLabel={props.defaultModelLabel}
                   defaultModelRef={props.defaultModelRef}
                   openDefaultModelPicker={props.openDefaultModelPicker}
-                  showThinking={props.showThinking}
-                  toggleShowThinking={props.toggleShowThinking}
                   autoCompactContext={props.autoCompactContext}
                   toggleAutoCompactContext={props.toggleAutoCompactContext}
                   autoCompactContextBusy={props.autoCompactContextBusy}
