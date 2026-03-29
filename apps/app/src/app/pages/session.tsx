@@ -13,14 +13,11 @@ import type {
   DashboardTab,
   ComposerDraft,
   MessageWithParts,
-  McpServerEntry,
   McpStatusMap,
   PendingPermission,
   PendingQuestion,
-  ProviderListItem,
   SessionCompactionState,
   SettingsTab,
-  SkillCard,
   TodoItem,
   View,
   WorkspaceConnectionState,
@@ -34,11 +31,13 @@ import {
   writeObsidianMirrorFile,
   type EngineInfo,
   type OpenCodeRouterInfo,
-  type OpenworkServerInfo,
   type OrchestratorStatus,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { usePlatform } from "../context/platform";
+import { useOpenworkServer } from "../context/openwork-server-context";
+import { useProviderAuth } from "../context/provider-auth-context";
+import { useWorkspaceActions } from "../context/workspace-actions-context";
 import { buildDenAuthUrl, createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
 import { buildFeedbackUrl } from "../lib/feedback";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
@@ -66,7 +65,6 @@ import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal, {
-  type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
@@ -80,9 +78,6 @@ import {
 import type {
   OpenworkFileSession,
   OpenworkServerClient,
-  OpenworkServerDiagnostics,
-  OpenworkServerSettings,
-  OpenworkServerStatus,
   OpenworkWorkspaceExport,
 } from "../lib/openwork-server";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
@@ -104,7 +99,6 @@ import { DEFAULT_SESSION_TITLE, getDisplaySessionTitle } from "../lib/session-ti
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
-import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 
@@ -112,8 +106,6 @@ export type SessionViewProps = {
   booting: boolean;
   selectedSessionId: string | null;
   setView: (view: View, sessionId?: string) => void;
-  tab: DashboardTab;
-  settingsTab: SettingsTab;
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
   toggleSettings: () => void;
@@ -129,29 +121,12 @@ export type SessionViewProps = {
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  openCreateWorkspace: () => void;
-  pickFolderWorkspace: () => Promise<boolean>;
-  openCreateRemoteWorkspace: () => void;
-  importWorkspaceConfig: () => void;
-  importingWorkspaceConfig: boolean;
-  exportWorkspaceConfig: (workspaceId?: string) => void;
-  exportWorkspaceBusy: boolean;
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerClient: OpenworkServerClient | null;
-  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  shareRemoteAccessBusy: boolean;
-  shareRemoteAccessError: string | null;
-  saveShareRemoteAccess: (enabled: boolean) => Promise<void>;
-  runtimeWorkspaceId: string | null;
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
   orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
   appVersion: string | null;
-  stopHost: () => void;
   headerStatus: string;
   busyHint: string | null;
   updateStatus: {
@@ -164,7 +139,6 @@ export type SessionViewProps = {
     downloadedBytes?: number;
     message?: string;
   } | null;
-  updateEnv: { supported?: boolean; reason?: string | null } | null;
   anyActiveRuns: boolean;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
@@ -186,7 +160,6 @@ export type SessionViewProps = {
   ensureSessionLoaded: (sessionId: string) => Promise<void> | void;
   sessionLoadingById: (sessionId: string | null) => boolean;
   todos: TodoItem[];
-  busyLabel: string | null;
   developerMode: boolean;
   showThinking: boolean;
   sessionCompactionState: SessionCompactionState | null;
@@ -194,19 +167,8 @@ export type SessionViewProps = {
   setExpandedStepIds: (
     updater: (current: Set<string>) => Set<string>,
   ) => Set<string>;
-  expandedSidebarSections: SidebarSectionState;
-  setExpandedSidebarSections: (
-    updater: (current: SidebarSectionState) => SidebarSectionState,
-  ) => SidebarSectionState;
   workingFiles: string[];
-  authorizedDirs: string[];
-  activePlugins: string[];
-  activePluginStatus: string | null;
-  mcpServers: McpServerEntry[];
   mcpStatuses: McpStatusMap;
-  mcpStatus: string | null;
-  skills: SkillCard[];
-  skillsStatus: string | null;
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
@@ -237,30 +199,6 @@ export type SessionViewProps = {
   error: string | null;
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
-  startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
-  completeProviderAuthOAuth: (
-    providerId: string,
-    methodIndex: number,
-    code?: string,
-  ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
-  submitProviderApiKey: (
-    providerId: string,
-    apiKey: string,
-  ) => Promise<string | void>;
-  refreshProviders: () => Promise<unknown>;
-  openProviderAuthModal: (options?: {
-    returnFocusTarget?: "none" | "composer";
-    preferredProviderId?: string;
-  }) => Promise<void>;
-  closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
-  providerAuthModalOpen: boolean;
-  providerAuthBusy: boolean;
-  providerAuthError: string | null;
-  providerAuthMethods: Record<string, ProviderAuthMethod[]>;
-  providerAuthPreferredProviderId: string | null;
-  providerAuthWorkerType: "local" | "remote";
-  providers: ProviderListItem[];
-  providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
   searchFiles: (query: string) => Promise<string[]>;
   listCommands: () => Promise<
@@ -273,7 +211,6 @@ export type SessionViewProps = {
   >;
   selectedSessionAgent: string | null;
   setSessionAgent: (sessionId: string, agent: string | null) => void;
-  saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
@@ -371,6 +308,32 @@ function describePermissionRequest(permission: PendingPermission | null) {
 
 export default function SessionView(props: SessionViewProps) {
   const platform = usePlatform();
+  const openworkServer = useOpenworkServer();
+  const providerAuth = useProviderAuth();
+  const workspaceActions = useWorkspaceActions();
+  const openworkServerStatus = openworkServer.openworkServerStatus;
+  const openworkServerClient = openworkServer.openworkServerClient;
+  const openworkServerDiagnostics = openworkServer.openworkServerDiagnostics;
+  const openworkServerSettings = openworkServer.openworkServerSettings;
+  const openworkServerHostInfo = openworkServer.openworkServerHostInfo;
+  const runtimeWorkspaceId = openworkServer.runtimeWorkspaceId;
+  const shareRemoteAccessBusy = openworkServer.shareRemoteAccessBusy;
+  const shareRemoteAccessError = openworkServer.shareRemoteAccessError;
+  const saveShareRemoteAccess = openworkServer.saveShareRemoteAccess;
+  const openProviderAuthModal = providerAuth.openProviderAuthModal;
+  const closeProviderAuthModal = providerAuth.closeProviderAuthModal;
+  const startProviderAuth = providerAuth.startProviderAuth;
+  const completeProviderAuthOAuth = providerAuth.completeProviderAuthOAuth;
+  const submitProviderApiKey = providerAuth.submitProviderApiKey;
+  const refreshProviders = providerAuth.refreshProviders;
+  const providerAuthModalOpen = providerAuth.providerAuthModalOpen;
+  const providerAuthBusy = providerAuth.providerAuthBusy;
+  const providerAuthError = providerAuth.providerAuthError;
+  const providerAuthMethods = providerAuth.providerAuthMethods;
+  const providerAuthPreferredProviderId = providerAuth.providerAuthPreferredProviderId;
+  const providerAuthWorkerType = providerAuth.providerAuthWorkerType;
+  const providers = providerAuth.providers;
+  const providerConnectedIds = providerAuth.providerConnectedIds;
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
@@ -447,7 +410,7 @@ export default function SessionView(props: SessionViewProps) {
       entrypoint: "session-status-bar",
       deployment: getOpenWorkDeployment(),
       appVersion: props.appVersion,
-      openworkServerVersion: props.openworkServerDiagnostics?.version ?? null,
+      openworkServerVersion: openworkServerDiagnostics()?.version ?? null,
       opencodeVersion:
         props.orchestratorStatus?.binaries?.opencode?.actualVersion ??
         props.engineDoctorVersion ??
@@ -1039,7 +1002,7 @@ export default function SessionView(props: SessionViewProps) {
     createSignal<RemoteFileSyncSession | null>(null);
   const remoteMirrorWorkspaceKey = createMemo(
     () =>
-      props.runtimeWorkspaceId?.trim() ||
+      runtimeWorkspaceId()?.trim() ||
       props.selectedWorkspaceDisplay.id?.trim() ||
       "remote-worker",
   );
@@ -1113,7 +1076,7 @@ export default function SessionView(props: SessionViewProps) {
   const closeRemoteFileSyncSession = async (
     session: RemoteFileSyncSession | null,
   ) => {
-    const client = props.openworkServerClient;
+    const client = openworkServerClient();
     if (!client || !session) return;
     try {
       await client.closeFileSession(session.id);
@@ -1198,8 +1161,8 @@ export default function SessionView(props: SessionViewProps) {
 
   const ensureRemoteFileSyncSession =
     async (): Promise<RemoteFileSyncSession> => {
-      const client = props.openworkServerClient;
-      const workspaceId = props.runtimeWorkspaceId?.trim() ?? "";
+      const client = openworkServerClient();
+      const workspaceId = runtimeWorkspaceId()?.trim() ?? "";
       if (!client || !workspaceId) {
         throw new Error("Connect to OpenWork server to sync remote files.");
       }
@@ -1251,7 +1214,7 @@ export default function SessionView(props: SessionViewProps) {
     session: RemoteFileSyncSession,
     path: string,
   ) => {
-    const client = props.openworkServerClient;
+    const client = openworkServerClient();
     if (!client) throw new Error("OpenWork server client unavailable");
 
     const result = await client.readFileBatch(session.id, [path]);
@@ -1305,7 +1268,7 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
 
-    const client = props.openworkServerClient;
+    const client = openworkServerClient();
     if (!client) {
       stopRemoteMirrorSyncLoop();
       return;
@@ -1430,7 +1393,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const mirrorRemoteArtifactForObsidian = async (file: string) => {
     const session = await ensureRemoteFileSyncSession();
-    const client = props.openworkServerClient;
+    const client = openworkServerClient();
     if (!client) {
       throw new Error("Connect to OpenWork server to sync remote files.");
     }
@@ -1485,8 +1448,8 @@ export default function SessionView(props: SessionViewProps) {
         [
           isTauriRuntime(),
           props.selectedWorkspaceDisplay.workspaceType,
-          props.runtimeWorkspaceId?.trim() ?? "",
-          Boolean(props.openworkServerClient),
+          runtimeWorkspaceId()?.trim() ?? "",
+          Boolean(openworkServerClient()),
         ] as const,
       ([desktopRuntime, workspaceType, workspaceId, hasClient], previous) => {
         const previousWorkspaceId = previous?.[2] ?? "";
@@ -1558,11 +1521,11 @@ export default function SessionView(props: SessionViewProps) {
   let jumpControlsSuppressTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
     if (props.selectedWorkspaceDisplay.workspaceType !== "remote") return true;
-    return props.openworkServerStatus === "connected";
+    return openworkServerStatus() === "connected";
   });
   const attachmentsDisabledReason = createMemo(() => {
     if (attachmentsEnabled()) return null;
-    if (props.openworkServerStatus === "limited") {
+    if (openworkServerStatus() === "limited") {
       return "Add a server token to attach files.";
     }
     return "Connect to OpenWork server to attach files.";
@@ -2946,7 +2909,7 @@ export default function SessionView(props: SessionViewProps) {
     }
     setProviderAuthActionBusy(true);
     try {
-      return await props.startProviderAuth(providerId, methodIndex);
+      return await startProviderAuth(providerId, methodIndex);
     } finally {
       setProviderAuthActionBusy(false);
     }
@@ -2960,14 +2923,14 @@ export default function SessionView(props: SessionViewProps) {
     if (providerAuthActionBusy()) return { connected: false, pending: true };
     setProviderAuthActionBusy(true);
     try {
-      const result = await props.completeProviderAuthOAuth(
+      const result = await completeProviderAuthOAuth(
         providerId,
         methodIndex,
         code,
       );
       if (result.connected) {
         setToastMessage(result.message || "Provider connected");
-        props.closeProviderAuthModal();
+        closeProviderAuthModal();
       }
       return result;
     } catch (error) {
@@ -2986,9 +2949,9 @@ export default function SessionView(props: SessionViewProps) {
     if (providerAuthActionBusy()) return;
     setProviderAuthActionBusy(true);
     try {
-      const message = await props.submitProviderApiKey(providerId, apiKey);
+      const message = await submitProviderApiKey(providerId, apiKey);
       setToastMessage(message || "API key saved");
-      props.closeProviderAuthModal();
+      closeProviderAuthModal();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to save API key";
@@ -3067,10 +3030,10 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     const ws = shareWorkspace();
-    const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+    const baseUrl = openworkServerHostInfo()?.baseUrl?.trim() ?? "";
     const token =
-      props.openworkServerHostInfo?.ownerToken?.trim() ||
-      props.openworkServerHostInfo?.clientToken?.trim() ||
+      openworkServerHostInfo()?.ownerToken?.trim() ||
+      openworkServerHostInfo()?.clientToken?.trim() ||
       "";
     const workspacePath =
       ws?.workspaceType === "local" ? (ws.path?.trim() ?? "") : "";
@@ -3123,14 +3086,14 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
-      if (props.openworkServerHostInfo?.remoteAccessEnabled !== true) {
+      if (openworkServerHostInfo()?.remoteAccessEnabled !== true) {
         return [];
       }
       const hostUrl =
-        props.openworkServerHostInfo?.connectUrl?.trim() ||
-        props.openworkServerHostInfo?.lanUrl?.trim() ||
-        props.openworkServerHostInfo?.mdnsUrl?.trim() ||
-        props.openworkServerHostInfo?.baseUrl?.trim() ||
+        openworkServerHostInfo()?.connectUrl?.trim() ||
+        openworkServerHostInfo()?.lanUrl?.trim() ||
+        openworkServerHostInfo()?.mdnsUrl?.trim() ||
+        openworkServerHostInfo()?.baseUrl?.trim() ||
         "";
       const mountedUrl = shareLocalOpenworkWorkspaceId()
         ? buildOpenworkWorkspaceBaseUrl(
@@ -3139,8 +3102,8 @@ export default function SessionView(props: SessionViewProps) {
           )
         : null;
       const url = mountedUrl || hostUrl;
-      const ownerToken = props.openworkServerHostInfo?.ownerToken?.trim() || "";
-      const collaboratorToken = props.openworkServerHostInfo?.clientToken?.trim() || "";
+      const ownerToken = openworkServerHostInfo()?.ownerToken?.trim() || "";
+      const collaboratorToken = openworkServerHostInfo()?.clientToken?.trim() || "";
       return [
         {
           label: "Worker URL",
@@ -3182,7 +3145,7 @@ export default function SessionView(props: SessionViewProps) {
         hostUrl;
       const token =
         ws.openworkToken?.trim() ||
-        props.openworkServerSettings.token?.trim() ||
+        openworkServerSettings().token?.trim() ||
         "";
       return [
         {
@@ -3233,10 +3196,10 @@ export default function SessionView(props: SessionViewProps) {
       return "Share service links are available for OpenWork workers.";
     }
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const baseUrl = openworkServerHostInfo()?.baseUrl?.trim() ?? "";
       const token =
-        props.openworkServerHostInfo?.ownerToken?.trim() ||
-        props.openworkServerHostInfo?.clientToken?.trim() ||
+        openworkServerHostInfo()?.ownerToken?.trim() ||
+        openworkServerHostInfo()?.clientToken?.trim() ||
         "";
       if (!baseUrl || !token) {
         return "Local OpenWork host is not ready yet.";
@@ -3245,7 +3208,7 @@ export default function SessionView(props: SessionViewProps) {
       const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
       const token =
         ws.openworkToken?.trim() ||
-        props.openworkServerSettings.token?.trim() ||
+        openworkServerSettings().token?.trim() ||
         "";
       if (!hostUrl) return "Missing OpenWork host URL.";
       if (!token) return "Missing OpenWork token.";
@@ -3308,10 +3271,10 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const baseUrl = openworkServerHostInfo()?.baseUrl?.trim() ?? "";
       const token =
-        props.openworkServerHostInfo?.ownerToken?.trim() ||
-        props.openworkServerHostInfo?.clientToken?.trim() ||
+        openworkServerHostInfo()?.ownerToken?.trim() ||
+        openworkServerHostInfo()?.clientToken?.trim() ||
         "";
       if (!baseUrl || !token) {
         throw new Error("Local OpenWork host is not ready yet.");
@@ -3348,7 +3311,7 @@ export default function SessionView(props: SessionViewProps) {
     const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
     const token =
       ws.openworkToken?.trim() ||
-      props.openworkServerSettings.token?.trim() ||
+      openworkServerSettings().token?.trim() ||
       "";
     if (!hostUrl || !token) {
       throw new Error("OpenWork host URL and token are required.");
@@ -3566,7 +3529,7 @@ export default function SessionView(props: SessionViewProps) {
     if (ws.workspaceType === "remote")
       return "Export is only supported for local workers.";
     if (!isTauriRuntime()) return "Export is available in the desktop app.";
-    if (props.exportWorkspaceBusy) return "Export is already running.";
+    if (workspaceActions.exportWorkspaceBusy()) return "Export is already running.";
     return null;
   });
 
@@ -3588,8 +3551,8 @@ export default function SessionView(props: SessionViewProps) {
     options?: { notify?: boolean },
   ): Promise<Array<{ name: string; path: string }>> => {
     const notify = options?.notify ?? true;
-    const client = props.openworkServerClient;
-    const workspaceId = props.runtimeWorkspaceId?.trim() ?? "";
+    const client = openworkServerClient();
+    const workspaceId = runtimeWorkspaceId()?.trim() ?? "";
     if (!client || !workspaceId) {
       if (notify) {
         setToastMessage(
@@ -3752,8 +3715,7 @@ export default function SessionView(props: SessionViewProps) {
         meta: "Open",
         action: () => {
           closeCommandPalette();
-          void props
-            .openProviderAuthModal({ returnFocusTarget: "composer" })
+          void openProviderAuthModal({ returnFocusTarget: "composer" })
             .catch((error) => {
               const message =
                 error instanceof Error
@@ -3942,7 +3904,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openProviderAuth = (preferredProviderId?: string) => {
-    void props.openProviderAuthModal({ preferredProviderId }).catch((error) => {
+    void openProviderAuthModal({ preferredProviderId }).catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
       setToastMessage(message);
     });
@@ -3953,7 +3915,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const hasOpenAiProviderConnected = createMemo(() =>
-    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
+    (providerConnectedIds() ?? []).some((id) => id.trim().toLowerCase() === "openai")
   );
   const showNewSessionProviderCta = createMemo(() => !hasOpenAiProviderConnected());
   const emptyStatePreset = createMemo(
@@ -4106,7 +4068,6 @@ export default function SessionView(props: SessionViewProps) {
               connectingWorkspaceId={props.connectingWorkspaceId}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
               newTaskDisabled={props.newTaskDisabled}
-              importingWorkspaceConfig={props.importingWorkspaceConfig}
               onSelectWorkspace={props.switchWorkspace}
               onOpenSession={openSessionFromList}
               onCreateTaskInWorkspace={createTaskInWorkspace}
@@ -4121,9 +4082,6 @@ export default function SessionView(props: SessionViewProps) {
               onTestWorkspaceConnection={props.testWorkspaceConnection}
               onEditWorkspaceConnection={props.editWorkspaceConnection}
               onForgetWorkspace={props.forgetWorkspace}
-              onOpenCreateWorkspace={props.openCreateWorkspace}
-              onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-              onImportWorkspaceConfig={props.importWorkspaceConfig}
             />
           </div>
           <div
@@ -4401,7 +4359,7 @@ export default function SessionView(props: SessionViewProps) {
                             <button
                               type="button"
                               class="group rounded-[24px] border border-transparent bg-dls-accent px-5 py-5 text-left text-white shadow-[var(--dls-card-shadow)] transition-all hover:-translate-y-0.5 hover:bg-[var(--dls-accent-hover)]"
-                              onClick={props.openCreateWorkspace}
+                              onClick={workspaceActions.openCreateWorkspace}
                             >
                               <div class="flex items-start gap-4">
                                 <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-white/10">
@@ -4419,7 +4377,7 @@ export default function SessionView(props: SessionViewProps) {
                             <button
                               type="button"
                               class="group rounded-[24px] border border-dls-border bg-dls-sidebar px-5 py-5 text-left text-gray-12 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:bg-gray-2/80"
-                              onClick={() => void props.pickFolderWorkspace()}
+                              onClick={() => void workspaceActions.pickFolderWorkspace()}
                             >
                               <div class="flex items-start gap-4">
                                 <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-gray-11">
@@ -4721,7 +4679,7 @@ export default function SessionView(props: SessionViewProps) {
 
           <StatusBar
             clientConnected={props.clientConnected}
-            openworkServerStatus={props.openworkServerStatus}
+            openworkServerStatus={openworkServerStatus()}
             developerMode={props.developerMode}
             settingsOpen={false}
             onSendFeedback={openFeedback}
@@ -4730,7 +4688,7 @@ export default function SessionView(props: SessionViewProps) {
             onOpenMessaging={() => openSettings("messaging")}
             onOpenProviders={openProviderAuth}
             onOpenMcp={openMcp}
-            providerConnectedIds={props.providerConnectedIds}
+            providerConnectedIds={providerConnectedIds()}
             mcpStatuses={props.mcpStatuses}
             statusLabel={
               showCompactionIndicator()
@@ -4868,20 +4826,20 @@ export default function SessionView(props: SessionViewProps) {
       </Show>
 
       <ProviderAuthModal
-        open={props.providerAuthModalOpen}
-        loading={props.providerAuthBusy}
+        open={providerAuthModalOpen()}
+        loading={providerAuthBusy()}
         submitting={providerAuthActionBusy()}
-        error={props.providerAuthError}
-        preferredProviderId={props.providerAuthPreferredProviderId}
-        workerType={props.providerAuthWorkerType}
-        providers={props.providers}
-        connectedProviderIds={props.providerConnectedIds}
-        authMethods={props.providerAuthMethods}
+        error={providerAuthError()}
+        preferredProviderId={providerAuthPreferredProviderId()}
+        workerType={providerAuthWorkerType()}
+        providers={providers()}
+        connectedProviderIds={providerConnectedIds()}
+        authMethods={providerAuthMethods()}
         onSelect={handleProviderAuthSelect}
         onSubmitApiKey={handleProviderAuthApiKey}
         onSubmitOAuth={handleProviderAuthOAuth}
-        onRefreshProviders={props.refreshProviders}
-        onClose={() => props.closeProviderAuthModal()}
+        onRefreshProviders={refreshProviders}
+        onClose={() => closeProviderAuthModal()}
       />
 
       <RenameSessionModal
@@ -4917,10 +4875,10 @@ export default function SessionView(props: SessionViewProps) {
         fields={shareFields()}
         remoteAccess={shareWorkspace()?.workspaceType === "local"
           ? {
-              enabled: props.openworkServerHostInfo?.remoteAccessEnabled === true,
-              busy: props.shareRemoteAccessBusy,
-              error: props.shareRemoteAccessError,
-              onSave: props.saveShareRemoteAccess,
+              enabled: openworkServerHostInfo()?.remoteAccessEnabled === true,
+              busy: shareRemoteAccessBusy(),
+              error: shareRemoteAccessError(),
+              onSave: saveShareRemoteAccess,
             }
           : undefined}
         note={shareNote()}
@@ -4954,7 +4912,7 @@ export default function SessionView(props: SessionViewProps) {
             : () => {
                 const id = shareWorkspaceId();
                 if (!id) return;
-                props.exportWorkspaceConfig(id);
+                workspaceActions.exportWorkspaceConfig(id);
               }
         }
         exportDisabledReason={exportDisabledReason()}

@@ -20,22 +20,11 @@ import {
   loadDenTemplateCache,
   readDenTemplateCacheSnapshot,
 } from "../lib/den-template-cache";
+import { useWorkspaceActions } from "../context/workspace-actions-context";
 import { usePlatform } from "../context/platform";
 
 type DenSettingsPanelProps = {
   developerMode: boolean;
-  connectRemoteWorkspace: (input: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
-    directory?: string | null;
-    displayName?: string | null;
-  }) => Promise<boolean>;
-  openCloudTemplate: (input: {
-    templateId: string;
-    name: string;
-    templateData: unknown;
-    organizationName?: string | null;
-  }) => void | Promise<void>;
 };
 
 function statusBadgeClass(kind: "ready" | "warning" | "neutral" | "error") {
@@ -75,6 +64,7 @@ function workerStatusMeta(status: string) {
 
 export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
+  const workspaceActions = useWorkspaceActions();
   const initial = readDenSettings();
   const initialBaseUrl = props.developerMode
     ? initial.baseUrl || DEFAULT_DEN_BASE_URL
@@ -546,7 +536,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         );
       }
 
-      const ok = await props.connectRemoteWorkspace({
+      const ok = await workspaceActions.connectRemoteWorkspace({
         openworkHostUrl: openworkUrl,
         openworkToken: accessToken,
         directory: null,
@@ -573,7 +563,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setTemplateActionError(null);
 
     try {
-      await props.openCloudTemplate({
+      await workspaceActions.openCloudTemplate({
         templateId: template.id,
         name: template.name,
         templateData: template.templateData,

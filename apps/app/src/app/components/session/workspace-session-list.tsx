@@ -27,6 +27,7 @@ import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
 } from "../../utils";
+import { useWorkspaceActions } from "../../context/workspace-actions-context";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -38,7 +39,6 @@ type Props = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
-  importingWorkspaceConfig: boolean;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
@@ -55,9 +55,6 @@ type Props = {
   ) => Promise<boolean> | boolean | void;
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
-  onOpenCreateWorkspace: () => void;
-  onOpenCreateRemoteWorkspace: () => void;
-  onImportWorkspaceConfig: () => void;
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
@@ -188,6 +185,7 @@ const workspaceSwatchColor = (seed: string) => {
 };
 
 export default function WorkspaceSessionList(props: Props) {
+  const workspaceActions = useWorkspaceActions();
   const revealLabel = isWindowsPlatform()
     ? "Reveal in Explorer"
     : "Reveal in Finder";
@@ -906,7 +904,7 @@ export default function WorkspaceSessionList(props: Props) {
                   : undefined
               }
               onClick={() => {
-                props.onOpenCreateWorkspace();
+                workspaceActions.openCreateWorkspace();
                 setAddWorkspaceMenuOpen(false);
               }}
             >
@@ -920,7 +918,7 @@ export default function WorkspaceSessionList(props: Props) {
               type="button"
               class="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-2 hover:text-gray-12"
               onClick={() => {
-                props.onOpenCreateRemoteWorkspace();
+                workspaceActions.openCreateRemoteWorkspace();
                 setAddWorkspaceMenuOpen(false);
               }}
             >
@@ -930,9 +928,9 @@ export default function WorkspaceSessionList(props: Props) {
             <button
               type="button"
               class="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={props.importingWorkspaceConfig}
+              disabled={workspaceActions.importingWorkspaceConfig()}
               onClick={() => {
-                props.onImportWorkspaceConfig();
+                workspaceActions.importWorkspaceConfig();
                 setAddWorkspaceMenuOpen(false);
               }}
             >

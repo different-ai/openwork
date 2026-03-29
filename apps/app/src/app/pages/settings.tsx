@@ -210,11 +210,6 @@ export type SettingsViewProps = {
   pickAuthorizedFolder: () => Promise<void>;
   removeAuthorizedFolder: (folder: string) => Promise<void>;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
-  notionStatus: "disconnected" | "connecting" | "connected" | "error";
-  notionStatusDetail: string | null;
-  notionError: string | null;
-  notionBusy: boolean;
-  connectNotion: () => void;
   engineDoctorVersion: string | null;
   openDebugDeepLink: (
     rawUrl: string,
@@ -299,32 +294,6 @@ export type SettingsViewProps = {
 const DISCORD_INVITE_URL = "https://discord.gg/VEhNQXxYMB";
 const BUG_REPORT_URL =
   "https://github.com/different-ai/openwork/issues/new?template=bug.yml";
-
-// OpenCodeRouter Settings Component
-//
-// Messaging identities + routing are managed in the Identities tab.
-export function OpenCodeRouterSettings(_props: {
-  busy: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerSettings: OpenworkServerSettings;
-  runtimeWorkspaceId: string | null;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  developerMode: boolean;
-}) {
-  return (
-    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-      <div class="flex items-center gap-2">
-        <MessageCircle size={16} class="text-gray-11" />
-        <div class="text-sm font-medium text-gray-12">Messaging</div>
-      </div>
-      <div class="text-xs text-gray-10">
-        Manage Telegram/Slack identities and bindings in the{" "}
-        <span class="font-medium text-gray-12">Identities</span> tab.
-      </div>
-    </div>
-  );
-}
 
 export default function SettingsView(props: SettingsViewProps) {
   const platform = usePlatform();
@@ -492,32 +461,6 @@ export default function SettingsView(props: SettingsViewProps) {
       return;
     }
     props.checkForUpdates();
-  };
-
-  const notionStatusLabel = () => {
-    switch (props.notionStatus) {
-      case "connected":
-        return "Connected";
-      case "connecting":
-        return "Reload required";
-      case "error":
-        return "Connection failed";
-      default:
-        return "Not connected";
-    }
-  };
-
-  const notionStatusStyle = () => {
-    if (props.notionStatus === "connected") {
-      return "bg-green-7/10 text-green-11 border-green-7/20";
-    }
-    if (props.notionStatus === "error") {
-      return "bg-red-7/10 text-red-11 border-red-7/20";
-    }
-    if (props.notionStatus === "connecting") {
-      return "bg-amber-7/10 text-amber-11 border-amber-7/20";
-    }
-    return "bg-gray-4/60 text-gray-11 border-gray-7/50";
   };
 
   const [providerConnectError, setProviderConnectError] = createSignal<
@@ -2216,11 +2159,7 @@ export default function SettingsView(props: SettingsViewProps) {
         </Match>
 
         <Match when={activeTab() === "den"}>
-          <DenSettingsPanel
-            developerMode={props.developerMode}
-            connectRemoteWorkspace={props.connectRemoteWorkspace}
-            openCloudTemplate={props.openCloudTemplate}
-          />
+          <DenSettingsPanel developerMode={props.developerMode} />
         </Match>
 
         <Match when={activeTab() === "advanced"}>

@@ -7,28 +7,20 @@ import {
   createSignal,
   onCleanup,
   onMount,
-  untrack,
 } from "solid-js";
 
 import { useLocation, useNavigate } from "@solidjs/router";
 
 import type {
-  Agent,
   Part,
-  ProviderAuthAuthorization,
   Session,
-  TextPartInput,
-  FilePartInput,
-  AgentPartInput,
-  SubtaskPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
-import { getVersion } from "@tauri-apps/api/app";
-import { homeDir } from "@tauri-apps/api/path";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/model-picker-modal";
+import AppOverlays from "./components/app-overlays";
 import ResetModal from "./components/reset-modal";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
@@ -41,42 +33,18 @@ import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import StatusToast from "./components/status-toast";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
-import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
+import { createAppOverlaysPropsBuilder } from "./app-props/app-overlays-props";
+import { createDashboardPropsBuilder } from "./app-props/dashboard-props";
+import { createSessionPropsBuilder } from "./app-props/session-props";
+import { unwrap, type OpencodeAuth } from "./lib/opencode";
 import { createDenClient, writeDenSettings } from "./lib/den";
+import { clearPerfLogs } from "./lib/perf-log";
 import {
-  abortSession as abortSessionTyped,
-  abortSessionSafe,
-  compactSession as compactSessionTyped,
-  revertSession,
-  unrevertSession,
-  shellInSession,
-  listCommands as listCommandsTyped,
-} from "./lib/opencode-session";
-import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
-import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
-import {
-  CHROME_DEVTOOLS_MCP_ID,
   DEFAULT_MODEL,
-  HIDE_TITLEBAR_PREF_KEY,
   MCP_QUICK_CONNECT,
-  MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
-  THINKING_PREF_KEY,
-  VARIANT_PREF_KEY,
 } from "./constants";
-import {
-  parseMcpServersFromContent,
-  removeMcpFromConfig,
-  usesChromeDevtoolsAutoConnect,
-  validateMcpServerName,
-} from "./mcp";
-import {
-  compareProviders,
-  filterProviderList,
-  mapConfigProvidersToList,
-  providerPriorityRank,
-} from "./utils/providers";
 import {
   blueprintMaterializedSessions,
   blueprintSessions,
@@ -90,31 +58,21 @@ import type {
   PlaceholderMessageInfo,
   StartupPreference,
   EngineRuntime,
-  ModelOption,
-  ModelRef,
   OnboardingStep,
   PluginScope,
   ReloadReason,
   ReloadTrigger,
-  ResetOpenworkMode,
-  SettingsTab,
-  SkillCard,
-  SidebarSessionItem,
-  TodoItem,
-  View,
-  WorkspaceSessionGroup,
-  WorkspaceDisplay,
-  McpServerEntry,
-  McpStatusMap,
-  ComposerAttachment,
-  ComposerDraft,
-  ComposerPart,
-  ProviderListItem,
-  SessionErrorTurn,
-  UpdateHandle,
-  OpencodeConnectStatus,
-  ScheduledJob,
-  WorkspacePreset,
+   ResetOpenworkMode,
+   SettingsTab,
+   SkillCard,
+   SidebarSessionItem,
+   View,
+   WorkspaceSessionGroup,
+   ProviderListItem,
+   SessionErrorTurn,
+   UpdateHandle,
+   OpencodeConnectStatus,
+   ScheduledJob,
 } from "./types";
 import {
   clearStartupPreference,
@@ -124,10 +82,7 @@ import {
   formatModelLabel,
   formatModelRef,
   formatRelativeTime,
-  isVisibleTextPart,
   isTauriRuntime,
-  modelEquals,
-  normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
 } from "./utils";
 import { currentLocale, setLocale, t, type Language } from "../i18n";
@@ -135,63 +90,46 @@ import {
   isWindowsPlatform,
   lastUserModelFromMessages,
   // normalizeDirectoryPath,
-  parseModelRef,
-  readStartupPreference,
   safeStringify,
   addOpencodeCacheHint,
 } from "./utils";
-import {
-  applyThemeMode,
-  getInitialThemeMode,
-  persistThemeMode,
-  subscribeToSystemTheme,
-  type ThemeMode,
-} from "./theme";
+import { getInitialThemeMode, type ThemeMode } from "./theme";
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import {
-  formatGenericBehaviorLabel,
-  getModelBehaviorSummary,
-  normalizeModelBehaviorValue,
-  sanitizeModelBehaviorValue,
-} from "./lib/model-behavior";
-import {
   describeDirectoryScope,
   shouldApplyScopedSessionLoad,
   shouldRedirectMissingSessionAfterScopedLoad,
-  toSessionTransportDirectory,
 } from "./lib/session-scope";
 
-const fileToDataUrl = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Failed to read attachment: ${file.name}`));
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      resolve(result);
-    };
-    reader.readAsDataURL(file);
-  });
 import { createExtensionsStore } from "./context/extensions";
 import { createAutomationsStore } from "./context/automations";
+import { checkOpenworkServer, createOpenworkServerStore } from "./context/openwork-server";
 import { createSidebarSessionsStore } from "./context/sidebar-sessions";
+import { createSharedBundleFlow } from "./context/shared-bundle-flow";
+import { createMcpStore } from "./context/mcp-store";
+import { ExtensionsProvider } from "./context/extensions-context";
 import { useGlobalSync } from "./context/global-sync";
+import { OpenworkServerProvider } from "./context/openwork-server-context";
+import { ProviderAuthProvider } from "./context/provider-auth-context";
+import { createProviderAuthStore } from "./context/provider-auth-store";
 import { createWorkspaceStore } from "./context/workspace";
+import { WorkspaceActionsProvider } from "./context/workspace-actions-context";
 import {
-  updaterEnvironment,
+  AuthorizedFoldersProvider,
+  createAuthorizedFoldersStore,
+} from "./hooks/use-authorized-folders";
+import { ScheduledJobsProvider } from "./hooks/use-scheduled-jobs";
+import {
+  WorkspaceMaintenanceProvider,
+  createWorkspaceMaintenanceStore,
+} from "./hooks/use-workspace-maintenance";
+import {
   readOpencodeConfig,
   writeOpencodeConfig,
   openworkServerRestart,
   openworkServerInfo,
-  orchestratorStatus,
-  opencodeRouterInfo,
-  pickDirectory,
-  setWindowDecorations,
-  type OrchestratorStatus,
-  type OpenworkServerInfo,
-  type OpenCodeRouterInfo,
-  type WorkspaceInfo,
 } from "./lib/tauri";
 import {
   FONT_ZOOM_STEP,
@@ -204,78 +142,29 @@ import {
 } from "./lib/font-zoom";
 import {
   parseOpenworkWorkspaceIdFromUrl,
-  readOpenworkBundleInviteFromSearch,
-  readOpenworkConnectInviteFromSearch,
-  stripOpenworkBundleInviteFromUrl,
-  stripOpenworkConnectInviteFromUrl,
   createOpenworkServerClient,
-  hydrateOpenworkServerSettingsFromEnv,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
   writeOpenworkServerSettings,
   clearOpenworkServerSettings,
-  type OpenworkAuditEntry,
-  type OpenworkServerCapabilities,
-  type OpenworkServerDiagnostics,
-  type OpenworkServerStatus,
   type OpenworkServerSettings,
   type OpenworkServerClient,
-  OpenworkServerError,
 } from "./lib/openwork-server";
 import {
-  buildImportPayloadFromBundle,
-  defaultPresetFromTemplateBundle,
-  describeSharedBundleImport,
-  fetchSharedBundle,
-  normalizeSharedBundleImportIntent,
   parseDebugDeepLinkInput,
   parseDenAuthDeepLink,
   parseRemoteConnectDeepLink,
-  parseSharedBundle,
-  parseSharedBundleDeepLink,
   stripRemoteConnectQuery,
   stripSharedBundleQuery,
   type DenAuthDeepLink,
   type RemoteWorkspaceDefaults,
-  type SharedBundleDeepLink,
   type SharedBundleImportIntent,
-  type SharedBundleV1,
-  type SharedSkillBundleV1,
-  type SharedWorkspaceProfileBundleV1,
 } from "./lib/shared-bundles";
-
-type SharedBundleCreateWorkerRequest = {
-  request: SharedBundleDeepLink;
-  bundle: SharedBundleV1;
-  defaultPreset: WorkspacePreset;
-};
-
-type SharedTemplateStartRequest = {
-  request: SharedBundleDeepLink;
-  bundle: SharedWorkspaceProfileBundleV1;
-  defaultPreset: WorkspacePreset;
-};
-
-type SharedSkillDestinationRequest = {
-  request: SharedBundleDeepLink;
-  bundle: SharedSkillBundleV1;
-};
-
-type SharedSkillSuccessToast = {
-  title: string;
-  description: string;
-};
-
-type SharedBundleImportTarget = {
-  workspaceId?: string | null;
-  localRoot?: string | null;
-  directoryHint?: string | null;
-};
-
-type SharedBundleImportChoice = {
-  request: SharedBundleDeepLink;
-  bundle: SharedBundleV1;
-};
+import { useAppBootstrap } from "./hooks/use-app-bootstrap";
+import { useModelPreferences } from "./hooks/use-model-preferences";
+import { useAppPreferencePersistence } from "./hooks/use-app-preference-persistence";
+import { useOpenworkServerBootstrap } from "./hooks/use-openwork-server-bootstrap";
+import { useSessionActions } from "./hooks/use-session-actions";
 
 type SettingsReturnTarget = {
   view: View;
@@ -311,16 +200,6 @@ export default function App() {
       // ignore
     }
   };
-  type ProviderAuthMethod = {
-    type: "oauth" | "api";
-    label: string;
-    methodIndex?: number;
-  };
-  type ProviderOAuthStartResult = {
-    methodIndex: number;
-    authorization: ProviderAuthAuthorization;
-  };
-
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -396,124 +275,52 @@ export default function App() {
 
   const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwork-orchestrator");
   const [opencodeEnableExa, setOpencodeEnableExa] = createSignal(false);
+  const [developerMode, setDeveloperMode] = createSignal(false);
+  const [documentVisible, setDocumentVisible] = createSignal(true);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
 
-  const [openworkServerSettings, setOpenworkServerSettings] = createSignal<OpenworkServerSettings>({});
   const [shareRemoteAccessBusy, setShareRemoteAccessBusy] = createSignal(false);
   const [shareRemoteAccessError, setShareRemoteAccessError] = createSignal<string | null>(null);
-  const [openworkServerUrl, setOpenworkServerUrl] = createSignal("");
-  const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
-  const [openworkServerCapabilities, setOpenworkServerCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
-  const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
-  const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
-  const [openworkServerDiagnostics, setOpenworkServerDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
-  const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
-  const [opencodeRouterInfoState, setOpenCodeRouterInfoState] = createSignal<OpenCodeRouterInfo | null>(null);
-  const [orchestratorStatusState, setOrchestratorStatusState] = createSignal<OrchestratorStatus | null>(null);
-  const [openworkAuditEntries, setOpenworkAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
-  const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
-  const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
-  const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
-
-  const openworkServerBaseUrl = createMemo(() => {
-    const pref = startupPreference();
-    const hostInfo = openworkServerHostInfo();
-    const settingsUrl = normalizeOpenworkServerUrl(openworkServerSettings().urlOverride ?? "") ?? "";
-
-    if (pref === "local") return hostInfo?.baseUrl ?? "";
-    if (pref === "server") return settingsUrl;
-    return hostInfo?.baseUrl ?? settingsUrl;
-  });
-
-  const openworkServerAuth = createMemo(
-    () => {
-      const pref = startupPreference();
-      const hostInfo = openworkServerHostInfo();
-      const settingsToken = openworkServerSettings().token?.trim() ?? "";
-      const clientToken = hostInfo?.clientToken?.trim() ?? "";
-      const hostToken = hostInfo?.hostToken?.trim() ?? "";
-
-      if (pref === "local") {
-        return { token: clientToken || undefined, hostToken: hostToken || undefined };
-      }
-      if (pref === "server") {
-        return { token: settingsToken || undefined, hostToken: undefined };
-      }
-      if (hostInfo?.baseUrl) {
-        return { token: clientToken || undefined, hostToken: hostToken || undefined };
-      }
-      return { token: settingsToken || undefined, hostToken: undefined };
+  const openworkServerStore = createOpenworkServerStore({
+    startupPreference,
+    developerMode,
+    documentVisible,
+    refreshEngine: async () => {
+      await workspaceStore?.refreshEngine?.();
     },
-    undefined,
-    {
-      equals: (prev, next) => prev?.token === next.token && prev?.hostToken === next.hostToken,
-    },
-  );
-
-  const openworkServerClient = createMemo(() => {
-    const baseUrl = openworkServerBaseUrl().trim();
-    if (!baseUrl) return null;
-    const auth = openworkServerAuth();
-    return createOpenworkServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
   });
-
-  const devtoolsOpenworkClient = createMemo(() => openworkServerClient());
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    hydrateOpenworkServerSettingsFromEnv();
-
-    const stored = readOpenworkServerSettings();
-    const invite = readOpenworkConnectInviteFromSearch(window.location.search);
-    const bundleInvite = readOpenworkBundleInviteFromSearch(window.location.search);
-
-    if (!invite) {
-      setOpenworkServerSettings(stored);
-    } else {
-      const merged: OpenworkServerSettings = {
-        ...stored,
-        urlOverride: invite.url,
-        token: invite.token ?? stored.token,
-      };
-
-      const next = writeOpenworkServerSettings(merged);
-      setOpenworkServerSettings(next);
-
-      if (invite.startup === "server" && untrack(onboardingStep) === "welcome") {
-        setStartupPreference("server");
-        setOnboardingStep("server");
-      }
-    }
-
-    if (bundleInvite?.bundleUrl) {
-      setPendingSharedBundleInvite({
-        bundleUrl: bundleInvite.bundleUrl,
-        intent: normalizeSharedBundleImportIntent(bundleInvite.intent),
-        source: bundleInvite.source,
-        orgId: bundleInvite.orgId,
-        label: bundleInvite.label,
-      });
-      setSharedBundleNoticeShown(false);
-    }
-
-    if (invite?.autoConnect) {
-      setPendingRemoteConnectDeepLink({
-        openworkHostUrl: invite.url,
-        openworkToken: invite.token ?? null,
-        directory: null,
-        displayName: null,
-        autoConnect: true,
-      });
-    }
-
-    const cleanedConnect = stripOpenworkConnectInviteFromUrl(window.location.href);
-    const cleaned = stripOpenworkBundleInviteFromUrl(cleanedConnect);
-    if (cleaned !== window.location.href) {
-      window.history.replaceState(window.history.state ?? null, "", cleaned);
-    }
-  });
+  const openworkServerSettings = openworkServerStore.settings;
+  const openworkServerUrl = openworkServerStore.url;
+  const openworkServerStatus = openworkServerStore.status;
+  const openworkServerCapabilities = openworkServerStore.capabilities;
+  const openworkServerCheckedAt = openworkServerStore.checkedAt;
+  const openworkServerHostInfo = openworkServerStore.hostInfo;
+  const openworkServerDiagnostics = openworkServerStore.diagnostics;
+  const openworkReconnectBusy = openworkServerStore.reconnectBusy;
+  const opencodeRouterInfoState = openworkServerStore.routerInfo;
+  const orchestratorStatusState = openworkServerStore.orchestratorStatus;
+  const openworkAuditEntries = openworkServerStore.auditEntries;
+  const openworkAuditStatus = openworkServerStore.auditStatus;
+  const openworkAuditError = openworkServerStore.auditError;
+  const devtoolsWorkspaceId = openworkServerStore.devtoolsWorkspaceId;
+  const setOpenworkServerSettings = openworkServerStore.setSettings;
+  const setOpenworkServerStatus = openworkServerStore.setStatus;
+  const setOpenworkServerCapabilities = openworkServerStore.setCapabilities;
+  const setOpenworkServerCheckedAt = openworkServerStore.setCheckedAt;
+  const setOpenworkServerHostInfo = openworkServerStore.setHostInfo;
+  const setOpenworkServerDiagnostics = openworkServerStore.setDiagnostics;
+  const setOpenworkReconnectBusy = openworkServerStore.setReconnectBusy;
+  const setOpenworkAuditEntries = openworkServerStore.setAuditEntries;
+  const setOpenworkAuditStatus = openworkServerStore.setAuditStatus;
+  const setOpenworkAuditError = openworkServerStore.setAuditError;
+  const setDevtoolsWorkspaceId = openworkServerStore.setDevtoolsWorkspaceId;
+  const openworkServerBaseUrl = openworkServerStore.baseUrl;
+  const openworkServerAuth = openworkServerStore.auth;
+  const openworkServerClient = openworkServerStore.client;
+  const devtoolsOpenworkClient = openworkServerStore.devtoolsClient;
+  const resolvedOpenworkCapabilities = createMemo(() => openworkServerCapabilities());
 
   createEffect(() => {
     if (typeof document === "undefined") return;
@@ -570,125 +377,6 @@ export default function App() {
   });
 
   createEffect(() => {
-    const pref = startupPreference();
-    const info = openworkServerHostInfo();
-    const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
-    const settingsUrl = normalizeOpenworkServerUrl(openworkServerSettings().urlOverride ?? "") ?? "";
-
-    if (pref === "local") {
-      setOpenworkServerUrl(hostUrl);
-      return;
-    }
-    if (pref === "server") {
-      setOpenworkServerUrl(settingsUrl);
-      return;
-    }
-    setOpenworkServerUrl(hostUrl || settingsUrl);
-  });
-
-  const checkOpenworkServer = async (url: string, token?: string, hostToken?: string) => {
-    const client = createOpenworkServerClient({ baseUrl: url, token, hostToken });
-    try {
-      await client.health();
-    } catch (error) {
-      if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
-        return { status: "limited" as OpenworkServerStatus, capabilities: null };
-      }
-      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
-    }
-
-    if (!token) {
-      return { status: "limited" as OpenworkServerStatus, capabilities: null };
-    }
-
-    try {
-      const caps = await client.capabilities();
-      return { status: "connected" as OpenworkServerStatus, capabilities: caps };
-    } catch (error) {
-      if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
-        return { status: "limited" as OpenworkServerStatus, capabilities: null };
-      }
-      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
-    }
-  };
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!documentVisible()) return;
-    const url = openworkServerBaseUrl().trim();
-    const auth = openworkServerAuth();
-    const token = auth.token;
-    const hostToken = auth.hostToken;
-
-    if (!url) {
-      setOpenworkServerStatus("disconnected");
-      setOpenworkServerCapabilities(null);
-      setOpenworkServerCheckedAt(Date.now());
-      return;
-    }
-
-    let active = true;
-    let busy = false;
-    let timeoutId: number | undefined;
-    let delayMs = 10_000;
-
-    const scheduleNext = () => {
-      if (!active) return;
-      timeoutId = window.setTimeout(run, delayMs);
-    };
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        const result = await checkOpenworkServer(url, token, hostToken);
-        if (!active) return;
-        setOpenworkServerStatus(result.status);
-        setOpenworkServerCapabilities(result.capabilities);
-        delayMs =
-          result.status === "connected" || result.status === "limited"
-            ? 10_000
-            : Math.min(delayMs * 2, 60_000);
-      } catch {
-        delayMs = Math.min(delayMs * 2, 60_000);
-      } finally {
-        if (!active) return;
-        setOpenworkServerCheckedAt(Date.now());
-        busy = false;
-        scheduleNext();
-      }
-    };
-
-    run();
-    onCleanup(() => {
-      active = false;
-      if (timeoutId) window.clearTimeout(timeoutId);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!documentVisible()) return;
-    let active = true;
-
-    const run = async () => {
-      try {
-        const info = await openworkServerInfo();
-        if (active) setOpenworkServerHostInfo(info);
-      } catch {
-        if (active) setOpenworkServerHostInfo(null);
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
     if (!isTauriRuntime()) return;
     const hostInfo = openworkServerHostInfo();
     const port = hostInfo?.port;
@@ -700,122 +388,6 @@ export default function App() {
     updateOpenworkServerSettings({
       ...current,
       portOverride: port,
-    });
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!documentVisible()) return;
-    if (!developerMode()) {
-      setOpenworkServerDiagnostics(null);
-      return;
-    }
-
-    const client = openworkServerClient();
-    if (!client || openworkServerStatus() === "disconnected") {
-      setOpenworkServerDiagnostics(null);
-      return;
-    }
-
-    let active = true;
-    let busy = false;
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        const status = await client.status();
-        if (active) setOpenworkServerDiagnostics(status);
-      } catch {
-        if (active) setOpenworkServerDiagnostics(null);
-      } finally {
-        busy = false;
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!developerMode()) return;
-    if (!documentVisible()) return;
-
-    let busy = false;
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        await workspaceStore.refreshEngine();
-      } finally {
-        busy = false;
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!developerMode()) {
-      setOpenCodeRouterInfoState(null);
-      return;
-    }
-    if (!documentVisible()) return;
-
-    let active = true;
-
-    const run = async () => {
-      try {
-        const info = await opencodeRouterInfo();
-        if (active) setOpenCodeRouterInfoState(info);
-      } catch {
-        if (active) setOpenCodeRouterInfoState(null);
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
-  });
-
-  createEffect(() => {
-    if (!isTauriRuntime()) return;
-    if (!developerMode()) {
-      setOrchestratorStatusState(null);
-      return;
-    }
-    if (!documentVisible()) return;
-
-    let active = true;
-
-    const run = async () => {
-      try {
-        const status = await orchestratorStatus();
-        if (active) setOrchestratorStatusState(status);
-      } catch {
-        if (active) setOrchestratorStatusState(null);
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 10_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
     });
   });
 
@@ -832,10 +404,6 @@ export default function App() {
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
   const mountTime = Date.now();
-  const [lastKnownConfigSnapshot, setLastKnownConfigSnapshot] = createSignal("");
-  const [developerMode, setDeveloperMode] = createSignal(false);
-  const [documentVisible, setDocumentVisible] = createSignal(true);
-
   createEffect(() => {
     if (developerMode()) return;
     clearPerfLogs();
@@ -870,34 +438,7 @@ export default function App() {
       // ignore
     }
   };
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [sessionModelById, setSessionModelById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [pendingSessionModel, setPendingSessionModel] = createSignal<ModelRef | null>(null);
-  const [sessionModelOverridesReady, setSessionModelOverridesReady] = createSignal(false);
-  const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
-  const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
-  const [pendingDefaultModelByWorkspace, setPendingDefaultModelByWorkspace] = createSignal<
-    Record<string, string>
-  >({});
-  const [autoCompactContextReady, setAutoCompactContextReady] = createSignal(false);
-  const [autoCompactContextDirty, setAutoCompactContextDirty] = createSignal(false);
-  const [autoCompactContextApplied, setAutoCompactContextApplied] = createSignal(true);
-  const [autoCompactContextSaving, setAutoCompactContextSaving] = createSignal(false);
-  type PromptFocusReturnTarget = "none" | "composer";
-
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
-  const [providerAuthModalOpen, setProviderAuthModalOpen] = createSignal(false);
-  const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
-  const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
-  const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
-  const [providerAuthPreferredProviderId, setProviderAuthPreferredProviderId] = createSignal<string | null>(null);
-  const [providerAuthReturnFocusTarget, setProviderAuthReturnFocusTarget] =
-    createSignal<PromptFocusReturnTarget>("none");
 
   createEffect(() => {
     const view = currentView();
@@ -940,6 +481,9 @@ export default function App() {
   let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
   const markReloadRequired = (reason: ReloadReason, trigger?: ReloadTrigger) => {
     markReloadRequiredHandler?.(reason, trigger);
+  };
+  const markOpencodeConfigReloadRequired = () => {
+    markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
   };
 
   const sessionStore = createSessionStore({
@@ -996,7 +540,6 @@ export default function App() {
     refreshPendingQuestions,
     selectSession,
     loadEarlierMessages,
-    renameSession,
     respondPermission,
     respondQuestion,
     setSessions,
@@ -1051,105 +594,6 @@ export default function App() {
       setSessionsLoaded(false);
     }
   });
-
-  const [prompt, setPrompt] = createSignal("");
-  const [lastPromptSent, setLastPromptSent] = createSignal("");
-
-  type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
-
-  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => ({
-    type: "file",
-    url: await fileToDataUrl(attachment.file),
-    filename: attachment.name,
-    mime: attachment.mimeType,
-  });
-
-  const buildPromptParts = async (draft: ComposerDraft): Promise<PartInput[]> => {
-    const parts: PartInput[] = [];
-    const text = draft.resolvedText ?? draft.text;
-    parts.push({ type: "text", text } as TextPartInput);
-
-    const root = workspaceProjectDir().trim();
-    const toAbsolutePath = (path: string) => {
-      const trimmed = path.trim();
-      if (!trimmed) return "";
-      if (trimmed.startsWith("/")) return trimmed;
-      // Windows absolute path, e.g. C:\foo\bar
-      if (/^[a-zA-Z]:\\/.test(trimmed)) return trimmed;
-      // Without a workspace root, we cannot safely resolve relative paths.
-      // Returning "" avoids emitting invalid file:// URLs.
-      if (!root) return "";
-      return (root + "/" + trimmed).replace("//", "/");
-    };
-    const filenameFromPath = (path: string) => {
-      const normalized = path.replace(/\\/g, "/");
-      const segments = normalized.split("/").filter(Boolean);
-      return segments[segments.length - 1] ?? "file";
-    };
-
-    for (const part of draft.parts) {
-      if (part.type === "agent") {
-        parts.push({ type: "agent", name: part.name } as AgentPartInput);
-        continue;
-      }
-      if (part.type === "file") {
-        const absolute = toAbsolutePath(part.path);
-        if (!absolute) continue;
-        parts.push({
-          type: "file",
-          mime: "text/plain",
-          url: `file://${absolute}`,
-          filename: filenameFromPath(part.path),
-        } as FilePartInput);
-      }
-    }
-
-    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
-
-    return parts;
-  };
-
-  const buildCommandFileParts = async (draft: ComposerDraft): Promise<FilePartInput[]> => {
-    const parts: FilePartInput[] = [];
-    const root = workspaceProjectDir().trim();
-
-    const toAbsolutePath = (path: string) => {
-      const trimmed = path.trim();
-      if (!trimmed) return "";
-      if (trimmed.startsWith("/")) return trimmed;
-      if (/^[a-zA-Z]:\\/.test(trimmed)) return trimmed;
-      if (!root) return "";
-      return (root + "/" + trimmed).replace("//", "/");
-    };
-
-    const filenameFromPath = (path: string) => {
-      const normalized = path.replace(/\\/g, "/");
-      const segments = normalized.split("/").filter(Boolean);
-      return segments[segments.length - 1] ?? "file";
-    };
-
-    for (const part of draft.parts) {
-      if (part.type !== "file") continue;
-      const absolute = toAbsolutePath(part.path);
-      if (!absolute) continue;
-      parts.push({
-        type: "file",
-        mime: "text/plain",
-        url: `file://${absolute}`,
-        filename: filenameFromPath(part.path),
-      } as FilePartInput);
-    }
-
-    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
-
-    return parts;
-  };
-
-  const assertNoClientError = (result: unknown) => {
-    const maybe = result as { error?: unknown } | null | undefined;
-    if (!maybe || maybe.error === undefined) return;
-    throw new Error(describeProviderError(maybe.error, "Request failed"));
-  };
 
   const describeProviderError = (error: unknown, fallback: string) => {
     const readString = (value: unknown, max = 700) => {
@@ -1234,225 +678,6 @@ export default function App() {
     }
     return ready;
   };
-
-  async function sendPrompt(draft?: ComposerDraft) {
-    const hasExplicitDraft = Boolean(draft);
-    const fallbackText = prompt().trim();
-    const resolvedDraft: ComposerDraft = draft ?? {
-      mode: "prompt",
-      parts: fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : [],
-      attachments: [] as ComposerAttachment[],
-      text: fallbackText,
-    };
-    const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!content && !resolvedDraft.attachments.length) return;
-
-    const ready = await ensureSelectedWorkspaceRuntime();
-    if (!ready) return;
-
-    const c = client();
-    if (!c) return;
-
-    const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(content);
-    const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
-    const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
-    if (compactCommand && !selectedSessionId()) {
-      setError("Select a session with messages before running /compact.");
-      return;
-    }
-
-    let sessionID = selectedSessionId();
-    if (!sessionID) {
-      await createSessionAndOpen();
-      sessionID = selectedSessionId();
-    }
-    if (!sessionID) return;
-
-    setBusy(true);
-    setBusyLabel("status.running");
-    setBusyStartedAt(Date.now());
-    setError(null);
-
-    const perfEnabled = developerMode();
-    const startedAt = perfNow();
-    const visible = messages();
-    const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
-    recordPerfLog(perfEnabled, "session.prompt", "start", {
-      sessionID,
-      mode: resolvedDraft.mode,
-      command: commandName,
-      charCount: content.length,
-      attachmentCount: resolvedDraft.attachments.length,
-      messageCount: visible.length,
-      partCount: visibleParts,
-    });
-
-    try {
-      if (!compactCommand) {
-        setLastPromptSent(content);
-      }
-      if (!hasExplicitDraft) {
-        setPrompt("");
-      }
-
-      const model = selectedSessionModel();
-      const agent = selectedSessionAgent();
-      const parts = await buildPromptParts(resolvedDraft);
-      const selectedVariant = sanitizeModelVariantForRef(model, getVariantFor(model)) ?? undefined;
-      const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
-      const requestVariant = reasoningEffort ? undefined : selectedVariant;
-      const promptOverrides = reasoningEffort
-        ? ({ reasoning_effort: reasoningEffort } as const)
-        : undefined;
-
-      if (resolvedDraft.mode === "shell") {
-        await shellInSession(c, sessionID, content);
-      } else if (resolvedDraft.command || compactCommand) {
-        if (compactCommand) {
-          await compactCurrentSession(sessionID);
-          finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
-            sessionID,
-            mode: resolvedDraft.mode,
-            command: commandName,
-          });
-          return;
-        }
-
-        const command = resolvedDraft.command;
-        if (!command) {
-          throw new Error("Command was not resolved.");
-        }
-
-        // Slash command: route through session.command() API
-        const modelString = `${model.providerID}/${model.modelID}`;
-        const files = await buildCommandFileParts(resolvedDraft);
-
-        // session.command() expects `model` as a provider/model string and only supports file parts.
-        unwrap(
-          await c.session.command({
-            sessionID,
-            command: command.name,
-            arguments: command.arguments,
-            agent: agent ?? undefined,
-            model: modelString,
-            variant: requestVariant,
-            ...(promptOverrides ?? {}),
-            parts: files.length ? files : undefined,
-          }),
-        );
-
-      } else {
-        const result = await c.session.promptAsync({
-          sessionID,
-          model,
-          agent: agent ?? undefined,
-          variant: requestVariant,
-          ...(promptOverrides ?? {}),
-          parts,
-        });
-        assertNoClientError(result);
-
-        setSessionModelById((current) => ({
-          ...current,
-          [sessionID]: model,
-        }));
-
-        setSessionModelOverrideById((current) => {
-          if (!current[sessionID]) return current;
-          const copy = { ...current };
-          delete copy[sessionID];
-          return copy;
-        });
-      }
-
-      finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
-        sessionID,
-        mode: resolvedDraft.mode,
-        command: commandName,
-      });
-    } catch (e) {
-      finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
-        sessionID,
-        mode: resolvedDraft.mode,
-        command: commandName,
-        error: e instanceof Error ? e.message : safeStringify(e),
-      });
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
-    } finally {
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
-    }
-  }
-
-  async function abortSession(sessionID?: string) {
-    const c = client();
-    if (!c) return;
-    const id = (sessionID ?? selectedSessionId() ?? "").trim();
-    if (!id) return;
-    // OpenCode exposes session.abort which interrupts the active prompt/run.
-    // We intentionally don't mutate global busy state here; the SessionView
-    // provides local UX (button disabled + toast) for cancellation.
-    await abortSessionTyped(c, id);
-  }
-
-  function retryLastPrompt() {
-    const text = lastPromptSent().trim();
-    if (!text) return;
-    void sendPrompt({
-      mode: "prompt",
-      text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
-  }
-
-  async function compactCurrentSession(sessionIdOverride?: string) {
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const sessionID = (sessionIdOverride ?? selectedSessionId() ?? "").trim();
-    if (!sessionID) {
-      throw new Error("Select a session before compacting.");
-    }
-
-    const visible = messages();
-    if (!visible.length) {
-      throw new Error("Nothing to compact yet.");
-    }
-
-    const model = selectedSessionModel();
-    const startedAt = perfNow();
-    const modelLabel = `${model.providerID}/${model.modelID}`;
-    recordPerfLog(developerMode(), "session.compact", "start", {
-      sessionID,
-      messageCount: visible.length,
-      model: modelLabel,
-      variant: sanitizeModelVariantForRef(model, getVariantFor(model)) ?? null,
-    });
-
-    try {
-      await compactSessionTyped(c, sessionID, model, {
-        directory: workspaceProjectDir().trim() || undefined,
-      });
-      finishPerf(developerMode(), "session.compact", "done", startedAt, {
-        sessionID,
-        messageCount: visible.length,
-        model: modelLabel,
-      });
-    } catch (error) {
-      finishPerf(developerMode(), "session.compact", "error", startedAt, {
-        sessionID,
-        messageCount: visible.length,
-        model: modelLabel,
-        error: error instanceof Error ? error.message : safeStringify(error),
-      });
-      throw error;
-    }
-  }
 
   const messageIdFromInfo = (message: MessageWithParts) => {
     const id = (message.info as { id?: string | number }).id;
@@ -1600,21 +825,6 @@ export default function App() {
     return next;
   };
 
-  const upsertLocalSession = (next: Session | null | undefined) => {
-    const id = (next as { id?: string } | null)?.id ?? "";
-    if (!id) return;
-
-    const current = sessions();
-    const index = current.findIndex((session) => session.id === id);
-    if (index === -1) {
-      setSessions([...current, next as Session]);
-      return;
-    }
-    const copy = current.slice();
-    copy[index] = next as Session;
-    setSessions(copy);
-  };
-
   // OpenCode keeps reverted messages in the log and uses `session.revert.messageID`
   // as the visibility boundary. OpenWork mirrors that behavior by filtering the
   // displayed transcript.
@@ -1638,187 +848,6 @@ export default function App() {
     );
   });
 
-  const restorePromptFromUserMessage = (message: MessageWithParts) => {
-    const text = message.parts
-      .filter(isVisibleTextPart)
-      .map((part) => String((part as { text?: string }).text ?? ""))
-      .join("");
-    setPrompt(text);
-  };
-
-  async function undoLastUserMessage() {
-    const c = client();
-    const sessionID = (selectedSessionId() ?? "").trim();
-    if (!c || !sessionID) return;
-
-    // Revert is rejected while the session is busy. We *usually* have an accurate
-    // session status via SSE, but to be resilient to transient desync we attempt
-    // an abort even when we think we're idle.
-    await abortSessionSafe(c, sessionID);
-
-    const revertMessageID = selectedSession()?.revert?.messageID ?? null;
-    const users = messages().filter((message) => {
-      const role = (message.info as { role?: string }).role;
-      return role === "user";
-    });
-
-    let target: MessageWithParts | null = null;
-    for (let idx = users.length - 1; idx >= 0; idx -= 1) {
-      const candidate = users[idx];
-      const id = messageIdFromInfo(candidate);
-      if (!id) continue;
-      if (!revertMessageID || id < revertMessageID) {
-        target = candidate;
-        break;
-      }
-    }
-
-    if (!target) return;
-    const messageID = messageIdFromInfo(target);
-    if (!messageID) return;
-
-    const next = await revertSession(c, sessionID, messageID);
-    upsertLocalSession(next);
-    restorePromptFromUserMessage(target);
-  }
-
-  async function redoLastUserMessage() {
-    const c = client();
-    const sessionID = (selectedSessionId() ?? "").trim();
-    if (!c || !sessionID) return;
-
-    await abortSessionSafe(c, sessionID);
-
-    const revertMessageID = selectedSession()?.revert?.messageID ?? null;
-    if (!revertMessageID) return;
-
-    const users = messages().filter((message) => {
-      const role = (message.info as { role?: string }).role;
-      return role === "user";
-    });
-
-    const next = users.find((message) => {
-      const id = messageIdFromInfo(message);
-      return Boolean(id) && id > revertMessageID;
-    });
-
-    if (!next) {
-      const session = await unrevertSession(c, sessionID);
-      upsertLocalSession(session);
-      setPrompt("");
-      return;
-    }
-
-    const messageID = messageIdFromInfo(next);
-    if (!messageID) return;
-
-    const nextSession = await revertSession(c, sessionID, messageID);
-    upsertLocalSession(nextSession);
-
-    let prior: MessageWithParts | null = null;
-    for (let idx = users.length - 1; idx >= 0; idx -= 1) {
-      const candidate = users[idx];
-      const id = messageIdFromInfo(candidate);
-      if (id && id < messageID) {
-        prior = candidate;
-        break;
-      }
-    }
-
-    if (prior) {
-      restorePromptFromUserMessage(prior);
-      return;
-    }
-
-    setPrompt("");
-  }
-
-  async function renameSessionTitle(sessionID: string, title: string) {
-    const trimmed = title.trim();
-    if (!trimmed) {
-      throw new Error("Session name is required");
-    }
-    
-    await renameSession(sessionID, trimmed);
-    await refreshSidebarWorkspaceSessions(workspaceStore.selectedWorkspaceId()).catch(() => undefined);
-  }
-
-  async function deleteSessionById(sessionID: string) {
-    const trimmed = sessionID.trim();
-    if (!trimmed) return;
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const root = workspaceStore.selectedWorkspaceRoot().trim();
-    const directory = toSessionTransportDirectory(root);
-    const params = directory ? { sessionID: trimmed, directory } : { sessionID: trimmed };
-    unwrap(await c.session.delete(params));
-
-    // Remove the deleted session from the store locally, then refetch the
-    // workspace-scoped sidebar session list from the server source of truth.
-    setSessions(sessions().filter((s) => s.id !== trimmed));
-    const activeWsId = workspaceStore.selectedWorkspaceId();
-    await refreshSidebarWorkspaceSessions(activeWsId).catch(() => undefined);
-
-    // If we're currently routed to the deleted session, navigate away immediately.
-    // (Otherwise the route effect can try to re-select a session that no longer exists.)
-    try {
-      const path = location.pathname.toLowerCase();
-      if (path === `/session/${trimmed.toLowerCase()}`) {
-        navigate("/session", { replace: true });
-      }
-    } catch {
-      // ignore
-    }
-
-    // If the deleted session was selected, clear selection so routing can fall back cleanly.
-    if (selectedSessionId() === trimmed) {
-      setSelectedSessionId(null);
-      const activeWorkspace = workspaceStore.selectedWorkspaceId().trim();
-      if (activeWorkspace) {
-        const map = readSessionByWorkspace();
-        if (map[activeWorkspace] === trimmed) {
-          const next = { ...map };
-          delete next[activeWorkspace];
-          writeSessionByWorkspace(next);
-        }
-      }
-    }
-
-    const nextStatus = { ...sessionStatusById() };
-    if (nextStatus[trimmed]) {
-      delete nextStatus[trimmed];
-      setSessionStatusById(nextStatus);
-    }
-  }
-
-
-  async function listAgents(): Promise<Agent[]> {
-    const c = client();
-    if (!c) return [];
-    const list = unwrap(await c.app.agents());
-    return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
-  }
-
-  const BUILTIN_COMPACT_COMMAND = {
-    id: "builtin:compact",
-    name: "compact",
-    description: "Summarize this session to reduce context size.",
-    source: "command" as const,
-  };
-
-  async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
-    const c = client();
-    if (!c) return [];
-    const list = await listCommandsTyped(c, workspaceStore.selectedWorkspaceRoot().trim() || undefined);
-    if (list.some((entry) => entry.name === "compact")) {
-      return list;
-    }
-    return [BUILTIN_COMPACT_COMMAND, ...list];
-  }
-
   function setSessionAgent(sessionID: string, agent: string | null) {
     const trimmed = agent?.trim() ?? "";
     setSessionAgentById((current) => {
@@ -1832,369 +861,6 @@ export default function App() {
     });
   }
 
-  const buildProviderAuthMethods = (
-    methods: Record<string, ProviderAuthMethod[]>,
-    availableProviders: ProviderListItem[],
-    workerType: "local" | "remote",
-  ) => {
-    const merged = Object.fromEntries(
-      Object.entries(methods ?? {}).map(([id, providerMethods]) => [
-        id,
-        (providerMethods ?? []).map((method, methodIndex) => ({
-          ...method,
-          methodIndex,
-        })),
-      ]),
-    ) as Record<string, ProviderAuthMethod[]>;
-    for (const provider of availableProviders ?? []) {
-      const id = provider.id?.trim();
-      if (!id || id === "opencode") continue;
-      if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
-      const existing = merged[id] ?? [];
-      if (existing.some((method) => method.type === "api")) continue;
-      merged[id] = [...existing, { type: "api", label: "API key" }];
-    }
-    for (const [id, providerMethods] of Object.entries(merged)) {
-      const provider = availableProviders.find((item) => item.id === id);
-      const normalizedId = id.trim().toLowerCase();
-      const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
-      const isOpenAiProvider = normalizedId === "openai" || normalizedName === "openai";
-      if (!isOpenAiProvider) continue;
-      merged[id] = providerMethods.filter((method) => {
-        if (method.type !== "oauth") return true;
-        const label = method.label.toLowerCase();
-        const isHeadless = label.includes("headless") || label.includes("device");
-        return workerType === "remote" ? isHeadless : !isHeadless;
-      });
-    }
-    return merged;
-  };
-
-  const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-    const methods = unwrap(await c.provider.auth());
-    return buildProviderAuthMethods(
-      methods as Record<string, ProviderAuthMethod[]>,
-      providers(),
-      workerType,
-    );
-  };
-
-  async function startProviderAuth(
-    providerId?: string,
-    methodIndex?: number,
-  ): Promise<ProviderOAuthStartResult> {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-    try {
-      const cachedMethods = providerAuthMethods();
-      const workerType = selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
-      const authMethods = Object.keys(cachedMethods).length
-        ? cachedMethods
-        : await loadProviderAuthMethods(workerType);
-      const providerIds = Object.keys(authMethods).sort();
-      if (!providerIds.length) {
-        throw new Error("No providers available");
-      }
-
-      const resolved = providerId?.trim() ?? "";
-      if (!resolved) {
-        throw new Error("Provider ID is required");
-      }
-
-      const methods = authMethods[resolved];
-      if (!methods || !methods.length) {
-        throw new Error(`Unknown provider: ${resolved}`);
-      }
-
-      const oauthIndex =
-        methodIndex !== undefined
-          ? methodIndex
-          : methods.find((method) => method.type === "oauth")?.methodIndex ?? -1;
-      if (oauthIndex === -1) {
-        throw new Error(`No OAuth flow available for ${resolved}. Use an API key instead.`);
-      }
-
-      const selectedMethod = methods.find((method) => method.methodIndex === oauthIndex);
-      if (!selectedMethod || selectedMethod.type !== "oauth") {
-        throw new Error(`Selected auth method is not an OAuth flow for ${resolved}.`);
-      }
-
-      const auth = unwrap(await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }));
-      return {
-        methodIndex: oauthIndex,
-        authorization: auth,
-      };
-    } catch (error) {
-      const message = describeProviderError(error, "Failed to connect provider");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
-  async function refreshProviders(options?: { dispose?: boolean }) {
-    const c = client();
-    if (!c) return null;
-
-    if (options?.dispose) {
-      try {
-        unwrap(await c.instance.dispose());
-      } catch {
-        // ignore dispose failures and try reading current state anyway
-      }
-
-      try {
-        await waitForHealthy(client() ?? c, { timeoutMs: 8_000, pollMs: 250 });
-      } catch {
-        // ignore health wait failures and still attempt provider reads
-      }
-    }
-
-    const activeClient = client() ?? c;
-    let disabledProviders = globalSync.data.config.disabled_providers ?? [];
-    try {
-      const config = unwrap(await activeClient.config.get());
-      disabledProviders = Array.isArray(config.disabled_providers) ? config.disabled_providers : [];
-    } catch {
-      // ignore config read failures and continue with current store state
-    }
-    try {
-      const updated = filterProviderList(
-        unwrap(await activeClient.provider.list()),
-        disabledProviders,
-      );
-      globalSync.set("provider", updated);
-      return updated;
-    } catch {
-      try {
-        const fallback = unwrap(await activeClient.config.providers());
-        const mapped = mapConfigProvidersToList(fallback.providers);
-        const previousConnected = providerConnectedIds();
-        const next = filterProviderList(
-          {
-            all: mapped,
-            connected: previousConnected.filter((id) => mapped.some((provider) => provider.id === id)),
-            default: fallback.default,
-          },
-          disabledProviders,
-        );
-        globalSync.set("provider", next);
-        return next;
-      } catch {
-        return null;
-      }
-    }
-  }
-
-  async function completeProviderAuthOAuth(providerId: string, methodIndex: number, code?: string) {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const resolved = providerId?.trim();
-    if (!resolved) {
-      throw new Error("Provider ID is required");
-    }
-
-    if (!Number.isInteger(methodIndex) || methodIndex < 0) {
-      throw new Error("OAuth method is required");
-    }
-
-    const waitForProviderConnection = async (timeoutMs = 15_000, pollMs = 2_000) => {
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < timeoutMs) {
-        try {
-          const updated = await refreshProviders({ dispose: true });
-          if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-            return true;
-          }
-        } catch {
-          // ignore and retry
-        }
-        await new Promise((resolve) => setTimeout(resolve, pollMs));
-      }
-      return false;
-    };
-
-    const isPendingOauthError = (error: unknown) => {
-      const text = error instanceof Error ? error.message : String(error ?? "");
-      return /request timed out/i.test(text) || /ProviderAuthOauthMissing/i.test(text);
-    };
-
-    try {
-      const trimmedCode = code?.trim();
-      const result = await c.provider.oauth.callback({
-        providerID: resolved,
-        method: methodIndex,
-        code: trimmedCode || undefined,
-      });
-      assertNoClientError(result);
-      const updated = await refreshProviders({ dispose: true });
-      const connectedNow = Array.isArray(updated?.connected) && updated.connected.includes(resolved);
-      if (connectedNow) {
-        return { connected: true, message: `Connected ${resolved}` };
-      }
-      const connected = await waitForProviderConnection();
-      if (connected) {
-        return { connected: true, message: `Connected ${resolved}` };
-      }
-      return { connected: false, pending: true };
-    } catch (error) {
-      if (isPendingOauthError(error)) {
-        const updated = await refreshProviders({ dispose: true });
-        if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-          return { connected: true, message: `Connected ${resolved}` };
-        }
-        const connected = await waitForProviderConnection();
-        if (connected) {
-          return { connected: true, message: `Connected ${resolved}` };
-        }
-        return { connected: false, pending: true };
-      }
-      const message = describeProviderError(error, "Failed to complete OAuth");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
-  async function submitProviderApiKey(providerId: string, apiKey: string) {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const trimmed = apiKey.trim();
-    if (!trimmed) {
-      throw new Error("API key is required");
-    }
-
-    try {
-      await c.auth.set({
-        providerID: providerId,
-        auth: { type: "api", key: trimmed },
-      });
-      await refreshProviders({ dispose: true });
-      return `Connected ${providerId}`;
-    } catch (error) {
-      const message = describeProviderError(error, "Failed to save API key");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
-  async function disconnectProvider(providerId: string) {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const resolved = providerId.trim();
-    if (!resolved) {
-      throw new Error("Provider ID is required");
-    }
-
-    const provider = providers().find((entry) => entry.id === resolved) as
-      | (ProviderListItem & { source?: string })
-      | undefined;
-    const canDisableProvider =
-      provider?.source === "config" || provider?.source === "custom";
-
-    const removeProviderAuth = async () => {
-      const authClient = c.auth as unknown as {
-        remove?: (options: { providerID: string }) => Promise<unknown>;
-        set?: (options: { providerID: string; auth: unknown }) => Promise<unknown>;
-      };
-      if (typeof authClient.remove === "function") {
-        const result = await authClient.remove({ providerID: resolved });
-        assertNoClientError(result);
-        return;
-      }
-
-      const rawClient = (c as unknown as { client?: { delete?: (options: { url: string }) => Promise<unknown> } })
-        .client;
-      if (rawClient?.delete) {
-        await rawClient.delete({ url: `/auth/${encodeURIComponent(resolved)}` });
-        return;
-      }
-
-      if (typeof authClient.set === "function") {
-        const result = await authClient.set({ providerID: resolved, auth: null });
-        assertNoClientError(result);
-        return;
-      }
-
-      throw new Error("Provider auth removal is not supported by this client.");
-    };
-
-    const disableProvider = async () => {
-      const config = unwrap(await c.config.get());
-      const disabledProviders = Array.isArray(config.disabled_providers)
-        ? config.disabled_providers
-        : [];
-      if (disabledProviders.includes(resolved)) {
-        return false;
-      }
-
-      const next = [...disabledProviders, resolved];
-      globalSync.set("config", "disabled_providers", next);
-      try {
-        const result = await c.config.update({
-          config: {
-            ...config,
-            disabled_providers: next,
-          },
-        });
-        assertNoClientError(result);
-        markOpencodeConfigReloadRequired();
-      } catch (error) {
-        globalSync.set("config", "disabled_providers", disabledProviders);
-        throw error;
-      }
-      return true;
-    };
-
-    try {
-      await removeProviderAuth();
-      let updated = await refreshProviders({ dispose: true });
-      if (
-        canDisableProvider &&
-        Array.isArray(updated?.connected) &&
-        updated.connected.includes(resolved)
-      ) {
-        const disabled = await disableProvider();
-        if (disabled) {
-          updated = filterProviderList(updated, globalSync.data.config.disabled_providers ?? []);
-          globalSync.set("provider", updated);
-        }
-        if (!Array.isArray(updated?.connected) || !updated.connected.includes(resolved)) {
-          return disabled
-            ? `Disconnected ${resolved} and disabled it in OpenCode config.`
-            : `Disconnected ${resolved}.`;
-        }
-      }
-
-      if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-        return `Removed stored credentials for ${resolved}, but the worker still reports it as connected. Clear any remaining API key or OAuth credentials and restart the worker to fully disconnect.`;
-      }
-      removeProviderFromState(resolved);
-      return `Disconnected ${resolved}`;
-    } catch (error) {
-      const message = describeProviderError(error, "Failed to disconnect provider");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
   function focusSessionPromptSoon() {
     if (typeof window === "undefined" || currentView() !== "session") return;
     requestAnimationFrame(() => {
@@ -2203,89 +869,6 @@ export default function App() {
       });
     });
   }
-
-  async function openProviderAuthModal(options?: {
-    returnFocusTarget?: PromptFocusReturnTarget;
-    preferredProviderId?: string;
-  }) {
-    const workerType = selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
-    setProviderAuthReturnFocusTarget(options?.returnFocusTarget ?? "none");
-    setProviderAuthPreferredProviderId(options?.preferredProviderId?.trim() || null);
-    setProviderAuthBusy(true);
-    setProviderAuthError(null);
-    try {
-      const methods = await loadProviderAuthMethods(workerType);
-      setProviderAuthMethods(methods);
-      setProviderAuthModalOpen(true);
-    } catch (error) {
-      setProviderAuthPreferredProviderId(null);
-      setProviderAuthReturnFocusTarget("none");
-      const message = describeProviderError(error, "Failed to load providers");
-      setProviderAuthError(message);
-      throw error;
-    } finally {
-      setProviderAuthBusy(false);
-    }
-  }
-
-  function closeProviderAuthModal(options?: { restorePromptFocus?: boolean }) {
-    const shouldFocusPrompt =
-      options?.restorePromptFocus ??
-      providerAuthReturnFocusTarget() === "composer";
-    setProviderAuthModalOpen(false);
-    setProviderAuthError(null);
-    setProviderAuthPreferredProviderId(null);
-    setProviderAuthReturnFocusTarget("none");
-    if (shouldFocusPrompt) {
-      focusSessionPromptSoon();
-    }
-  }
-
-  async function saveSessionExport(sessionID: string) {
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const session = unwrap(await c.session.get({ sessionID }));
-    const messages = unwrap(await c.session.messages({ sessionID }));
-    let todos: TodoItem[] = [];
-    try {
-      todos = unwrap(await c.session.todo({ sessionID }));
-    } catch {
-      // ignore
-    }
-
-    const payload = {
-      session,
-      messages,
-      todos,
-      exportedAt: new Date().toISOString(),
-      source: "openwork",
-    };
-
-    const baseName = session.title || session.slug || session.id;
-    const safeName = baseName
-      .toLowerCase()
-      .replace(/[^a-z0-9\-_.]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80);
-    const fileName = `session-${safeName || session.id}.json`;
-    return downloadSessionExport(payload, fileName);
-  }
-
-  function downloadSessionExport(payload: unknown, fileName: string) {
-    const json = JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
-    return fileName;
-  }
-
 
   async function respondPermissionAndRemember(
     requestID: string,
@@ -2305,18 +888,6 @@ export default function App() {
   const [notionSkillInstalled, setNotionSkillInstalled] = createSignal(false);
   const [tryNotionPromptVisible, setTryNotionPromptVisible] = createSignal(false);
   const notionIsActive = createMemo(() => notionStatus() === "connected");
-  const [mcpServers, setMcpServers] = createSignal<McpServerEntry[]>([]);
-  const [mcpStatus, setMcpStatus] = createSignal<string | null>(null);
-  const [mcpLastUpdatedAt, setMcpLastUpdatedAt] = createSignal<number | null>(null);
-  const [mcpStatuses, setMcpStatuses] = createSignal<McpStatusMap>({});
-  const [mcpConnectingName, setMcpConnectingName] = createSignal<string | null>(null);
-  const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
-
-  // MCP OAuth modal state
-  const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
-  const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
-  const [mcpAuthNeedsReload, setMcpAuthNeedsReload] = createSignal(false);
-
   let workspaceStore!: ReturnType<typeof createWorkspaceStore>;
 
   const extensionsStore = createExtensionsStore({
@@ -2410,262 +981,65 @@ export default function App() {
     );
   };
 
-  const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const sessionModelOverridesKey = (workspaceId: string) =>
-    `${SESSION_MODEL_PREF_KEY}.${workspaceId}`;
-
-  const parseSessionModelOverrides = (raw: string | null) => {
-    if (!raw) return {} as Record<string, ModelRef>;
-    try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return {} as Record<string, ModelRef>;
-      }
-      const next: Record<string, ModelRef> = {};
-      for (const [sessionId, value] of Object.entries(parsed)) {
-        if (typeof value === "string") {
-          const model = parseModelRef(value);
-          if (model) next[sessionId] = model;
-          continue;
-        }
-        if (!value || typeof value !== "object") continue;
-        const record = value as Record<string, unknown>;
-        if (typeof record.providerID === "string" && typeof record.modelID === "string") {
-          next[sessionId] = {
-            providerID: record.providerID,
-            modelID: record.modelID,
-          };
-        }
-      }
-      return next;
-    } catch {
-      return {} as Record<string, ModelRef>;
-    }
-  };
-
-  const serializeSessionModelOverrides = (overrides: Record<string, ModelRef>) => {
-    const entries = Object.entries(overrides);
-    if (!entries.length) return null;
-    const payload: Record<string, string> = {};
-    for (const [sessionId, model] of entries) {
-      payload[sessionId] = formatModelRef(model);
-    }
-    return JSON.stringify(payload);
-  };
-
-  const parseDefaultModelFromConfig = (content: string | null) => {
-    if (!content) return null;
-    try {
-      const parsed = parse(content) as Record<string, unknown> | undefined;
-      const rawModel = typeof parsed?.model === "string" ? parsed.model : null;
-      return parseModelRef(rawModel);
-    } catch {
-      return null;
-    }
-  };
-
-  const formatConfigWithDefaultModel = (content: string | null, model: ModelRef) => {
-    let config: Record<string, unknown> = {};
-    if (content?.trim()) {
-      try {
-        const parsed = parse(content) as Record<string, unknown> | undefined;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          config = { ...parsed };
-        }
-      } catch {
-        config = {};
-      }
-    }
-
-    if (!config["$schema"]) {
-      config["$schema"] = "https://opencode.ai/config.json";
-    }
-
-    config.model = formatModelRef(model);
-    return `${JSON.stringify(config, null, 2)}\n`;
-  };
-
-  const parseAutoCompactContextFromConfig = (content: string | null) => {
-    if (!content) return null;
-    try {
-      const parsed = parse(content) as Record<string, unknown> | undefined;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return null;
-      }
-      const compaction = parsed.compaction;
-      if (!compaction || typeof compaction !== "object" || Array.isArray(compaction)) {
-        return null;
-      }
-      return typeof (compaction as Record<string, unknown>).auto === "boolean"
-        ? ((compaction as Record<string, unknown>).auto as boolean)
-        : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const formatConfigWithAutoCompactContext = (content: string | null, enabled: boolean) => {
-    let config: Record<string, unknown> = {};
-    if (content?.trim()) {
-      try {
-        const parsed = parse(content) as Record<string, unknown> | undefined;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          config = { ...parsed };
-        }
-      } catch {
-        config = {};
-      }
-    }
-
-    if (!config["$schema"]) {
-      config["$schema"] = "https://opencode.ai/config.json";
-    }
-
-    const compaction =
-      typeof config.compaction === "object" && config.compaction && !Array.isArray(config.compaction)
-        ? { ...(config.compaction as Record<string, unknown>) }
-        : {};
-
-    compaction.auto = enabled;
-    config.compaction = compaction;
-    return `${JSON.stringify(config, null, 2)}\n`;
-  };
-
-  const getConfigSnapshot = (content: string | null) => {
-    if (!content?.trim()) return "";
-    try {
-      const parsed = parse(content) as Record<string, unknown>;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const copy = { ...parsed };
-        delete copy.model;
-        return JSON.stringify(copy);
-      }
-      return content;
-    } catch {
-      return content;
-    }
-  };
-
-  const ensureRecord = (value: unknown): Record<string, unknown> => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return value as Record<string, unknown>;
-  };
-
-  const readAutoCompactContextFromRecord = (value: unknown) => {
-    const compaction = ensureRecord(ensureRecord(value).compaction);
-    return typeof compaction.auto === "boolean" ? compaction.auto : null;
-  };
-
-  const normalizeAuthorizedFolderPath = (input: string | null | undefined) => {
-    const trimmed = (input ?? "").trim();
-    if (!trimmed) return "";
-    const withoutWildcard = trimmed.replace(/[\\/]\*+$/, "");
-    return normalizeDirectoryQueryPath(withoutWildcard);
-  };
-
-  const authorizedFolderToExternalDirectoryKey = (folder: string) => {
-    const normalized = normalizeAuthorizedFolderPath(folder);
-    if (!normalized) return "";
-    return normalized === "/" ? "/*" : `${normalized}/*`;
-  };
-
-  const externalDirectoryKeyToAuthorizedFolder = (key: string, value: unknown) => {
-    if (value !== "allow") return null;
-    const trimmed = key.trim();
-    if (!trimmed) return null;
-    if (trimmed === "/*") return "/";
-    if (!trimmed.endsWith("/*")) return null;
-    return normalizeAuthorizedFolderPath(trimmed.slice(0, -2));
-  };
-
-  const readAuthorizedFoldersFromConfig = (opencodeConfig: Record<string, unknown>) => {
-    const permission = ensureRecord(opencodeConfig.permission);
-    const externalDirectory = ensureRecord(permission.external_directory);
-    const folders: string[] = [];
-    const hiddenEntries: Record<string, unknown> = {};
-    const seen = new Set<string>();
-
-    for (const [key, value] of Object.entries(externalDirectory)) {
-      const folder = externalDirectoryKeyToAuthorizedFolder(key, value);
-      if (!folder) {
-        hiddenEntries[key] = value;
-        continue;
-      }
-      if (seen.has(folder)) continue;
-      seen.add(folder);
-      folders.push(folder);
-    }
-
-    return { folders, hiddenEntries };
-  };
-
-  const buildAuthorizedFoldersStatus = (preservedCount: number, action?: string) => {
-    const preservedLabel =
-      preservedCount > 0
-        ? `Preserving ${preservedCount} non-folder permission ${preservedCount === 1 ? "entry" : "entries"}.`
-        : null;
-    if (action && preservedLabel) return `${action} ${preservedLabel}`;
-    return action ?? preservedLabel;
-  };
-
-  const mergeAuthorizedFoldersIntoExternalDirectory = (
-    folders: string[],
-    hiddenEntries: Record<string, unknown>,
-  ): Record<string, unknown> | undefined => {
-    const next: Record<string, unknown> = { ...hiddenEntries };
-    for (const folder of folders) {
-      const key = authorizedFolderToExternalDirectoryKey(folder);
-      if (!key) continue;
-      next[key] = "allow";
-    }
-    return Object.keys(next).length ? next : undefined;
-  };
-  const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
-  const [modelPickerTarget, setModelPickerTarget] = createSignal<
-    "session" | "default"
-  >("session");
-  const [modelPickerQuery, setModelPickerQuery] = createSignal("");
-  const [modelPickerReturnFocusTarget, setModelPickerReturnFocusTarget] =
-    createSignal<PromptFocusReturnTarget>("none");
-
   const [showThinking, setShowThinking] = createSignal(false);
-  const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  const [modelVariantMap, setModelVariantMap] = createSignal<Record<string, string>>({});
-  const modelVariant = () => getVariantFor(selectedSessionModel());
-  const getVariantFor = (ref: ModelRef) => modelVariantMap()[`${ref.providerID}/${ref.modelID}`] ?? null;
-  const updateModelVariant = (ref: ModelRef, value: string | null) => {
-    const key = `${ref.providerID}/${ref.modelID}`;
-    setModelVariantMap((prev) => {
-      const next = { ...prev };
-      if (value) next[key] = value;
-      else delete next[key];
-      return next;
-    });
-  };
-  const setModelVariant = (value: string | null) => updateModelVariant(selectedSessionModel(), value);
-  const toggleAutoCompactContext = () => {
-    if (autoCompactContextSaving()) return;
-    setAutoCompactContext((value) => !value);
-    setAutoCompactContextDirty(true);
-  };
-  const [authorizedFolders, setAuthorizedFolders] = createSignal<string[]>([]);
-  const [authorizedFolderDraft, setAuthorizedFolderDraft] = createSignal("");
-  const [, setAuthorizedFolderHiddenEntries] = createSignal<Record<string, unknown>>({});
-  const [authorizedFoldersLoading, setAuthorizedFoldersLoading] = createSignal(false);
-  const [authorizedFoldersSaving, setAuthorizedFoldersSaving] = createSignal(false);
-  const [authorizedFoldersStatus, setAuthorizedFoldersStatus] = createSignal<string | null>(null);
-  const [authorizedFoldersError, setAuthorizedFoldersError] = createSignal<string | null>(null);
-
-  const resolveCodexReasoningEffort = (modelID: string, variant: string | null) => {
-    if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
-    const normalized = normalizeModelBehaviorValue(variant);
-    if (!normalized || normalized === "none") return undefined;
-    if (normalized === "minimal") return "low";
-    if (normalized === "xhigh" || normalized === "max") return "high";
-    if (!["low", "medium", "high"].includes(normalized)) return undefined;
-    return normalized;
-  };
+  const modelPreferences = useModelPreferences({
+    selectedSessionId,
+    messages,
+    providers,
+    providerDefaults,
+    providerConnectedIds,
+    client,
+    selectedWorkspaceId: () => workspaceStore.selectedWorkspaceId(),
+    selectedWorkspaceDisplay: () => workspaceStore.selectedWorkspaceDisplay(),
+    selectedWorkspacePath: () => workspaceStore.selectedWorkspacePath(),
+    openworkServerClient,
+    openworkServerStatus,
+    openworkServerCapabilities: resolvedOpenworkCapabilities,
+    runtimeWorkspaceId: () => workspaceStore.runtimeWorkspaceId(),
+    markOpencodeConfigReloadRequired,
+    focusSessionPromptSoon,
+    setError,
+  });
+  const {
+    defaultModel,
+    setDefaultModel,
+    setLegacyDefaultModel,
+    setDefaultModelExplicit,
+    sessionModelOverrideById,
+    setSessionModelOverrideById,
+    sessionModelById,
+    setSessionModelById,
+    pendingSessionModel,
+    setPendingSessionModel,
+    selectedSessionModel,
+    selectedSessionModelLabel,
+    autoCompactContext,
+    setAutoCompactContext,
+    autoCompactContextSaving,
+    toggleAutoCompactContext,
+    modelVariantMap,
+    setModelVariantMap,
+    modelVariant,
+    getVariantFor,
+    updateModelVariant,
+    setModelVariant,
+    sanitizeModelVariantForRef,
+    getModelBehaviorCopy,
+    resolveCodexReasoningEffort,
+    modelPickerOpen,
+    modelOptions,
+    filteredModelOptions,
+    modelPickerQuery,
+    setModelPickerQuery,
+    modelPickerTarget,
+    modelPickerCurrent,
+    closeModelPicker,
+    openSessionModelPicker,
+    openDefaultModelPicker,
+    applyModelSelection,
+    setPendingDefaultModelByWorkspace,
+  } = modelPreferences;
 
   workspaceStore = createWorkspaceStore({
     startupPreference,
@@ -2913,383 +1287,6 @@ export default function App() {
     return;
   });
 
-  const resolveSharedBundleWorkerTarget = () => {
-    const pref = startupPreference();
-    const hostInfo = openworkServerHostInfo();
-    const settings = openworkServerSettings();
-
-    const localHostUrl = normalizeOpenworkServerUrl(hostInfo?.baseUrl ?? "") ?? "";
-    const localToken = hostInfo?.clientToken?.trim() ?? "";
-    const serverHostUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
-    const serverToken = settings.token?.trim() ?? "";
-
-    if (pref === "server") {
-      return {
-        hostUrl: serverHostUrl || localHostUrl,
-        token: serverToken || localToken,
-      };
-    }
-
-    if (pref === "local") {
-      return {
-        hostUrl: localHostUrl || serverHostUrl,
-        token: localToken || serverToken,
-      };
-    }
-
-    if (localHostUrl) {
-      return {
-        hostUrl: localHostUrl,
-        token: localToken || serverToken,
-      };
-    }
-
-    return {
-      hostUrl: serverHostUrl,
-      token: serverToken || localToken,
-    };
-  };
-
-  const isSharedBundleImportWorkspace = (workspace: WorkspaceDisplay | WorkspaceInfo | null) => {
-    if (!workspace?.id?.trim()) return false;
-    if (workspace.workspaceType === "local") {
-      return Boolean(workspace.path?.trim());
-    }
-    return Boolean(
-      workspace.remoteType === "openwork" ||
-        workspace.openworkHostUrl?.trim() ||
-        workspace.openworkWorkspaceId?.trim()
-    );
-  };
-
-  const resolveSharedBundleImportTargetForWorkspace = (
-    workspace: WorkspaceDisplay | WorkspaceInfo | null,
-  ): SharedBundleImportTarget | undefined => {
-    if (!workspace) return undefined;
-    if (workspace.workspaceType === "local") {
-      const localRoot = workspace.path?.trim() ?? "";
-      return localRoot ? { localRoot } : undefined;
-    }
-
-    const workspaceId =
-      workspace.openworkWorkspaceId?.trim() ||
-      parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
-      parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
-      null;
-    const directoryHint = workspace.directory?.trim() || workspace.path?.trim() || null;
-    if (workspaceId || directoryHint) {
-      return {
-        workspaceId,
-        directoryHint,
-      };
-    }
-    return undefined;
-  };
-
-  const resolveActiveSharedBundleImportTarget = (): SharedBundleImportTarget => {
-    const active = workspaceStore.selectedWorkspaceDisplay();
-    if (active.workspaceType === "local") {
-      return { localRoot: workspaceStore.selectedWorkspaceRoot().trim() };
-    }
-
-    return {
-      workspaceId:
-        active.openworkWorkspaceId?.trim() ||
-        parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
-        parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
-        null,
-      directoryHint: active.directory?.trim() || active.path?.trim() || null,
-    };
-  };
-
-  const waitForSharedBundleImportTarget = async (timeoutMs = 20_000, target?: SharedBundleImportTarget) => {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-      const client = openworkServerClient();
-      if (client && openworkServerStatus() === "connected") {
-        if (target?.workspaceId?.trim() || target?.localRoot?.trim() || target?.directoryHint?.trim()) {
-          try {
-            const matchId = await workspaceStore.ensureRuntimeWorkspaceId({
-              workspaceId: target.workspaceId,
-              localRoot: target.localRoot,
-              directoryHint: target.directoryHint,
-              strictMatch: true,
-            });
-            if (matchId) {
-              return { client, workspaceId: matchId };
-            }
-          } catch {
-            // ignore and keep polling
-          }
-        } else {
-          const workspaceId = runtimeWorkspaceId();
-          if (workspaceId) {
-            return { client, workspaceId };
-          }
-        }
-      }
-      await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, 200);
-      });
-    }
-    throw new Error("OpenWork worker is not ready yet.");
-  };
-
-  const importSharedBundlePayload = async (bundle: SharedBundleV1, target?: SharedBundleImportTarget) => {
-    const { client, workspaceId } = await waitForSharedBundleImportTarget(20_000, target);
-    const { payload, importedSkillsCount } = buildImportPayloadFromBundle(bundle);
-    await client.importWorkspace(workspaceId, payload);
-    await refreshActiveWorkspaceServerConfig(workspaceId);
-    await refreshSkills({ force: true });
-    await refreshHubSkills({ force: true });
-    if (importedSkillsCount > 0) {
-      markReloadRequired("skills", {
-        type: "skill",
-        name: bundle.name?.trim() || undefined,
-        action: "added",
-      });
-      console.log(`[openwork] imported ${importedSkillsCount} skills from share bundle`);
-    }
-  };
-
-  const importSharedBundleIntoActiveWorker = async (
-    request: SharedBundleDeepLink,
-    target?: SharedBundleImportTarget,
-    bundleOverride?: SharedBundleV1,
-  ) => {
-    try {
-      const bundle = bundleOverride ?? (await fetchSharedBundle(request.bundleUrl, openworkServerClient()));
-      await importSharedBundlePayload(bundle, target);
-      setError(null);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setError(addOpencodeCacheHint(message));
-      return false;
-    }
-  };
-
-  const createWorkerForSharedBundle = async (request: SharedBundleDeepLink, bundle: SharedBundleV1) => {
-    const target = resolveSharedBundleWorkerTarget();
-    const hostUrl = target.hostUrl.trim();
-    const token = target.token.trim();
-    if (!hostUrl || !token) {
-      throw new Error("Share link detected. Configure an OpenWork worker host and token, then open the link again.");
-    }
-
-    const label = (request.label?.trim() || bundle.name?.trim() || "Shared setup").slice(0, 80);
-    const ok = await workspaceStore.createRemoteWorkspaceFlow({
-      openworkHostUrl: hostUrl,
-      openworkToken: token,
-      directory: null,
-      displayName: label,
-      manageBusy: false,
-      closeModal: false,
-    });
-
-    if (!ok) {
-      throw new Error("Failed to create a worker from this share link.");
-    }
-  };
-
-  const startWorkspaceFromTemplate = async (folder: string | null) => {
-    const request = sharedTemplateStartRequest();
-    if (!request || sharedTemplateStartBusy()) return false;
-
-    setSharedTemplateStartBusy(true);
-
-    try {
-      const ok = await workspaceStore.createWorkspaceFlow(request.defaultPreset, folder);
-      if (!ok) return false;
-
-      const imported = await importSharedBundleIntoActiveWorker(
-        request.request,
-        {
-          localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-        },
-        request.bundle,
-      );
-
-      if (!imported) return false;
-
-      setSharedTemplateStartRequest(null);
-      setError(null);
-      return true;
-    } finally {
-      setSharedTemplateStartBusy(false);
-    }
-  };
-
-  const createWorkspaceFromBundle = async (
-    bundle: SharedWorkspaceProfileBundleV1,
-    folder: string | null,
-    defaultPreset = defaultPresetFromTemplateBundle(bundle),
-  ) => {
-    const request = {
-      bundleUrl: "",
-      intent: "new_worker" as const,
-      source: "cloud-template" as const,
-      label: bundle.name,
-    };
-
-    const ok = await workspaceStore.createWorkspaceFlow(defaultPreset, folder);
-    if (!ok) return false;
-
-    return importSharedBundleIntoActiveWorker(
-      request,
-      {
-        localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-      },
-      bundle,
-    );
-  };
-
-  const importSharedSkillIntoWorkspace = async (workspaceId: string) => {
-    if (sharedSkillDestinationBusyId()) return;
-    const destination = sharedSkillDestinationRequest();
-    if (!destination) return;
-
-    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
-    if (!isSharedBundleImportWorkspace(workspace)) {
-      setError("This worker cannot accept shared skills yet.");
-      return;
-    }
-
-    setView("dashboard");
-    setTab("scheduled");
-    setError(null);
-    setSharedSkillDestinationBusyId(workspaceId);
-
-    try {
-      const ok = await workspaceStore.activateWorkspace(workspaceId);
-      if (!ok) return;
-
-      const imported = await importSharedBundleIntoActiveWorker(
-        destination.request,
-        resolveSharedBundleImportTargetForWorkspace(workspace),
-        destination.bundle,
-      );
-      if (!imported) return;
-
-      showSharedSkillSuccessToast({
-        title: "Skill added",
-        description: `Added '${destination.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspace)}.`,
-      });
-      setSharedSkillDestinationRequest(null);
-      setSharedBundleCreateWorkerRequest(null);
-      setSharedBundleNoticeShown(false);
-    } finally {
-      setSharedSkillDestinationBusyId(null);
-    }
-  };
-
-  const processSharedBundleInvite = async (request: SharedBundleDeepLink) => {
-    const bundle = await fetchSharedBundle(request.bundleUrl, openworkServerClient());
-
-    if (bundle.type === "skill") {
-      setView("dashboard");
-      setTab("scheduled");
-      setError(null);
-      setSharedSkillDestinationRequest({ request, bundle });
-      return { mode: "choice" as const, bundle };
-    }
-
-    if (bundle.type === "skills-set") {
-      setView("dashboard");
-      setTab("skills");
-      setError(null);
-      setSharedBundleImportChoice({ request, bundle });
-      return { mode: "choice" as const, bundle };
-    }
-
-    if (bundle.type === "workspace-profile" && request.intent === "new_worker" && isTauriRuntime()) {
-      setView("dashboard");
-      setTab("scheduled");
-      setError(null);
-      setSharedBundleCreateWorkerRequest(null);
-      setSharedBundleImportChoice(null);
-      setSharedTemplateStartRequest({
-        request,
-        bundle,
-        defaultPreset: defaultPresetFromTemplateBundle(bundle),
-      });
-      return { mode: "start_with_template_modal" as const, bundle };
-    }
-
-    if (request.intent === "import_current") {
-      const client = openworkServerClient();
-      const connected = openworkServerStatus() === "connected";
-      const target = resolveActiveSharedBundleImportTarget();
-      const hasTargetHint = Boolean(target.workspaceId?.trim() || target.localRoot?.trim() || target.directoryHint?.trim());
-      if (!client || !connected || !hasTargetHint) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Connect to a writable OpenWork worker to import this bundle.");
-        }
-        return { mode: "blocked_import_current" as const, bundle };
-      }
-    } else {
-      const target = resolveSharedBundleWorkerTarget();
-      if (!target.hostUrl.trim() || !target.token.trim()) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Configure an OpenWork host and token to create a new worker.");
-        }
-        return { mode: "blocked_new_worker" as const, bundle };
-      }
-    }
-
-    if (request.intent === "new_worker") {
-      await createWorkerForSharedBundle(request, bundle);
-    }
-
-    await importSharedBundlePayload(bundle, resolveActiveSharedBundleImportTarget());
-    setError(null);
-    return { mode: "imported" as const, bundle };
-  };
-
-  createEffect(() => {
-    const request = pendingSharedBundleInvite();
-    if (!request || booting()) {
-      return;
-    }
-
-    if (untrack(sharedBundleImportBusy)) {
-      return;
-    }
-
-    let cancelled = false;
-    setSharedBundleImportBusy(true);
-
-    void (async () => {
-      try {
-        await processSharedBundleInvite(request);
-        if (cancelled) return;
-      } catch (error) {
-        if (!cancelled) {
-          const message = error instanceof Error ? error.message : safeStringify(error);
-          setError(addOpencodeCacheHint(message));
-        }
-      } finally {
-        if (!cancelled) {
-          const nextPendingInvite = pendingSharedBundleInvite();
-          const shouldClearPendingInvite = nextPendingInvite === request;
-          setSharedBundleImportBusy(false);
-          if (shouldClearPendingInvite) {
-            setPendingSharedBundleInvite(null);
-            setSharedBundleNoticeShown(false);
-          } else if (nextPendingInvite) {
-            setPendingSharedBundleInvite({ ...nextPendingInvite });
-          }
-        }
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
   createEffect(() => {
     if (!developerMode()) {
       setDevtoolsWorkspaceId(null);
@@ -3394,7 +1391,41 @@ export default function App() {
 
   const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
   const openworkServerWorkspaceReady = createMemo(() => Boolean(runtimeWorkspaceId()));
-  const resolvedOpenworkCapabilities = createMemo(() => openworkServerCapabilities());
+  const mcpStore = createMcpStore({
+    client,
+    setClient,
+    developerMode,
+    workspaceProjectDir: () => workspaceStore.projectDir(),
+    setWorkspaceProjectDir: workspaceStore.setProjectDir,
+    selectedWorkspaceType: () => workspaceStore.selectedWorkspaceDisplay().workspaceType,
+    runtimeWorkspaceId,
+    ensureRuntimeWorkspaceId: () => workspaceStore.ensureRuntimeWorkspaceId(),
+    openworkServerClient,
+    openworkServerStatus,
+    openworkServerCapabilities: resolvedOpenworkCapabilities,
+    openworkServerBaseUrl,
+    openworkServerAuth,
+    markReloadRequired,
+  });
+  const {
+    mcpServers,
+    mcpStatus,
+    mcpLastUpdatedAt,
+    mcpStatuses,
+    mcpConnectingName,
+    selectedMcp,
+    setSelectedMcp,
+    mcpAuthModalOpen,
+    mcpAuthEntry,
+    mcpAuthNeedsReload,
+    refreshMcpServers,
+    connectMcp,
+    authorizeMcp,
+    logoutMcpAuth,
+    removeMcp,
+    closeMcpAuthModal,
+    completeMcpAuthModal,
+  } = mcpStore;
   const openworkServerCanWriteSkills = createMemo(
     () =>
       openworkServerReady() &&
@@ -3472,97 +1503,26 @@ export default function App() {
   const [autoConnectRemoteWorkspaceOverlayOpen, setAutoConnectRemoteWorkspaceOverlayOpen] = createSignal(false);
   const [pendingDenAuthDeepLink, setPendingDenAuthDeepLink] = createSignal<DenAuthDeepLink | null>(null);
   const [processingDenAuthDeepLink, setProcessingDenAuthDeepLink] = createSignal(false);
-  const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
-  const [sharedTemplateStartRequest, setSharedTemplateStartRequest] =
-    createSignal<SharedTemplateStartRequest | null>(null);
-  const [sharedTemplateStartBusy, setSharedTemplateStartBusy] = createSignal(false);
-  const [sharedBundleCreateWorkerRequest, setSharedBundleCreateWorkerRequest] =
-    createSignal<SharedBundleCreateWorkerRequest | null>(null);
-  const [sharedSkillDestinationRequest, setSharedSkillDestinationRequest] =
-    createSignal<SharedSkillDestinationRequest | null>(null);
-  const [sharedSkillDestinationBusyId, setSharedSkillDestinationBusyId] = createSignal<string | null>(null);
-  const [sharedBundleImportChoice, setSharedBundleImportChoice] = createSignal<SharedBundleImportChoice | null>(null);
-  const [sharedBundleImportBusy, setSharedBundleImportBusy] = createSignal(false);
-  const [sharedBundleImportError, setSharedBundleImportError] = createSignal<string | null>(null);
-  const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
-  const [sharedSkillSuccessToast, setSharedSkillSuccessToast] = createSignal<SharedSkillSuccessToast | null>(null);
+  const [startupSharedBundleInvite, setStartupSharedBundleInvite] = createSignal<{
+    bundleUrl: string;
+    intent: SharedBundleImportIntent;
+    source?: string;
+    orgId?: string;
+    label?: string;
+  } | null>(null);
+  useOpenworkServerBootstrap({
+    onboardingStep,
+    setStartupPreference,
+    setOnboardingStep,
+    setOpenworkServerSettings,
+    setStartupSharedBundleInvite,
+    setPendingRemoteConnectDeepLink,
+  });
   const recentClaimedDeepLinks = new Map<string, number>();
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
   const [renameWorkspaceName, setRenameWorkspaceName] = createSignal("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = createSignal(false);
-  let sharedSkillSuccessToastTimer: number | null = null;
-
-  const clearSharedSkillSuccessToast = () => {
-    if (sharedSkillSuccessToastTimer) {
-      window.clearTimeout(sharedSkillSuccessToastTimer);
-      sharedSkillSuccessToastTimer = null;
-    }
-    setSharedSkillSuccessToast(null);
-  };
-
-  const showSharedSkillSuccessToast = (toast: SharedSkillSuccessToast) => {
-    if (sharedSkillSuccessToastTimer) {
-      window.clearTimeout(sharedSkillSuccessToastTimer);
-    }
-    setSharedSkillSuccessToast(toast);
-    sharedSkillSuccessToastTimer = window.setTimeout(() => {
-      sharedSkillSuccessToastTimer = null;
-      setSharedSkillSuccessToast(null);
-    }, 4200);
-  };
-
-  onCleanup(() => {
-    if (sharedSkillSuccessToastTimer) {
-      window.clearTimeout(sharedSkillSuccessToastTimer);
-    }
-  });
-
-  const createWorkspaceDefaultPreset = createMemo<WorkspacePreset>(() =>
-    sharedBundleCreateWorkerRequest()?.defaultPreset ?? "starter"
-  );
-  const sharedTemplateStartItems = createMemo(() => {
-    const request = sharedTemplateStartRequest();
-    return request ? describeSharedBundleImport(request.bundle).items : [];
-  });
-
-  const sharedSkillDestinationWorkspaces = createMemo(() => {
-    const activeId = workspaceStore.selectedWorkspaceId();
-    return workspaceStore
-      .workspaces()
-      .filter((workspace) => isSharedBundleImportWorkspace(workspace))
-      .slice()
-      .sort((a, b) => {
-        if (a.id === activeId && b.id !== activeId) return -1;
-        if (b.id === activeId && a.id !== activeId) return 1;
-        const aLabel =
-          a.displayName?.trim() ||
-          a.openworkWorkspaceName?.trim() ||
-          a.name?.trim() ||
-          a.directory?.trim() ||
-          a.path?.trim() ||
-          a.baseUrl?.trim() ||
-          "";
-        const bLabel =
-          b.displayName?.trim() ||
-          b.openworkWorkspaceName?.trim() ||
-          b.name?.trim() ||
-          b.directory?.trim() ||
-          b.path?.trim() ||
-          b.baseUrl?.trim() ||
-          "";
-        return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });
-      });
-  });
-
-  const describeWorkspaceForToasts = (workspace: WorkspaceDisplay | WorkspaceInfo | null) =>
-    workspace?.displayName?.trim() ||
-    workspace?.openworkWorkspaceName?.trim() ||
-    workspace?.name?.trim() ||
-    workspace?.directory?.trim() ||
-    workspace?.path?.trim() ||
-    workspace?.baseUrl?.trim() ||
-    "the selected worker";
 
   const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
     const parsed = parseRemoteConnectDeepLink(rawUrl);
@@ -3612,21 +1572,6 @@ export default function App() {
     return true;
   };
 
-  const queueSharedBundleDeepLink = (rawUrl: string): boolean => {
-    const parsed = parseSharedBundleDeepLink(rawUrl);
-    if (!parsed) {
-      return false;
-    }
-    setPendingSharedBundleInvite(parsed);
-    setSharedSkillDestinationRequest(null);
-    setSharedSkillDestinationBusyId(null);
-    setSharedBundleImportChoice(null);
-    setSharedBundleCreateWorkerRequest(null);
-    setSharedBundleImportError(null);
-    setSharedBundleNoticeShown(false);
-    return true;
-  };
-
   const stripHandledBrowserDeepLink = (rawUrl: string) => {
     if (typeof window === "undefined" || isTauriRuntime()) {
       return;
@@ -3668,7 +1613,7 @@ export default function App() {
 
       const matchedDen = queueDenAuthDeepLink(url);
       const matchedRemote = !matchedDen && queueRemoteConnectDeepLink(url);
-      const matchedBundle = !matchedDen && !matchedRemote && queueSharedBundleDeepLink(url);
+      const matchedBundle = !matchedDen && !matchedRemote && sharedBundleFlow.queueSharedBundleDeepLink(url);
       const claimed = matchedDen || matchedRemote || matchedBundle;
       if (!claimed) {
         continue;
@@ -3689,37 +1634,7 @@ export default function App() {
     setError(null);
     setView("dashboard");
     if (parsed.kind === "bundle") {
-      setPendingSharedBundleInvite(null);
-      setSharedBundleNoticeShown(false);
-      setSharedSkillDestinationRequest(null);
-      setSharedSkillDestinationBusyId(null);
-      setSharedBundleImportError(null);
-      setSharedBundleImportChoice(null);
-      setSharedTemplateStartRequest(null);
-      setSharedBundleCreateWorkerRequest(null);
-
-      try {
-        setSharedBundleImportBusy(true);
-        const result = await processSharedBundleInvite(parsed.link);
-        switch (result.mode) {
-          case "choice":
-            return { ok: true, message: "Opened the share import chooser." };
-          case "start_with_template_modal":
-            return { ok: true, message: "Opened the template start flow." };
-          case "blocked_import_current":
-          case "blocked_new_worker":
-            return { ok: false, message: error() || "The share link needs more worker setup before it can open." };
-          case "imported":
-            return { ok: true, message: "Imported the shared bundle into the current worker." };
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        const friendly = addOpencodeCacheHint(message);
-        setError(friendly);
-        return { ok: false, message: friendly };
-      } finally {
-        setSharedBundleImportBusy(false);
-      }
+      return sharedBundleFlow.openDebugSharedBundleLink(parsed.link);
     }
     if (parsed.kind === "auth") {
       setPendingDenAuthDeepLink(parsed.link);
@@ -3729,212 +1644,6 @@ export default function App() {
     setPendingRemoteConnectDeepLink(parsed.kind === "remote" ? parsed.link : null);
     setTab("scheduled");
     return { ok: true, message: "Queued remote worker link. OpenWork should move into the connect flow." };
-  };
-
-  const closeSharedBundleImportChoice = () => {
-    if (sharedBundleImportBusy()) return;
-    setSharedBundleImportChoice(null);
-    setSharedBundleImportError(null);
-  };
-
-  const openCloudTemplate = async (input: {
-    templateId: string;
-    name: string;
-    templateData: unknown;
-    organizationName?: string | null;
-  }) => {
-    const bundle = parseSharedBundle(input.templateData);
-    setError(null);
-    setView("dashboard");
-    setTab("settings");
-    setSharedSkillDestinationBusyId(null);
-    setSharedBundleImportError(null);
-    setSharedTemplateStartRequest(null);
-    setSharedBundleCreateWorkerRequest(null);
-
-    if (bundle.type === "skill") {
-      setSharedBundleImportChoice(null);
-      setSharedSkillDestinationRequest({
-        request: {
-          bundleUrl: "",
-          intent: "import_current",
-          source: "cloud-template",
-          label: input.name,
-        },
-        bundle,
-      });
-      return;
-    }
-
-    setSharedSkillDestinationRequest(null);
-    setSharedBundleImportChoice({
-      request: {
-        bundleUrl: "",
-        intent: "import_current",
-        source: "cloud-template",
-        label: input.name,
-      },
-      bundle,
-    });
-  };
-
-  const startWorkspaceFromCloudTemplate = async (input: {
-    name: string;
-    templateData: unknown;
-    folder: string | null;
-    preset?: WorkspacePreset;
-  }) => {
-    const bundle = parseSharedBundle(input.templateData);
-    if (bundle.type !== "workspace-profile") {
-      throw new Error("Only workspace templates can start a new workspace.");
-    }
-
-    setError(null);
-    setSharedSkillDestinationRequest(null);
-    setSharedBundleImportChoice(null);
-    setSharedBundleImportError(null);
-    setSharedBundleCreateWorkerRequest(null);
-    setSharedTemplateStartRequest(null);
-
-    const imported = await createWorkspaceFromBundle(
-      bundle,
-      input.folder,
-      input.preset ?? defaultPresetFromTemplateBundle(bundle),
-    );
-    if (!imported) {
-      throw new Error(`Failed to create ${input.name} from template.`);
-    }
-  };
-
-  const sharedBundleImportCopy = createMemo(() => {
-    const choice = sharedBundleImportChoice();
-    if (!choice) return null;
-    return describeSharedBundleImport(choice.bundle);
-  });
-
-  const sharedBundleWorkerOptions = createMemo(() => {
-    const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
-    const items = workspaceStore.workspaces().map((workspace) => {
-        let disabledReason: string | null = null;
-        if (!resolveSharedBundleImportTargetForWorkspace(workspace)) {
-          disabledReason =
-            workspace.workspaceType === "remote" && workspace.remoteType !== "openwork"
-            ? "Only OpenWork-connected workers support direct shared bundle imports."
-            : "This worker is missing the info OpenWork needs to import the bundle.";
-        }
-
-      const label =
-        workspace.displayName?.trim() ||
-        workspace.openworkWorkspaceName?.trim() ||
-        workspace.name?.trim() ||
-        workspace.path?.trim() ||
-        "Worker";
-      const badge =
-        workspace.workspaceType === "remote"
-          ? workspace.sandboxBackend === "docker" ||
-            Boolean(workspace.sandboxRunId?.trim()) ||
-            Boolean(workspace.sandboxContainerName?.trim())
-            ? "Sandbox"
-            : "Remote"
-          : "Local";
-      const detail =
-        workspace.workspaceType === "local"
-          ? workspace.path?.trim() || "Local worker"
-          : workspace.directory?.trim() || workspace.baseUrl?.trim() || workspace.openworkHostUrl?.trim() || "Remote worker";
-
-      return {
-        id: workspace.id,
-        label,
-        detail,
-        badge,
-        current: workspace.id === selectedWorkspaceId,
-        disabledReason,
-      };
-    });
-
-    return items.sort((a, b) => {
-      if (a.current !== b.current) return a.current ? -1 : 1;
-      return a.label.localeCompare(b.label);
-    });
-  });
-
-  const openSharedBundleCreateWorkerFlow = async () => {
-    const choice = sharedBundleImportChoice();
-    if (!choice || sharedBundleImportBusy()) return;
-
-    setSharedBundleImportError(null);
-    setError(null);
-
-    if (isTauriRuntime()) {
-      setView("dashboard");
-      setTab("scheduled");
-      setSharedBundleCreateWorkerRequest({
-        request: choice.request,
-        bundle: choice.bundle,
-        defaultPreset:
-          choice.bundle.type === "workspace-profile"
-            ? defaultPresetFromTemplateBundle(choice.bundle)
-            : "starter",
-      });
-      setSharedBundleImportChoice(null);
-      workspaceStore.setCreateWorkspaceOpen(true);
-      return;
-    }
-
-    setSharedBundleImportBusy(true);
-    try {
-      await createWorkerForSharedBundle(choice.request, choice.bundle);
-      await importSharedBundlePayload(choice.bundle, resolveActiveSharedBundleImportTarget());
-      setSharedBundleImportChoice(null);
-      setError(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      const friendly = addOpencodeCacheHint(message);
-      setSharedBundleImportError(friendly);
-      setError(friendly);
-    } finally {
-      setSharedBundleImportBusy(false);
-    }
-  };
-
-  const importSharedBundleIntoExistingWorkspace = async (workspaceId: string) => {
-    const choice = sharedBundleImportChoice();
-    if (!choice || sharedBundleImportBusy()) return;
-
-    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
-    if (!workspace) {
-      setSharedBundleImportError("The selected worker is no longer available.");
-      return;
-    }
-
-    const target = resolveSharedBundleImportTargetForWorkspace(workspace);
-    if (!target) {
-      setSharedBundleImportError("This worker cannot accept shared bundle imports yet.");
-      return;
-    }
-
-    setSharedBundleImportBusy(true);
-    setSharedBundleImportError(null);
-    setError(null);
-
-    try {
-      setView("dashboard");
-      setTab(choice.bundle.type === "workspace-profile" ? "scheduled" : "skills");
-      const ok = await workspaceStore.activateWorkspace(workspace.id);
-      if (!ok) {
-        throw new Error(error() || `Failed to switch to ${workspace.displayName?.trim() || workspace.name || "the selected worker"}.`);
-      }
-      await importSharedBundlePayload(choice.bundle, target);
-      setSharedBundleImportChoice(null);
-      setError(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      const friendly = addOpencodeCacheHint(message);
-      setSharedBundleImportError(friendly);
-      setError(friendly);
-    } finally {
-      setSharedBundleImportBusy(false);
-    }
   };
 
   createEffect(() => {
@@ -4443,10 +2152,6 @@ export default function App() {
     return sources.includes(triggerType);
   };
 
-  const markOpencodeConfigReloadRequired = () => {
-    markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
-  };
-
   const activeReloadBlockingSessions = createMemo(() => {
     const statuses = sessionStatusById();
     return sessions()
@@ -4581,23 +2286,90 @@ export default function App() {
   const resolvedActiveWorkspaceConfig = createMemo(
     () => activeWorkspaceServerConfig() ?? workspaceStore.workspaceConfig(),
   );
+  const providerAuthStore = createProviderAuthStore({
+    client,
+    providers,
+    providerConnectedIds,
+    selectedWorkspaceType: () =>
+      selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local",
+    getDisabledProviders: () => globalSync.data.config.disabled_providers ?? [],
+    setDisabledProviders: (value) => {
+      globalSync.set("config", "disabled_providers", value);
+    },
+    setProviderListResponse: (value) => {
+      globalSync.set("provider", value);
+    },
+    removeProviderFromState,
+    markOpencodeConfigReloadRequired,
+    describeProviderError,
+    onRestorePromptFocus: focusSessionPromptSoon,
+  });
+  const {
+    providerAuthBusy,
+    providerAuthModalOpen,
+    providerAuthError,
+    providerAuthMethods,
+    providerAuthPreferredProviderId,
+    providerAuthWorkerType,
+    refreshProviders,
+    startProviderAuth,
+    completeProviderAuthOAuth,
+    submitProviderApiKey,
+    disconnectProvider,
+    openProviderAuthModal,
+    closeProviderAuthModal,
+  } = providerAuthStore;
   const refreshActiveWorkspaceServerConfig = workspaceStore.refreshRuntimeWorkspaceConfig;
+  const sharedBundleFlow = createSharedBundleFlow({
+    booting,
+    startupPreference,
+    openworkServerHostInfo,
+    openworkServerSettings,
+    openworkServerClient,
+    openworkServerStatus,
+    runtimeWorkspaceId,
+    workspaceStore,
+    error,
+    setError,
+    setView,
+    setTab,
+    refreshActiveWorkspaceServerConfig,
+    refreshSkills,
+    refreshHubSkills,
+    markReloadRequired,
+  });
+  const initialSharedBundleInvite = startupSharedBundleInvite();
+  if (initialSharedBundleInvite) {
+    sharedBundleFlow.queueSharedBundleInvite(initialSharedBundleInvite);
+    setStartupSharedBundleInvite(null);
+  }
   const activePermissionMemo = createMemo(() => activePermission());
-  const migrationRepairUnavailableReason = createMemo<string | null>(() => {
-    if (workspaceStore.canRepairOpencodeMigration()) return null;
-    if (!isTauriRuntime()) {
-      return t("app.migration.desktop_required", currentLocale());
-    }
+  const authorizedFoldersStore = createAuthorizedFoldersStore({
+    openworkServerClient,
+    runtimeWorkspaceId,
+    openworkServerReady,
+    openworkServerWorkspaceReady,
+    openworkServerCanReadConfig,
+    openworkServerCanWriteConfig,
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot(),
+    markOpencodeConfigReloadRequired,
+  });
 
-    if (selectedWorkspaceDisplay().workspaceType !== "local") {
-      return t("app.migration.local_only", currentLocale());
-    }
-
-    if (!workspaceStore.selectedWorkspacePath().trim()) {
-      return t("app.migration.workspace_required", currentLocale());
-    }
-
-    return t("app.migration.local_only", currentLocale());
+  const workspaceMaintenanceStore = createWorkspaceMaintenanceStore({
+    sandboxCreateProgress: workspaceStore.sandboxCreateProgress,
+    sandboxCreateProgressLast: workspaceStore.lastSandboxCreateProgress,
+    repairOpencodeMigration: workspaceStore.repairOpencodeMigration,
+    migrationRepairBusy: workspaceStore.migrationRepairBusy,
+    migrationRepairResult: workspaceStore.migrationRepairResult,
+    canRepairOpencodeMigration: workspaceStore.canRepairOpencodeMigration,
+    selectedWorkspaceType: () => selectedWorkspaceDisplay().workspaceType,
+    selectedWorkspacePath: () => workspaceStore.selectedWorkspacePath(),
+    repairOpencodeCache,
+    cacheRepairBusy,
+    cacheRepairResult,
+    cleanupOpenworkDockerContainers,
+    dockerCleanupBusy,
+    dockerCleanupResult,
   });
 
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(
@@ -4738,263 +2510,11 @@ export default function App() {
     void workspaceStore.onConnectClient();
   });
 
-  const selectedSessionModel = createMemo<ModelRef>(() => {
-    const id = selectedSessionId();
-    if (!id) return pendingSessionModel() ?? defaultModel();
-
-    const override = sessionModelOverrideById()[id];
-    if (override) return override;
-
-    const known = sessionModelById()[id];
-    if (known) return known;
-
-    const fromMessages = lastUserModelFromMessages(messages());
-    if (fromMessages) return fromMessages;
-
-    return defaultModel();
-  });
-
   const selectedSessionAgent = createMemo(() => {
     const id = selectedSessionId();
     if (!id) return null;
     return sessionAgentById()[id] ?? null;
   });
-
-  const selectedSessionModelLabel = createMemo(() =>
-    formatModelLabel(selectedSessionModel(), providers())
-  );
-
-  const findProviderModel = (ref: ModelRef) => {
-    const provider = providers().find((entry) => entry.id === ref.providerID);
-    return provider?.models?.[ref.modelID] ?? null;
-  };
-
-  const sanitizeModelVariantForRef = (ref: ModelRef, value: string | null) => {
-    const modelInfo = findProviderModel(ref);
-    if (!modelInfo) return normalizeModelBehaviorValue(value);
-    return sanitizeModelBehaviorValue(ref.providerID, modelInfo, value);
-  };
-
-  const getModelBehaviorCopy = (ref: ModelRef, value: string | null) => {
-    const modelInfo = findProviderModel(ref);
-    if (!modelInfo) {
-      return {
-        title: "Model behavior",
-        label: formatGenericBehaviorLabel(value),
-        description: "Choose the model first to see provider-specific behavior controls.",
-        options: [],
-      };
-    }
-    return getModelBehaviorSummary(ref.providerID, modelInfo, value);
-  };
-
-  const modelPickerCurrent = createMemo(() =>
-    modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel()
-  );
-
-  const isHeroModel = (id: string) => {
-    const check = id.toLowerCase();
-    if (check.includes("gpt-5")) return true;
-    if (check.includes("opus-4")) return true;
-    if (check.includes("claude-3-7-sonnet")) return true;
-    if (check.includes("claude-3-5-sonnet")) return true;
-    if (check.includes("gpt-4o") && !check.includes("mini") && !check.includes("audio")) return true;
-    if (check.includes("o3-mini")) return true;
-    if (check.includes("o1") && !check.includes("mini")) return true;
-    if (check.includes("deepseek-r1")) return true;
-    return false;
-  };
-
-  const modelOptions = createMemo<ModelOption[]>(() => {
-    const allProviders = providers();
-    const defaults = providerDefaults();
-    const currentDefault = defaultModel();
-
-    if (!allProviders.length) {
-      const behavior = getModelBehaviorCopy(DEFAULT_MODEL, getVariantFor(DEFAULT_MODEL));
-      return [
-        {
-          providerID: DEFAULT_MODEL.providerID,
-          modelID: DEFAULT_MODEL.modelID,
-          title: DEFAULT_MODEL.modelID,
-          description: DEFAULT_MODEL.providerID,
-          footer: t("settings.model_fallback", currentLocale()),
-          behaviorTitle: behavior.title,
-          behaviorLabel: behavior.label,
-          behaviorDescription: behavior.description,
-          behaviorValue: normalizeModelBehaviorValue(getVariantFor(DEFAULT_MODEL)),
-          behaviorOptions: behavior.options,
-          isFree: true,
-          isConnected: false,
-        },
-      ];
-    }
-
-    const sortedProviders = allProviders.slice().sort(compareProviders);
-
-    const next: ModelOption[] = [];
-
-    for (const provider of sortedProviders) {
-      const defaultModelID = defaults[provider.id];
-      const isConnected = providerConnectedIds().includes(provider.id);
-      const models = Object.values(provider.models ?? {}).filter(
-        (m) => m.status !== "deprecated"
-      );
-
-      models.sort((a, b) => {
-        const aFree = a.cost?.input === 0 && a.cost?.output === 0;
-        const bFree = b.cost?.input === 0 && b.cost?.output === 0;
-        if (aFree !== bFree) return aFree ? -1 : 1;
-        return (a.name ?? a.id).localeCompare(b.name ?? b.id);
-      });
-
-      for (const model of models) {
-        const isFree = model.cost?.input === 0 && model.cost?.output === 0;
-        const isDefault =
-          provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
-        const ref = { providerID: provider.id, modelID: model.id };
-        const behavior = getModelBehaviorSummary(provider.id, model, getVariantFor(ref));
-        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, getVariantFor(ref));
-        const footerBits: string[] = [];
-        if (defaultModelID === model.id || isDefault) {
-          footerBits.push(t("settings.model_default", currentLocale()));
-        }
-        if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
-
-        next.push({
-          providerID: provider.id,
-          modelID: model.id,
-          title: model.name ?? model.id,
-          description: provider.name,
-          footer: footerBits.length
-            ? footerBits.slice(0, 2).join(" · ")
-            : undefined,
-          behaviorTitle: behavior.title,
-          behaviorLabel: behavior.label,
-          behaviorDescription: behavior.description,
-          behaviorValue,
-          behaviorOptions: behavior.options,
-          disabled: !isConnected,
-          isFree,
-          isConnected,
-          isRecommended: isHeroModel(model.id),
-        });
-      }
-    }
-
-    next.sort((a, b) => {
-      if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
-      if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
-      const providerRankDiff =
-        providerPriorityRank(a.providerID) - providerPriorityRank(b.providerID);
-      if (providerRankDiff !== 0) return providerRankDiff;
-      return a.title.localeCompare(b.title);
-    });
-
-    return next;
-  });
-
-  const filteredModelOptions = createMemo(() => {
-    const q = modelPickerQuery().trim().toLowerCase();
-    const options = modelOptions();
-    if (!q) return options;
-
-    return options.filter((opt) => {
-      const haystack = [
-        opt.title,
-        opt.description ?? "",
-        opt.footer ?? "",
-        opt.behaviorTitle,
-        opt.behaviorLabel,
-        opt.behaviorDescription,
-        `${opt.providerID}/${opt.modelID}`,
-        opt.isConnected ? "connected" : "disconnected",
-        opt.isFree ? "free" : "paid",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  });
-
-  function closeModelPicker(options?: { restorePromptFocus?: boolean }) {
-    const shouldFocusPrompt =
-      options?.restorePromptFocus ??
-      modelPickerReturnFocusTarget() === "composer";
-    setModelPickerOpen(false);
-    setModelPickerReturnFocusTarget("none");
-    if (shouldFocusPrompt) {
-      focusSessionPromptSoon();
-    }
-  }
-
-  function openSessionModelPicker(options?: {
-    returnFocusTarget?: PromptFocusReturnTarget;
-  }) {
-    setModelPickerTarget("session");
-    setModelPickerQuery("");
-    setModelPickerReturnFocusTarget(options?.returnFocusTarget ?? "composer");
-    setModelPickerOpen(true);
-  }
-
-  function openDefaultModelPicker() {
-    setModelPickerTarget("default");
-    setModelPickerQuery("");
-    setModelPickerReturnFocusTarget("none");
-    setModelPickerOpen(true);
-  }
-
-  function setPendingDefaultModelForWorkspace(workspaceId: string, model: ModelRef | null) {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setPendingDefaultModelByWorkspace((current) => {
-      const next = { ...current };
-      if (model) {
-        next[id] = formatModelRef(model);
-      } else {
-        delete next[id];
-      }
-      return next;
-    });
-  }
-
-  function pendingDefaultModelForWorkspace(workspaceId: string) {
-    const id = workspaceId.trim();
-    if (!id) return null;
-    return pendingDefaultModelByWorkspace()[id] ?? null;
-  }
-
-  function applyDefaultModelChoice(next: ModelRef) {
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (workspaceId) {
-      setPendingDefaultModelForWorkspace(workspaceId, next);
-    }
-    setDefaultModelExplicit(true);
-    setDefaultModel(next);
-    setLegacyDefaultModel(next);
-  }
-
-  function applyModelSelection(next: ModelRef) {
-    const target = modelPickerTarget();
-    const restorePromptFocus = target === "session";
-
-    if (target === "default") {
-      applyDefaultModelChoice(next);
-      return;
-    }
-
-    const id = selectedSessionId();
-    if (!id) {
-      setPendingSessionModel(next);
-      applyDefaultModelChoice(next);
-      closeModelPicker({ restorePromptFocus });
-      return;
-    }
-
-    setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
-    applyDefaultModelChoice(next);
-    closeModelPicker({ restorePromptFocus });
-  }
 
   function openSettingsFromModelPicker() {
     setTab("settings");
@@ -5089,1428 +2609,97 @@ export default function App() {
     }
   }
 
-  async function refreshMcpServers() {
-    const filterConfiguredStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
-      const configured = new Set(entries.map((entry) => entry.name));
-      return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
-    };
-
-    const projectDir = workspaceProjectDir().trim();
-    const isRemoteWorkspace = workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote";
-    const isLocalWorkspace = !isRemoteWorkspace;
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.read;
-
-    if (isRemoteWorkspace) {
-      if (!canUseOpenworkServer) {
-        setMcpStatus("OpenWork server unavailable. MCP config is read-only.");
-        setMcpServers([]);
-        setMcpStatuses({});
-        return;
-      }
-
-      try {
-        setMcpStatus(null);
-        const response = await openworkClient.listMcp(openworkWorkspaceId);
-        const next = response.items.map((entry) => ({
-          name: entry.name,
-          config: entry.config as McpServerEntry["config"],
-        }));
-        setMcpServers(next);
-        setMcpLastUpdatedAt(Date.now());
-
-        const activeClient = client();
-        if (activeClient && projectDir) {
-          try {
-            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
-          } catch {
-            setMcpStatuses({});
-          }
-        } else {
-          setMcpStatuses({});
-        }
-
-        if (!next.length) {
-          setMcpStatus("No MCP servers configured yet.");
-        }
-      } catch (e) {
-        setMcpServers([]);
-        setMcpStatuses({});
-        setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
-      }
-      return;
-    }
-
-    if (isLocalWorkspace && canUseOpenworkServer) {
-      try {
-        setMcpStatus(null);
-        const response = await openworkClient.listMcp(openworkWorkspaceId);
-        const next = response.items.map((entry) => ({
-          name: entry.name,
-          config: entry.config as McpServerEntry["config"],
-        }));
-        setMcpServers(next);
-        setMcpLastUpdatedAt(Date.now());
-
-        const activeClient = client();
-        if (activeClient && projectDir) {
-          try {
-            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
-          } catch {
-            setMcpStatuses({});
-          }
-        } else {
-          setMcpStatuses({});
-        }
-
-        if (!next.length) {
-          setMcpStatus("No MCP servers configured yet.");
-        }
-      } catch (e) {
-        setMcpServers([]);
-        setMcpStatuses({});
-        setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
-      }
-      return;
-    }
-
-    if (!isTauriRuntime()) {
-      setMcpStatus("MCP configuration is only available for local workspaces.");
-      setMcpServers([]);
-      setMcpStatuses({});
-      return;
-    }
-
-    if (!projectDir) {
-      setMcpStatus("Pick a workspace folder to load MCP servers.");
-      setMcpServers([]);
-      setMcpStatuses({});
-      return;
-    }
-
-    try {
-      setMcpStatus(null);
-      const config = await readOpencodeConfig("project", projectDir);
-      if (!config.exists || !config.content) {
-        setMcpServers([]);
-        setMcpStatuses({});
-        setMcpStatus("No opencode.json found yet. Create one by connecting an MCP.");
-        return;
-      }
-
-      const next = parseMcpServersFromContent(config.content);
-      setMcpServers(next);
-      setMcpLastUpdatedAt(Date.now());
-
-      const activeClient = client();
-      if (activeClient) {
-        try {
-          const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-          setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
-        } catch {
-          setMcpStatuses({});
-        }
-      }
-
-      if (!next.length) {
-        setMcpStatus("No MCP servers configured yet.");
-      }
-    } catch (e) {
-      setMcpServers([]);
-      setMcpStatuses({});
-      setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
-    }
-  }
-
-  const readMcpConfigFile = async (scope: "project" | "global") => {
-    const projectDir = workspaceProjectDir().trim();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      resolvedOpenworkCapabilities()?.config?.read;
-
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      return openworkClient.readOpencodeConfigFile(openworkWorkspaceId, scope);
-    }
-    if (!isTauriRuntime()) {
-      return null;
-    }
-    return readOpencodeConfig(scope, projectDir);
-  };
-
-  async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
-    const startedAt = perfNow();
-    const isRemoteWorkspace =
-      workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && openworkServerStatus() === "connected");
-    const projectDir = workspaceProjectDir().trim();
-    const entryType = entry.type ?? "remote";
-
-    recordPerfLog(developerMode(), "mcp.connect", "start", {
-      name: entry.name,
-      type: entryType,
-      workspaceType: isRemoteWorkspace ? "remote" : "local",
-      projectDir: projectDir || null,
-    });
-
-    const openworkClient = openworkServerClient();
-    let openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
-      openworkWorkspaceId = await workspaceStore.ensureRuntimeWorkspaceId();
-    }
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.write;
-
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
-      setMcpStatus("OpenWork server unavailable. MCP config is read-only.");
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "openwork-server-unavailable",
-      });
-      return;
-    }
-
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
-      setMcpStatus(t("mcp.desktop_required", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "desktop-required",
-      });
-      return;
-    }
-
-    if (!isRemoteWorkspace && !projectDir) {
-      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "missing-workspace",
-      });
-      return;
-    }
-
-    let activeClient = client();
-    if (!activeClient) {
-      const openworkBaseUrl = openworkServerBaseUrl().trim();
-      const auth = openworkServerAuth();
-      if (openworkBaseUrl && auth.token) {
-        const opencodeUrl = `${openworkBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "openwork" });
-        setClient(activeClient);
-      }
-    }
-    if (!activeClient) {
-      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "no-active-client",
-      });
-      return;
-    }
-
-    let resolvedProjectDir = projectDir;
-    if (!resolvedProjectDir) {
-      try {
-        const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
-        const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
-        if (discovered) {
-          resolvedProjectDir = discovered;
-          workspaceStore.setProjectDir(discovered);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (!resolvedProjectDir) {
-      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "missing-workspace-after-discovery",
-      });
-      return;
-    }
-
-    const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
-    const action = mcpServers().some((server) => server.name === slug) ? "updated" : "added";
-
-    try {
-      setMcpStatus(null);
-      setMcpConnectingName(entry.name);
-
-      let mcpEnvironment: Record<string, string> | undefined;
-
-      const mcpEntryConfig: Record<string, unknown> = {
-        type: entryType,
-        enabled: true,
-      };
-
-      if (entryType === "remote") {
-        if (!entry.url) {
-          throw new Error("Missing MCP URL.");
-        }
-        mcpEntryConfig["url"] = entry.url;
-        if (entry.oauth) {
-          mcpEntryConfig["oauth"] = {};
-        }
-      }
-
-      if (entryType === "local") {
-        if (!entry.command?.length) {
-          throw new Error("Missing MCP command.");
-        }
-        mcpEntryConfig["command"] = entry.command;
-
-        if (slug === CHROME_DEVTOOLS_MCP_ID && usesChromeDevtoolsAutoConnect(entry.command) && isTauriRuntime()) {
-          try {
-            const hostHome = (await homeDir()).replace(/[\\/]+$/, "");
-            if (hostHome) {
-              mcpEnvironment = { HOME: hostHome };
-              mcpEntryConfig["environment"] = mcpEnvironment;
-            }
-          } catch {
-            // ignore and let the MCP use the default worker environment
-          }
-        }
-      }
-
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.addMcp(openworkWorkspaceId, {
-          name: slug,
-          config: mcpEntryConfig,
-        });
-      } else {
-        const configFile = await readOpencodeConfig("project", resolvedProjectDir);
-
-        let existingConfig: Record<string, unknown> = {};
-        if (configFile.exists && configFile.content?.trim()) {
-          try {
-            existingConfig = parse(configFile.content) ?? {};
-          } catch (parseErr) {
-            recordPerfLog(developerMode(), "mcp.connect", "config-parse-failed", {
-              error: parseErr instanceof Error ? parseErr.message : String(parseErr),
-            });
-            existingConfig = {};
-          }
-        }
-
-        if (!existingConfig["$schema"]) {
-          existingConfig["$schema"] = "https://opencode.ai/config.json";
-        }
-
-        const mcpSection = (existingConfig["mcp"] as Record<string, unknown>) ?? {};
-        existingConfig["mcp"] = mcpSection;
-        mcpSection[slug] = mcpEntryConfig;
-
-        const writeResult = await writeOpencodeConfig(
-          "project",
-          resolvedProjectDir,
-          `${JSON.stringify(existingConfig, null, 2)}\n`
-        );
-        if (!writeResult.ok) {
-          throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
-        }
-      }
-
-      const mcpAddConfig =
-        entryType === "remote"
-          ? {
-            type: "remote" as const,
-            url: entry.url!,
-            enabled: true,
-            ...(entry.oauth ? { oauth: {} } : {}),
-          }
-          : {
-            type: "local" as const,
-            command: entry.command!,
-            enabled: true,
-            ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
-          };
-
-      const status = unwrap(
-        await activeClient.mcp.add({
-          directory: resolvedProjectDir,
-          name: slug,
-          config: mcpAddConfig,
-        }),
-      );
-
-      setMcpStatuses(status as McpStatusMap);
-      markReloadRequired("mcp", { type: "mcp", name: slug, action });
-      await refreshMcpServers();
-
-      if (entry.oauth) {
-        setMcpAuthEntry(entry);
-        setMcpAuthNeedsReload(true);
-        setMcpAuthModalOpen(true);
-      } else {
-        setMcpStatus(t("mcp.connected", currentLocale()));
-      }
-
-      await refreshMcpServers();
-      finishPerf(developerMode(), "mcp.connect", "done", startedAt, {
-        name: entry.name,
-        type: entryType,
-        slug,
-      });
-    } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : t("mcp.connect_failed", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "error", startedAt, {
-        name: entry.name,
-        type: entryType,
-        error: e instanceof Error ? e.message : safeStringify(e),
-      });
-    } finally {
-      setMcpConnectingName(null);
-    }
-  }
-
-  function authorizeMcp(entry: McpServerEntry) {
-    if (entry.config.type !== "remote" || entry.config.oauth === false) {
-      setMcpStatus(t("mcp.login_unavailable", currentLocale()));
-      return;
-    }
-
-    const matchingQuickConnect = MCP_QUICK_CONNECT.find((candidate) => {
-      const candidateSlug = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      return candidateSlug === entry.name || candidate.name === entry.name;
-    });
-
-    setMcpAuthEntry(
-      matchingQuickConnect ?? {
-        name: entry.name,
-        description: "",
-        type: "remote",
-        url: entry.config.url,
-        oauth: true,
-      },
-    );
-    setMcpAuthNeedsReload(false);
-    setMcpAuthModalOpen(true);
-  }
-
-  async function logoutMcpAuth(name: string) {
-    const isRemoteWorkspace =
-      workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && openworkServerStatus() === "connected");
-    const projectDir = workspaceProjectDir().trim();
-
-    const openworkClient = openworkServerClient();
-    let openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
-      openworkWorkspaceId = await workspaceStore.ensureRuntimeWorkspaceId();
-    }
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.write;
-
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
-      setMcpStatus("OpenWork server unavailable. MCP auth is read-only.");
-      return;
-    }
-
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
-      setMcpStatus(t("mcp.desktop_required", currentLocale()));
-      return;
-    }
-
-    let activeClient = client();
-    if (!activeClient) {
-      const openworkBaseUrl = openworkServerBaseUrl().trim();
-      const auth = openworkServerAuth();
-      if (openworkBaseUrl && auth.token) {
-        const opencodeUrl = `${openworkBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "openwork" });
-        setClient(activeClient);
-      }
-    }
-    if (!activeClient) {
-      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
-      return;
-    }
-
-    let resolvedProjectDir = projectDir;
-    if (!resolvedProjectDir) {
-      try {
-        const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
-        const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
-        if (discovered) {
-          resolvedProjectDir = discovered;
-          workspaceStore.setProjectDir(discovered);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (!resolvedProjectDir) {
-      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-      return;
-    }
-
-    const safeName = validateMcpServerName(name);
-    setMcpStatus(null);
-
-    try {
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.logoutMcpAuth(openworkWorkspaceId, safeName);
-      } else {
-        try {
-          await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
-        } catch {
-          // ignore
-        }
-        await activeClient.mcp.auth.remove({ directory: resolvedProjectDir, name: safeName });
-      }
-
-      try {
-        const status = unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
-        setMcpStatuses(status as McpStatusMap);
-      } catch {
-        // ignore
-      }
-
-      await refreshMcpServers();
-      setMcpStatus(t("mcp.logout_success", currentLocale()).replace("{server}", safeName));
-    } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : t("mcp.logout_failed", currentLocale()));
-    }
-  }
-
-  async function removeMcp(name: string) {
-    try {
-      setMcpStatus(null);
-
-      const openworkClient = openworkServerClient();
-      const openworkWorkspaceId = runtimeWorkspaceId();
-      const canUseOpenworkServer =
-        openworkServerStatus() === "connected" &&
-        openworkClient &&
-        openworkWorkspaceId &&
-        resolvedOpenworkCapabilities()?.mcp?.write;
-
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.removeMcp(openworkWorkspaceId, name);
-      } else {
-        const projectDir = workspaceProjectDir().trim();
-        if (!projectDir) {
-          setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-          return;
-        }
-        await removeMcpFromConfig(projectDir, name);
-      }
-
-      markReloadRequired("mcp", { type: "mcp", name, action: "removed" });
-      await refreshMcpServers();
-      if (selectedMcp() === name) {
-        setSelectedMcp(null);
-      }
-      setMcpStatus(null);
-    } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : t("mcp.remove_failed", currentLocale()));
-    }
-  }
-
-  async function createSessionAndOpen() {
-    const ready = await ensureSelectedWorkspaceRuntime();
-    if (!ready) {
-      return;
-    }
-
-    const c = client();
-    if (!c) {
-      return;
-    }
-
-    const perfEnabled = developerMode();
-    const startedAt = perfNow();
-    const runId = (() => {
-      const key = "__openwork_create_session_run__";
-      const w = window as typeof window & { [key]?: number };
-      w[key] = (w[key] ?? 0) + 1;
-      return w[key];
-    })();
-
-    const mark = (event: string, payload?: Record<string, unknown>) => {
-      const elapsed = Math.round((perfNow() - startedAt) * 100) / 100;
-      recordPerfLog(perfEnabled, "session.create", event, {
-        runId,
-        elapsedMs: elapsed,
-        ...(payload ?? {}),
-      });
-    };
-
-    mark("start", {
-      baseUrl: baseUrl(),
-      workspace: workspaceStore.selectedWorkspaceRoot().trim() || null,
-    });
-
-    // Abort any in-flight refresh operations to free up connection resources
-    abortRefreshes();
-
-    // Small delay to allow pending requests to settle
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    setBusy(true);
-    setBusyLabel("status.creating_task");
-    setBusyStartedAt(Date.now());
-    setError(null);
-    setCreatingSession(true);
-
-    const withTimeout = async <T,>(
-      promise: Promise<T>,
-      ms: number,
-      label: string
-    ) => {
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error(`Timed out waiting for ${label}`)),
-          ms
-        );
-      });
-      try {
-        return await Promise.race([promise, timeoutPromise]);
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-    };
-
-    try {
-      // Quick health check to detect stale connection
-      mark("health:start");
-      try {
-        await withTimeout(c.global.health(), 3_000, "health");
-        mark("health:ok");
-      } catch (healthErr) {
-        mark("health:error", {
-          error: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
-        });
-        throw new Error(t("app.connection_lost", currentLocale()));
-      }
-
-      let rawResult: Awaited<ReturnType<typeof c.session.create>>;
-      try {
-        const directory = toSessionTransportDirectory(workspaceStore.selectedWorkspaceRoot().trim()) || undefined;
-        logWorkspaceScopeSnapshot("session:create:scope", {
-          transportDirectory: directory ?? null,
-          transportScope: describeDirectoryScope(directory ?? null),
-        });
-        mark("session:create:start");
-        rawResult = await c.session.create({
-          directory,
-        });
-        mark("session:create:ok");
-      } catch (createErr) {
-        mark("session:create:error", {
-          error: createErr instanceof Error ? createErr.message : safeStringify(createErr),
-        });
-        throw createErr;
-      }
-
-      const session = unwrap(rawResult);
-      const pendingModel = pendingSessionModel();
-      // Immediately select and show the new session before background list refresh.
-      setBusyLabel("status.loading_session");
-      mark("session:select:start", { sessionID: session.id });
-      await selectSession(session.id);
-      mark("session:select:ok", { sessionID: session.id });
-
-      if (pendingModel) {
-        setSessionModelOverrideById((current) => ({
-          ...current,
-          [session.id]: pendingModel,
-        }));
-        setPendingSessionModel(null);
-      }
-
-      // Inject the new session into the reactive sessions() store so
-      // the createEffect bridge (sessions → sidebar) will always include it,
-      // even if the background loadSessionsWithReady hasn't returned yet.
-      const currentStoreSessions = sessions();
-      if (!currentStoreSessions.some((s) => s.id === session.id)) {
-        setSessions([session, ...currentStoreSessions]);
-      }
-
-      const wsId = workspaceStore.selectedWorkspaceId().trim();
-      if (wsId) {
-        await refreshSidebarWorkspaceSessions(wsId).catch(() => undefined);
-      }
-
-      // setSessionViewLockUntil(Date.now() + 1200);
-      goToSession(session.id);
-
-      // The new session is already in the sessions() store (injected above).
-      // Sidebar state now refreshes from the server-scoped workspace list.
-      finishPerf(perfEnabled, "session.create", "done", startedAt, {
-        runId,
-        sessionID: session.id,
-      });
-      return session.id;
-    } catch (e) {
-      finishPerf(perfEnabled, "session.create", "error", startedAt, {
-        runId,
-        error: e instanceof Error ? e.message : safeStringify(e),
-      });
-      const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
-      setError(addOpencodeCacheHint(message));
-      return undefined;
-    } finally {
-      setCreatingSession(false);
-      setBusy(false);
-    }
-  }
-
-
-  onMount(async () => {
-    const startupPref = readStartupPreference();
-    if (startupPref) {
-      setRememberStartupChoice(true);
-      setStartupPreference(startupPref);
-    }
-
-    const unsubscribeTheme = subscribeToSystemTheme((isDark) => {
-      if (themeMode() !== "system") return;
-      applyThemeMode(isDark ? "dark" : "light");
-    });
-
-    onCleanup(() => {
-      unsubscribeTheme();
-    });
-
-    createEffect(() => {
-      const next = themeMode();
-      persistThemeMode(next);
-      applyThemeMode(next);
-    });
-
-    if (typeof window !== "undefined") {
-      try {
-        // In Tauri/desktop mode, do NOT restore the cached baseUrl from localStorage.
-        // OpenCode is assigned a random port on every restart, so the stored URL is
-        // always stale after a relaunch. The correct baseUrl is provided by engine_info().
-        // Web mode still needs the cached value since it connects to a fixed server URL.
-        if (!isTauriRuntime()) {
-          const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
-          if (storedBaseUrl) {
-            setBaseUrl(storedBaseUrl);
-          }
-        }
-
-        const storedClientDir = window.localStorage.getItem(
-          "openwork.clientDirectory"
-        );
-        if (storedClientDir) {
-          setClientDirectory(storedClientDir);
-        }
-
-        const storedEngineSource = window.localStorage.getItem(
-          "openwork.engineSource"
-        );
-        const storedEngineCustomBinPath = window.localStorage.getItem(
-          "openwork.engineCustomBinPath"
-        );
-        if (storedEngineCustomBinPath) {
-          setEngineCustomBinPath(storedEngineCustomBinPath);
-        }
-        if (
-          storedEngineSource === "path" ||
-          storedEngineSource === "sidecar" ||
-          storedEngineSource === "custom"
-        ) {
-          if (storedEngineSource === "custom" && !(storedEngineCustomBinPath ?? "").trim()) {
-            setEngineSource(isTauriRuntime() ? "sidecar" : "path");
-          } else {
-            setEngineSource(storedEngineSource);
-          }
-        }
-
-        const storedEngineRuntime = window.localStorage.getItem(
-          "openwork.engineRuntime"
-        );
-        if (storedEngineRuntime === "direct" || storedEngineRuntime === "openwork-orchestrator") {
-          setEngineRuntime(storedEngineRuntime);
-        }
-
-        const storedOpencodeEnableExa = window.localStorage.getItem(
-          "openwork.opencodeEnableExa"
-        );
-        if (storedOpencodeEnableExa === "0" || storedOpencodeEnableExa === "1") {
-          setOpencodeEnableExa(storedOpencodeEnableExa === "1");
-        }
-
-        const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
-        const parsedDefaultModel = parseModelRef(storedDefaultModel);
-        if (parsedDefaultModel) {
-          setDefaultModel(parsedDefaultModel);
-          setLegacyDefaultModel(parsedDefaultModel);
-        } else {
-          setDefaultModel(DEFAULT_MODEL);
-          setLegacyDefaultModel(DEFAULT_MODEL);
-          try {
-            window.localStorage.setItem(
-              MODEL_PREF_KEY,
-              formatModelRef(DEFAULT_MODEL)
-            );
-          } catch {
-            // ignore
-          }
-        }
-
-        const storedThinking = window.localStorage.getItem(THINKING_PREF_KEY);
-        if (storedThinking != null) {
-          try {
-            const parsed = JSON.parse(storedThinking);
-            if (typeof parsed === "boolean") {
-              setShowThinking(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        const storedHideTitlebar = window.localStorage.getItem(HIDE_TITLEBAR_PREF_KEY);
-        if (storedHideTitlebar != null) {
-          try {
-            const parsed = JSON.parse(storedHideTitlebar);
-            if (typeof parsed === "boolean") {
-              setHideTitlebar(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
-        if (storedVariant && storedVariant.trim()) {
-          try {
-            const parsed = JSON.parse(storedVariant);
-            if (typeof parsed === "object" && parsed !== null) {
-              setModelVariantMap(parsed);
-            } else {
-              setModelVariantMap({ [`${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`]: normalizeModelBehaviorValue(storedVariant)! });
-            }
-          } catch {
-            setModelVariantMap({ [`${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`]: normalizeModelBehaviorValue(storedVariant)! });
-          }
-        }
-
-        const storedUpdateAutoCheck = window.localStorage.getItem(
-          "openwork.updateAutoCheck"
-        );
-        if (storedUpdateAutoCheck === "0" || storedUpdateAutoCheck === "1") {
-          setUpdateAutoCheck(storedUpdateAutoCheck === "1");
-        }
-
-        const storedUpdateAutoDownload = window.localStorage.getItem(
-          "openwork.updateAutoDownload"
-        );
-        if (storedUpdateAutoDownload === "0" || storedUpdateAutoDownload === "1") {
-          const enabled = storedUpdateAutoDownload === "1";
-          setUpdateAutoDownload(enabled);
-          if (enabled) {
-            setUpdateAutoCheck(true);
-          }
-        }
-
-        const storedUpdateCheckedAt = window.localStorage.getItem(
-          "openwork.updateLastCheckedAt"
-        );
-        if (storedUpdateCheckedAt) {
-          const parsed = Number(storedUpdateCheckedAt);
-          if (Number.isFinite(parsed) && parsed > 0) {
-            setUpdateStatus({ state: "idle", lastCheckedAt: parsed });
-          }
-        }
-
-        const storedNotionStatus = window.localStorage.getItem("openwork.notionStatus");
-        if (
-          storedNotionStatus === "disconnected" ||
-          storedNotionStatus === "connected" ||
-          storedNotionStatus === "connecting" ||
-          storedNotionStatus === "error"
-        ) {
-          setNotionStatus(storedNotionStatus);
-        }
-
-        const storedNotionDetail = window.localStorage.getItem("openwork.notionStatusDetail");
-        if (storedNotionDetail) {
-          setNotionStatusDetail(storedNotionDetail);
-        } else if (storedNotionStatus === "connecting") {
-          setNotionStatusDetail(t("mcp.connecting", currentLocale()));
-        }
-
-        await refreshMcpServers();
-
-        const storedNotionSkillInstalled = window.localStorage.getItem("openwork.notionSkillInstalled");
-        if (storedNotionSkillInstalled === "1") {
-          setNotionSkillInstalled(true);
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    if (isTauriRuntime()) {
-      try {
-        setAppVersion(await getVersion());
-      } catch {
-        // ignore
-      }
-
-      try {
-        setUpdateEnv(await updaterEnvironment());
-      } catch {
-        // ignore
-      }
-
-      if (!launchUpdateCheckTriggered()) {
-        setLaunchUpdateCheckTriggered(true);
-        checkForUpdates({ quiet: true }).catch(() => undefined);
-      }
-    }
-
-    if (typeof window !== "undefined") {
-      const handleDeepLinkEvent = (event: Event) => {
-        const detail = (event as CustomEvent<DeepLinkBridgeDetail>).detail;
-        consumeDeepLinks(detail?.urls ?? []);
-      };
-
-      consumeDeepLinks(drainPendingDeepLinks(window));
-      window.addEventListener(deepLinkBridgeEvent, handleDeepLinkEvent as EventListener);
-      onCleanup(() => {
-        window.removeEventListener(deepLinkBridgeEvent, handleDeepLinkEvent as EventListener);
-      });
-    }
-
-    void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
+  const {
+    prompt,
+    setPrompt,
+    lastPromptSent,
+    createSessionAndOpen,
+    sendPrompt,
+    abortSession,
+    retryLastPrompt,
+    compactCurrentSession,
+    undoLastUserMessage,
+    redoLastUserMessage,
+    renameSession: renameSessionTitle,
+    deleteSession: deleteSessionById,
+    listAgents,
+    listCommands,
+  } = useSessionActions({
+    client,
+    baseUrl,
+    selectedSessionId,
+    selectedSession,
+    selectedSessionModel,
+    selectedSessionAgent,
+    workspaceProjectDir,
+    selectedWorkspaceId: () => workspaceStore.selectedWorkspaceId(),
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot().trim(),
+    messages,
+    sessions,
+    pendingSessionModel,
+    developerMode,
+    locationPathname: () => location.pathname,
+    ensureSelectedWorkspaceRuntime,
+    createSessionRoute: (sessionId) => goToSession(sessionId),
+    navigateToSessionList: () => navigate("/session", { replace: true }),
+    selectSession,
+    refreshSidebarWorkspaceSessions,
+    abortRefreshes,
+    setBusy,
+    setBusyLabel,
+    setBusyStartedAt,
+    setError,
+    setCreatingSession,
+    setSelectedSessionId,
+    setSessions,
+    sessionStatusById,
+    setSessionStatusById,
+    setPendingSessionModel,
+    setSessionModelById,
+    setSessionModelOverrideById,
+    readSessionByWorkspace,
+    writeSessionByWorkspace,
+    appendSessionErrorTurn: sessionStore.appendSessionErrorTurn,
+    describeProviderError,
+    logWorkspaceScopeSnapshot: (label, payload) =>
+      logWorkspaceScopeSnapshot(label, payload as Record<string, unknown> | undefined),
+    safeStringify,
+    getVariantFor,
+    sanitizeModelVariantForRef,
+    resolveCodexReasoningEffort,
   });
 
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) return;
 
-    setSessionModelOverridesReady(false);
-    const raw = window.localStorage.getItem(sessionModelOverridesKey(workspaceId));
-    setSessionModelOverrideById(parseSessionModelOverrides(raw));
-    setSessionModelOverridesReady(true);
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!sessionModelOverridesReady()) return;
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) return;
-
-    const payload = serializeSessionModelOverrides(sessionModelOverrideById());
-    try {
-      if (payload) {
-        window.localStorage.setItem(sessionModelOverridesKey(workspaceId), payload);
-      } else {
-        window.localStorage.removeItem(sessionModelOverridesKey(workspaceId));
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const canReadConfig = openworkServerCanReadConfig();
-
-    if (!openworkClient || !openworkWorkspaceId || !canReadConfig) {
-      setAuthorizedFolders([]);
-      setAuthorizedFolderDraft("");
-      setAuthorizedFolderHiddenEntries({});
-      setAuthorizedFoldersLoading(false);
-      setAuthorizedFoldersStatus(null);
-      setAuthorizedFoldersError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setAuthorizedFolderDraft("");
-    setAuthorizedFoldersLoading(true);
-    setAuthorizedFoldersError(null);
-    setAuthorizedFoldersStatus(null);
-
-    const loadAuthorizedFolders = async () => {
-      try {
-        const config = await openworkClient.getConfig(openworkWorkspaceId);
-        if (cancelled) return;
-        const next = readAuthorizedFoldersFromConfig(ensureRecord(config.opencode));
-        setAuthorizedFolders(next.folders);
-        setAuthorizedFolderHiddenEntries(next.hiddenEntries);
-        setAuthorizedFoldersStatus(
-          buildAuthorizedFoldersStatus(Object.keys(next.hiddenEntries).length),
-        );
-      } catch (error) {
-        if (cancelled) return;
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setAuthorizedFolders([]);
-        setAuthorizedFolderHiddenEntries({});
-        setAuthorizedFoldersError(message);
-      } finally {
-        if (!cancelled) {
-          setAuthorizedFoldersLoading(false);
-        }
-      }
-    };
-
-    void loadAuthorizedFolders();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  const persistAuthorizedFolders = async (nextFolders: string[]) => {
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    if (!openworkClient || !openworkWorkspaceId || !openworkServerCanWriteConfig()) {
-      setAuthorizedFoldersError(
-        "A writable OpenWork server workspace is required to update authorized folders.",
-      );
-      return false;
-    }
-
-    setAuthorizedFoldersSaving(true);
-    setAuthorizedFoldersError(null);
-    setAuthorizedFoldersStatus("Saving authorized folders...");
-
-    try {
-      const currentConfig = await openworkClient.getConfig(openworkWorkspaceId);
-      const currentAuthorizedFolders = readAuthorizedFoldersFromConfig(
-        ensureRecord(currentConfig.opencode),
-      );
-      const nextExternalDirectory = mergeAuthorizedFoldersIntoExternalDirectory(
-        nextFolders,
-        currentAuthorizedFolders.hiddenEntries,
-      );
-
-      await openworkClient.patchConfig(openworkWorkspaceId, {
-        opencode: {
-          permission: {
-            external_directory: nextExternalDirectory,
-          },
-        },
-      });
-      setAuthorizedFolders(nextFolders);
-      setAuthorizedFolderHiddenEntries(currentAuthorizedFolders.hiddenEntries);
-      setAuthorizedFoldersStatus(
-        buildAuthorizedFoldersStatus(
-          Object.keys(currentAuthorizedFolders.hiddenEntries).length,
-          "Authorized folders updated.",
-        ),
-      );
-      markOpencodeConfigReloadRequired();
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setAuthorizedFoldersError(message);
-      setAuthorizedFoldersStatus(null);
-      return false;
-    } finally {
-      setAuthorizedFoldersSaving(false);
-    }
-  };
-
-  const addAuthorizedFolder = async () => {
-    const normalized = normalizeAuthorizedFolderPath(authorizedFolderDraft());
-    const workspaceRoot = normalizeAuthorizedFolderPath(workspaceStore.selectedWorkspaceRoot().trim());
-    if (!normalized) return;
-    if (workspaceRoot && normalized === workspaceRoot) {
-      setAuthorizedFolderDraft("");
-      setAuthorizedFoldersStatus("Workspace root is already available.");
-      setAuthorizedFoldersError(null);
-      return;
-    }
-    if (authorizedFolders().includes(normalized)) {
-      setAuthorizedFolderDraft("");
-      setAuthorizedFoldersStatus("Folder is already authorized.");
-      setAuthorizedFoldersError(null);
-      return;
-    }
-
-    const ok = await persistAuthorizedFolders([...authorizedFolders(), normalized]);
-    if (ok) {
-      setAuthorizedFolderDraft("");
-    }
-  };
-
-  const removeAuthorizedFolder = async (folder: string) => {
-    const nextFolders = authorizedFolders().filter((entry) => entry !== folder);
-    await persistAuthorizedFolders(nextFolders);
-  };
-
-  const pickAuthorizedFolder = async () => {
-    if (!isTauriRuntime()) return;
-    try {
-      const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
-      const folder = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-      const normalized = normalizeAuthorizedFolderPath(folder);
-      const workspaceRoot = normalizeAuthorizedFolderPath(workspaceStore.selectedWorkspaceRoot().trim());
-      if (!normalized) return;
-      setAuthorizedFolderDraft(normalized);
-      if (workspaceRoot && normalized === workspaceRoot) {
-        setAuthorizedFolderDraft("");
-        setAuthorizedFoldersStatus("Workspace root is already available.");
-        setAuthorizedFoldersError(null);
-        return;
-      }
-      if (authorizedFolders().includes(normalized)) {
-        setAuthorizedFoldersStatus("Folder is already authorized.");
-        setAuthorizedFoldersError(null);
-        return;
-      }
-      const ok = await persistAuthorizedFolders([...authorizedFolders(), normalized]);
-      if (ok) {
-        setAuthorizedFolderDraft("");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setAuthorizedFoldersError(message);
-    }
-  };
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) return;
-
-    setWorkspaceDefaultModelReady(false);
-    const workspaceType = workspaceStore.selectedWorkspaceDisplay().workspaceType;
-    const workspaceRoot = workspaceStore.selectedWorkspacePath().trim();
-    const activeClient = client();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
-
-    let cancelled = false;
-
-    const applyDefault = async () => {
-      let configDefault: ModelRef | null = null;
-      let configFileContent: string | null = null;
-
-      if (workspaceType === "local" && workspaceRoot) {
-        if (canUseOpenworkServer) {
-          try {
-            const config = await openworkClient.getConfig(openworkWorkspaceId);
-            const model = typeof config.opencode?.model === "string" ? config.opencode.model : null;
-            configDefault = parseModelRef(model);
-          } catch {
-            // ignore
-          }
-        } else if (isTauriRuntime()) {
-          try {
-            const configFile = await readOpencodeConfig("project", workspaceRoot);
-            configFileContent = configFile.content;
-            configDefault = parseDefaultModelFromConfig(configFile.content);
-          } catch {
-            // ignore
-          }
-        }
-      } else if (activeClient) {
-        try {
-          const config = unwrap(
-            await activeClient.config.get({ directory: workspaceRoot || undefined })
-          );
-          if (typeof config.model === "string") {
-            configDefault = parseModelRef(config.model);
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      const pendingModelRef = pendingDefaultModelForWorkspace(workspaceId);
-      const loadedModelRef = configDefault ? formatModelRef(configDefault) : null;
-
-      if (pendingModelRef && pendingModelRef !== loadedModelRef) {
-        if (workspaceType === "local" && workspaceRoot) {
-          setLastKnownConfigSnapshot(getConfigSnapshot(configFileContent));
-        }
-
-        if (!cancelled) {
-          setWorkspaceDefaultModelReady(true);
-        }
-        return;
-      }
-
-      if (pendingModelRef && loadedModelRef === pendingModelRef) {
-        setPendingDefaultModelForWorkspace(workspaceId, null);
-      }
-
-      setDefaultModelExplicit(Boolean(configDefault));
-      const nextDefault = configDefault ?? legacyDefaultModel();
-      const currentDefault = untrack(defaultModel);
-      if (nextDefault && !modelEquals(currentDefault, nextDefault)) {
-        setDefaultModel(nextDefault);
-      }
-      const currentLegacyDefault = untrack(legacyDefaultModel);
-      if (nextDefault && !modelEquals(currentLegacyDefault, nextDefault)) {
-        setLegacyDefaultModel(nextDefault);
-      }
-
-      if (workspaceType === "local" && workspaceRoot) {
-        setLastKnownConfigSnapshot(getConfigSnapshot(configFileContent));
-      }
-
-      if (!cancelled) {
-        setWorkspaceDefaultModelReady(true);
-      }
-    };
-
-    void applyDefault();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    if (!workspaceDefaultModelReady()) return;
-    if (!isTauriRuntime()) return;
-    if (!defaultModelExplicit()) return;
-
-    const workspace = workspaceStore.selectedWorkspaceDisplay();
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (workspace.workspaceType !== "local") return;
-
-    const root = workspaceStore.selectedWorkspacePath().trim();
-    if (!root) return;
-    const nextModel = defaultModel();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
-    let cancelled = false;
-
-    const writeConfig = async () => {
-      try {
-        if (canUseOpenworkServer) {
-          const config = await openworkClient.getConfig(openworkWorkspaceId);
-          const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
-          if (currentModel && modelEquals(currentModel, nextModel)) {
-            if (workspaceId) {
-              setPendingDefaultModelForWorkspace(workspaceId, null);
-            }
-            return;
-          }
-
-          await openworkClient.patchConfig(openworkWorkspaceId, {
-            opencode: { model: formatModelRef(nextModel) },
-          });
-          if (workspaceId) {
-            setPendingDefaultModelForWorkspace(workspaceId, null);
-          }
-          markOpencodeConfigReloadRequired();
-          return;
-        }
-
-        const configFile = await readOpencodeConfig("project", root);
-        const existingModel = parseDefaultModelFromConfig(configFile.content);
-        if (existingModel && modelEquals(existingModel, nextModel)) {
-          if (workspaceId) {
-            setPendingDefaultModelForWorkspace(workspaceId, null);
-          }
-          return;
-        }
-
-        const content = formatConfigWithDefaultModel(configFile.content, nextModel);
-        const result = await writeOpencodeConfig("project", root, content);
-        if (!result.ok) {
-          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-        }
-        setLastKnownConfigSnapshot(getConfigSnapshot(content));
-        if (workspaceId) {
-          setPendingDefaultModelForWorkspace(workspaceId, null);
-        }
-        markOpencodeConfigReloadRequired();
-      } catch (error) {
-        if (cancelled) return;
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-      }
-    };
-
-    void writeConfig();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) {
-      setAutoCompactContext(true);
-      setAutoCompactContextApplied(true);
-      setAutoCompactContextDirty(false);
-      setAutoCompactContextReady(false);
-      setAutoCompactContextSaving(false);
-      return;
-    }
-
-    const workspace = workspaceStore.selectedWorkspaceDisplay();
-    const root = workspaceStore.selectedWorkspacePath().trim();
-    const activeClient = client();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
-
-    let cancelled = false;
-    setAutoCompactContextReady(false);
-    setAutoCompactContextDirty(false);
-
-    const loadAutoCompactContext = async () => {
-      let nextValue = true;
-
-      if (canUseOpenworkServer) {
-        try {
-          const config = await openworkClient.getConfig(openworkWorkspaceId);
-          nextValue = readAutoCompactContextFromRecord(config.opencode) ?? true;
-        } catch {
-          // ignore
-        }
-      } else if (workspace.workspaceType === "local" && root && isTauriRuntime()) {
-        try {
-          const configFile = await readOpencodeConfig("project", root);
-          nextValue = parseAutoCompactContextFromConfig(configFile.content) ?? true;
-        } catch {
-          // ignore
-        }
-      } else if (activeClient) {
-        try {
-          const config = unwrap(await activeClient.config.get({ directory: root || undefined }));
-          nextValue = readAutoCompactContextFromRecord(config) ?? true;
-        } catch {
-          // ignore
-        }
-      }
-
-      if (cancelled) return;
-      setAutoCompactContext(nextValue);
-      setAutoCompactContextApplied(nextValue);
-      setAutoCompactContextReady(true);
-    };
-
-    void loadAutoCompactContext();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    if (!autoCompactContextReady()) return;
-    if (!autoCompactContextDirty()) return;
-
-    const nextValue = autoCompactContext();
-    const appliedValue = autoCompactContextApplied();
-    const workspace = workspaceStore.selectedWorkspaceDisplay();
-    const root = workspaceStore.selectedWorkspacePath().trim();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
-
-    let cancelled = false;
-    setAutoCompactContextSaving(true);
-
-    const persistAutoCompactContext = async () => {
-      try {
-        if (canUseOpenworkServer) {
-          const config = await openworkClient.getConfig(openworkWorkspaceId);
-          const currentValue = readAutoCompactContextFromRecord(config.opencode) ?? true;
-          if (currentValue !== nextValue) {
-            await openworkClient.patchConfig(openworkWorkspaceId, {
-              opencode: {
-                compaction: {
-                  auto: nextValue,
-                },
-              },
-            });
-            markOpencodeConfigReloadRequired();
-          }
-          if (cancelled) return;
-          setAutoCompactContextApplied(nextValue);
-          setAutoCompactContextDirty(false);
-          return;
-        }
-
-        if (workspace.workspaceType !== "local" || !root || !isTauriRuntime()) {
-          throw new Error(
-            "Auto context compaction can only be changed for a local workspace or a writable OpenWork server workspace.",
-          );
-        }
-
-        const configFile = await readOpencodeConfig("project", root);
-        const currentValue = parseAutoCompactContextFromConfig(configFile.content) ?? true;
-        if (currentValue !== nextValue) {
-          const content = formatConfigWithAutoCompactContext(configFile.content, nextValue);
-          const result = await writeOpencodeConfig("project", root, content);
-          if (!result.ok) {
-            throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-          }
-          setLastKnownConfigSnapshot(getConfigSnapshot(content));
-          markOpencodeConfigReloadRequired();
-        }
-
-        if (cancelled) return;
-        setAutoCompactContextApplied(nextValue);
-        setAutoCompactContextDirty(false);
-      } catch (error) {
-        if (cancelled) return;
-        setAutoCompactContext(appliedValue);
-        setAutoCompactContextDirty(false);
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-      } finally {
-        setAutoCompactContextSaving(false);
-      }
-    };
-
-    void persistAutoCompactContext();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
+  useAppBootstrap({
+    themeMode,
+    launchUpdateCheckTriggered,
+    setRememberStartupChoice,
+    setStartupPreference,
+    setBaseUrl,
+    setClientDirectory,
+    setEngineSource,
+    setEngineCustomBinPath,
+    setEngineRuntime,
+    setOpencodeEnableExa,
+    setDefaultModel,
+    setLegacyDefaultModel,
+    setShowThinking,
+    setHideTitlebar,
+    setModelVariantMap,
+    setUpdateAutoCheck,
+    setUpdateAutoDownload,
+    setUpdateStatus,
+    setNotionStatus,
+    setNotionStatusDetail,
+    setNotionSkillInstalled,
+    setAppVersion,
+    setUpdateEnv,
+    setLaunchUpdateCheckTriggered,
+    refreshMcpServers,
+    checkForUpdates,
+    consumeDeepLinks,
+    bootstrapOnboarding: workspaceStore.bootstrapOnboarding,
+    setBooting,
   });
 
   createEffect(() => {
@@ -6519,173 +2708,21 @@ export default function App() {
     void workspaceStore.refreshEngineDoctor();
   });
 
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem("openwork.baseUrl", baseUrl());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        "openwork.clientDirectory",
-        clientDirectory()
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    // Legacy key: keep for backwards compatibility.
-    try {
-      window.localStorage.setItem("openwork.projectDir", workspaceProjectDir());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem("openwork.engineSource", engineSource());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const value = engineCustomBinPath().trim();
-      if (value) {
-        window.localStorage.setItem("openwork.engineCustomBinPath", value);
-      } else {
-        window.localStorage.removeItem("openwork.engineCustomBinPath");
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem("openwork.engineRuntime", engineRuntime());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        "openwork.opencodeEnableExa",
-        opencodeEnableExa() ? "1" : "0"
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        MODEL_PREF_KEY,
-        formatModelRef(defaultModel())
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        "openwork.updateAutoCheck",
-        updateAutoCheck() ? "1" : "0"
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        "openwork.updateAutoDownload",
-        updateAutoDownload() ? "1" : "0"
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        THINKING_PREF_KEY,
-        JSON.stringify(showThinking())
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  // Persist and apply hideTitlebar setting
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const hide = hideTitlebar();
-    try {
-      window.localStorage.setItem(HIDE_TITLEBAR_PREF_KEY, JSON.stringify(hide));
-    } catch {
-      // ignore
-    }
-    // Apply to window decorations (only in Tauri desktop environment)
-    if (isTauriRuntime()) {
-      setWindowDecorations(!hide).catch(() => {
-        // ignore errors (e.g., window not ready)
-      });
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const map = modelVariantMap();
-      if (Object.keys(map).length > 0) {
-        window.localStorage.setItem(VARIANT_PREF_KEY, JSON.stringify(map));
-      } else {
-        window.localStorage.removeItem(VARIANT_PREF_KEY);
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    const state = updateStatus();
-    if (typeof window === "undefined") return;
-    if (state.state === "idle" && state.lastCheckedAt) {
-      try {
-        window.localStorage.setItem(
-          "openwork.updateLastCheckedAt",
-          String(state.lastCheckedAt)
-        );
-      } catch {
-        // ignore
-      }
-    }
+  useAppPreferencePersistence({
+    baseUrl,
+    clientDirectory,
+    workspaceProjectDir,
+    engineSource,
+    engineCustomBinPath,
+    engineRuntime,
+    opencodeEnableExa,
+    defaultModel,
+    updateAutoCheck,
+    updateAutoDownload,
+    showThinking,
+    hideTitlebar,
+    modelVariantMap,
+    updateStatus,
   });
 
   createEffect(() => {
@@ -6804,7 +2841,7 @@ export default function App() {
     engineInstallLogs: engineInstallLogs(),
     error: error(),
     canRepairMigration: workspaceStore.canRepairOpencodeMigration(),
-    migrationRepairUnavailableReason: migrationRepairUnavailableReason(),
+    migrationRepairUnavailableReason: workspaceMaintenanceStore.migrationRepairUnavailableReason(),
     migrationRepairBusy: workspaceStore.migrationRepairBusy(),
     migrationRepairResult: workspaceStore.migrationRepairResult(),
     isWindows: isWindowsPlatform(),
@@ -6857,301 +2894,289 @@ export default function App() {
     setThemeMode,
   });
 
-  const dashboardProps = () => {
-    const workspaceType = selectedWorkspaceDisplay().workspaceType;
-    const isRemoteWorkspace = workspaceType === "remote";
-    const providerAuthWorkerType: "local" | "remote" = isRemoteWorkspace ? "remote" : "local";
-    const openworkStatus = openworkServerStatus();
-    const canUseDesktopTools = isTauriRuntime() && !isRemoteWorkspace;
-    const canInstallSkillCreator = isRemoteWorkspace
+  const canUseDesktopTools = createMemo(
+    () => isTauriRuntime() && selectedWorkspaceDisplay().workspaceType !== "remote",
+  );
+  const canInstallSkillCreator = createMemo(() =>
+    selectedWorkspaceDisplay().workspaceType === "remote"
       ? openworkServerCanWriteSkills()
-      : isTauriRuntime();
-    const canEditPlugins = isRemoteWorkspace
+      : isTauriRuntime(),
+  );
+  const canEditPlugins = createMemo(() =>
+    selectedWorkspaceDisplay().workspaceType === "remote"
       ? openworkServerCanWritePlugins()
-      : isTauriRuntime();
-    const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
-    const skillsAccessHint = isRemoteWorkspace
-      ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills."
-        : openworkStatus === "limited"
-          ? "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect."
-          : openworkServerCanWriteSkills()
-            ? null
-            : "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs."
-      : null;
-    const pluginsAccessHint = isRemoteWorkspace
-      ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Plugins are read-only."
-        : openworkStatus === "limited"
-          ? "OpenWork server needs a token to edit plugins."
-          : openworkServerCanWritePlugins()
-            ? null
-            : "OpenWork server is read-only for plugins."
-      : null;
+      : isTauriRuntime(),
+  );
+  const canUseGlobalPluginScope = createMemo(
+    () => selectedWorkspaceDisplay().workspaceType !== "remote" && isTauriRuntime(),
+  );
+  const skillsAccessHint = createMemo<string | null>(() => {
+    if (selectedWorkspaceDisplay().workspaceType !== "remote") {
+      return null;
+    }
+    const status = openworkServerStatus();
+    if (status === "disconnected") {
+      return "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills.";
+    }
+    if (status === "limited") {
+      return "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect.";
+    }
+    return openworkServerCanWriteSkills()
+      ? null
+      : "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs.";
+  });
+  const pluginsAccessHint = createMemo<string | null>(() => {
+    if (selectedWorkspaceDisplay().workspaceType !== "remote") {
+      return null;
+    }
+    const status = openworkServerStatus();
+    if (status === "disconnected") {
+      return "OpenWork server unavailable. Plugins are read-only.";
+    }
+    if (status === "limited") {
+      return "OpenWork server needs a token to edit plugins.";
+    }
+    return openworkServerCanWritePlugins()
+      ? null
+      : "OpenWork server is read-only for plugins.";
+  });
 
-    return {
-      tab: tab(),
-      setTab,
-      settingsTab: settingsTab(),
-      setSettingsTab,
-      providers: providers(),
-      providerConnectedIds: providerConnectedIds(),
-      providerAuthBusy: providerAuthBusy(),
-      providerAuthModalOpen: providerAuthModalOpen(),
-      providerAuthError: providerAuthError(),
-      providerAuthMethods: providerAuthMethods(),
-      providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
-      providerAuthWorkerType,
-      openProviderAuthModal,
-      disconnectProvider,
-      closeProviderAuthModal,
-      startProviderAuth,
-      completeProviderAuthOAuth,
-      refreshProviders,
-      submitProviderApiKey,
-      view: currentView(),
-      setView,
-      toggleSettings: () => toggleSettingsView("general"),
-      startupPreference: startupPreference(),
-      baseUrl: baseUrl(),
-      clientConnected: Boolean(client()),
-      busy: busy(),
-      busyHint: busyHint(),
-      busyLabel: busyLabel(),
-      newTaskDisabled: newTaskDisabled(),
-      headerStatus: headerStatus(),
-      error: error(),
-      openworkServerStatus: openworkStatus,
-      openworkServerUrl: openworkServerUrl(),
-      openworkServerClient: openworkServerClient(),
-      openworkReconnectBusy: openworkReconnectBusy(),
-      reconnectOpenworkServer,
-      openworkServerSettings: openworkServerSettings(),
-      openworkServerHostInfo: openworkServerHostInfo(),
-      shareRemoteAccessBusy: shareRemoteAccessBusy(),
-      shareRemoteAccessError: shareRemoteAccessError(),
-      saveShareRemoteAccess,
-      openworkServerCapabilities: devtoolsCapabilities(),
-      openworkServerDiagnostics: openworkServerDiagnostics(),
-      runtimeWorkspaceId: runtimeWorkspaceId(),
-      activeWorkspaceType: workspaceStore.selectedWorkspaceDisplay().workspaceType,
-      openworkAuditEntries: openworkAuditEntries(),
-      openworkAuditStatus: openworkAuditStatus(),
-      openworkAuditError: openworkAuditError(),
-      opencodeConnectStatus: opencodeConnectStatus(),
-      engineInfo: workspaceStore.engine(),
-      orchestratorStatus: orchestratorStatusState(),
-      opencodeRouterInfo: opencodeRouterInfoState(),
-      engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
-      updateOpenworkServerSettings,
-      resetOpenworkServerSettings,
-      testOpenworkServerConnection,
-      canReloadWorkspace: canReloadWorkspace(),
-      reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
-      reloadBusy: reloadBusy(),
-      reloadError: reloadError(),
-      workspaceAutoReloadAvailable: workspaceAutoReloadAvailable(),
-      workspaceAutoReloadEnabled: workspaceAutoReloadEnabled(),
-      setWorkspaceAutoReloadEnabled,
-      workspaceAutoReloadResumeEnabled: workspaceAutoReloadResumeEnabled(),
-      setWorkspaceAutoReloadResumeEnabled,
-      selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
-      workspaces: workspaceStore.workspaces(),
-      selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
-      connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
-      workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
-      switchWorkspace: workspaceStore.switchWorkspace,
-      testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
-      recoverWorkspace: workspaceStore.recoverWorkspace,
-      openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-      pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
-      openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
-      connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
-      openCloudTemplate,
-      importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
-      importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
-      exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
-      exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
-      createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
-      setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
-      createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
-      pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
-      workspaceSessionGroups: sidebarWorkspaceGroups(),
-      selectedSessionId: activeSessionId(),
-      openRenameWorkspace,
-      editWorkspaceConnection: openWorkspaceConnectionSettings,
-      forgetWorkspace: workspaceStore.forgetWorkspace,
-      stopSandbox: workspaceStore.stopSandbox,
-      scheduledJobs: scheduledJobs(),
-      scheduledJobsSource: scheduledJobsSource(),
-      schedulerPluginInstalled: schedulerPluginInstalled(),
-      scheduledJobsStatus: scheduledJobsStatus(),
-      scheduledJobsBusy: scheduledJobsBusy(),
-      scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
-      refreshScheduledJobs: (options?: { force?: boolean }) =>
-        refreshScheduledJobs(options).catch(() => undefined),
-      deleteScheduledJob,
-      selectedWorkspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-      isRemoteWorkspace: workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote",
-      refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
-      refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
-      ensureHubSkillsFresh,
-      refreshPlugins: (scopeOverride?: PluginScope) =>
-        refreshPlugins(scopeOverride).catch(() => undefined),
-      skills: skills(),
-      skillsStatus: skillsStatus(),
-      hubSkills: hubSkills(),
-      hubSkillsStatus: hubSkillsStatus(),
-      hubRepo: hubRepo(),
-      hubRepos: hubRepos(),
-      skillsAccessHint,
-      canInstallSkillCreator,
-      canUseDesktopTools,
-      importLocalSkill,
-      installSkillCreator,
-      installHubSkill,
-      setHubRepo,
-      addHubRepo,
-      removeHubRepo,
-      revealSkillsFolder,
-      uninstallSkill,
-      readSkill,
-      saveSkill,
-      pluginsAccessHint,
-      canEditPlugins,
-      canUseGlobalPluginScope,
-      pluginScope: pluginScope(),
-      setPluginScope,
-      pluginConfigPath: pluginConfigPath() ?? pluginConfig()?.path ?? null,
-      pluginList: pluginList(),
-      pluginInput: pluginInput(),
-      setPluginInput,
-      pluginStatus: pluginStatus(),
-      activePluginGuide: activePluginGuide(),
-      setActivePluginGuide,
-      isPluginInstalled: isPluginInstalledByName,
-      suggestedPlugins: SUGGESTED_PLUGINS,
-      addPlugin,
-      removePlugin,
-      createSessionAndOpen,
-      setPrompt,
-      selectSession: selectSession,
-      defaultModelLabel: formatModelLabel(defaultModel(), providers()),
-      defaultModelRef: formatModelRef(defaultModel()),
-      openDefaultModelPicker,
-      showThinking: showThinking(),
-      toggleShowThinking: () => setShowThinking((v) => !v),
-      autoCompactContext: autoCompactContext(),
-      toggleAutoCompactContext,
-      autoCompactContextBusy: autoCompactContextSaving(),
-      hideTitlebar: hideTitlebar(),
-      toggleHideTitlebar: () => setHideTitlebar((v) => !v),
-      modelVariantLabel: getModelBehaviorCopy(defaultModel(), getVariantFor(defaultModel())).label,
-      editModelVariant: openDefaultModelPicker,
-      updateAutoCheck: updateAutoCheck(),
-      toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
-      updateAutoDownload: updateAutoDownload(),
-      toggleUpdateAutoDownload: () =>
-        setUpdateAutoDownload((v) => {
-          const next = !v;
-          if (next) {
-            setUpdateAutoCheck(true);
-          }
-          return next;
-        }),
-      updateStatus: updateStatus(),
-      updateEnv: updateEnv(),
-      appVersion: appVersion(),
-      checkForUpdates: () => checkForUpdates(),
-      downloadUpdate: () => downloadUpdate(),
-      installUpdateAndRestart,
-      anyActiveRuns: anyActiveRuns(),
-      engineSource: engineSource(),
-      setEngineSource,
-      engineCustomBinPath: engineCustomBinPath(),
-      setEngineCustomBinPath,
-      engineRuntime: engineRuntime(),
-      setEngineRuntime,
-      opencodeEnableExa: opencodeEnableExa(),
-      toggleOpencodeEnableExa: () => setOpencodeEnableExa((v) => !v),
-      isWindows: isWindowsPlatform(),
-      toggleDeveloperMode: () => setDeveloperMode((v) => !v),
-      developerMode: developerMode(),
-      stopHost,
-      restartLocalServer,
-      openResetModal,
-      resetModalBusy: resetModalBusy(),
-      onResetStartupPreference: () => {
-        clearStartupPreference();
-        setStartupPreference(null);
-        setRememberStartupChoice(false);
-      },
-      themeMode: themeMode(),
-      setThemeMode,
-      pendingPermissions: pendingPermissions(),
-      events: events(),
-      workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
-      sandboxCreateProgress: workspaceStore.sandboxCreateProgress(),
-      sandboxCreateProgressLast: workspaceStore.lastSandboxCreateProgress(),
-      clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
-      safeStringify,
-      repairOpencodeMigration: workspaceStore.repairOpencodeMigration,
-      migrationRepairBusy: workspaceStore.migrationRepairBusy(),
-      migrationRepairResult: workspaceStore.migrationRepairResult(),
-      migrationRepairAvailable: workspaceStore.canRepairOpencodeMigration(),
-      migrationRepairUnavailableReason: migrationRepairUnavailableReason(),
-      repairOpencodeCache,
-      cacheRepairBusy: cacheRepairBusy(),
-      cacheRepairResult: cacheRepairResult(),
-      cleanupOpenworkDockerContainers,
-      dockerCleanupBusy: dockerCleanupBusy(),
-      dockerCleanupResult: dockerCleanupResult(),
-      authorizedFolders: authorizedFolders(),
-      authorizedFolderDraft: authorizedFolderDraft(),
-      setAuthorizedFolderDraft,
-      authorizedFoldersLoading: authorizedFoldersLoading(),
-      authorizedFoldersSaving: authorizedFoldersSaving(),
-      authorizedFoldersError: authorizedFoldersError(),
-      authorizedFoldersStatus: authorizedFoldersStatus(),
-      authorizedFoldersAvailable: openworkServerCanReadConfig(),
-      authorizedFoldersEditable: openworkServerCanWriteConfig(),
-      authorizedFoldersHint: !openworkServerReady()
-        ? "OpenWork server is disconnected."
-        : !openworkServerWorkspaceReady()
-          ? "No active server workspace is selected."
-          : !openworkServerCanReadConfig()
-            ? "OpenWork server config access is unavailable for this workspace."
-            : !openworkServerCanWriteConfig()
-              ? "OpenWork server is connected read-only for workspace config."
-              : null,
-      addAuthorizedFolder,
-      pickAuthorizedFolder,
-      removeAuthorizedFolder,
-      resetAppConfigDefaults,
-      notionStatus: notionStatus(),
-      notionStatusDetail: notionStatusDetail(),
-      notionError: notionError(),
-      notionBusy: notionBusy(),
-      connectNotion,
-      openDebugDeepLink,
-      mcpServers: mcpServers(),
-      mcpStatus: mcpStatus(),
-      mcpLastUpdatedAt: mcpLastUpdatedAt(),
-      mcpStatuses: mcpStatuses(),
-      mcpConnectingName: mcpConnectingName(),
-      selectedMcp: selectedMcp(),
-      setSelectedMcp,
-      readConfigFile: readMcpConfigFile,
-      quickConnect: MCP_QUICK_CONNECT,
-      connectMcp,
-      authorizeMcp,
-      logoutMcpAuth,
-      removeMcp,
-      refreshMcpServers,
-      language: currentLocale(),
-      setLanguage: setLocale,
-    };
+  const openworkServerContextValue = {
+    openworkServerStatus,
+    openworkServerUrl,
+    openworkServerClient,
+    openworkReconnectBusy,
+    reconnectOpenworkServer,
+    openworkServerSettings,
+    openworkServerHostInfo,
+    openworkServerCapabilities: devtoolsCapabilities,
+    openworkServerDiagnostics,
+    runtimeWorkspaceId,
+    openworkAuditEntries,
+    openworkAuditStatus,
+    openworkAuditError,
+    shareRemoteAccessBusy,
+    shareRemoteAccessError,
+    saveShareRemoteAccess,
   };
+
+  const providerAuthContextValue = {
+    providers,
+    providerConnectedIds,
+    providerAuthBusy,
+    providerAuthModalOpen,
+    providerAuthError,
+    providerAuthMethods,
+    providerAuthPreferredProviderId,
+    providerAuthWorkerType,
+    openProviderAuthModal,
+    closeProviderAuthModal,
+    startProviderAuth,
+    completeProviderAuthOAuth,
+    submitProviderApiKey,
+    disconnectProvider,
+    refreshProviders,
+  };
+
+  const extensionsContextValue = {
+    skills,
+    skillsStatus,
+    hubSkills,
+    hubSkillsStatus,
+    hubRepo,
+    hubRepos,
+    skillsAccessHint,
+    canInstallSkillCreator,
+    canUseDesktopTools,
+    refreshSkills,
+    refreshHubSkills,
+    ensureHubSkillsFresh,
+    importLocalSkill,
+    installSkillCreator,
+    installHubSkill,
+    setHubRepo,
+    addHubRepo,
+    removeHubRepo,
+    revealSkillsFolder,
+    uninstallSkill,
+    readSkill,
+    saveSkill,
+    pluginsAccessHint,
+    canEditPlugins,
+    canUseGlobalPluginScope,
+    pluginScope,
+    setPluginScope,
+    pluginConfigPath: () => pluginConfigPath() ?? pluginConfig()?.path ?? null,
+    pluginList,
+    pluginInput,
+    setPluginInput,
+    pluginStatus,
+    activePluginGuide,
+    setActivePluginGuide,
+    isPluginInstalled: isPluginInstalledByName,
+    suggestedPlugins: SUGGESTED_PLUGINS,
+    refreshPlugins,
+    addPlugin,
+    removePlugin,
+  };
+
+  const workspaceActionsContextValue = {
+    openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
+    pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
+    openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
+    connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
+    openCloudTemplate: sharedBundleFlow.openCloudTemplate,
+    importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
+    importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig,
+    exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
+    exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig,
+  };
+
+  const scheduledJobsContextValue = {
+    scheduledJobs,
+    scheduledJobsSource,
+    schedulerPluginInstalled,
+    scheduledJobsStatus,
+    scheduledJobsBusy,
+    scheduledJobsUpdatedAt,
+    refreshScheduledJobs: async (options?: { force?: boolean }) => {
+      await refreshScheduledJobs(options).catch(() => undefined);
+    },
+    deleteScheduledJob,
+  };
+
+  const authorizedFoldersContextValue = authorizedFoldersStore;
+
+  const workspaceMaintenanceContextValue = workspaceMaintenanceStore;
+
+  const dashboardProps = createDashboardPropsBuilder({
+    tab,
+    setTab,
+    settingsTab,
+    setSettingsTab,
+    setView,
+    toggleSettings: () => toggleSettingsView("general"),
+    startupPreference,
+    baseUrl,
+    clientConnected: () => Boolean(client()),
+    busy,
+    busyHint,
+    newTaskDisabled,
+    headerStatus,
+    error,
+    activeWorkspaceType: () => workspaceStore.selectedWorkspaceDisplay().workspaceType,
+    opencodeConnectStatus,
+    engineInfo: workspaceStore.engine,
+    orchestratorStatus: orchestratorStatusState,
+    opencodeRouterInfo: opencodeRouterInfoState,
+    engineDoctorVersion: () => workspaceStore.engineDoctorResult()?.version ?? null,
+    updateOpenworkServerSettings,
+    resetOpenworkServerSettings,
+    testOpenworkServerConnection,
+    canReloadWorkspace,
+    reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
+    reloadBusy,
+    reloadError,
+    workspaceAutoReloadAvailable,
+    workspaceAutoReloadEnabled,
+    setWorkspaceAutoReloadEnabled,
+    workspaceAutoReloadResumeEnabled,
+    setWorkspaceAutoReloadResumeEnabled,
+    selectedWorkspaceDisplay,
+    workspaces: workspaceStore.workspaces,
+    selectedWorkspaceId: workspaceStore.selectedWorkspaceId,
+    connectingWorkspaceId: workspaceStore.connectingWorkspaceId,
+    workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById,
+    switchWorkspace: workspaceStore.switchWorkspace,
+    testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
+    recoverWorkspace: workspaceStore.recoverWorkspace,
+    workspaceSessionGroups: sidebarWorkspaceGroups,
+    selectedSessionId: activeSessionId,
+    openRenameWorkspace,
+    editWorkspaceConnection: openWorkspaceConnectionSettings,
+    forgetWorkspace: workspaceStore.forgetWorkspace,
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot().trim(),
+    isRemoteWorkspace: () => workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote",
+    createSessionAndOpen,
+    setPrompt,
+    selectSession,
+    defaultModelLabel: () => formatModelLabel(defaultModel(), providers()),
+    defaultModelRef: () => formatModelRef(defaultModel()),
+    openDefaultModelPicker,
+    showThinking,
+    toggleShowThinking: () => setShowThinking((v) => !v),
+    autoCompactContext,
+    toggleAutoCompactContext,
+    autoCompactContextBusy: autoCompactContextSaving,
+    hideTitlebar,
+    toggleHideTitlebar: () => setHideTitlebar((v) => !v),
+    modelVariantLabel: () => getModelBehaviorCopy(defaultModel(), getVariantFor(defaultModel())).label,
+    editModelVariant: openDefaultModelPicker,
+    updateAutoCheck,
+    toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
+    updateAutoDownload,
+    toggleUpdateAutoDownload: () =>
+      setUpdateAutoDownload((v) => {
+        const next = !v;
+        if (next) {
+          setUpdateAutoCheck(true);
+        }
+        return next;
+      }),
+    updateStatus,
+    updateEnv,
+    appVersion,
+    checkForUpdates: () => checkForUpdates(),
+    downloadUpdate: () => downloadUpdate(),
+    installUpdateAndRestart,
+    anyActiveRuns,
+    engineSource,
+    setEngineSource,
+    engineCustomBinPath,
+    setEngineCustomBinPath,
+    engineRuntime,
+    setEngineRuntime,
+    opencodeEnableExa,
+    toggleOpencodeEnableExa: () => setOpencodeEnableExa((v) => !v),
+    isWindows: isWindowsPlatform,
+    toggleDeveloperMode: () => setDeveloperMode((v) => !v),
+    developerMode,
+    stopHost,
+    restartLocalServer,
+    openResetModal,
+    resetModalBusy,
+    onResetStartupPreference: () => {
+      clearStartupPreference();
+      setStartupPreference(null);
+      setRememberStartupChoice(false);
+    },
+    themeMode,
+    setThemeMode,
+    pendingPermissions,
+    events,
+    workspaceDebugEvents: workspaceStore.workspaceDebugEvents,
+    sandboxCreateProgress: workspaceStore.sandboxCreateProgress,
+    sandboxCreateProgressLast: workspaceStore.lastSandboxCreateProgress,
+    clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
+    safeStringify,
+    resetAppConfigDefaults,
+    openDebugDeepLink,
+    mcpServers,
+    mcpStatus,
+    mcpLastUpdatedAt,
+    mcpStatuses,
+    mcpConnectingName,
+    selectedMcp,
+    setSelectedMcp,
+    quickConnect: MCP_QUICK_CONNECT,
+    connectMcp,
+    authorizeMcp,
+    logoutMcpAuth,
+    removeMcp,
+    refreshMcpServers,
+    language: currentLocale,
+    setLanguage: setLocale,
+  });
 
   const searchWorkspaceFiles = async (query: string) => {
     const trimmed = query.trim();
@@ -7174,137 +3199,75 @@ export default function App() {
     }
   };
 
-  const sessionProps = () => ({
-    booting: booting(),
-    providerAuthWorkerType: (selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local") as
-      | "remote"
-      | "local",
-    selectedSessionId: activeSessionId(),
+  const sessionProps = createSessionPropsBuilder({
+    booting,
+    selectedSessionId: activeSessionId,
     setView,
-    tab: tab(),
-    settingsTab: settingsTab(),
     setTab,
     setSettingsTab,
     toggleSettings: () => toggleSettingsView("general"),
-    selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
-    selectedWorkspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-    activeWorkspaceConfig: resolvedActiveWorkspaceConfig(),
-    workspaces: workspaceStore.workspaces(),
-    selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
-    connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
-    workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
+    selectedWorkspaceDisplay,
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot().trim(),
+    activeWorkspaceConfig: resolvedActiveWorkspaceConfig,
+    workspaces: workspaceStore.workspaces,
+    selectedWorkspaceId: workspaceStore.selectedWorkspaceId,
+    connectingWorkspaceId: workspaceStore.connectingWorkspaceId,
+    workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById,
     switchWorkspace: workspaceStore.switchWorkspace,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
     recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
-    openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-    pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
-    openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
-    importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
-    importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
-    exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
-    exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
-    clientConnected: Boolean(client()),
-    openworkServerStatus: openworkServerStatus(),
-    openworkServerClient: openworkServerClient(),
-    openworkServerDiagnostics: openworkServerDiagnostics(),
-    openworkServerSettings: openworkServerSettings(),
-    openworkServerHostInfo: openworkServerHostInfo(),
-    shareRemoteAccessBusy: shareRemoteAccessBusy(),
-    shareRemoteAccessError: shareRemoteAccessError(),
-    saveShareRemoteAccess,
-    runtimeWorkspaceId: runtimeWorkspaceId(),
-    engineInfo: workspaceStore.engine(),
-    engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
-    orchestratorStatus: orchestratorStatusState(),
-    opencodeRouterInfo: opencodeRouterInfoState(),
-    appVersion: appVersion(),
-    stopHost,
-    headerStatus: headerStatus(),
-    busyHint: busyHint(),
-    updateStatus: updateStatus(),
-    updateEnv: updateEnv(),
-    anyActiveRuns: anyActiveRuns(),
+    clientConnected: () => Boolean(client()),
+    engineInfo: workspaceStore.engine,
+    engineDoctorVersion: () => workspaceStore.engineDoctorResult()?.version ?? null,
+    orchestratorStatus: orchestratorStatusState,
+    opencodeRouterInfo: opencodeRouterInfoState,
+    appVersion,
+    headerStatus,
+    busyHint,
+    updateStatus,
+    anyActiveRuns,
     installUpdateAndRestart,
-    selectedSessionModelLabel: selectedSessionModelLabel(),
-    openSessionModelPicker: openSessionModelPicker,
-    modelVariantLabel: getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).label,
-    modelVariant: getVariantFor(selectedSessionModel()),
-    modelBehaviorOptions: getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).options,
-    setModelVariant: (value: string | null) => updateModelVariant(selectedSessionModel(), value),
-    activePlugins: sidebarPluginList(),
-    activePluginStatus: sidebarPluginStatus(),
-    mcpServers: mcpServers(),
-    mcpStatuses: mcpStatuses(),
-    mcpStatus: mcpStatus(),
-    skills: skills(),
-    skillsStatus: skillsStatus(),
-    createSessionAndOpen: createSessionAndOpen,
+    createSessionAndOpen,
     sendPromptAsync: sendPrompt,
-    abortSession: abortSession,
-    sessionRevertMessageId: selectedSession()?.revert?.messageID ?? null,
-    undoLastUserMessage: undoLastUserMessage,
-    redoLastUserMessage: redoLastUserMessage,
+    abortSession,
+    sessionRevertMessageId: () => selectedSession()?.revert?.messageID ?? null,
+    undoLastUserMessage,
+    redoLastUserMessage,
     compactSession: compactCurrentSession,
-    lastPromptSent: lastPromptSent(),
-    retryLastPrompt: retryLastPrompt,
-    newTaskDisabled: newTaskDisabled(),
-    workspaceSessionGroups: sidebarWorkspaceGroups(),
+    lastPromptSent,
+    retryLastPrompt,
+    newTaskDisabled,
+    workspaceSessionGroups: sidebarWorkspaceGroups,
     openRenameWorkspace,
-    selectSession: selectSession,
-    messages: visibleMessages(),
+    selectSession,
+    messages: visibleMessages,
     getSessionById: sessionById,
     getMessagesBySessionId: messagesBySessionId,
     ensureSessionLoaded,
     sessionLoadingById,
-    todos: activeTodos(),
-    busyLabel: busyLabel(),
-    developerMode: developerMode(),
-    showThinking: showThinking(),
-    sessionCompactionState: selectedSessionCompactionState(),
-    expandedStepIds: expandedStepIds(),
-    setExpandedStepIds: setExpandedStepIds,
-    expandedSidebarSections: expandedSidebarSections(),
-    setExpandedSidebarSections: setExpandedSidebarSections,
-    workingFiles: activeWorkingFiles(),
-    authorizedDirs: activeAuthorizedDirs(),
-    busy: busy(),
-    prompt: prompt(),
-    setPrompt: setPrompt,
-    activePermission: activePermissionMemo(),
-    permissionReplyBusy: permissionReplyBusy(),
-    respondPermission: respondPermission,
-    respondPermissionAndRemember: respondPermissionAndRemember,
-    activeQuestion: activeQuestion(),
-    questionReplyBusy: questionReplyBusy(),
-    respondQuestion: respondQuestion,
-    safeStringify: safeStringify,
-    showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
-    startProviderAuth: startProviderAuth,
-    completeProviderAuthOAuth: completeProviderAuthOAuth,
-    refreshProviders: refreshProviders,
-    submitProviderApiKey: submitProviderApiKey,
-    openProviderAuthModal: openProviderAuthModal,
-    closeProviderAuthModal: closeProviderAuthModal,
-    providerAuthModalOpen: providerAuthModalOpen(),
-    providerAuthBusy: providerAuthBusy(),
-    providerAuthError: providerAuthError(),
-    providerAuthMethods: providerAuthMethods(),
-    providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
-    providers: providers(),
-    providerConnectedIds: providerConnectedIds(),
-    listAgents: listAgents,
-    listCommands: listCommands,
-    selectedSessionAgent: selectedSessionAgent(),
-    setSessionAgent: setSessionAgent,
-    saveSession: saveSessionExport,
-    sessionStatusById: activeSessionStatusById(),
-    hasEarlierMessages: selectedSessionHasEarlierMessages(),
-    loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
-    loadEarlierMessages,
-    searchFiles: searchWorkspaceFiles,
-    deleteSession: deleteSessionById,
+    todos: activeTodos,
+    developerMode,
+    showThinking,
+    sessionCompactionState: selectedSessionCompactionState,
+    expandedStepIds,
+    setExpandedStepIds,
+    workingFiles: activeWorkingFiles,
+    mcpStatuses,
+    busy,
+    prompt,
+    setPrompt,
+    selectedSessionModelLabel,
+    openSessionModelPicker,
+    modelVariantLabel: () =>
+      getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).label,
+    modelVariant: () => getVariantFor(selectedSessionModel()),
+    modelBehaviorOptions: () =>
+      getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).options,
+    setModelVariant: (value: string | null) => updateModelVariant(selectedSessionModel(), value),
+    activePermission: activePermissionMemo,
+    showTryNotionPrompt: () => tryNotionPromptVisible() && notionIsActive(),
     onTryNotionPrompt: () => {
       setPrompt("setup my crm");
       setTryNotionPromptVisible(false);
@@ -7315,9 +3278,284 @@ export default function App() {
         // ignore
       }
     },
-    sessionStatus: selectedSessionStatus(),
+    permissionReplyBusy,
+    respondPermission,
+    respondPermissionAndRemember,
+    activeQuestion,
+    questionReplyBusy,
+    respondQuestion,
+    safeStringify,
+    error,
+    sessionStatus: selectedSessionStatus,
     renameSession: renameSessionTitle,
-    error: error(),
+    listAgents,
+    searchFiles: searchWorkspaceFiles,
+    listCommands,
+    selectedSessionAgent,
+    setSessionAgent,
+    sessionStatusById: activeSessionStatusById,
+    hasEarlierMessages: selectedSessionHasEarlierMessages,
+    loadingEarlierMessages: selectedSessionLoadingEarlierMessages,
+    loadEarlierMessages,
+    deleteSession: deleteSessionById,
+  });
+
+  const appOverlaysProps = createAppOverlaysPropsBuilder({
+    modelPickerOpen: modelPickerOpen,
+    modelPickerOptions: modelOptions,
+    filteredModelOptions,
+    modelPickerQuery,
+    setModelPickerQuery,
+    modelPickerTarget,
+    modelPickerCurrent,
+    applyModelSelection,
+    onModelBehaviorChange: (model, value) => {
+      updateModelVariant(model, sanitizeModelVariantForRef(model, value));
+    },
+    openSettingsFromModelPicker,
+    closeModelPicker,
+    resetModalOpen,
+    resetModalMode,
+    resetModalText,
+    resetModalBusy,
+    canReset: () =>
+      !resetModalBusy() && !anyActiveRuns() && resetModalText().trim().toUpperCase() === "RESET",
+    hasActiveRuns: anyActiveRuns,
+    language: currentLocale,
+    closeResetModal: () => setResetModalOpen(false),
+    confirmReset,
+    setResetModalText,
+    mcpAuthModalOpen,
+    mcpAuthClient: client,
+    mcpAuthEntry,
+    workspaceProjectDir,
+    mcpAuthNeedsReload,
+    mcpAuthReloadBlocked: () => activeReloadBlockingSessions().length > 0,
+    activeReloadBlockingSessions,
+    isRemoteWorkspace: () => selectedWorkspaceDisplay().workspaceType === "remote",
+    forceStopSession: (sessionID) => abortSession(sessionID),
+    closeMcpAuthModal,
+    completeMcpAuthModal,
+    reloadWorkspaceEngine: () => reloadWorkspaceEngineAndResume(),
+    sharedBundleImportOpen: () => Boolean(sharedBundleFlow.sharedBundleImportChoice()),
+    sharedBundleImportTitle: () => sharedBundleFlow.sharedBundleImportCopy()?.title ?? "Import shared bundle",
+    sharedBundleImportDescription: () =>
+      sharedBundleFlow.sharedBundleImportCopy()?.description ?? "Choose how to import this shared bundle.",
+    sharedBundleImportItems: () => sharedBundleFlow.sharedBundleImportCopy()?.items ?? [],
+    sharedBundleWorkerOptions: sharedBundleFlow.sharedBundleWorkerOptions,
+    sharedBundleImportBusy: sharedBundleFlow.sharedBundleImportBusy,
+    sharedBundleImportError: sharedBundleFlow.sharedBundleImportError,
+    closeSharedBundleImportChoice: sharedBundleFlow.closeSharedBundleImportChoice,
+    openSharedBundleCreateWorkerFlow: () => {
+      void sharedBundleFlow.openSharedBundleCreateWorkerFlow();
+    },
+    importSharedBundleIntoExistingWorkspace: (workspaceId) => {
+      void sharedBundleFlow.importSharedBundleIntoExistingWorkspace(workspaceId);
+    },
+    startWithTemplateOpen: () => Boolean(sharedBundleFlow.sharedTemplateStartRequest()),
+    sharedTemplateName: () => sharedBundleFlow.sharedTemplateStartRequest()?.bundle.name?.trim() || "this template",
+    sharedTemplateDescription: () => sharedBundleFlow.sharedTemplateStartRequest()?.bundle.description ?? "",
+    sharedTemplateStartItems: sharedBundleFlow.sharedTemplateStartItems,
+    sharedTemplateStartBusy: sharedBundleFlow.sharedTemplateStartBusy,
+    closeTemplateStart: sharedBundleFlow.closeTemplateStart,
+    pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
+    startWorkspaceFromTemplate: (folder) => {
+      void sharedBundleFlow.startWorkspaceFromTemplate(folder);
+    },
+    createWorkspace: {
+      open: workspaceStore.createWorkspaceOpen(),
+      onClose: () => {
+        workspaceStore.setCreateWorkspaceOpen(false);
+        workspaceStore.clearSandboxCreateProgress?.();
+        sharedBundleFlow.clearSharedBundleCreateWorkerRequest();
+      },
+      onPickFolder: workspaceStore.pickWorkspaceFolder,
+      defaultPreset: sharedBundleFlow.createWorkspaceDefaultPreset(),
+      onConfirmRemote: (input) => workspaceStore.createRemoteWorkspaceFlow(input),
+      onConfirmTemplate: (template, preset, folder) =>
+        sharedBundleFlow.startWorkspaceFromCloudTemplate({
+          name: template.name,
+          templateData: template.templateData,
+          folder,
+          preset,
+        }),
+      onConfirm: (preset, folder) => sharedBundleFlow.confirmCreateWorkspaceImport(preset, folder),
+      onConfirmWorker: isTauriRuntime()
+        ? (preset, folder) => sharedBundleFlow.confirmCreateSandboxImport(preset, folder)
+        : undefined,
+      workerDisabled: (() => {
+        if (!isTauriRuntime()) return true;
+        if (workspaceStore.sandboxDoctorBusy?.()) return true;
+        const doctor = workspaceStore.sandboxDoctorResult?.();
+        if (!doctor) return false;
+        return !doctor?.ready;
+      })(),
+      workerDisabledReason: (() => {
+        if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
+        if (workspaceStore.sandboxDoctorBusy?.()) {
+          return t("dashboard.sandbox_checking_docker", currentLocale());
+        }
+        const doctor = workspaceStore.sandboxDoctorResult?.();
+        if (!doctor || doctor.ready) return null;
+        const message = doctor?.error?.trim();
+        return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
+      })(),
+      workerCtaLabel: t("dashboard.sandbox_get_ready_action", currentLocale()),
+      workerCtaDescription: t("dashboard.sandbox_get_ready_desc", currentLocale()),
+      onWorkerCta: async () => {
+        const url = "https://www.docker.com/products/docker-desktop/";
+        if (isTauriRuntime()) {
+          const { openUrl } = await import("@tauri-apps/plugin-opener");
+          await openUrl(url);
+        } else {
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+      },
+      workerRetryLabel: t("common.retry", currentLocale()),
+      workerDebugLines: (() => {
+        const doctor = workspaceStore.sandboxDoctorResult?.();
+        const lines: string[] = [];
+        if (!doctor?.debug) return lines;
+        const selected = doctor.debug.selectedBin?.trim();
+        if (selected) lines.push(`selected: ${selected}`);
+        if (doctor.debug.candidates?.length) {
+          lines.push(`candidates: ${doctor.debug.candidates.join(", ")}`);
+        }
+        if (doctor.debug.versionCommand) {
+          const cmd = doctor.debug.versionCommand;
+          lines.push(`docker --version exit=${cmd.status}`);
+          if (cmd.stderr?.trim()) lines.push(`docker --version stderr: ${cmd.stderr.trim()}`);
+        }
+        if (doctor.debug.infoCommand) {
+          const cmd = doctor.debug.infoCommand;
+          lines.push(`docker info exit=${cmd.status}`);
+          if (cmd.stderr?.trim()) lines.push(`docker info stderr: ${cmd.stderr.trim()}`);
+        }
+        return lines;
+      })(),
+      onWorkerRetry: () => {
+        void workspaceStore.refreshSandboxDoctor?.();
+      },
+      workerSubmitting: workspaceStore.sandboxPreflightBusy?.() ?? false,
+      remoteSubmitting: busy() && busyLabel() === "status.connecting",
+      remoteError: busyLabel() === "status.connecting" ? error() : null,
+      submitting: (() => {
+        const phase = workspaceStore.sandboxCreatePhase?.() ?? "idle";
+        if (phase === "provisioning" || phase === "finalizing") return true;
+        return busy() && busyLabel() === "status.creating_workspace";
+      })(),
+      submittingProgress: workspaceStore.sandboxCreateProgress?.() ?? null,
+    },
+    sharedSkillDestination: {
+      open:
+        Boolean(sharedBundleFlow.sharedSkillDestinationRequest()) &&
+        !workspaceStore.createWorkspaceOpen() &&
+        !workspaceStore.createRemoteWorkspaceOpen(),
+      skill: (() => {
+        const request = sharedBundleFlow.sharedSkillDestinationRequest();
+        if (!request) return null;
+        return {
+          name: request.bundle.name,
+          description: request.bundle.description ?? null,
+          trigger: request.bundle.trigger ?? null,
+        };
+      })(),
+      workspaces: sharedBundleFlow.sharedSkillDestinationWorkspaces(),
+      selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
+      busyWorkspaceId: sharedBundleFlow.sharedSkillDestinationBusyId(),
+      onClose: sharedBundleFlow.closeSharedSkillDestination,
+      onSubmitWorkspace: sharedBundleFlow.importSharedSkillIntoWorkspace,
+      onCreateWorker: isTauriRuntime()
+        ? sharedBundleFlow.openCreateWorkerFromSharedSkillDestination
+        : undefined,
+      onConnectRemote: () => {
+        setError(null);
+        workspaceStore.setCreateRemoteWorkspaceOpen(true);
+      },
+    },
+    createRemoteWorkspace: {
+      open: workspaceStore.createRemoteWorkspaceOpen(),
+      onClose: () => {
+        workspaceStore.setCreateRemoteWorkspaceOpen(false);
+        setDeepLinkRemoteWorkspaceDefaults(null);
+      },
+      onConfirm: (input) => workspaceStore.createRemoteWorkspaceFlow(input),
+      initialValues: deepLinkRemoteWorkspaceDefaults() ?? undefined,
+      submitting:
+        busy() &&
+        (busyLabel() === "status.creating_workspace" || busyLabel() === "status.connecting"),
+    },
+    reloadToast: {
+      open: reloadRequired("config", "mcp", "plugin", "skill", "agent", "command"),
+      title: reloadCopy().title,
+      description: reloadCopy().body,
+      trigger: reloadTrigger(),
+      error: reloadError(),
+      reloadLabel: activeReloadBlockingSessions().length > 0 ? "Reload & Stop Tasks" : "Reload now",
+      dismissLabel: "Later",
+      busy: reloadBusy(),
+      canReload: canReloadWorkspace(),
+      hasActiveRuns: activeReloadBlockingSessions().length > 0,
+      onReload: () => {
+        void (activeReloadBlockingSessions().length > 0
+          ? forceStopActiveSessionsAndReload()
+          : reloadWorkspaceEngineAndResume());
+      },
+      onDismiss: clearReloadRequired,
+    },
+    statusToast: {
+      open: Boolean(sharedBundleFlow.sharedSkillSuccessToast()),
+      tone: "success",
+      title: sharedBundleFlow.sharedSkillSuccessToast()?.title ?? "Skill added",
+      description: sharedBundleFlow.sharedSkillSuccessToast()?.description ?? null,
+      dismissLabel: "Dismiss",
+      onDismiss: sharedBundleFlow.clearSharedSkillSuccessToast,
+    },
+    renameWorkspace: {
+      open: renameWorkspaceOpen(),
+      title: renameWorkspaceName(),
+      busy: renameWorkspaceBusy(),
+      canSave: renameWorkspaceName().trim().length > 0 && !renameWorkspaceBusy(),
+      onClose: closeRenameWorkspace,
+      onSave: saveRenameWorkspace,
+      onTitleChange: setRenameWorkspaceName,
+    },
+    editRemoteWorkspace: {
+      open: editRemoteWorkspaceOpen(),
+      onClose: () => {
+        setEditRemoteWorkspaceOpen(false);
+        setEditRemoteWorkspaceId(null);
+        setEditRemoteWorkspaceError(null);
+      },
+      onConfirm: (input) => {
+        const workspaceId = editRemoteWorkspaceId();
+        if (!workspaceId) return;
+        setEditRemoteWorkspaceError(null);
+        void (async () => {
+          try {
+            const ok = await workspaceStore.updateRemoteWorkspaceFlow(workspaceId, input);
+            if (ok) {
+              setEditRemoteWorkspaceOpen(false);
+              setEditRemoteWorkspaceId(null);
+              setEditRemoteWorkspaceError(null);
+            } else {
+              setEditRemoteWorkspaceError(error() || "Connection failed. Check the URL and token.");
+              setError(null);
+            }
+          } catch (e) {
+            const message = e instanceof Error ? e.message : "Connection failed";
+            setEditRemoteWorkspaceError(message);
+            setError(null);
+          }
+        })();
+      },
+      initialValues: editRemoteWorkspaceDefaults() ?? undefined,
+      submitting: busy() && busyLabel() === "status.connecting",
+      error: editRemoteWorkspaceError(),
+      title: t("dashboard.edit_remote_workspace_title", currentLocale()),
+      subtitle: t("dashboard.edit_remote_workspace_subtitle", currentLocale()),
+      confirmLabel: t("dashboard.edit_remote_workspace_confirm", currentLocale()),
+    },
   });
 
   const dashboardTabs = new Set<DashboardTab>([
@@ -7430,383 +3668,31 @@ export default function App() {
   });
 
   return (
-    <>
-      <Switch>
-        <Match when={currentView() === "session"}>
-          <SessionView {...sessionProps()} />
-        </Match>
-        <Match when={true}>
-          <DashboardView {...dashboardProps()} />
-        </Match>
-      </Switch>
+    <OpenworkServerProvider value={openworkServerContextValue}>
+      <ProviderAuthProvider value={providerAuthContextValue}>
+        <ExtensionsProvider value={extensionsContextValue}>
+          <WorkspaceActionsProvider value={workspaceActionsContextValue}>
+            <ScheduledJobsProvider value={scheduledJobsContextValue}>
+              <AuthorizedFoldersProvider value={authorizedFoldersContextValue}>
+                <WorkspaceMaintenanceProvider value={workspaceMaintenanceContextValue}>
+                  <>
+                    <Switch>
+                      <Match when={currentView() === "session"}>
+                        <SessionView {...sessionProps()} />
+                      </Match>
+                      <Match when={true}>
+                        <DashboardView {...dashboardProps()} />
+                      </Match>
+                    </Switch>
 
-      <ModelPickerModal
-        open={modelPickerOpen()}
-        options={modelOptions()}
-        filteredOptions={filteredModelOptions()}
-        query={modelPickerQuery()}
-        setQuery={setModelPickerQuery}
-        target={modelPickerTarget()}
-        current={modelPickerCurrent()}
-        onSelect={applyModelSelection}
-        onBehaviorChange={(model, value) => {
-          updateModelVariant(model, sanitizeModelVariantForRef(model, value));
-        }}
-        onOpenSettings={openSettingsFromModelPicker}
-        onClose={closeModelPicker}
-      />
-
-      <ResetModal
-        open={resetModalOpen()}
-        mode={resetModalMode()}
-        text={resetModalText()}
-        busy={resetModalBusy()}
-        canReset={
-          !resetModalBusy() &&
-          !anyActiveRuns() &&
-          resetModalText().trim().toUpperCase() === "RESET"
-        }
-        hasActiveRuns={anyActiveRuns()}
-        language={currentLocale()}
-        onClose={() => setResetModalOpen(false)}
-        onConfirm={confirmReset}
-        onTextChange={setResetModalText}
-      />
-
-      <McpAuthModal
-        open={mcpAuthModalOpen()}
-        client={client()}
-        entry={mcpAuthEntry()}
-        projectDir={workspaceProjectDir()}
-        language={currentLocale()}
-        reloadRequired={mcpAuthNeedsReload()}
-        reloadBlocked={activeReloadBlockingSessions().length > 0}
-        activeSessions={activeReloadBlockingSessions()}
-        isRemoteWorkspace={selectedWorkspaceDisplay().workspaceType === "remote"}
-        onForceStopSession={(sessionID) => abortSession(sessionID)}
-        onClose={() => {
-          setMcpAuthModalOpen(false);
-          setMcpAuthEntry(null);
-          setMcpAuthNeedsReload(false);
-        }}
-        onComplete={async () => {
-          setMcpAuthModalOpen(false);
-          setMcpAuthEntry(null);
-          setMcpAuthNeedsReload(false);
-          await refreshMcpServers();
-        }}
-        onReloadEngine={() => reloadWorkspaceEngineAndResume()}
-      />
-
-      <SharedBundleImportModal
-        open={Boolean(sharedBundleImportChoice())}
-        title={sharedBundleImportCopy()?.title ?? "Import shared bundle"}
-        description={sharedBundleImportCopy()?.description ?? "Choose how to import this shared bundle."}
-        items={sharedBundleImportCopy()?.items ?? []}
-        workers={sharedBundleWorkerOptions()}
-        busy={sharedBundleImportBusy()}
-        error={sharedBundleImportError()}
-        onClose={closeSharedBundleImportChoice}
-        onCreateNewWorker={() => {
-          void openSharedBundleCreateWorkerFlow();
-        }}
-        onSelectWorker={(workspaceId) => {
-          void importSharedBundleIntoExistingWorkspace(workspaceId);
-        }}
-      />
-
-      <StartWithTemplateModal
-        open={Boolean(sharedTemplateStartRequest())}
-        templateName={sharedTemplateStartRequest()?.bundle.name?.trim() || "this template"}
-        description={sharedTemplateStartRequest()?.bundle.description ?? ""}
-        items={sharedTemplateStartItems()}
-        busy={sharedTemplateStartBusy()}
-        onClose={() => {
-          if (sharedTemplateStartBusy()) return;
-          setSharedTemplateStartRequest(null);
-        }}
-        onPickFolder={workspaceStore.pickWorkspaceFolder}
-        onConfirm={(folder) => {
-          void startWorkspaceFromTemplate(folder);
-        }}
-      />
-
-      <CreateWorkspaceModal
-        open={workspaceStore.createWorkspaceOpen()}
-        onClose={() => {
-          workspaceStore.setCreateWorkspaceOpen(false);
-          workspaceStore.clearSandboxCreateProgress?.();
-          setSharedBundleCreateWorkerRequest(null);
-        }}
-        onPickFolder={workspaceStore.pickWorkspaceFolder}
-        defaultPreset={createWorkspaceDefaultPreset()}
-        onConfirmRemote={(input) => workspaceStore.createRemoteWorkspaceFlow(input)}
-        onConfirmTemplate={(template, preset, folder) =>
-          startWorkspaceFromCloudTemplate({
-            name: template.name,
-            templateData: template.templateData,
-            folder,
-            preset,
-          })
-        }
-        onConfirm={async (preset, folder) => {
-          const request = sharedBundleCreateWorkerRequest();
-          const ok = await workspaceStore.createWorkspaceFlow(preset, folder);
-          if (!ok || !request) return;
-          const imported = await importSharedBundleIntoActiveWorker(request.request, {
-            localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-          }, request.bundle);
-          setSharedBundleCreateWorkerRequest(null);
-          if (imported) {
-            if (request.bundle.type === "skill") {
-              showSharedSkillSuccessToast({
-                title: "Skill added",
-                description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspaceStore.selectedWorkspaceDisplay())}.`,
-              });
-            }
-            setSharedSkillDestinationRequest(null);
-          }
-        }}
-        onConfirmWorker={
-          isTauriRuntime()
-            ? async (preset, folder) => {
-                const request = sharedBundleCreateWorkerRequest();
-                const ok = await workspaceStore.createSandboxFlow(
-                  preset,
-                  folder,
-                  request
-                    ? {
-                        onReady: async () => {
-                          const active = workspaceStore.selectedWorkspaceDisplay();
-                          await importSharedBundleIntoActiveWorker(request.request, {
-                            workspaceId:
-                              active.openworkWorkspaceId?.trim() ||
-                              parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
-                              parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
-                              null,
-                            directoryHint: active.directory?.trim() || active.path?.trim() || null,
-                          }, request.bundle);
-                          if (request.bundle.type === "skill") {
-                            showSharedSkillSuccessToast({
-                              title: "Skill added",
-                              description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(active)}.`,
-                            });
-                          }
-                        },
-                      }
-                    : undefined,
-                );
-                if (!ok) return;
-                setSharedBundleCreateWorkerRequest(null);
-                if (request) {
-                  setSharedSkillDestinationRequest(null);
-                }
-              }
-            : undefined
-        }
-        workerDisabled={(() => {
-          if (!isTauriRuntime()) return true;
-          if (workspaceStore.sandboxDoctorBusy?.()) return true;
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor) return false;
-          return !doctor?.ready;
-        })()}
-        workerDisabledReason={(() => {
-          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
-          if (workspaceStore.sandboxDoctorBusy?.()) {
-            return t("dashboard.sandbox_checking_docker", currentLocale());
-          }
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor || doctor.ready) return null;
-          const message = doctor?.error?.trim();
-          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
-        })()}
-        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
-        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
-        onWorkerCta={async () => {
-          const url = "https://www.docker.com/products/docker-desktop/";
-          if (isTauriRuntime()) {
-            const { openUrl } = await import("@tauri-apps/plugin-opener");
-            await openUrl(url);
-          } else {
-            window.open(url, "_blank", "noopener,noreferrer");
-          }
-        }}
-        workerRetryLabel={t("common.retry", currentLocale())}
-        workerDebugLines={(() => {
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          const lines: string[] = [];
-          if (!doctor?.debug) return lines;
-          const selected = doctor.debug.selectedBin?.trim();
-          if (selected) lines.push(`selected: ${selected}`);
-          if (doctor.debug.candidates?.length) {
-            lines.push(`candidates: ${doctor.debug.candidates.join(", ")}`);
-          }
-          if (doctor.debug.versionCommand) {
-            const cmd = doctor.debug.versionCommand;
-            lines.push(`docker --version exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker --version stderr: ${cmd.stderr.trim()}`);
-          }
-          if (doctor.debug.infoCommand) {
-            const cmd = doctor.debug.infoCommand;
-            lines.push(`docker info exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker info stderr: ${cmd.stderr.trim()}`);
-          }
-          return lines;
-        })()}
-        onWorkerRetry={() => {
-          void workspaceStore.refreshSandboxDoctor?.();
-        }}
-        workerSubmitting={workspaceStore.sandboxPreflightBusy?.() ?? false}
-        remoteSubmitting={busy() && busyLabel() === "status.connecting"}
-        remoteError={busyLabel() === "status.connecting" ? error() : null}
-        submitting={(() => {
-          const phase = workspaceStore.sandboxCreatePhase?.() ?? "idle";
-          if (phase === "provisioning" || phase === "finalizing") return true;
-          return busy() && busyLabel() === "status.creating_workspace";
-        })()}
-        submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
-      />
-
-      <SharedSkillDestinationModal
-        open={
-          Boolean(sharedSkillDestinationRequest()) &&
-          !workspaceStore.createWorkspaceOpen() &&
-          !workspaceStore.createRemoteWorkspaceOpen()
-        }
-        skill={(() => {
-          const request = sharedSkillDestinationRequest();
-          if (!request) return null;
-          return {
-            name: request.bundle.name,
-            description: request.bundle.description ?? null,
-            trigger: request.bundle.trigger ?? null,
-          };
-        })()}
-        workspaces={sharedSkillDestinationWorkspaces()}
-        selectedWorkspaceId={workspaceStore.selectedWorkspaceId()}
-        busyWorkspaceId={sharedSkillDestinationBusyId()}
-        onClose={() => {
-          if (sharedSkillDestinationBusyId()) return;
-          setSharedSkillDestinationRequest(null);
-        }}
-        onSubmitWorkspace={importSharedSkillIntoWorkspace}
-        onCreateWorker={
-          isTauriRuntime()
-            ? () => {
-                const request = sharedSkillDestinationRequest();
-                if (!request) return;
-                setError(null);
-                setSharedBundleCreateWorkerRequest({
-                  request: request.request,
-                  bundle: request.bundle,
-                  defaultPreset: "minimal",
-                });
-                workspaceStore.setCreateWorkspaceOpen(true);
-              }
-            : undefined
-        }
-        onConnectRemote={() => {
-          setError(null);
-          workspaceStore.setCreateRemoteWorkspaceOpen(true);
-        }}
-      />
-
-      <CreateRemoteWorkspaceModal
-        open={workspaceStore.createRemoteWorkspaceOpen()}
-        onClose={() => {
-          workspaceStore.setCreateRemoteWorkspaceOpen(false);
-          setDeepLinkRemoteWorkspaceDefaults(null);
-        }}
-        onConfirm={(input) => workspaceStore.createRemoteWorkspaceFlow(input)}
-        initialValues={deepLinkRemoteWorkspaceDefaults() ?? undefined}
-        submitting={
-          busy() &&
-          (busyLabel() === "status.creating_workspace" || busyLabel() === "status.connecting")
-        }
-      />
-
-      <div class="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
-        <div class="pointer-events-auto">
-          <ReloadWorkspaceToast
-            open={reloadRequired("config", "mcp", "plugin", "skill", "agent", "command")}
-            title={reloadCopy().title}
-            description={reloadCopy().body}
-            trigger={reloadTrigger()}
-            error={reloadError()}
-            reloadLabel={activeReloadBlockingSessions().length > 0 ? "Reload & Stop Tasks" : "Reload now"}
-            dismissLabel="Later"
-            busy={reloadBusy()}
-            canReload={canReloadWorkspace()}
-            hasActiveRuns={activeReloadBlockingSessions().length > 0}
-            onReload={() => {
-              void (activeReloadBlockingSessions().length > 0
-                ? forceStopActiveSessionsAndReload()
-                : reloadWorkspaceEngineAndResume());
-            }}
-            onDismiss={clearReloadRequired}
-          />
-        </div>
-
-        <div class="pointer-events-auto">
-          <StatusToast
-            open={Boolean(sharedSkillSuccessToast())}
-            tone="success"
-            title={sharedSkillSuccessToast()?.title ?? "Skill added"}
-            description={sharedSkillSuccessToast()?.description ?? null}
-            dismissLabel="Dismiss"
-            onDismiss={clearSharedSkillSuccessToast}
-          />
-        </div>
-
-      </div>
-
-      <RenameWorkspaceModal
-        open={renameWorkspaceOpen()}
-        title={renameWorkspaceName()}
-        busy={renameWorkspaceBusy()}
-        canSave={renameWorkspaceName().trim().length > 0 && !renameWorkspaceBusy()}
-        onClose={closeRenameWorkspace}
-        onSave={saveRenameWorkspace}
-        onTitleChange={setRenameWorkspaceName}
-      />
-
-      <CreateRemoteWorkspaceModal
-        open={editRemoteWorkspaceOpen()}
-        onClose={() => {
-          setEditRemoteWorkspaceOpen(false);
-          setEditRemoteWorkspaceId(null);
-          setEditRemoteWorkspaceError(null);
-        }}
-        onConfirm={(input) => {
-          const workspaceId = editRemoteWorkspaceId();
-          if (!workspaceId) return;
-          setEditRemoteWorkspaceError(null);
-          void (async () => {
-            try {
-              const ok = await workspaceStore.updateRemoteWorkspaceFlow(workspaceId, input);
-              if (ok) {
-                setEditRemoteWorkspaceOpen(false);
-                setEditRemoteWorkspaceId(null);
-                setEditRemoteWorkspaceError(null);
-              } else {
-                setEditRemoteWorkspaceError(error() || "Connection failed. Check the URL and token.");
-                setError(null);
-              }
-            } catch (e) {
-              const message = e instanceof Error ? e.message : "Connection failed";
-              setEditRemoteWorkspaceError(message);
-              setError(null);
-            }
-          })();
-        }}
-        initialValues={editRemoteWorkspaceDefaults() ?? undefined}
-        submitting={busy() && busyLabel() === "status.connecting"}
-        error={editRemoteWorkspaceError()}
-        title={t("dashboard.edit_remote_workspace_title", currentLocale())}
-        subtitle={t("dashboard.edit_remote_workspace_subtitle", currentLocale())}
-        confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
-      />
-    </>
+                    <AppOverlays {...appOverlaysProps()} />
+                  </>
+                </WorkspaceMaintenanceProvider>
+              </AuthorizedFoldersProvider>
+            </ScheduledJobsProvider>
+          </WorkspaceActionsProvider>
+        </ExtensionsProvider>
+      </ProviderAuthProvider>
+    </OpenworkServerProvider>
   );
 }

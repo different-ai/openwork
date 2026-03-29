@@ -12,9 +12,9 @@ import type {
   HubSkillRepo,
   SkillCard,
   StartupPreference,
+  View,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
-  View,
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import {
@@ -24,7 +24,14 @@ import {
   isWindowsPlatform,
   normalizeDirectoryPath,
 } from "../utils";
+import { useAuthorizedFolders } from "../hooks/use-authorized-folders";
+import { useScheduledJobs } from "../hooks/use-scheduled-jobs";
+import { useWorkspaceMaintenance } from "../hooks/use-workspace-maintenance";
+import { useExtensions } from "../context/extensions-context";
+import { useOpenworkServer } from "../context/openwork-server-context";
 import { usePlatform } from "../context/platform";
+import { useProviderAuth } from "../context/provider-auth-context";
+import { useWorkspaceActions } from "../context/workspace-actions-context";
 import { buildFeedbackUrl } from "../lib/feedback";
 import { buildDenAuthUrl, createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
@@ -75,29 +82,6 @@ export type DashboardViewProps = {
   setTab: (tab: DashboardTab) => void;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
-  providers: ProviderListItem[];
-  providerConnectedIds: string[];
-  providerAuthBusy: boolean;
-  providerAuthModalOpen: boolean;
-  providerAuthError: string | null;
-  providerAuthMethods: Record<string, ProviderAuthMethod[]>;
-  providerAuthPreferredProviderId: string | null;
-  providerAuthWorkerType: "local" | "remote";
-  openProviderAuthModal: (options?: {
-    returnFocusTarget?: "none" | "composer";
-    preferredProviderId?: string;
-  }) => Promise<void>;
-  disconnectProvider: (providerId: string) => Promise<string | void>;
-  closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
-  startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
-  completeProviderAuthOAuth: (
-    providerId: string,
-    methodIndex: number,
-    code?: string
-  ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
-  submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
-  refreshProviders: () => Promise<unknown>;
-  view: View;
   setView: (view: View, sessionId?: string) => void;
   toggleSettings: () => void;
   startupPreference: StartupPreference | null;
@@ -105,27 +89,10 @@ export type DashboardViewProps = {
   clientConnected: boolean;
   busy: boolean;
   busyHint: string | null;
-  busyLabel: string | null;
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerClient: OpenworkServerClient | null;
-  openworkReconnectBusy: boolean;
-  reconnectOpenworkServer: () => Promise<boolean>;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  shareRemoteAccessBusy: boolean;
-  shareRemoteAccessError: string | null;
-  saveShareRemoteAccess: (enabled: boolean) => Promise<void>;
-  openworkServerCapabilities: OpenworkServerCapabilities | null;
-  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  runtimeWorkspaceId: string | null;
   activeWorkspaceType: "local" | "remote";
-  openworkAuditEntries: OpenworkAuditEntry[];
-  openworkAuditStatus: "idle" | "loading" | "error";
-  openworkAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
@@ -151,95 +118,14 @@ export type DashboardViewProps = {
   switchWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
-  openCreateWorkspace: () => void;
-  openCreateRemoteWorkspace: () => void;
-  connectRemoteWorkspace: (input: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
-    directory?: string | null;
-    displayName?: string | null;
-  }) => Promise<boolean>;
-  openCloudTemplate: (input: {
-    templateId: string;
-    name: string;
-    templateData: unknown;
-    organizationName?: string | null;
-  }) => Promise<void> | void;
-  importWorkspaceConfig: () => void;
-  importingWorkspaceConfig: boolean;
-  exportWorkspaceConfig: (workspaceId?: string) => void;
-  exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   selectedSessionId: string | null;
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  stopSandbox: (workspaceId: string) => void;
-  scheduledJobs: ScheduledJob[];
-  scheduledJobsSource: "local" | "remote";
-  schedulerPluginInstalled: boolean;
-  scheduledJobsStatus: string | null;
-  scheduledJobsBusy: boolean;
-  scheduledJobsUpdatedAt: number | null;
-  refreshScheduledJobs: (options?: { force?: boolean }) => void;
-  deleteScheduledJob: (name: string) => Promise<void> | void;
   selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
-  refreshSkills: (options?: { force?: boolean }) => void;
-  refreshHubSkills: (options?: { force?: boolean }) => void;
-  ensureHubSkillsFresh: () => void;
-  refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
-  skills: SkillCard[];
-  skillsStatus: string | null;
-  hubSkills: HubSkillCard[];
-  hubSkillsStatus: string | null;
-  hubRepo: HubSkillRepo | null;
-  hubRepos: HubSkillRepo[];
-  skillsAccessHint?: string | null;
-  canInstallSkillCreator: boolean;
-  canUseDesktopTools: boolean;
-  importLocalSkill: () => void;
-  installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
-  installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
-  setHubRepo: (repo: Partial<HubSkillRepo> | null) => void;
-  addHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  removeHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  revealSkillsFolder: () => void;
-  uninstallSkill: (name: string) => void;
-  readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
-  saveSkill: (input: { name: string; content: string; description?: string }) => void;
-  pluginsAccessHint?: string | null;
-  canEditPlugins: boolean;
-  canUseGlobalPluginScope: boolean;
-  pluginScope: PluginScope;
-  setPluginScope: (scope: PluginScope) => void;
-  pluginConfigPath: string | null;
-  pluginList: string[];
-  pluginInput: string;
-  setPluginInput: (value: string) => void;
-  pluginStatus: string | null;
-  activePluginGuide: string | null;
-  setActivePluginGuide: (value: string | null) => void;
-  isPluginInstalled: (name: string, aliases?: string[]) => boolean;
-  suggestedPlugins: Array<{
-    name: string;
-    packageName: string;
-    description: string;
-    tags: string[];
-    aliases?: string[];
-    installMode?: "simple" | "guided";
-    steps?: Array<{
-      title: string;
-      description: string;
-      command?: string;
-      url?: string;
-      path?: string;
-      note?: string;
-    }>;
-  }>;
-  addPlugin: (pluginNameOverride?: string) => void;
-  removePlugin: (pluginName: string) => void;
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
   mcpLastUpdatedAt: number | null;
@@ -314,36 +200,7 @@ export type DashboardViewProps = {
   sandboxCreateProgressLast: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
-  repairOpencodeMigration: () => void;
-  migrationRepairBusy: boolean;
-  migrationRepairResult: { ok: boolean; message: string } | null;
-  migrationRepairAvailable: boolean;
-  migrationRepairUnavailableReason: string | null;
-  repairOpencodeCache: () => void;
-  cacheRepairBusy: boolean;
-  cacheRepairResult: string | null;
-  cleanupOpenworkDockerContainers: () => void;
-  dockerCleanupBusy: boolean;
-  dockerCleanupResult: string | null;
-  authorizedFolders: string[];
-  authorizedFolderDraft: string;
-  setAuthorizedFolderDraft: (value: string) => void;
-  authorizedFoldersLoading: boolean;
-  authorizedFoldersSaving: boolean;
-  authorizedFoldersError: string | null;
-  authorizedFoldersStatus: string | null;
-  authorizedFoldersAvailable: boolean;
-  authorizedFoldersEditable: boolean;
-  authorizedFoldersHint: string | null;
-  addAuthorizedFolder: () => Promise<void>;
-  pickAuthorizedFolder: () => Promise<void>;
-  removeAuthorizedFolder: (folder: string) => Promise<void>;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
-  notionStatus: "disconnected" | "connecting" | "connected" | "error";
-  notionStatusDetail: string | null;
-  notionError: string | null;
-  notionBusy: boolean;
-  connectNotion: () => void;
   openDebugDeepLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
 };
 
@@ -376,6 +233,44 @@ type SkillsSetBundleV1 = {
 
 export default function DashboardView(props: DashboardViewProps) {
   const platform = usePlatform();
+  const authorizedFolders = useAuthorizedFolders();
+  const extensions = useExtensions();
+  const openworkServer = useOpenworkServer();
+  const providerAuth = useProviderAuth();
+  const scheduledJobs = useScheduledJobs();
+  const workspaceMaintenance = useWorkspaceMaintenance();
+  const workspaceActions = useWorkspaceActions();
+  const openworkServerStatus = openworkServer.openworkServerStatus;
+  const openworkServerUrl = openworkServer.openworkServerUrl;
+  const openworkServerClient = openworkServer.openworkServerClient;
+  const openworkReconnectBusy = openworkServer.openworkReconnectBusy;
+  const reconnectOpenworkServer = openworkServer.reconnectOpenworkServer;
+  const openworkServerSettings = openworkServer.openworkServerSettings;
+  const openworkServerHostInfo = openworkServer.openworkServerHostInfo;
+  const openworkServerCapabilities = openworkServer.openworkServerCapabilities;
+  const openworkServerDiagnostics = openworkServer.openworkServerDiagnostics;
+  const runtimeWorkspaceId = openworkServer.runtimeWorkspaceId;
+  const openworkAuditEntries = openworkServer.openworkAuditEntries;
+  const openworkAuditStatus = openworkServer.openworkAuditStatus;
+  const openworkAuditError = openworkServer.openworkAuditError;
+  const shareRemoteAccessBusy = openworkServer.shareRemoteAccessBusy;
+  const shareRemoteAccessError = openworkServer.shareRemoteAccessError;
+  const saveShareRemoteAccess = openworkServer.saveShareRemoteAccess;
+  const providers = providerAuth.providers;
+  const providerConnectedIds = providerAuth.providerConnectedIds;
+  const providerAuthBusy = providerAuth.providerAuthBusy;
+  const providerAuthModalOpen = providerAuth.providerAuthModalOpen;
+  const providerAuthError = providerAuth.providerAuthError;
+  const providerAuthMethods = providerAuth.providerAuthMethods;
+  const providerAuthPreferredProviderId = providerAuth.providerAuthPreferredProviderId;
+  const providerAuthWorkerType = providerAuth.providerAuthWorkerType;
+  const openProviderAuthModal = providerAuth.openProviderAuthModal;
+  const disconnectProvider = providerAuth.disconnectProvider;
+  const closeProviderAuthModal = providerAuth.closeProviderAuthModal;
+  const startProviderAuth = providerAuth.startProviderAuth;
+  const completeProviderAuthOAuth = providerAuth.completeProviderAuthOAuth;
+  const submitProviderApiKey = providerAuth.submitProviderApiKey;
+  const refreshProviders = providerAuth.refreshProviders;
   const webDeployment = createMemo(() => getOpenWorkDeployment() === "web");
   const title = createMemo(() => {
     switch (props.tab) {
@@ -446,7 +341,7 @@ export default function DashboardView(props: DashboardViewProps) {
       entrypoint: "dashboard-status-bar",
       deployment: getOpenWorkDeployment(),
       appVersion: props.appVersion,
-      openworkServerVersion: props.openworkServerDiagnostics?.version ?? null,
+      openworkServerVersion: openworkServerDiagnostics()?.version ?? null,
       opencodeVersion:
         props.orchestratorStatus?.binaries?.opencode?.actualVersion ??
         props.engineDoctorVersion ??
@@ -467,7 +362,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
     setProviderAuthActionBusy(true);
     try {
-      return await props.startProviderAuth(providerId, methodIndex);
+      return await startProviderAuth(providerId, methodIndex);
     } finally {
       setProviderAuthActionBusy(false);
     }
@@ -477,9 +372,9 @@ export default function DashboardView(props: DashboardViewProps) {
     if (providerAuthActionBusy()) return { connected: false, pending: true };
     setProviderAuthActionBusy(true);
     try {
-      const result = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
+      const result = await completeProviderAuthOAuth(providerId, methodIndex, code);
       if (result.connected) {
-        props.closeProviderAuthModal();
+        closeProviderAuthModal();
       }
       return result;
     } catch {
@@ -494,8 +389,8 @@ export default function DashboardView(props: DashboardViewProps) {
     if (providerAuthActionBusy()) return;
     setProviderAuthActionBusy(true);
     try {
-      await props.submitProviderApiKey(providerId, apiKey);
-      props.closeProviderAuthModal();
+      await submitProviderApiKey(providerId, apiKey);
+      closeProviderAuthModal();
     } catch {
       // Errors are surfaced in the modal.
     } finally {
@@ -525,10 +420,10 @@ export default function DashboardView(props: DashboardViewProps) {
     const doRefresh = async () => {
       try {
         if (currentTab === "skills" && !cancelled) {
-          await props.refreshSkills();
+          await extensions.refreshSkills();
         }
         if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
-          await Promise.all([props.refreshPlugins(), props.refreshMcpServers()]);
+          await Promise.all([extensions.refreshPlugins(), props.refreshMcpServers()]);
         }
       } catch {
         // Ignore errors during navigation
@@ -632,10 +527,10 @@ export default function DashboardView(props: DashboardViewProps) {
 
   createEffect(() => {
     const ws = shareWorkspace();
-    const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+    const baseUrl = openworkServerHostInfo()?.baseUrl?.trim() ?? "";
     const token =
-      props.openworkServerHostInfo?.ownerToken?.trim() ||
-      props.openworkServerHostInfo?.clientToken?.trim() ||
+      openworkServerHostInfo()?.ownerToken?.trim() ||
+      openworkServerHostInfo()?.clientToken?.trim() ||
       "";
     const workspacePath = ws?.workspaceType === "local" ? ws.path?.trim() ?? "" : "";
 
@@ -679,21 +574,21 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
-      if (props.openworkServerHostInfo?.remoteAccessEnabled !== true) {
+      if (openworkServerHostInfo()?.remoteAccessEnabled !== true) {
         return [];
       }
       const hostUrl =
-        props.openworkServerHostInfo?.connectUrl?.trim() ||
-        props.openworkServerHostInfo?.lanUrl?.trim() ||
-        props.openworkServerHostInfo?.mdnsUrl?.trim() ||
-        props.openworkServerHostInfo?.baseUrl?.trim() ||
+        openworkServerHostInfo()?.connectUrl?.trim() ||
+        openworkServerHostInfo()?.lanUrl?.trim() ||
+        openworkServerHostInfo()?.mdnsUrl?.trim() ||
+        openworkServerHostInfo()?.baseUrl?.trim() ||
         "";
       const mountedUrl = shareLocalOpenworkWorkspaceId()
         ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId())
         : null;
       const url = mountedUrl || hostUrl;
-      const ownerToken = props.openworkServerHostInfo?.ownerToken?.trim() || "";
-      const collaboratorToken = props.openworkServerHostInfo?.clientToken?.trim() || "";
+      const ownerToken = openworkServerHostInfo()?.ownerToken?.trim() || "";
+      const collaboratorToken = openworkServerHostInfo()?.clientToken?.trim() || "";
       return [
         {
           label: "Worker URL",
@@ -731,7 +626,7 @@ export default function DashboardView(props: DashboardViewProps) {
       const url = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId) || hostUrl;
       const token =
         ws.openworkToken?.trim() ||
-        props.openworkServerSettings.token?.trim() ||
+        openworkServerSettings().token?.trim() ||
         "";
       return [
         {
@@ -779,17 +674,17 @@ export default function DashboardView(props: DashboardViewProps) {
       return "Share service links are available for OpenWork workers.";
     }
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const baseUrl = openworkServerHostInfo()?.baseUrl?.trim() ?? "";
       const token =
-        props.openworkServerHostInfo?.ownerToken?.trim() ||
-        props.openworkServerHostInfo?.clientToken?.trim() ||
+        openworkServerHostInfo()?.ownerToken?.trim() ||
+        openworkServerHostInfo()?.clientToken?.trim() ||
         "";
       if (!baseUrl || !token) {
         return "Local OpenWork host is not ready yet.";
       }
     } else {
       const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+      const token = ws.openworkToken?.trim() || openworkServerSettings().token?.trim() || "";
       if (!hostUrl) return "Missing OpenWork host URL.";
       if (!token) return "Missing OpenWork token.";
     }
@@ -851,10 +746,10 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const baseUrl = openworkServerHostInfo()?.baseUrl?.trim() ?? "";
       const token =
-        props.openworkServerHostInfo?.ownerToken?.trim() ||
-        props.openworkServerHostInfo?.clientToken?.trim() ||
+        openworkServerHostInfo()?.ownerToken?.trim() ||
+        openworkServerHostInfo()?.clientToken?.trim() ||
         "";
       if (!baseUrl || !token) {
         throw new Error("Local OpenWork host is not ready yet.");
@@ -883,7 +778,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-    const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+    const token = ws.openworkToken?.trim() || openworkServerSettings().token?.trim() || "";
     if (!hostUrl || !token) {
       throw new Error("OpenWork host URL and token are required.");
     }
@@ -1075,7 +970,7 @@ export default function DashboardView(props: DashboardViewProps) {
     if (!ws) return "Export is available for local workers in the desktop app.";
     if (ws.workspaceType === "remote") return "Export is only supported for local workers.";
     if (!isTauriRuntime()) return "Export is available in the desktop app.";
-    if (props.exportWorkspaceBusy) return "Export is already running.";
+    if (workspaceActions.exportWorkspaceBusy()) return "Export is already running.";
     return null;
   });
 
@@ -1221,7 +1116,6 @@ export default function DashboardView(props: DashboardViewProps) {
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
-            importingWorkspaceConfig={props.importingWorkspaceConfig}
             onSelectWorkspace={props.switchWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}
@@ -1232,9 +1126,6 @@ export default function DashboardView(props: DashboardViewProps) {
             onTestWorkspaceConnection={props.testWorkspaceConnection}
             onEditWorkspaceConnection={props.editWorkspaceConnection}
             onForgetWorkspace={props.forgetWorkspace}
-            onOpenCreateWorkspace={props.openCreateWorkspace}
-            onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-            onImportWorkspaceConfig={props.importWorkspaceConfig}
           />
         </div>
         <div
@@ -1312,20 +1203,20 @@ export default function DashboardView(props: DashboardViewProps) {
               <WorkspaceToolsPanel
                 section="scheduled"
                 scheduled={{
-                  jobs: props.scheduledJobs,
-                  source: props.scheduledJobsSource,
-                  status: props.scheduledJobsStatus,
-                  busy: props.scheduledJobsBusy,
-                  lastUpdatedAt: props.scheduledJobsUpdatedAt,
-                  refreshJobs: props.refreshScheduledJobs,
-                  deleteJob: props.deleteScheduledJob,
+                  jobs: scheduledJobs.scheduledJobs(),
+                  source: scheduledJobs.scheduledJobsSource(),
+                  status: scheduledJobs.scheduledJobsStatus(),
+                  busy: scheduledJobs.scheduledJobsBusy(),
+                  lastUpdatedAt: scheduledJobs.scheduledJobsUpdatedAt(),
+                  refreshJobs: scheduledJobs.refreshScheduledJobs,
+                  deleteJob: scheduledJobs.deleteScheduledJob,
                   selectedWorkspaceRoot: props.selectedWorkspaceRoot,
                   createSessionAndOpen: props.createSessionAndOpen,
                   setPrompt: props.setPrompt,
                   newTaskDisabled: props.newTaskDisabled,
-                  schedulerInstalled: props.schedulerPluginInstalled,
-                  canEditPlugins: props.canEditPlugins,
-                  addPlugin: props.addPlugin,
+                  schedulerInstalled: scheduledJobs.schedulerPluginInstalled(),
+                  canEditPlugins: extensions.canEditPlugins(),
+                  addPlugin: extensions.addPlugin,
                   reloadWorkspaceEngine: props.reloadWorkspaceEngine,
                   reloadBusy: props.reloadBusy,
                   canReloadWorkspace: props.canReloadWorkspace,
@@ -1338,28 +1229,28 @@ export default function DashboardView(props: DashboardViewProps) {
                 skills={{
                   workspaceName: props.selectedWorkspaceDisplay.name,
                   busy: props.busy,
-                  canInstallSkillCreator: props.canInstallSkillCreator,
-                  canUseDesktopTools: props.canUseDesktopTools,
-                  accessHint: props.skillsAccessHint,
-                  refreshSkills: props.refreshSkills,
-                  refreshHubSkills: props.refreshHubSkills,
-                  ensureHubSkillsFresh: props.ensureHubSkillsFresh,
-                  skills: props.skills,
-                  skillsStatus: props.skillsStatus,
-                  hubSkills: props.hubSkills,
-                  hubSkillsStatus: props.hubSkillsStatus,
-                  hubRepo: props.hubRepo,
-                  hubRepos: props.hubRepos,
-                  importLocalSkill: props.importLocalSkill,
-                  installSkillCreator: props.installSkillCreator,
-                  installHubSkill: props.installHubSkill,
-                  setHubRepo: props.setHubRepo,
-                  addHubRepo: props.addHubRepo,
-                  removeHubRepo: props.removeHubRepo,
-                  revealSkillsFolder: props.revealSkillsFolder,
-                  uninstallSkill: props.uninstallSkill,
-                  readSkill: props.readSkill,
-                  saveSkill: props.saveSkill,
+                  canInstallSkillCreator: extensions.canInstallSkillCreator(),
+                  canUseDesktopTools: extensions.canUseDesktopTools(),
+                  accessHint: extensions.skillsAccessHint(),
+                  refreshSkills: extensions.refreshSkills,
+                  refreshHubSkills: extensions.refreshHubSkills,
+                  ensureHubSkillsFresh: extensions.ensureHubSkillsFresh,
+                  skills: extensions.skills(),
+                  skillsStatus: extensions.skillsStatus(),
+                  hubSkills: extensions.hubSkills(),
+                  hubSkillsStatus: extensions.hubSkillsStatus(),
+                  hubRepo: extensions.hubRepo(),
+                  hubRepos: extensions.hubRepos(),
+                  importLocalSkill: extensions.importLocalSkill,
+                  installSkillCreator: extensions.installSkillCreator,
+                  installHubSkill: extensions.installHubSkill,
+                  setHubRepo: extensions.setHubRepo,
+                  addHubRepo: extensions.addHubRepo,
+                  removeHubRepo: extensions.removeHubRepo,
+                  revealSkillsFolder: extensions.revealSkillsFolder,
+                  uninstallSkill: extensions.uninstallSkill,
+                  readSkill: extensions.readSkill,
+                  saveSkill: extensions.saveSkill,
                   createSessionAndOpen: props.createSessionAndOpen,
                   setPrompt: props.setPrompt,
                 }}
@@ -1388,23 +1279,23 @@ export default function DashboardView(props: DashboardViewProps) {
                   authorizeMcp: props.authorizeMcp,
                   logoutMcpAuth: props.logoutMcpAuth,
                   removeMcp: props.removeMcp,
-                  canEditPlugins: props.canEditPlugins,
-                  canUseGlobalScope: props.canUseGlobalPluginScope,
-                  accessHint: props.pluginsAccessHint,
-                  pluginScope: props.pluginScope,
-                  setPluginScope: props.setPluginScope,
-                  pluginConfigPath: props.pluginConfigPath,
-                  pluginList: props.pluginList,
-                  pluginInput: props.pluginInput,
-                  setPluginInput: props.setPluginInput,
-                  pluginStatus: props.pluginStatus,
-                  activePluginGuide: props.activePluginGuide,
-                  setActivePluginGuide: props.setActivePluginGuide,
-                  isPluginInstalled: props.isPluginInstalled,
-                  suggestedPlugins: props.suggestedPlugins,
-                  refreshPlugins: props.refreshPlugins,
-                  addPlugin: props.addPlugin,
-                  removePlugin: props.removePlugin,
+                  canEditPlugins: extensions.canEditPlugins(),
+                  canUseGlobalScope: extensions.canUseGlobalPluginScope(),
+                  accessHint: extensions.pluginsAccessHint(),
+                  pluginScope: extensions.pluginScope(),
+                  setPluginScope: extensions.setPluginScope,
+                  pluginConfigPath: extensions.pluginConfigPath(),
+                  pluginList: extensions.pluginList(),
+                  pluginInput: extensions.pluginInput(),
+                  setPluginInput: extensions.setPluginInput,
+                  pluginStatus: extensions.pluginStatus(),
+                  activePluginGuide: extensions.activePluginGuide(),
+                  setActivePluginGuide: extensions.setActivePluginGuide,
+                  isPluginInstalled: extensions.isPluginInstalled,
+                  suggestedPlugins: extensions.suggestedPlugins,
+                  refreshPlugins: extensions.refreshPlugins,
+                  addPlugin: extensions.addPlugin,
+                  removePlugin: extensions.removePlugin,
                 }}
               />
             </Match>
@@ -1414,13 +1305,13 @@ export default function DashboardView(props: DashboardViewProps) {
                 section="identities"
                 identities={{
                   busy: props.busy,
-                  openworkServerStatus: props.openworkServerStatus,
-                  openworkServerUrl: props.openworkServerUrl,
-                  openworkServerClient: props.openworkServerClient,
-                  openworkReconnectBusy: props.openworkReconnectBusy,
-                  reconnectOpenworkServer: props.reconnectOpenworkServer,
+                  openworkServerStatus: openworkServerStatus(),
+                  openworkServerUrl: openworkServerUrl(),
+                  openworkServerClient: openworkServerClient(),
+                  openworkReconnectBusy: openworkReconnectBusy(),
+                  reconnectOpenworkServer,
                   restartLocalServer: props.restartLocalServer,
-                  runtimeWorkspaceId: props.runtimeWorkspaceId,
+                  runtimeWorkspaceId: runtimeWorkspaceId(),
                   selectedWorkspaceRoot: props.selectedWorkspaceRoot,
                   developerMode: props.developerMode,
                 }}
@@ -1432,11 +1323,11 @@ export default function DashboardView(props: DashboardViewProps) {
                 busy={props.busy}
                 clientConnected={props.clientConnected}
                 anyActiveRuns={props.anyActiveRuns}
-                openworkServerStatus={props.openworkServerStatus}
-                openworkServerUrl={props.openworkServerUrl}
-                openworkServerSettings={props.openworkServerSettings}
-                openworkServerHostInfo={props.openworkServerHostInfo}
-                runtimeWorkspaceId={props.runtimeWorkspaceId}
+                openworkServerStatus={openworkServerStatus()}
+                openworkServerUrl={openworkServerUrl()}
+                openworkServerSettings={openworkServerSettings()}
+                openworkServerHostInfo={openworkServerHostInfo()}
+                runtimeWorkspaceId={runtimeWorkspaceId()}
                 updateOpenworkServerSettings={props.updateOpenworkServerSettings}
                 resetOpenworkServerSettings={props.resetOpenworkServerSettings}
                 testOpenworkServerConnection={props.testOpenworkServerConnection}
@@ -1462,26 +1353,26 @@ export default function DashboardView(props: DashboardViewProps) {
                   clientConnected={props.clientConnected}
                   settingsTab={props.settingsTab}
                   setSettingsTab={props.setSettingsTab}
-                  providers={props.providers}
-                  providerConnectedIds={props.providerConnectedIds}
-                  providerAuthBusy={props.providerAuthBusy}
-                  openProviderAuthModal={props.openProviderAuthModal}
-                  disconnectProvider={props.disconnectProvider}
-                  openworkServerStatus={props.openworkServerStatus}
-                  openworkServerUrl={props.openworkServerUrl}
-                  openworkServerClient={props.openworkServerClient}
-                  openworkReconnectBusy={props.openworkReconnectBusy}
-                  reconnectOpenworkServer={props.reconnectOpenworkServer}
-                  openworkServerSettings={props.openworkServerSettings}
-                  openworkServerHostInfo={props.openworkServerHostInfo}
-                  openworkServerCapabilities={props.openworkServerCapabilities}
-                  openworkServerDiagnostics={props.openworkServerDiagnostics}
-                  runtimeWorkspaceId={props.runtimeWorkspaceId}
+                  providers={providers()}
+                  providerConnectedIds={providerConnectedIds()}
+                  providerAuthBusy={providerAuthBusy()}
+                  openProviderAuthModal={openProviderAuthModal}
+                  disconnectProvider={disconnectProvider}
+                  openworkServerStatus={openworkServerStatus()}
+                  openworkServerUrl={openworkServerUrl()}
+                  openworkServerClient={openworkServerClient()}
+                  openworkReconnectBusy={openworkReconnectBusy()}
+                  reconnectOpenworkServer={reconnectOpenworkServer}
+                  openworkServerSettings={openworkServerSettings()}
+                  openworkServerHostInfo={openworkServerHostInfo()}
+                  openworkServerCapabilities={openworkServerCapabilities()}
+                  openworkServerDiagnostics={openworkServerDiagnostics()}
+                  runtimeWorkspaceId={runtimeWorkspaceId()}
                   selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   activeWorkspaceType={props.activeWorkspaceType}
-                  openworkAuditEntries={props.openworkAuditEntries}
-                  openworkAuditStatus={props.openworkAuditStatus}
-                  openworkAuditError={props.openworkAuditError}
+                  openworkAuditEntries={openworkAuditEntries()}
+                  openworkAuditStatus={openworkAuditStatus()}
+                  openworkAuditError={openworkAuditError()}
                   opencodeConnectStatus={props.opencodeConnectStatus}
                   engineInfo={props.engineInfo}
                   orchestratorStatus={props.orchestratorStatus}
@@ -1537,86 +1428,81 @@ export default function DashboardView(props: DashboardViewProps) {
                   sandboxCreateProgressLast={props.sandboxCreateProgressLast}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
-                  repairOpencodeMigration={props.repairOpencodeMigration}
-                  migrationRepairBusy={props.migrationRepairBusy}
-                  migrationRepairResult={props.migrationRepairResult}
-                  migrationRepairAvailable={props.migrationRepairAvailable}
-                  migrationRepairUnavailableReason={props.migrationRepairUnavailableReason}
-                  repairOpencodeCache={props.repairOpencodeCache}
-                  cacheRepairBusy={props.cacheRepairBusy}
-                  cacheRepairResult={props.cacheRepairResult}
-                  cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
-                  dockerCleanupBusy={props.dockerCleanupBusy}
-                  dockerCleanupResult={props.dockerCleanupResult}
-                  authorizedFolders={props.authorizedFolders}
-                  authorizedFolderDraft={props.authorizedFolderDraft}
-                  setAuthorizedFolderDraft={props.setAuthorizedFolderDraft}
-                  authorizedFoldersLoading={props.authorizedFoldersLoading}
-                  authorizedFoldersSaving={props.authorizedFoldersSaving}
-                  authorizedFoldersError={props.authorizedFoldersError}
-                  authorizedFoldersStatus={props.authorizedFoldersStatus}
-                  authorizedFoldersAvailable={props.authorizedFoldersAvailable}
-                  authorizedFoldersEditable={props.authorizedFoldersEditable}
-                  authorizedFoldersHint={props.authorizedFoldersHint}
-                  addAuthorizedFolder={props.addAuthorizedFolder}
-                  pickAuthorizedFolder={props.pickAuthorizedFolder}
-                  removeAuthorizedFolder={props.removeAuthorizedFolder}
+                  repairOpencodeMigration={workspaceMaintenance.repairOpencodeMigration}
+                  migrationRepairBusy={workspaceMaintenance.migrationRepairBusy()}
+                  migrationRepairResult={workspaceMaintenance.migrationRepairResult()}
+                  migrationRepairAvailable={workspaceMaintenance.migrationRepairAvailable()}
+                  migrationRepairUnavailableReason={workspaceMaintenance.migrationRepairUnavailableReason()}
+                  repairOpencodeCache={workspaceMaintenance.repairOpencodeCache}
+                  cacheRepairBusy={workspaceMaintenance.cacheRepairBusy()}
+                  cacheRepairResult={workspaceMaintenance.cacheRepairResult()}
+                  cleanupOpenworkDockerContainers={workspaceMaintenance.cleanupOpenworkDockerContainers}
+                  dockerCleanupBusy={workspaceMaintenance.dockerCleanupBusy()}
+                  dockerCleanupResult={workspaceMaintenance.dockerCleanupResult()}
+                  authorizedFolders={authorizedFolders.authorizedFolders()}
+                  authorizedFolderDraft={authorizedFolders.authorizedFolderDraft()}
+                  setAuthorizedFolderDraft={authorizedFolders.setAuthorizedFolderDraft}
+                  authorizedFoldersLoading={authorizedFolders.authorizedFoldersLoading()}
+                  authorizedFoldersSaving={authorizedFolders.authorizedFoldersSaving()}
+                  authorizedFoldersError={authorizedFolders.authorizedFoldersError()}
+                  authorizedFoldersStatus={authorizedFolders.authorizedFoldersStatus()}
+                  authorizedFoldersAvailable={authorizedFolders.authorizedFoldersAvailable()}
+                  authorizedFoldersEditable={authorizedFolders.authorizedFoldersEditable()}
+                  authorizedFoldersHint={authorizedFolders.authorizedFoldersHint()}
+                  addAuthorizedFolder={authorizedFolders.addAuthorizedFolder}
+                  pickAuthorizedFolder={authorizedFolders.pickAuthorizedFolder}
+                  removeAuthorizedFolder={authorizedFolders.removeAuthorizedFolder}
                   resetAppConfigDefaults={props.resetAppConfigDefaults}
-                  notionStatus={props.notionStatus}
-                  notionStatusDetail={props.notionStatusDetail}
-                  notionError={props.notionError}
-                  notionBusy={props.notionBusy}
-                  connectNotion={props.connectNotion}
                   openDebugDeepLink={props.openDebugDeepLink}
-                  scheduledJobs={props.scheduledJobs}
-                  scheduledJobsSource={props.scheduledJobsSource}
-                  scheduledJobsStatus={props.scheduledJobsStatus}
-                  scheduledJobsBusy={props.scheduledJobsBusy}
-                  scheduledJobsUpdatedAt={props.scheduledJobsUpdatedAt}
-                  refreshScheduledJobs={props.refreshScheduledJobs}
-                  deleteScheduledJob={props.deleteScheduledJob}
+                  scheduledJobs={scheduledJobs.scheduledJobs()}
+                  scheduledJobsSource={scheduledJobs.scheduledJobsSource()}
+                  scheduledJobsStatus={scheduledJobs.scheduledJobsStatus()}
+                  scheduledJobsBusy={scheduledJobs.scheduledJobsBusy()}
+                  scheduledJobsUpdatedAt={scheduledJobs.scheduledJobsUpdatedAt()}
+                  refreshScheduledJobs={scheduledJobs.refreshScheduledJobs}
+                  deleteScheduledJob={scheduledJobs.deleteScheduledJob}
                   newTaskDisabled={props.newTaskDisabled}
-                  schedulerPluginInstalled={props.schedulerPluginInstalled}
-                  refreshSkills={props.refreshSkills}
-                  refreshHubSkills={props.refreshHubSkills}
-                  ensureHubSkillsFresh={props.ensureHubSkillsFresh}
-                  skills={props.skills}
-                  skillsStatus={props.skillsStatus}
-                  hubSkills={props.hubSkills}
-                  hubSkillsStatus={props.hubSkillsStatus}
-                  hubRepo={props.hubRepo}
-                  hubRepos={props.hubRepos}
-                  skillsAccessHint={props.skillsAccessHint}
-                  canInstallSkillCreator={props.canInstallSkillCreator}
-                  canUseDesktopTools={props.canUseDesktopTools}
-                  importLocalSkill={props.importLocalSkill}
-                  installSkillCreator={props.installSkillCreator}
-                  installHubSkill={props.installHubSkill}
-                  setHubRepo={props.setHubRepo}
-                  addHubRepo={props.addHubRepo}
-                  removeHubRepo={props.removeHubRepo}
-                  revealSkillsFolder={props.revealSkillsFolder}
-                  uninstallSkill={props.uninstallSkill}
-                  readSkill={props.readSkill}
-                  saveSkill={props.saveSkill}
-                  refreshPlugins={props.refreshPlugins}
+                  schedulerPluginInstalled={scheduledJobs.schedulerPluginInstalled()}
+                  refreshSkills={extensions.refreshSkills}
+                  refreshHubSkills={extensions.refreshHubSkills}
+                  ensureHubSkillsFresh={extensions.ensureHubSkillsFresh}
+                  skills={extensions.skills()}
+                  skillsStatus={extensions.skillsStatus()}
+                  hubSkills={extensions.hubSkills()}
+                  hubSkillsStatus={extensions.hubSkillsStatus()}
+                  hubRepo={extensions.hubRepo()}
+                  hubRepos={extensions.hubRepos()}
+                  skillsAccessHint={extensions.skillsAccessHint()}
+                  canInstallSkillCreator={extensions.canInstallSkillCreator()}
+                  canUseDesktopTools={extensions.canUseDesktopTools()}
+                  importLocalSkill={extensions.importLocalSkill}
+                  installSkillCreator={extensions.installSkillCreator}
+                  installHubSkill={extensions.installHubSkill}
+                  setHubRepo={extensions.setHubRepo}
+                  addHubRepo={extensions.addHubRepo}
+                  removeHubRepo={extensions.removeHubRepo}
+                  revealSkillsFolder={extensions.revealSkillsFolder}
+                  uninstallSkill={extensions.uninstallSkill}
+                  readSkill={extensions.readSkill}
+                  saveSkill={extensions.saveSkill}
+                  refreshPlugins={extensions.refreshPlugins}
                   refreshMcpServers={props.refreshMcpServers}
-                  pluginsAccessHint={props.pluginsAccessHint}
-                  canEditPlugins={props.canEditPlugins}
-                  canUseGlobalPluginScope={props.canUseGlobalPluginScope}
-                  pluginScope={props.pluginScope}
-                  setPluginScope={props.setPluginScope}
-                  pluginConfigPath={props.pluginConfigPath}
-                  pluginList={props.pluginList}
-                  pluginInput={props.pluginInput}
-                  setPluginInput={props.setPluginInput}
-                  pluginStatus={props.pluginStatus}
-                  activePluginGuide={props.activePluginGuide}
-                  setActivePluginGuide={props.setActivePluginGuide}
-                  isPluginInstalled={props.isPluginInstalled}
-                  suggestedPlugins={props.suggestedPlugins}
-                  addPlugin={props.addPlugin}
-                  removePlugin={props.removePlugin}
+                  pluginsAccessHint={extensions.pluginsAccessHint()}
+                  canEditPlugins={extensions.canEditPlugins()}
+                  canUseGlobalPluginScope={extensions.canUseGlobalPluginScope()}
+                  pluginScope={extensions.pluginScope()}
+                  setPluginScope={extensions.setPluginScope}
+                  pluginConfigPath={extensions.pluginConfigPath()}
+                  pluginList={extensions.pluginList()}
+                  pluginInput={extensions.pluginInput()}
+                  setPluginInput={extensions.setPluginInput}
+                  pluginStatus={extensions.pluginStatus()}
+                  activePluginGuide={extensions.activePluginGuide()}
+                  setActivePluginGuide={extensions.setActivePluginGuide}
+                  isPluginInstalled={extensions.isPluginInstalled}
+                  suggestedPlugins={extensions.suggestedPlugins}
+                  addPlugin={extensions.addPlugin}
+                  removePlugin={extensions.removePlugin}
                   mcpServers={props.mcpServers}
                   mcpStatus={props.mcpStatus}
                   mcpLastUpdatedAt={props.mcpLastUpdatedAt}
@@ -1634,8 +1520,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   canReloadWorkspace={props.canReloadWorkspace}
                   reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                   reloadBusy={props.reloadBusy}
-                  connectRemoteWorkspace={props.connectRemoteWorkspace}
-                  openCloudTemplate={props.openCloudTemplate}
+                  connectRemoteWorkspace={workspaceActions.connectRemoteWorkspace}
+                  openCloudTemplate={workspaceActions.openCloudTemplate}
               />
 
             </Match>
@@ -1651,10 +1537,10 @@ export default function DashboardView(props: DashboardViewProps) {
                   <Button
                     variant="secondary"
                     class="text-xs h-8 py-0 px-3"
-                    onClick={props.repairOpencodeCache}
-                    disabled={props.cacheRepairBusy || !props.developerMode}
+                    onClick={workspaceMaintenance.repairOpencodeCache}
+                    disabled={workspaceMaintenance.cacheRepairBusy() || !props.developerMode}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {workspaceMaintenance.cacheRepairBusy() ? "Repairing cache" : "Repair cache"}
                   </Button>
                   <Button
                     variant="outline"
@@ -1664,9 +1550,9 @@ export default function DashboardView(props: DashboardViewProps) {
                   >
                     Retry
                   </Button>
-                  <Show when={props.cacheRepairResult}>
+                  <Show when={workspaceMaintenance.cacheRepairResult()}>
                     <span class="text-xs text-red-12/80">
-                      {props.cacheRepairResult}
+                      {workspaceMaintenance.cacheRepairResult()}
                     </span>
                   </Show>
                 </div>
@@ -1676,20 +1562,20 @@ export default function DashboardView(props: DashboardViewProps) {
         </Show>
 
         <ProviderAuthModal
-          open={props.providerAuthModalOpen}
-          loading={props.providerAuthBusy}
+          open={providerAuthModalOpen()}
+          loading={providerAuthBusy()}
           submitting={providerAuthActionBusy()}
-          error={props.providerAuthError}
-          preferredProviderId={props.providerAuthPreferredProviderId}
-          workerType={props.providerAuthWorkerType}
-          providers={props.providers}
-          connectedProviderIds={props.providerConnectedIds}
-          authMethods={props.providerAuthMethods}
+          error={providerAuthError()}
+          preferredProviderId={providerAuthPreferredProviderId()}
+          workerType={providerAuthWorkerType()}
+          providers={providers()}
+          connectedProviderIds={providerConnectedIds()}
+          authMethods={providerAuthMethods()}
           onSelect={handleProviderAuthSelect}
           onSubmitApiKey={handleProviderAuthApiKey}
           onSubmitOAuth={handleProviderAuthOAuth}
-          onRefreshProviders={props.refreshProviders}
-          onClose={() => props.closeProviderAuthModal()}
+          onRefreshProviders={refreshProviders}
+          onClose={() => closeProviderAuthModal()}
         />
 
         <ShareWorkspaceModal
@@ -1700,10 +1586,10 @@ export default function DashboardView(props: DashboardViewProps) {
           fields={shareFields()}
           remoteAccess={shareWorkspace()?.workspaceType === "local"
             ? {
-                enabled: props.openworkServerHostInfo?.remoteAccessEnabled === true,
-                busy: props.shareRemoteAccessBusy,
-                error: props.shareRemoteAccessError,
-                onSave: props.saveShareRemoteAccess,
+                enabled: openworkServerHostInfo()?.remoteAccessEnabled === true,
+                busy: shareRemoteAccessBusy(),
+                error: shareRemoteAccessError(),
+                onSave: saveShareRemoteAccess,
               }
             : undefined}
           note={shareNote()}
@@ -1736,7 +1622,7 @@ export default function DashboardView(props: DashboardViewProps) {
               : () => {
                 const id = shareWorkspaceId();
                 if (!id) return;
-                props.exportWorkspaceConfig(id);
+                workspaceActions.exportWorkspaceConfig(id);
               }
           }
           exportDisabledReason={exportDisabledReason()}
@@ -1746,16 +1632,16 @@ export default function DashboardView(props: DashboardViewProps) {
 
         <StatusBar
           clientConnected={props.clientConnected}
-          openworkServerStatus={props.openworkServerStatus}
+          openworkServerStatus={openworkServerStatus()}
           developerMode={props.developerMode}
           settingsOpen={props.tab === "settings"}
           showSettingsButton={true}
           onSendFeedback={openFeedback}
           onOpenSettings={props.toggleSettings}
           onOpenMessaging={() => openSettings("messaging")}
-          onOpenProviders={() => props.openProviderAuthModal()}
+          onOpenProviders={() => openProviderAuthModal()}
           onOpenMcp={() => openSettings("extensions")}
-          providerConnectedIds={props.providerConnectedIds}
+          providerConnectedIds={providerConnectedIds()}
           mcpStatuses={props.mcpStatuses}
         />
         <nav class="hidden border-t border-dls-border bg-dls-surface">

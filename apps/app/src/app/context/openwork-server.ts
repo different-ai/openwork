@@ -152,7 +152,7 @@ export function createOpenworkServerStore(options: {
       if (busy) return;
       busy = true;
       try {
-        const result = await checkServer(serverUrl, token, ht);
+        const result = await checkOpenworkServer(serverUrl, token, ht);
         if (!active) return;
         setStatus(result.status);
         setCapabilities(result.capabilities);
@@ -362,7 +362,7 @@ export function createOpenworkServerStore(options: {
 
 // -- Helpers --
 
-async function checkServer(
+export async function checkOpenworkServer(
   url: string,
   token?: string,
   hostToken?: string,
