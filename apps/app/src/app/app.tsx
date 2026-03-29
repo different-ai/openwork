@@ -37,6 +37,8 @@ import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import StatusToast from "./components/status-toast";
 import ConnectionsModals from "./connections/modals";
 import { ConnectionsProvider } from "./connections/provider";
+import { ExtensionsProvider } from "./extensions/provider";
+import { AutomationsProvider } from "./automations/provider";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
 import { unwrap } from "./lib/opencode";
@@ -5451,57 +5453,17 @@ export default function App() {
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
       stopSandbox: workspaceStore.stopSandbox,
-      scheduledJobs: scheduledJobs(),
-      scheduledJobsSource: scheduledJobsSource(),
       schedulerPluginInstalled: schedulerPluginInstalled(),
-      scheduledJobsStatus: scheduledJobsStatus(),
-      scheduledJobsBusy: scheduledJobsBusy(),
-      scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
-      refreshScheduledJobs: (options?: { force?: boolean }) =>
-        refreshScheduledJobs(options).catch(() => undefined),
-      deleteScheduledJob,
       selectedWorkspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
       isRemoteWorkspace: workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote",
-      refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
-      refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
-      ensureHubSkillsFresh,
-      refreshPlugins: (scopeOverride?: PluginScope) =>
-        refreshPlugins(scopeOverride).catch(() => undefined),
-      skills: skills(),
-      skillsStatus: skillsStatus(),
-      hubSkills: hubSkills(),
-      hubSkillsStatus: hubSkillsStatus(),
-      hubRepo: hubRepo(),
-      hubRepos: hubRepos(),
       skillsAccessHint,
       canInstallSkillCreator,
       canUseDesktopTools,
-      importLocalSkill,
-      installSkillCreator,
-      installHubSkill,
-      setHubRepo,
-      addHubRepo,
-      removeHubRepo,
-      revealSkillsFolder,
-      uninstallSkill,
-      readSkill,
-      saveSkill,
       pluginsAccessHint,
       canEditPlugins,
       canUseGlobalPluginScope,
-      pluginScope: pluginScope(),
-      setPluginScope,
-      pluginConfigPath: pluginConfigPath() ?? pluginConfig()?.path ?? null,
-      pluginList: pluginList(),
-      pluginInput: pluginInput(),
-      setPluginInput,
-      pluginStatus: pluginStatus(),
-      activePluginGuide: activePluginGuide(),
-      setActivePluginGuide,
-      isPluginInstalled: isPluginInstalledByName,
       suggestedPlugins: SUGGESTED_PLUGINS,
       addPlugin,
-      removePlugin,
       createSessionAndOpen,
       setPrompt,
       selectSession: selectSession,
@@ -5837,14 +5799,16 @@ export default function App() {
 
   return (
     <ConnectionsProvider store={connectionsStore}>
-      <Switch>
-        <Match when={currentView() === "session"}>
-          <SessionView {...sessionProps()} />
-        </Match>
-        <Match when={true}>
-          <DashboardView {...dashboardProps()} />
-        </Match>
-      </Switch>
+      <ExtensionsProvider store={extensionsStore}>
+        <AutomationsProvider store={automationsStore}>
+          <Switch>
+            <Match when={currentView() === "session"}>
+              <SessionView {...sessionProps()} />
+            </Match>
+            <Match when={true}>
+              <DashboardView {...dashboardProps()} />
+            </Match>
+          </Switch>
 
       <ModelPickerModal
         open={modelPickerOpen()}
@@ -6199,6 +6163,8 @@ export default function App() {
         subtitle={t("dashboard.edit_remote_workspace_subtitle", currentLocale())}
         confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
       />
+        </AutomationsProvider>
+      </ExtensionsProvider>
     </ConnectionsProvider>
   );
 }

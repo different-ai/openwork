@@ -5,6 +5,7 @@ import { Box, Cpu } from "lucide-solid";
 import Button from "../components/button";
 import McpView from "../connections/mcp-view";
 import { useConnections } from "../connections/provider";
+import { useExtensions } from "../extensions/provider";
 import PluginsView, { type PluginsViewProps } from "./plugins";
 
 export type ExtensionsSection = "all" | "mcp" | "plugins";
@@ -18,6 +19,7 @@ export type ExtensionsViewProps = PluginsViewProps & {
 
 export default function ExtensionsView(props: ExtensionsViewProps) {
   const connections = useConnections();
+  const extensions = useExtensions();
   const [section, setSection] = createSignal<ExtensionsSection>(props.initialSection ?? "all");
 
   createEffect(
@@ -38,11 +40,11 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
     }).length,
   );
 
-  const pluginCount = createMemo(() => props.pluginList.length);
+  const pluginCount = createMemo(() => extensions.pluginList().length);
 
   const refreshAll = () => {
     void connections.refreshMcpServers();
-    props.refreshPlugins();
+    void extensions.refreshPlugins();
   };
 
   const selectSection = (nextSection: ExtensionsSection) => {
@@ -149,20 +151,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
             canEditPlugins={props.canEditPlugins}
             canUseGlobalScope={props.canUseGlobalScope}
             accessHint={props.accessHint}
-            pluginScope={props.pluginScope}
-            setPluginScope={props.setPluginScope}
-            pluginConfigPath={props.pluginConfigPath}
-            pluginList={props.pluginList}
-            pluginInput={props.pluginInput}
-            setPluginInput={props.setPluginInput}
-            pluginStatus={props.pluginStatus}
-            activePluginGuide={props.activePluginGuide}
-            setActivePluginGuide={props.setActivePluginGuide}
-            isPluginInstalled={props.isPluginInstalled}
             suggestedPlugins={props.suggestedPlugins}
-            refreshPlugins={props.refreshPlugins}
-            addPlugin={props.addPlugin}
-            removePlugin={props.removePlugin}
           />
         </div>
       </Show>

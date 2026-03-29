@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import type { ScheduledJob } from "../types";
+import { useAutomations } from "../automations/provider";
 import { usePlatform } from "../context/platform";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
 
@@ -24,13 +25,7 @@ import {
 } from "lucide-solid";
 
 export type ScheduledTasksViewProps = {
-  jobs: ScheduledJob[];
-  source: "local" | "remote";
-  status: string | null;
   busy: boolean;
-  lastUpdatedAt: number | null;
-  refreshJobs: (options?: { force?: boolean }) => void;
-  deleteJob: (name: string) => Promise<void> | void;
   selectedWorkspaceRoot: string;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
@@ -434,22 +429,23 @@ const AutomationJobCard = (props: {
 };
 
 export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
+  const automations = useAutomations();
   const platform = usePlatform();
   const [installingScheduler, setInstallingScheduler] = createSignal(false);
   const [schedulerInstallRequested, setSchedulerInstallRequested] = createSignal(false);
   const supported = createMemo(() => {
-    if (props.source === "remote") return true;
+    if (automations.scheduledJobsSource() === "remote") return true;
     return isTauriRuntime() && props.schedulerInstalled && !schedulerInstallRequested();
   });
   const schedulerGateActive = createMemo(() => {
-    if (props.source !== "local") return false;
+    if (automations.scheduledJobsSource() !== "local") return false;
     if (!isTauriRuntime()) return false;
     return !props.schedulerInstalled || schedulerInstallRequested();
   });
   const schedulerGateMode = createMemo(() => (props.schedulerInstalled ? "reload" : "install"));
   const automationDisabled = createMemo(() => props.newTaskDisabled || schedulerGateActive());
   const supportNote = createMemo(() => {
-    if (props.source === "remote") {
+    if (automations.scheduledJobsSource() === "remote") {
       return null;
     }
     if (!isTauriRuntime()) return "Scheduled tasks require the desktop app.";
@@ -457,22 +453,22 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     return null;
   });
   const sourceDescription = createMemo(() =>
-    props.source === "remote"
+    automations.scheduledJobsSource() === "remote"
       ? "Automations that run on a schedule from the connected OpenWork server."
       : "Automations that run on a schedule from this device."
   );
   const sourceLabel = createMemo(() =>
-    props.source === "remote" ? "From OpenWork server" : "From local scheduler"
+    automations.scheduledJobsSource() === "remote" ? "From OpenWork server" : "From local scheduler"
   );
-  const schedulerLabel = createMemo(() => (props.source === "remote" ? "OpenWork server" : "Local"));
+  const schedulerLabel = createMemo(() => (automations.scheduledJobsSource() === "remote" ? "OpenWork server" : "Local"));
   const schedulerHint = createMemo(() =>
-    props.source === "remote" ? "Remote instance" : "Launchd or systemd"
+    automations.scheduledJobsSource() === "remote" ? "Remote instance" : "Launchd or systemd"
   );
   const schedulerUnavailableHint = createMemo(() =>
-    props.source === "remote" ? "OpenWork server unavailable" : "Desktop-only"
+    automations.scheduledJobsSource() === "remote" ? "OpenWork server unavailable" : "Desktop-only"
   );
   const deleteDescription = createMemo(() =>
-    props.source === "remote"
+    automations.scheduledJobsSource() === "remote"
       ? "This removes the schedule and deletes the job definition from the connected OpenWork server."
       : "This removes the schedule and deletes the job definition from your machine."
   );
@@ -486,8 +482,8 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
   const lastUpdatedLabel = createMemo(() => {
     lastUpdatedNow();
-    if (!props.lastUpdatedAt) return "Not synced yet";
-    return formatRelativeTime(props.lastUpdatedAt);
+    if (!automations.scheduledJobsUpdatedAt()) return "Not synced yet";
+    return formatRelativeTime(automations.scheduledJobsUpdatedAt() as number);
   });
 
   const [deleteTarget, setDeleteTarget] = createSignal<ScheduledJob | null>(null);
@@ -510,7 +506,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      await props.deleteJob(target.slug);
+      await automations.deleteScheduledJob(target.slug);
       setDeleteTarget(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -648,7 +644,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         </button>
         <button
           type="button"
-          onClick={() => props.refreshJobs({ force: true })}
+          onClick={() => void automations.refreshScheduledJobs({ force: true })}
           disabled={!supported() || props.busy}
           class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
             !supported() || props.busy
@@ -755,9 +751,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         </div>
       </Show>
 
-      <Show when={props.status}>
+      <Show when={automations.scheduledJobsStatus()}>
         <div class="rounded-xl border border-red-7/40 bg-red-3/60 px-5 py-4 text-sm text-red-11">
-          {props.status}
+          {automations.scheduledJobsStatus()}
         </div>
       </Show>
 
@@ -768,7 +764,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       </Show>
 
       <Show
-        when={props.jobs.length > 0}
+        when={automations.scheduledJobs().length > 0}
         fallback={
           <div class={`space-y-4 ${schedulerGateActive() ? "opacity-60 pointer-events-none" : ""}`}>
             <div class="text-center text-sm text-gray-9">
@@ -798,7 +794,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         }
       >
         <div class={`grid w-full grid-cols-1 gap-4 ${schedulerGateActive() ? "opacity-60 pointer-events-none" : ""}`}>
-          <For each={props.jobs}>
+          <For each={automations.scheduledJobs()}>
             {(job) => (
               <AutomationJobCard
                 job={job}

@@ -25,6 +25,7 @@ import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
 import { buildDenAuthUrl, createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
 import { useConnections } from "../connections/provider";
+import { useExtensions } from "../extensions/provider";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 import {
@@ -178,52 +179,15 @@ export type DashboardViewProps = {
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
   stopSandbox: (workspaceId: string) => void;
-  scheduledJobs: ScheduledJob[];
-  scheduledJobsSource: "local" | "remote";
   schedulerPluginInstalled: boolean;
-  scheduledJobsStatus: string | null;
-  scheduledJobsBusy: boolean;
-  scheduledJobsUpdatedAt: number | null;
-  refreshScheduledJobs: (options?: { force?: boolean }) => void;
-  deleteScheduledJob: (name: string) => Promise<void> | void;
   selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
-  refreshSkills: (options?: { force?: boolean }) => void;
-  refreshHubSkills: (options?: { force?: boolean }) => void;
-  ensureHubSkillsFresh: () => void;
-  refreshPlugins: (scopeOverride?: PluginScope) => void;
-  skills: SkillCard[];
-  skillsStatus: string | null;
-  hubSkills: HubSkillCard[];
-  hubSkillsStatus: string | null;
-  hubRepo: HubSkillRepo | null;
-  hubRepos: HubSkillRepo[];
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
-  importLocalSkill: () => void;
-  installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
-  installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
-  setHubRepo: (repo: Partial<HubSkillRepo> | null) => void;
-  addHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  removeHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  revealSkillsFolder: () => void;
-  uninstallSkill: (name: string) => void;
-  readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
-  saveSkill: (input: { name: string; content: string; description?: string }) => void;
   pluginsAccessHint?: string | null;
   canEditPlugins: boolean;
   canUseGlobalPluginScope: boolean;
-  pluginScope: PluginScope;
-  setPluginScope: (scope: PluginScope) => void;
-  pluginConfigPath: string | null;
-  pluginList: string[];
-  pluginInput: string;
-  setPluginInput: (value: string) => void;
-  pluginStatus: string | null;
-  activePluginGuide: string | null;
-  setActivePluginGuide: (value: string | null) => void;
-  isPluginInstalled: (name: string, aliases?: string[]) => boolean;
   suggestedPlugins: Array<{
     name: string;
     packageName: string;
@@ -239,9 +203,8 @@ export type DashboardViewProps = {
       path?: string;
       note?: string;
     }>;
-  }>; 
+  }>;
   addPlugin: (pluginNameOverride?: string) => void;
-  removePlugin: (pluginName: string) => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
@@ -346,6 +309,7 @@ type SkillsSetBundleV1 = {
 
 export default function DashboardView(props: DashboardViewProps) {
   const connections = useConnections();
+  const extensions = useExtensions();
   const platform = usePlatform();
   const webDeployment = createMemo(() => getOpenWorkDeployment() === "web");
   const title = createMemo(() => {
@@ -496,10 +460,10 @@ export default function DashboardView(props: DashboardViewProps) {
     const doRefresh = async () => {
       try {
         if (currentTab === "skills" && !cancelled) {
-          await props.refreshSkills();
+          await extensions.refreshSkills();
         }
         if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
-          await Promise.all([props.refreshPlugins(), connections.refreshMcpServers()]);
+          await Promise.all([extensions.refreshPlugins(), connections.refreshMcpServers()]);
         }
       } catch {
         // Ignore errors during navigation
@@ -1290,13 +1254,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "scheduled"}>
               <WebUnavailableSurface unavailable={webDeployment()}>
                 <ScheduledTasksView
-                  jobs={props.scheduledJobs}
-                  source={props.scheduledJobsSource}
-                  status={props.scheduledJobsStatus}
-                  busy={props.scheduledJobsBusy}
-                  lastUpdatedAt={props.scheduledJobsUpdatedAt}
-                  refreshJobs={props.refreshScheduledJobs}
-                  deleteJob={props.deleteScheduledJob}
+                  busy={props.busy}
                   selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   createSessionAndOpen={props.createSessionAndOpen}
                   setPrompt={props.setPrompt}
@@ -1318,25 +1276,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   canInstallSkillCreator={props.canInstallSkillCreator}
                   canUseDesktopTools={props.canUseDesktopTools}
                   accessHint={props.skillsAccessHint}
-                  refreshSkills={props.refreshSkills}
-                  refreshHubSkills={props.refreshHubSkills}
-                  ensureHubSkillsFresh={props.ensureHubSkillsFresh}
-                  skills={props.skills}
-                  skillsStatus={props.skillsStatus}
-                  hubSkills={props.hubSkills}
-                  hubSkillsStatus={props.hubSkillsStatus}
-                  hubRepo={props.hubRepo}
-                  hubRepos={props.hubRepos}
-                  importLocalSkill={props.importLocalSkill}
-                  installSkillCreator={props.installSkillCreator}
-                  installHubSkill={props.installHubSkill}
-                  setHubRepo={props.setHubRepo}
-                  addHubRepo={props.addHubRepo}
-                  removeHubRepo={props.removeHubRepo}
-                  revealSkillsFolder={props.revealSkillsFolder}
-                  uninstallSkill={props.uninstallSkill}
-                  readSkill={props.readSkill}
-                  saveSkill={props.saveSkill}
                   createSessionAndOpen={props.createSessionAndOpen}
                   setPrompt={props.setPrompt}
                 />
@@ -1354,20 +1293,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   canEditPlugins={props.canEditPlugins}
                   canUseGlobalScope={props.canUseGlobalPluginScope}
                   accessHint={props.pluginsAccessHint}
-                  pluginScope={props.pluginScope}
-                  setPluginScope={props.setPluginScope}
-                  pluginConfigPath={props.pluginConfigPath}
-                  pluginList={props.pluginList}
-                  pluginInput={props.pluginInput}
-                  setPluginInput={props.setPluginInput}
-                  pluginStatus={props.pluginStatus}
-                  activePluginGuide={props.activePluginGuide}
-                  setActivePluginGuide={props.setActivePluginGuide}
-                  isPluginInstalled={props.isPluginInstalled}
                   suggestedPlugins={props.suggestedPlugins}
-                  refreshPlugins={props.refreshPlugins}
-                  addPlugin={props.addPlugin}
-                  removePlugin={props.removePlugin}
                 />
               </WebUnavailableSurface>
             </Match>
@@ -1511,59 +1437,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   markOpencodeConfigReloadRequired={props.markOpencodeConfigReloadRequired}
                   resetAppConfigDefaults={props.resetAppConfigDefaults}
                   openDebugDeepLink={props.openDebugDeepLink}
-                  scheduledJobs={props.scheduledJobs}
-                  scheduledJobsSource={props.scheduledJobsSource}
-                  scheduledJobsStatus={props.scheduledJobsStatus}
-                  scheduledJobsBusy={props.scheduledJobsBusy}
-                  scheduledJobsUpdatedAt={props.scheduledJobsUpdatedAt}
-                  refreshScheduledJobs={props.refreshScheduledJobs}
-                  deleteScheduledJob={props.deleteScheduledJob}
-                  newTaskDisabled={props.newTaskDisabled}
-                  schedulerPluginInstalled={props.schedulerPluginInstalled}
-                  refreshSkills={props.refreshSkills}
-                  refreshHubSkills={props.refreshHubSkills}
-                  ensureHubSkillsFresh={props.ensureHubSkillsFresh}
-                  skills={props.skills}
-                  skillsStatus={props.skillsStatus}
-                  hubSkills={props.hubSkills}
-                  hubSkillsStatus={props.hubSkillsStatus}
-                  hubRepo={props.hubRepo}
-                  hubRepos={props.hubRepos}
-                  skillsAccessHint={props.skillsAccessHint}
-                  canInstallSkillCreator={props.canInstallSkillCreator}
-                  canUseDesktopTools={props.canUseDesktopTools}
-                  importLocalSkill={props.importLocalSkill}
-                  installSkillCreator={props.installSkillCreator}
-                  installHubSkill={props.installHubSkill}
-                  setHubRepo={props.setHubRepo}
-                  addHubRepo={props.addHubRepo}
-                  removeHubRepo={props.removeHubRepo}
-                  revealSkillsFolder={props.revealSkillsFolder}
-                  uninstallSkill={props.uninstallSkill}
-                  readSkill={props.readSkill}
-                  saveSkill={props.saveSkill}
-                  refreshPlugins={props.refreshPlugins}
-                  pluginsAccessHint={props.pluginsAccessHint}
-                  canEditPlugins={props.canEditPlugins}
-                  canUseGlobalPluginScope={props.canUseGlobalPluginScope}
-                  pluginScope={props.pluginScope}
-                  setPluginScope={props.setPluginScope}
-                  pluginConfigPath={props.pluginConfigPath}
-                  pluginList={props.pluginList}
-                  pluginInput={props.pluginInput}
-                  setPluginInput={props.setPluginInput}
-                  pluginStatus={props.pluginStatus}
-                  activePluginGuide={props.activePluginGuide}
-                  setActivePluginGuide={props.setActivePluginGuide}
-                  isPluginInstalled={props.isPluginInstalled}
-                  suggestedPlugins={props.suggestedPlugins}
-                  addPlugin={props.addPlugin}
-                  removePlugin={props.removePlugin}
-                   createSessionAndOpen={props.createSessionAndOpen}
-                  setPrompt={props.setPrompt}
-                  canReloadWorkspace={props.canReloadWorkspace}
-                  reloadWorkspaceEngine={props.reloadWorkspaceEngine}
-                  reloadBusy={props.reloadBusy}
                   connectRemoteWorkspace={props.connectRemoteWorkspace}
                   openCloudTemplate={props.openCloudTemplate}
               />

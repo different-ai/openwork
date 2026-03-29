@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js";
 
-import type { PluginScope } from "../types";
+import { useExtensions } from "../extensions/provider";
 
 import Button from "../components/button";
 import TextInput from "../components/text-input";
@@ -12,16 +12,6 @@ export type PluginsViewProps = {
   canEditPlugins: boolean;
   canUseGlobalScope: boolean;
   accessHint?: string | null;
-  pluginScope: PluginScope;
-  setPluginScope: (scope: PluginScope) => void;
-  pluginConfigPath: string | null;
-  pluginList: string[];
-  pluginInput: string;
-  setPluginInput: (value: string) => void;
-  pluginStatus: string | null;
-  activePluginGuide: string | null;
-  setActivePluginGuide: (value: string | null) => void;
-  isPluginInstalled: (name: string, aliases?: string[]) => boolean;
   suggestedPlugins: Array<{
     name: string;
     packageName: string;
@@ -38,12 +28,10 @@ export type PluginsViewProps = {
       note?: string;
     }>;
   }>;
-  refreshPlugins: (scopeOverride?: PluginScope) => void;
-  addPlugin: (pluginNameOverride?: string) => void;
-  removePlugin: (pluginName: string) => void;
 };
 
 export default function PluginsView(props: PluginsViewProps) {
+  const extensions = useExtensions();
   return (
     <section class="space-y-6">
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
@@ -55,13 +43,13 @@ export default function PluginsView(props: PluginsViewProps) {
           <div class="flex items-center gap-2">
             <button
               class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                props.pluginScope === "project"
+                extensions.pluginScope() === "project"
                   ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
                   : "text-gray-10 border-gray-6 hover:text-gray-12"
               }`}
               onClick={() => {
-                props.setPluginScope("project");
-                props.refreshPlugins("project");
+                extensions.setPluginScope("project");
+                void extensions.refreshPlugins("project");
               }}
             >
               Project
@@ -69,19 +57,19 @@ export default function PluginsView(props: PluginsViewProps) {
             <button
               disabled={!props.canUseGlobalScope}
               class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                props.pluginScope === "global"
+                extensions.pluginScope() === "global"
                   ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
                   : "text-gray-10 border-gray-6 hover:text-gray-12"
               } ${!props.canUseGlobalScope ? "opacity-40 cursor-not-allowed hover:text-gray-10" : ""}`}
               onClick={() => {
                 if (!props.canUseGlobalScope) return;
-                props.setPluginScope("global");
-                props.refreshPlugins("global");
+                extensions.setPluginScope("global");
+                void extensions.refreshPlugins("global");
               }}
             >
               Global
             </button>
-            <Button variant="ghost" onClick={() => props.refreshPlugins()}>
+            <Button variant="ghost" onClick={() => void extensions.refreshPlugins()}>
               Refresh
             </Button>
           </div>
@@ -89,7 +77,7 @@ export default function PluginsView(props: PluginsViewProps) {
 
         <div class="flex flex-col gap-1 text-xs text-gray-10">
           <div>Config</div>
-          <div class="text-gray-7 font-mono truncate">{props.pluginConfigPath ?? "Not loaded yet"}</div>
+          <div class="text-gray-7 font-mono truncate">{extensions.pluginConfigPath() ?? extensions.pluginConfig()?.path ?? "Not loaded yet"}</div>
           <Show when={props.accessHint}>
             <div class="text-gray-9">{props.accessHint}</div>
           </Show>
@@ -101,8 +89,8 @@ export default function PluginsView(props: PluginsViewProps) {
             <For each={props.suggestedPlugins}>
               {(plugin) => {
                 const isGuided = () => plugin.installMode === "guided";
-                const isInstalled = () => props.isPluginInstalled(plugin.packageName, plugin.aliases ?? []);
-                const isGuideOpen = () => props.activePluginGuide === plugin.packageName;
+                const isInstalled = () => extensions.isPluginInstalledByName(plugin.packageName, plugin.aliases ?? []);
+                const isGuideOpen = () => extensions.activePluginGuide() === plugin.packageName;
 
                 return (
                   <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
@@ -118,19 +106,19 @@ export default function PluginsView(props: PluginsViewProps) {
                         <Show when={isGuided()}>
                           <Button
                             variant="ghost"
-                            onClick={() => props.setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)}
+                            onClick={() => extensions.setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)}
                           >
                             {isGuideOpen() ? "Hide setup" : "Setup"}
                           </Button>
                         </Show>
                         <Button
                           variant={isInstalled() ? "outline" : "secondary"}
-                          onClick={() => props.addPlugin(plugin.packageName)}
+                          onClick={() => extensions.addPlugin(plugin.packageName)}
                           disabled={
                             props.busy ||
                             isInstalled() ||
                             !props.canEditPlugins ||
-                            (props.pluginScope === "project" && !props.selectedWorkspaceRoot.trim())
+                            (extensions.pluginScope() === "project" && !props.selectedWorkspaceRoot.trim())
                           }
                         >
                           {isInstalled() ? "Added" : "Add"}
@@ -186,7 +174,7 @@ export default function PluginsView(props: PluginsViewProps) {
         </div>
 
         <Show
-          when={props.pluginList.length}
+          when={extensions.pluginList().length}
           fallback={
             <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-10">
               No plugins configured yet.
@@ -194,7 +182,7 @@ export default function PluginsView(props: PluginsViewProps) {
           }
         >
           <div class="grid gap-2">
-            <For each={props.pluginList}>
+            <For each={extensions.pluginList()}>
               {(pluginName) => (
                 <div class="flex items-center justify-between rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-2.5">
                   <div class="text-sm text-gray-12 font-mono">{pluginName}</div>
@@ -203,7 +191,7 @@ export default function PluginsView(props: PluginsViewProps) {
                     <Button
                       variant="ghost"
                       class="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
-                      onClick={() => props.removePlugin(pluginName)}
+                      onClick={() => extensions.removePlugin(pluginName)}
                       disabled={props.busy || !props.canEditPlugins}
                     >
                       Remove
@@ -221,22 +209,22 @@ export default function PluginsView(props: PluginsViewProps) {
               <TextInput
                 label="Add plugin"
                 placeholder="opencode-wakatime"
-                value={props.pluginInput}
-                onInput={(e) => props.setPluginInput(e.currentTarget.value)}
+                value={extensions.pluginInput()}
+                onInput={(e) => extensions.setPluginInput(e.currentTarget.value)}
                 hint="Add npm package names, e.g. opencode-wakatime"
               />
             </div>
             <Button
               variant="secondary"
-              onClick={() => props.addPlugin()}
-              disabled={props.busy || !props.pluginInput.trim() || !props.canEditPlugins}
+              onClick={() => extensions.addPlugin()}
+              disabled={props.busy || !extensions.pluginInput().trim() || !props.canEditPlugins}
               class="md:mt-6"
             >
               Add
             </Button>
           </div>
-          <Show when={props.pluginStatus}>
-            <div class="text-xs text-gray-10">{props.pluginStatus}</div>
+          <Show when={extensions.pluginStatus()}>
+            <div class="text-xs text-gray-10">{extensions.pluginStatus()}</div>
           </Show>
         </div>
       </div>

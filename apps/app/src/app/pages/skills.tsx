@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
 import type { HubSkillCard, HubSkillRepo, SkillCard } from "../types";
+import { useExtensions } from "../extensions/provider";
 
 import Button from "../components/button";
 import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
@@ -30,39 +31,21 @@ const OPENWORK_DEFAULT_SKILL_NAMES = new Set([
 export type SkillsViewProps = {
   workspaceName: string;
   busy: boolean;
-  ensureHubSkillsFresh: () => void;
   showHeader?: boolean;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
   accessHint?: string | null;
-  refreshSkills: (options?: { force?: boolean }) => void;
-  refreshHubSkills: (options?: { force?: boolean }) => void;
-  skills: SkillCard[];
-  skillsStatus: string | null;
-  hubSkills: HubSkillCard[];
-  hubSkillsStatus: string | null;
-  hubRepo: HubSkillRepo | null;
-  hubRepos: HubSkillRepo[];
-  importLocalSkill: () => void;
-  installSkillCreator: () => Promise<InstallResult>;
-  installHubSkill: (name: string) => Promise<InstallResult>;
-  setHubRepo: (repo: Partial<HubSkillRepo> | null) => void;
-  addHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  removeHubRepo: (repo: Partial<HubSkillRepo>) => void;
-  revealSkillsFolder: () => void;
-  uninstallSkill: (name: string) => void;
-  readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
-  saveSkill: (input: { name: string; content: string; description?: string }) => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
 };
 
 export default function SkillsView(props: SkillsViewProps) {
+  const extensions = useExtensions();
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
 
   const skillCreatorInstalled = createMemo(() =>
-    props.skills.some((skill) => skill.name === "skill-creator")
+    extensions.skills().some((skill) => skill.name === "skill-creator")
   );
 
   const [uninstallTarget, setUninstallTarget] = createSignal<SkillCard | null>(null);
@@ -97,7 +80,7 @@ export default function SkillsView(props: SkillsViewProps) {
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
 
   onMount(() => {
-    props.ensureHubSkillsFresh();
+    extensions.ensureHubSkillsFresh();
   });
 
   createEffect(() => {
@@ -130,21 +113,21 @@ export default function SkillsView(props: SkillsViewProps) {
   const hubRepoKey = (repo: HubSkillRepo) => `${repo.owner}/${repo.repo}@${repo.ref}`;
   const defaultHubRepoKey = "different-ai/openwork-hub@main";
 
-  const activeHubRepoLabel = createMemo(() => (props.hubRepo ? hubRepoKey(props.hubRepo) : "No hub repo selected"));
+  const activeHubRepoLabel = createMemo(() => (extensions.hubRepo() ? hubRepoKey(extensions.hubRepo()!) : "No hub repo selected"));
 
-  const hasDefaultHubRepo = createMemo(() => props.hubRepos.some((repo) => hubRepoKey(repo) === defaultHubRepoKey));
+  const hasDefaultHubRepo = createMemo(() => extensions.hubRepos().some((repo) => hubRepoKey(repo) === defaultHubRepoKey));
 
   const selectHubRepo = (repo: HubSkillRepo) => {
-    props.setHubRepo(repo);
-    props.refreshHubSkills({ force: true });
+    extensions.setHubRepo(repo);
+    void extensions.refreshHubSkills({ force: true });
   };
 
   const openCustomRepoModal = () => {
     if (props.busy) return;
     setCustomRepoOpen(true);
-    setCustomRepoOwner(props.hubRepo?.owner ?? "");
-    setCustomRepoName(props.hubRepo?.repo ?? "");
-    setCustomRepoRef(props.hubRepo?.ref || "main");
+    setCustomRepoOwner(extensions.hubRepo()?.owner ?? "");
+    setCustomRepoName(extensions.hubRepo()?.repo ?? "");
+    setCustomRepoRef(extensions.hubRepo()?.ref || "main");
     setCustomRepoError(null);
   };
 
@@ -161,15 +144,15 @@ export default function SkillsView(props: SkillsViewProps) {
       setCustomRepoError("Owner and repo are required.");
       return;
     }
-    props.addHubRepo({ owner, repo, ref });
-    props.refreshHubSkills({ force: true });
+    extensions.addHubRepo({ owner, repo, ref });
+    void extensions.refreshHubSkills({ force: true });
     closeCustomRepoModal();
   };
 
   const filteredSkills = createMemo(() => {
     const query = searchQuery().trim().toLowerCase();
-    if (!query) return props.skills;
-    return props.skills.filter((skill) => {
+    if (!query) return extensions.skills();
+    return extensions.skills().filter((skill) => {
       const description = skill.description ?? "";
       return (
         skill.name.toLowerCase().includes(query) ||
@@ -178,10 +161,10 @@ export default function SkillsView(props: SkillsViewProps) {
     });
   });
 
-  const installedNames = createMemo(() => new Set(props.skills.map((skill) => skill.name)));
+  const installedNames = createMemo(() => new Set(extensions.skills().map((skill) => skill.name)));
 
   const availableHubSkills = createMemo(() =>
-    props.hubSkills.filter((skill) => !installedNames().has(skill.name))
+    extensions.hubSkills().filter((skill) => !installedNames().has(skill.name))
   );
 
   const filteredHubSkills = createMemo(() => {
@@ -208,7 +191,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setInstallingSkillCreator(true);
     setToast(translate("skills.installing_skill_creator"));
     try {
-      const result = await props.installSkillCreator();
+      const result = await extensions.installSkillCreator();
       setToast(result.message);
     } catch (e) {
       setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
@@ -222,7 +205,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setInstallingHubSkill(skill.name);
     setToast(`Installing ${skill.name}…`);
     try {
-      const result = await props.installHubSkill(skill.name);
+      const result = await extensions.installHubSkill(skill.name);
       setToast(result.message);
     } catch (e) {
       setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
@@ -245,7 +228,7 @@ export default function SkillsView(props: SkillsViewProps) {
         title: translate("skills.import_local"),
         description: translate("skills.import_local_hint"),
         icon: Upload,
-        onClick: props.importLocalSkill,
+        onClick: extensions.importLocalSkill,
         disabled: props.busy || !props.canUseDesktopTools,
       },
       {
@@ -253,7 +236,7 @@ export default function SkillsView(props: SkillsViewProps) {
         title: translate("skills.reveal_folder"),
         description: translate("skills.reveal_folder_hint"),
         icon: FolderOpen,
-        onClick: props.revealSkillsFolder,
+        onClick: extensions.revealSkillsFolder,
         disabled: props.busy || !props.canUseDesktopTools,
       },
     ];
@@ -307,7 +290,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setShareError(null);
 
     try {
-      const skill = await props.readSkill(target.name);
+      const skill = await extensions.readSkill(target.name);
       if (!skill) throw new Error("Failed to load skill");
 
       const payload: SkillBundleV1 = {
@@ -436,13 +419,13 @@ export default function SkillsView(props: SkillsViewProps) {
       const content = shouldRename ? stripFrontmatter(bundle.content) : bundle.content;
 
       await Promise.resolve(
-        props.saveSkill({
+        extensions.saveSkill({
           name: finalName,
           content,
           description: bundle.description,
         }),
       );
-      props.refreshSkills({ force: true });
+      void extensions.refreshSkills({ force: true });
       setToast(`Installed ${finalName}`);
       closeInstallFromLink();
     } catch (e) {
@@ -477,7 +460,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setSelectedError(null);
     setSelectedLoading(true);
     try {
-      const result = await props.readSkill(skill.name);
+      const result = await extensions.readSkill(skill.name);
       if (!result) {
         setSelectedError("Failed to load skill.");
         return;
@@ -505,7 +488,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setSelectedError(null);
     try {
       await Promise.resolve(
-        props.saveSkill({
+        extensions.saveSkill({
           name: skill.name,
           content: selectedContent(),
           description: skill.description,
@@ -579,7 +562,7 @@ export default function SkillsView(props: SkillsViewProps) {
         <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
             <div class="text-[11px] text-dls-secondary">Installed</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">{props.skills.length}</div>
+            <div class="mt-1 text-base font-semibold text-dls-text">{extensions.skills().length}</div>
           </div>
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
             <div class="text-[11px] text-dls-secondary">Hub available</div>
@@ -603,7 +586,7 @@ export default function SkillsView(props: SkillsViewProps) {
       <div class="flex flex-wrap items-center gap-3 border-b border-dls-border pb-4">
         <button
           type="button"
-          onClick={() => props.refreshSkills({ force: true })}
+          onClick={() => void extensions.refreshSkills({ force: true })}
           disabled={props.busy}
           class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
             props.busy
@@ -648,9 +631,9 @@ export default function SkillsView(props: SkillsViewProps) {
         <div class="text-xs text-dls-secondary">{translate("skills.host_mode_only")}</div>
       </Show>
 
-      <Show when={props.skillsStatus}>
+      <Show when={extensions.skillsStatus()}>
         <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words">
-          {props.skillsStatus}
+          {extensions.skillsStatus()}
         </div>
       </Show>
 
@@ -776,7 +759,7 @@ export default function SkillsView(props: SkillsViewProps) {
             </button>
             <button
               type="button"
-              onClick={() => props.refreshHubSkills({ force: true })}
+              onClick={() => void extensions.refreshHubSkills({ force: true })}
               disabled={props.busy}
               class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
                 props.busy
@@ -800,8 +783,8 @@ export default function SkillsView(props: SkillsViewProps) {
               <button
                 type="button"
                 onClick={() => {
-                  props.addHubRepo({ owner: "different-ai", repo: "openwork-hub", ref: "main" });
-                  props.refreshHubSkills({ force: true });
+                  extensions.addHubRepo({ owner: "different-ai", repo: "openwork-hub", ref: "main" });
+                  void extensions.refreshHubSkills({ force: true });
                 }}
                 class={`rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
                   props.busy
@@ -813,10 +796,10 @@ export default function SkillsView(props: SkillsViewProps) {
                 Add OpenWork Hub
               </button>
             </Show>
-            <For each={props.hubRepos}>
+            <For each={extensions.hubRepos()}>
               {(repo) => {
                 const key = hubRepoKey(repo);
-                const active = props.hubRepo ? key === hubRepoKey(props.hubRepo) : false;
+                const active = extensions.hubRepo() ? key === hubRepoKey(extensions.hubRepo()!) : false;
                 return (
                   <div class="inline-flex items-center rounded-md border border-dls-border bg-dls-surface">
                     <button
@@ -835,8 +818,8 @@ export default function SkillsView(props: SkillsViewProps) {
                       type="button"
                       class="px-1.5 py-1 text-[11px] text-dls-secondary hover:text-red-11"
                       onClick={() => {
-                        props.removeHubRepo(repo);
-                        props.refreshHubSkills({ force: true });
+                        extensions.removeHubRepo(repo);
+                        void extensions.refreshHubSkills({ force: true });
                       }}
                       disabled={props.busy}
                       title="Remove saved repo"
@@ -850,9 +833,9 @@ export default function SkillsView(props: SkillsViewProps) {
           </div>
         </div>
 
-        <Show when={props.hubSkillsStatus}>
+        <Show when={extensions.hubSkillsStatus()}>
           <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words">
-            {props.hubSkillsStatus}
+            {extensions.hubSkillsStatus()}
           </div>
         </Show>
 
@@ -860,7 +843,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={filteredHubSkills().length}
           fallback={
             <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
-              {props.hubRepo ? "No hub skills available." : "No hub repo selected. Add a GitHub repo to browse skills."}
+              {extensions.hubRepo() ? "No hub skills available." : "No hub repo selected. Add a GitHub repo to browse skills."}
             </div>
           }
         >
@@ -1091,7 +1074,7 @@ export default function SkillsView(props: SkillsViewProps) {
                     const target = uninstallTarget();
                     setUninstallTarget(null);
                     if (!target) return;
-                    props.uninstallSkill(target.name);
+                    extensions.uninstallSkill(target.name);
                   }}
                   disabled={props.busy}
                 >
