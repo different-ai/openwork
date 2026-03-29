@@ -16,6 +16,7 @@ import {
   isWindowsPlatform,
 } from "../utils";
 
+import AuthorizedFoldersPanel from "../app-settings/authorized-folders-panel";
 import Button from "../components/button";
 import ProviderIcon from "../components/provider-icon";
 import DenSettingsPanel from "../components/den-settings-panel";
@@ -32,9 +33,6 @@ import {
   Cpu,
   Download,
   FolderOpen,
-  FolderLock,
-  FolderSearch,
-  Folder,
   HardDrive,
   LifeBuoy,
   MessageCircle,
@@ -42,7 +40,6 @@ import {
   RefreshCcw,
   Server,
   Smartphone,
-  X,
   Zap,
 } from "lucide-solid";
 import type {
@@ -196,19 +193,7 @@ export type SettingsViewProps = {
   cleanupOpenworkDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
-  authorizedFolders: string[];
-  authorizedFolderDraft: string;
-  setAuthorizedFolderDraft: (value: string) => void;
-  authorizedFoldersLoading: boolean;
-  authorizedFoldersSaving: boolean;
-  authorizedFoldersError: string | null;
-  authorizedFoldersStatus: string | null;
-  authorizedFoldersAvailable: boolean;
-  authorizedFoldersEditable: boolean;
-  authorizedFoldersHint: string | null;
-  addAuthorizedFolder: () => Promise<void>;
-  pickAuthorizedFolder: () => Promise<void>;
-  removeAuthorizedFolder: (folder: string) => Promise<void>;
+  markOpencodeConfigReloadRequired: () => void;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   engineDoctorVersion: string | null;
   openDebugDeepLink: (
@@ -327,14 +312,6 @@ export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
   const engineCustomBinPathLabel = () =>
     props.engineCustomBinPath.trim() || "No binary selected.";
-  const canPickAuthorizedFolder = createMemo(
-    () => isTauriRuntime() && props.authorizedFoldersEditable && props.activeWorkspaceType === "local",
-  );
-  const workspaceRootFolder = createMemo(() => props.selectedWorkspaceRoot.trim());
-  const visibleAuthorizedFolders = createMemo(() => {
-    const root = workspaceRootFolder();
-    return root ? [root, ...props.authorizedFolders] : props.authorizedFolders;
-  });
 
   const openExternalLink = (url: string) => {
     const resolved = url.trim();
@@ -1532,177 +1509,15 @@ export default function SettingsView(props: SettingsViewProps) {
         <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
-            <div class={`${settingsPanelClass} space-y-4`}>
-              <div class="space-y-1">
-                <div class="flex items-center gap-2 text-sm font-semibold text-gray-12">
-                    <FolderLock size={16} class="text-gray-10" />
-                    Authorized folders
-                  </div>
-                  <div class="text-xs text-gray-9 leading-relaxed max-w-[65ch]">
-                    Grant this workspace access to read and edit files in directories outside of its root.
-                  </div>
-                </div>
-
-                <Show
-                  when={props.authorizedFoldersAvailable}
-                  fallback={
-                    <div class={`${settingsPanelSoftClass} px-3 py-3 text-xs text-gray-10`}>
-                      {props.authorizedFoldersHint ??
-                        "Connect to a writable OpenWork server workspace to edit authorized folders."}
-                    </div>
-                  }
-                >
-                  <div class="flex flex-col overflow-hidden rounded-xl border border-gray-5/60 bg-gray-1/50 shadow-sm">
-                    <Show when={props.authorizedFoldersHint}>
-                      {(hint) => (
-                        <div class="bg-gray-2/60 px-3 py-2 text-[11px] text-gray-10 border-b border-gray-5/40">
-                          {hint()}
-                        </div>
-                      )}
-                    </Show>
-
-                    <Show
-                      when={visibleAuthorizedFolders().length > 0}
-                      fallback={
-                        <div class="flex flex-col items-center justify-center p-6 text-center">
-                          <div class="flex h-10 w-10 items-center justify-center rounded-full bg-blue-3/30 text-blue-11 mb-3">
-                            <Folder size={20} />
-                          </div>
-                          <div class="text-sm font-medium text-gray-11">No external folders authorized</div>
-                          <div class="text-[11px] text-gray-9 mt-1 max-w-[40ch]">
-                            Add a folder to let this workspace read and edit files outside its root directory.
-                          </div>
-                        </div>
-                      }
-                    >
-                      <div class="flex flex-col divide-y divide-gray-5/40 max-h-[300px] overflow-y-auto">
-                        <For each={visibleAuthorizedFolders()}>
-                          {(folder) => {
-                            const isWorkspaceRoot = folder === workspaceRootFolder();
-                            const folderName = folder.split(/[/\\]/).filter(Boolean).pop() || folder;
-                            return (
-                              <div class={`flex items-center justify-between px-3 py-2.5 transition-colors ${
-                                isWorkspaceRoot ? "bg-blue-2/20" : "hover:bg-gray-2/50"
-                              }`}>
-                                <div class="flex items-center gap-3 overflow-hidden">
-                                  <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-3/30 text-blue-11">
-                                    <Folder size={15} />
-                                  </div>
-                                  <div class="flex min-w-0 flex-col">
-                                    <div class="flex items-center gap-2">
-                                      <span class="truncate text-sm font-medium text-gray-12">{folderName}</span>
-                                      <Show when={isWorkspaceRoot}>
-                                        <span class="rounded-full border border-blue-7/30 bg-blue-3/25 px-2 py-0.5 text-[10px] font-medium text-blue-11">
-                                          Workspace root
-                                        </span>
-                                      </Show>
-                                    </div>
-                                    <span class="truncate font-mono text-[10px] text-gray-8">{folder}</span>
-                                  </div>
-                                </div>
-                                <Show
-                                  when={!isWorkspaceRoot}
-                                  fallback={
-                                    <span class="shrink-0 text-[10px] font-medium text-gray-8">
-                                      Always available
-                                    </span>
-                                  }
-                                >
-                                  <Button
-                                    variant="ghost"
-                                    class="h-6 w-6 shrink-0 !rounded-full !p-0 border-0 bg-transparent text-red-10 shadow-none hover:bg-red-3/15 hover:text-red-11 focus:ring-red-7/25"
-                                    onClick={() => void props.removeAuthorizedFolder(folder)}
-                                    disabled={
-                                      props.authorizedFoldersLoading ||
-                                      props.authorizedFoldersSaving ||
-                                      !props.authorizedFoldersEditable
-                                    }
-                                    aria-label={`Remove ${folderName}`}
-                                  >
-                                    <X size={16} class="text-current" />
-                                  </Button>
-                                </Show>
-                              </div>
-                            );
-                          }}
-                        </For>
-                      </div>
-                    </Show>
-
-                    <Show when={props.authorizedFoldersStatus}>
-                      {(status) => (
-                        <div class="bg-blue-2/30 px-3 py-2 text-[11px] text-blue-11 border-t border-gray-5/40">
-                          {status()}
-                        </div>
-                      )}
-                    </Show>
-                    <Show when={props.authorizedFoldersError}>
-                      {(error) => (
-                        <div class="bg-red-2/30 px-3 py-2 text-[11px] text-red-11 border-t border-gray-5/40">
-                          {error()}
-                        </div>
-                      )}
-                    </Show>
-
-                    <form
-                      class="flex items-center gap-2 bg-gray-2/60 border-t border-gray-5/60 p-2"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void props.addAuthorizedFolder();
-                      }}
-                    >
-                      <div class="relative flex-1">
-                        <input
-                          class="w-full rounded-lg border border-gray-5/60 bg-gray-1 px-3 py-1.5 text-xs text-gray-12 placeholder:text-gray-8 focus:outline-none focus:ring-2 focus:ring-blue-7/30 disabled:opacity-50"
-                          value={props.authorizedFolderDraft}
-                          onInput={(event) =>
-                            props.setAuthorizedFolderDraft(event.currentTarget.value)
-                          }
-                          onPaste={(event) => {
-                            event.preventDefault();
-                          }}
-                          placeholder="Type a folder path to authorize..."
-                          disabled={
-                            props.authorizedFoldersLoading ||
-                            props.authorizedFoldersSaving ||
-                            !props.authorizedFoldersEditable
-                          }
-                        />
-                      </div>
-                      
-                      <Show when={canPickAuthorizedFolder()}>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          class="h-8 px-3 text-xs bg-gray-1 hover:bg-gray-2"
-                          onClick={() => void props.pickAuthorizedFolder()}
-                          disabled={
-                            props.authorizedFoldersLoading ||
-                            props.authorizedFoldersSaving ||
-                            !props.authorizedFoldersEditable
-                          }
-                        >
-                          <FolderSearch size={13} class="mr-1.5" /> Browse
-                        </Button>
-                      </Show>
-                      
-                      <Button
-                        type="submit"
-                        variant="primary"
-                        class="h-8 px-3 text-xs bg-gray-3 text-gray-12 hover:bg-gray-4 border border-gray-5/60"
-                        disabled={
-                          props.authorizedFoldersLoading ||
-                          props.authorizedFoldersSaving ||
-                          !props.authorizedFoldersEditable ||
-                          !props.authorizedFolderDraft.trim()
-                        }
-                      >
-                        {props.authorizedFoldersSaving ? "Adding..." : "Add"}
-                      </Button>
-                    </form>
-                  </div>
-                </Show>
-              </div>
+            <AuthorizedFoldersPanel
+              openworkServerClient={props.openworkServerClient}
+              openworkServerStatus={props.openworkServerStatus}
+              openworkServerCapabilities={props.openworkServerCapabilities}
+              runtimeWorkspaceId={props.runtimeWorkspaceId}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
+              activeWorkspaceType={props.activeWorkspaceType}
+              onConfigUpdated={props.markOpencodeConfigReloadRequired}
+            />
 
             <div class={`${settingsPanelClass} space-y-4`}>
               <div class="flex items-start justify-between gap-4">

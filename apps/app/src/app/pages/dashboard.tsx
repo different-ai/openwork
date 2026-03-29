@@ -134,6 +134,7 @@ export type DashboardViewProps = {
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
+  markOpencodeConfigReloadRequired: () => void;
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
@@ -325,19 +326,6 @@ export type DashboardViewProps = {
   cleanupOpenworkDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
-  authorizedFolders: string[];
-  authorizedFolderDraft: string;
-  setAuthorizedFolderDraft: (value: string) => void;
-  authorizedFoldersLoading: boolean;
-  authorizedFoldersSaving: boolean;
-  authorizedFoldersError: string | null;
-  authorizedFoldersStatus: string | null;
-  authorizedFoldersAvailable: boolean;
-  authorizedFoldersEditable: boolean;
-  authorizedFoldersHint: string | null;
-  addAuthorizedFolder: () => Promise<void>;
-  pickAuthorizedFolder: () => Promise<void>;
-  removeAuthorizedFolder: (folder: string) => Promise<void>;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   openDebugDeepLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
 };
@@ -1543,19 +1531,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
                   dockerCleanupBusy={props.dockerCleanupBusy}
                   dockerCleanupResult={props.dockerCleanupResult}
-                  authorizedFolders={props.authorizedFolders}
-                  authorizedFolderDraft={props.authorizedFolderDraft}
-                  setAuthorizedFolderDraft={props.setAuthorizedFolderDraft}
-                  authorizedFoldersLoading={props.authorizedFoldersLoading}
-                  authorizedFoldersSaving={props.authorizedFoldersSaving}
-                  authorizedFoldersError={props.authorizedFoldersError}
-                  authorizedFoldersStatus={props.authorizedFoldersStatus}
-                  authorizedFoldersAvailable={props.authorizedFoldersAvailable}
-                  authorizedFoldersEditable={props.authorizedFoldersEditable}
-                  authorizedFoldersHint={props.authorizedFoldersHint}
-                  addAuthorizedFolder={props.addAuthorizedFolder}
-                  pickAuthorizedFolder={props.pickAuthorizedFolder}
-                  removeAuthorizedFolder={props.removeAuthorizedFolder}
+                  markOpencodeConfigReloadRequired={props.markOpencodeConfigReloadRequired}
                   resetAppConfigDefaults={props.resetAppConfigDefaults}
                   openDebugDeepLink={props.openDebugDeepLink}
                   scheduledJobs={props.scheduledJobs}
