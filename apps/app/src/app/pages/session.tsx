@@ -3206,7 +3206,8 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openMcp = () => {
-    openSettings("extensions");
+    props.setTab("mcp");
+    props.setView("dashboard");
   };
 
   const openProviderAuth = (preferredProviderId?: string) => {
@@ -3978,7 +3979,10 @@ export default function SessionView(props: SessionViewProps) {
             onSendFeedback={openFeedback}
             showSettingsButton={true}
             onOpenSettings={props.toggleSettings}
-            onOpenMessaging={() => openSettings("messaging")}
+            onOpenMessaging={() => {
+              props.setTab("identities");
+              props.setView("dashboard");
+            }}
             onOpenProviders={openProviderAuth}
             onOpenMcp={openMcp}
             providerConnectedIds={props.providerConnectedIds}

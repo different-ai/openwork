@@ -25,7 +25,6 @@ import { useSessionDisplayPreferences } from "../app-settings/session-display-pr
 import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
-import WorkspaceToolsPanel from "./workspace-tools-panel";
 import {
   ArrowUpRight,
   CircleAlert,
@@ -857,14 +856,6 @@ export default function SettingsView(props: SettingsViewProps) {
         return "Cloud";
       case "model":
         return "Model";
-      case "automations":
-        return "Automations";
-      case "skills":
-        return "Skills";
-      case "extensions":
-        return "Extensions";
-      case "messaging":
-        return "Messaging";
       case "advanced":
         return "Advanced";
       case "appearance":
@@ -880,14 +871,7 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const workspaceTabs = createMemo<SettingsTab[]>(() => [
-    "general",
-    "automations",
-    "skills",
-    "extensions",
-    "messaging",
-    "advanced",
-  ]);
+  const workspaceTabs = createMemo<SettingsTab[]>(() => ["general", "advanced"]);
 
   const globalTabs = createMemo<SettingsTab[]>(() => {
     const tabs: SettingsTab[] = ["den", "appearance", "updates", "recovery"];
@@ -1368,14 +1352,6 @@ export default function SettingsView(props: SettingsViewProps) {
         return "Manage your OpenWork Cloud connection, hosted workers, and workspace access.";
       case "model":
         return "Tune the default model, runtime behavior, and assistant output settings.";
-      case "automations":
-        return "Create and manage scheduled automations inside workspace settings.";
-      case "skills":
-        return "Browse, edit, and install skills without leaving settings.";
-      case "extensions":
-        return "Manage MCP apps and OpenCode plugins for this workspace.";
-      case "messaging":
-        return "Configure router identities and inbox behavior from workspace settings.";
       case "advanced":
         return "Inspect runtime health, connection state, and developer-facing controls.";
       case "appearance":
@@ -1858,116 +1834,6 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </Show>
           </div>
-        </Match>
-
-        <Match when={activeTab() === "automations"}>
-          <WorkspaceToolsPanel
-            section="scheduled"
-            scheduled={{
-              showHeader: false,
-              jobs: props.scheduledJobs,
-              source: props.scheduledJobsSource,
-              status: props.scheduledJobsStatus,
-              busy: props.scheduledJobsBusy,
-              lastUpdatedAt: props.scheduledJobsUpdatedAt,
-              refreshJobs: props.refreshScheduledJobs,
-              deleteJob: props.deleteScheduledJob,
-              selectedWorkspaceRoot: props.selectedWorkspaceRoot,
-              createSessionAndOpen: props.createSessionAndOpen,
-              setPrompt: props.setPrompt,
-              newTaskDisabled: props.newTaskDisabled,
-              schedulerInstalled: props.schedulerPluginInstalled,
-              canEditPlugins: props.canEditPlugins,
-              addPlugin: props.addPlugin,
-              reloadWorkspaceEngine: props.reloadWorkspaceEngine,
-              reloadBusy: props.reloadBusy,
-              canReloadWorkspace: props.canReloadWorkspace,
-            }}
-          />
-        </Match>
-
-        <Match when={activeTab() === "skills"}>
-          <WorkspaceToolsPanel
-            section="skills"
-            skills={{
-              workspaceName: props.selectedWorkspaceRoot.trim() || "Workspace",
-              busy: props.busy,
-              showHeader: false,
-              canInstallSkillCreator: props.canInstallSkillCreator,
-              canUseDesktopTools: props.canUseDesktopTools,
-              accessHint: props.skillsAccessHint,
-              refreshSkills: props.refreshSkills,
-              refreshHubSkills: props.refreshHubSkills,
-              ensureHubSkillsFresh: props.ensureHubSkillsFresh,
-              skills: props.skills,
-              skillsStatus: props.skillsStatus,
-              hubSkills: props.hubSkills,
-              hubSkillsStatus: props.hubSkillsStatus,
-              hubRepo: props.hubRepo,
-              hubRepos: props.hubRepos,
-              importLocalSkill: props.importLocalSkill,
-              installSkillCreator: props.installSkillCreator,
-              installHubSkill: props.installHubSkill,
-              setHubRepo: props.setHubRepo,
-              addHubRepo: props.addHubRepo,
-              removeHubRepo: props.removeHubRepo,
-              revealSkillsFolder: props.revealSkillsFolder,
-              uninstallSkill: props.uninstallSkill,
-              readSkill: props.readSkill,
-              saveSkill: props.saveSkill,
-              createSessionAndOpen: props.createSessionAndOpen,
-              setPrompt: props.setPrompt,
-            }}
-          />
-        </Match>
-
-        <Match when={activeTab() === "extensions"}>
-          <WorkspaceToolsPanel
-            section="extensions"
-            extensions={{
-              initialSection: "all",
-              showHeader: false,
-              busy: props.busy,
-              selectedWorkspaceRoot: props.selectedWorkspaceRoot,
-              isRemoteWorkspace: props.activeWorkspaceType === "remote",
-              canEditPlugins: props.canEditPlugins,
-              canUseGlobalScope: props.canUseGlobalPluginScope,
-              accessHint: props.pluginsAccessHint,
-              pluginScope: props.pluginScope,
-              setPluginScope: props.setPluginScope,
-              pluginConfigPath: props.pluginConfigPath,
-              pluginList: props.pluginList,
-              pluginInput: props.pluginInput,
-              setPluginInput: props.setPluginInput,
-              pluginStatus: props.pluginStatus,
-              activePluginGuide: props.activePluginGuide,
-              setActivePluginGuide: props.setActivePluginGuide,
-              isPluginInstalled: props.isPluginInstalled,
-              suggestedPlugins: props.suggestedPlugins,
-              refreshPlugins: props.refreshPlugins,
-              addPlugin: props.addPlugin,
-              removePlugin: props.removePlugin,
-            }}
-          />
-        </Match>
-
-        <Match when={activeTab() === "messaging"}>
-          <WorkspaceToolsPanel
-            section="identities"
-            identities={{
-              busy: props.busy,
-              showHeader: false,
-              openworkServerStatus: props.openworkServerStatus,
-              openworkServerUrl: props.openworkServerUrl,
-              openworkServerClient: props.openworkServerClient,
-              openworkReconnectBusy: props.openworkReconnectBusy,
-              reconnectOpenworkServer: props.reconnectOpenworkServer,
-              restartLocalServer: props.restartLocalServer,
-              runtimeWorkspaceId: props.runtimeWorkspaceId,
-              selectedWorkspaceRoot: props.selectedWorkspaceRoot,
-              developerMode: props.developerMode,
-            }}
-          />
         </Match>
 
         <Match when={activeTab() === "den"}>

@@ -519,6 +519,14 @@ export default function DashboardView(props: DashboardViewProps) {
     props.setTab("settings");
   };
 
+  const openMessaging = () => {
+    props.setTab("identities");
+  };
+
+  const openExtensions = () => {
+    props.setTab("mcp");
+  };
+
   const openConfig = () => {
     props.setTab(props.developerMode ? "config" : "identities");
   };
@@ -1674,11 +1682,11 @@ export default function DashboardView(props: DashboardViewProps) {
           showSettingsButton={true}
           onSendFeedback={openFeedback}
           onOpenSettings={props.toggleSettings}
-            onOpenMessaging={() => openSettings("messaging")}
-            onOpenProviders={() => props.openProviderAuthModal()}
-            onOpenMcp={() => openSettings("extensions")}
-            providerConnectedIds={props.providerConnectedIds}
-          />
+          onOpenMessaging={openMessaging}
+          onOpenProviders={() => props.openProviderAuthModal()}
+          onOpenMcp={openExtensions}
+          providerConnectedIds={props.providerConnectedIds}
+        />
         <nav class="hidden border-t border-dls-border bg-dls-surface">
           <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button

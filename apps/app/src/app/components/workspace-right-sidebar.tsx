@@ -105,25 +105,25 @@ export default function WorkspaceRightSidebar(props: Props) {
           {sidebarButton(
             "Automations",
             <History size={18} />,
-            showSelection() && (props.tab === "scheduled" || (props.tab === "settings" && props.settingsTab === "automations")),
+            showSelection() && props.tab === "scheduled",
             props.onOpenAutomations,
           )}
           {sidebarButton(
             "Skills",
             <Zap size={18} />,
-            showSelection() && (props.tab === "skills" || (props.tab === "settings" && props.settingsTab === "skills")),
+            showSelection() && props.tab === "skills",
             props.onOpenSkills,
           )}
           {sidebarButton(
             "Extensions",
             <Box size={18} />,
-            showSelection() && (props.tab === "mcp" || props.tab === "plugins" || (props.tab === "settings" && props.settingsTab === "extensions")),
+            showSelection() && (props.tab === "mcp" || props.tab === "plugins"),
             props.onOpenExtensions,
           )}
           {sidebarButton(
             "Messaging",
             <MessageCircle size={18} />,
-            showSelection() && (props.tab === "identities" || (props.tab === "settings" && props.settingsTab === "messaging")),
+            showSelection() && props.tab === "identities",
             props.onOpenMessaging,
           )}
           <Show when={props.developerMode}>
