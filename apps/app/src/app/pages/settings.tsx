@@ -27,7 +27,7 @@ import { usePlatform } from "../context/platform";
 import ConfigView from "./config";
 import ExtensionsView from "./extensions";
 import IdentitiesView from "./identities";
-import ScheduledTasksView from "./scheduled";
+import AutomationsView from "./automations";
 import SkillsView from "./skills";
 import { buildFeedbackUrl } from "../lib/feedback";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
@@ -1725,7 +1725,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "automations"}>
           <WebUnavailableSurface unavailable={webDeployment()}>
-            <ScheduledTasksView
+            <AutomationsView
               busy={props.busy}
               selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               createSessionAndOpen={props.createSessionAndOpen}

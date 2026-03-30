@@ -8,6 +8,82 @@ import { createWorkspaceContextKey } from "./workspace-context";
 
 export type AutomationsStore = ReturnType<typeof createAutomationsStore>;
 
+export type AutomationActionPlan =
+  | { ok: true; mode: "session_prompt"; prompt: string }
+  | { ok: false; error: string };
+
+export type PrepareCreateAutomationInput = {
+  name: string;
+  prompt: string;
+  schedule: string;
+  workdir?: string | null;
+};
+
+const normalizeSentence = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/[.!?]$/.test(trimmed)) return trimmed;
+  return `${trimmed}.`;
+};
+
+const buildCreateAutomationPrompt = (
+  input: PrepareCreateAutomationInput,
+): AutomationActionPlan => {
+  const name = input.name.trim();
+  const schedule = input.schedule.trim();
+  const prompt = normalizeSentence(input.prompt);
+  if (!schedule) {
+    return { ok: false, error: "Schedule is required." };
+  }
+  if (!prompt) {
+    return { ok: false, error: "Prompt is required." };
+  }
+  const workdir = (input.workdir ?? "").trim();
+  const nameSegment = name ? ` named \"${name}\"` : "";
+  const workdirSegment = workdir ? ` Run from ${workdir}.` : "";
+  return {
+    ok: true,
+    mode: "session_prompt",
+    prompt: `Schedule a job${nameSegment} with cron \"${schedule}\" to ${prompt}${workdirSegment}`.trim(),
+  };
+};
+
+const buildRunAutomationPrompt = (
+  job: ScheduledJob,
+  fallbackWorkdir?: string | null,
+): AutomationActionPlan => {
+  const workdir = (job.workdir ?? fallbackWorkdir ?? "").trim();
+  const workdirSegment = workdir ? `\n\nRun from ${workdir}.` : "";
+
+  if (job.run?.prompt || job.prompt) {
+    const promptBody = (job.run?.prompt ?? job.prompt ?? "").trim();
+    if (!promptBody) {
+      return { ok: false, error: "Automation prompt is empty." };
+    }
+    return {
+      ok: true,
+      mode: "session_prompt",
+      prompt: `Run this automation now: ${job.name}.\nSchedule: ${job.schedule}.\n\n${promptBody}${workdirSegment}`.trim(),
+    };
+  }
+
+  if (job.run?.command) {
+    const args = job.run.arguments ? ` ${job.run.arguments}` : "";
+    const command = `${job.run.command}${args}`.trim();
+    return {
+      ok: true,
+      mode: "session_prompt",
+      prompt: `Run this automation now: ${job.name}.\nSchedule: ${job.schedule}.\n\nRun the following command:\n${command}${workdirSegment}`.trim(),
+    };
+  }
+
+  return {
+    ok: true,
+    mode: "session_prompt",
+    prompt: `Run this automation now: ${job.name}.\nSchedule: ${job.schedule}.`.trim(),
+  };
+};
+
 export function createAutomationsStore(options: {
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
@@ -132,6 +208,14 @@ export function createAutomationsStore(options: {
     setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
   };
 
+  const prepareCreateAutomation = (input: PrepareCreateAutomationInput) =>
+    buildCreateAutomationPrompt(input);
+
+  const prepareRunAutomation = (
+    job: ScheduledJob,
+    fallbackWorkdir?: string | null,
+  ) => buildRunAutomationPrompt(job, fallbackWorkdir);
+
   createEffect(() => {
     scheduledJobsContextKey();
     setScheduledJobs([]);
@@ -170,5 +254,15 @@ export function createAutomationsStore(options: {
     scheduledJobsContextKey,
     refreshScheduledJobs,
     deleteScheduledJob,
+    jobs: scheduledJobs,
+    jobsStatus: scheduledJobsStatus,
+    jobsBusy: scheduledJobsBusy,
+    jobsUpdatedAt: scheduledJobsUpdatedAt,
+    jobsSource: scheduledJobsSource,
+    pollingAvailable: scheduledJobsPollingAvailable,
+    refresh: refreshScheduledJobs,
+    remove: deleteScheduledJob,
+    prepareCreateAutomation,
+    prepareRunAutomation,
   };
 }

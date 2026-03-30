@@ -379,7 +379,6 @@ export const TOY_UI_HTML = `<!doctype html>
 
             <div class="tabs" id="tabs">
               <button class="tab active" data-tab="share">Share</button>
-              <button class="tab" data-tab="automations">Automations</button>
               <button class="tab" data-tab="skills">Skills</button>
               <button class="tab" data-tab="plugins">Plugins</button>
               <button class="tab" data-tab="apps">Apps</button>
@@ -428,54 +427,6 @@ export const TOY_UI_HTML = `<!doctype html>
               <div class="row">
                 <button class="btn danger" id="btn-delete-workspace">Delete workspace</button>
                 <span class="small">Removes from host config. Requires owner/host token.</span>
-              </div>
-            </div>
-
-            <div class="panel hidden" data-panel="automations">
-              <div class="row">
-                <button class="btn" id="btn-auto-refresh">Refresh</button>
-                <span class="small">Apply schedule on host via <span class="mono">openwork-agent-lab scheduler sync</span>.</span>
-              </div>
-              <div class="list" id="automations"></div>
-
-              <div class="codebox" id="auto-log"></div>
-
-              <div class="hr"></div>
-
-              <div class="small">Create automation</div>
-              <div class="row">
-                <input class="input" id="auto-name" type="text" placeholder="name" />
-                <select class="input" id="auto-kind">
-                  <option value="interval">interval</option>
-                  <option value="daily">daily</option>
-                  <option value="weekly">weekly</option>
-                </select>
-              </div>
-              <div class="row" id="auto-interval-row">
-                <input class="input" id="auto-interval" type="number" min="60" step="60" placeholder="seconds" />
-                <span class="small">StartInterval</span>
-              </div>
-              <div class="row hidden" id="auto-daily-row">
-                <input class="input" id="auto-hour" type="number" min="0" max="23" placeholder="hour" />
-                <input class="input" id="auto-minute" type="number" min="0" max="59" placeholder="minute" />
-                <span class="small">local time</span>
-              </div>
-              <div class="row hidden" id="auto-weekly-row">
-                <select class="input" id="auto-weekday">
-                  <option value="1">Sun</option>
-                  <option value="2">Mon</option>
-                  <option value="3">Tue</option>
-                  <option value="4">Wed</option>
-                  <option value="5">Thu</option>
-                  <option value="6">Fri</option>
-                  <option value="7">Sat</option>
-                </select>
-                <input class="input" id="auto-weekly-hour" type="number" min="0" max="23" placeholder="hour" />
-                <input class="input" id="auto-weekly-minute" type="number" min="0" max="59" placeholder="minute" />
-              </div>
-              <textarea class="inputarea" id="auto-prompt" placeholder="Prompt..." spellcheck="false"></textarea>
-              <div class="row">
-                <button class="btn primary" id="btn-auto-save">Save automation</button>
               </div>
             </div>
 
@@ -557,7 +508,6 @@ const connectEl = qs("#connect");
 const tokensEl = qs("#tokens");
 const exportEl = qs("#export");
 const importEl = qs("#import");
-const automationsEl = qs("#automations");
 const skillsEl = qs("#skills");
 const pluginsEl = qs("#plugins");
 const pluginSpecEl = qs("#plugin-spec");
@@ -569,20 +519,6 @@ const workspaceUrlEl = qs("#workspace-url");
 const shareScopeEl = qs("#share-scope");
 const shareLabelEl = qs("#share-label");
 const tabsEl = qs("#tabs");
-
-const autoNameEl = qs("#auto-name");
-const autoKindEl = qs("#auto-kind");
-const autoIntervalEl = qs("#auto-interval");
-const autoHourEl = qs("#auto-hour");
-const autoMinuteEl = qs("#auto-minute");
-const autoWeekdayEl = qs("#auto-weekday");
-const autoWeeklyHourEl = qs("#auto-weekly-hour");
-const autoWeeklyMinuteEl = qs("#auto-weekly-minute");
-const autoPromptEl = qs("#auto-prompt");
-const autoIntervalRow = qs("#auto-interval-row");
-const autoDailyRow = qs("#auto-daily-row");
-const autoWeeklyRow = qs("#auto-weekly-row");
-const autoLogEl = qs("#auto-log");
 
 const STORAGE_TOKEN = "openwork.toy.token";
 const STORAGE_SESSION_PREFIX = "openwork.toy.session.";
@@ -1187,168 +1123,6 @@ async function importWorkspace(workspaceId) {
   });
 }
 
-function scheduleSummary(schedule) {
-  if (!schedule || typeof schedule !== "object") return "";
-  const kind = String(schedule.kind || "");
-  const pad2 = (n) => String(n).padStart(2, "0");
-  if (kind === "interval") {
-    const seconds = Number(schedule.seconds || 0);
-    return seconds ? ("every " + seconds + "s") : "interval";
-  }
-  if (kind === "daily") {
-    return "daily " + pad2(schedule.hour) + ":" + pad2(schedule.minute);
-  }
-  if (kind === "weekly") {
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const weekday = Number(schedule.weekday || 1);
-    const day = days[Math.max(1, Math.min(7, weekday)) - 1] || "?";
-    return "weekly " + day + " " + pad2(schedule.hour) + ":" + pad2(schedule.minute);
-  }
-  return kind || "schedule";
-}
-
-let automationsCache = [];
-
-async function refreshAutomations(workspaceId) {
-  if (!automationsEl) return;
-  if (autoLogEl) autoLogEl.textContent = "";
-  automationsEl.innerHTML = "";
-  try {
-    const data = await apiFetch("/workspace/" + encodeURIComponent(workspaceId) + "/agentlab/automations");
-    const items = Array.isArray(data && data.items) ? data.items : [];
-    automationsCache = items;
-    if (!items.length) {
-      const empty = document.createElement("div");
-      empty.className = "item";
-      empty.textContent = "No automations yet.";
-      automationsEl.appendChild(empty);
-      return;
-    }
-    for (const item of items) {
-      const row = document.createElement("div");
-      row.className = "item";
-
-      const top = document.createElement("div");
-      top.className = "row";
-
-      const left = document.createElement("div");
-      const name = document.createElement("div");
-      name.className = "mono";
-      name.textContent = item.name + "  (" + item.id + ")";
-      const meta = document.createElement("div");
-      meta.className = "small";
-      meta.textContent = (item.enabled ? "enabled" : "disabled") + " - " + scheduleSummary(item.schedule);
-      left.appendChild(name);
-      left.appendChild(meta);
-
-      const buttons = document.createElement("div");
-      buttons.className = "row";
-
-      const runBtn = document.createElement("button");
-      runBtn.className = "btn";
-      runBtn.textContent = "Run";
-      runBtn.onclick = async () => {
-        try {
-          const res = await apiFetch(
-            "/workspace/" + encodeURIComponent(workspaceId) + "/agentlab/automations/" + encodeURIComponent(item.id) + "/run",
-            { method: "POST", body: JSON.stringify({}) },
-          );
-          const sessionId = res && res.sessionId ? String(res.sessionId) : "";
-          if (sessionId) {
-            writeSessionId(workspaceId, sessionId);
-            sessionIdEl.textContent = "session: " + sessionId;
-            await refreshMessages(workspaceId).catch(() => undefined);
-          }
-          setStatus("Automation started", "ok");
-        } catch (e) {
-          setStatus(e && e.message ? e.message : "Automation failed", "bad");
-        }
-      };
-
-      const logBtn = document.createElement("button");
-      logBtn.className = "btn";
-      logBtn.textContent = "Logs";
-      logBtn.onclick = async () => {
-        if (!autoLogEl) return;
-        autoLogEl.textContent = "";
-        try {
-          const data = await apiFetch(
-            "/workspace/" + encodeURIComponent(workspaceId) + "/agentlab/automations/logs/" + encodeURIComponent(item.id),
-          );
-          autoLogEl.textContent = data && data.content ? String(data.content) : "";
-        } catch (e) {
-          autoLogEl.textContent = e && e.message ? e.message : "Log not available";
-        }
-      };
-
-      const delBtn = document.createElement("button");
-      delBtn.className = "btn danger";
-      delBtn.textContent = "Delete";
-      delBtn.onclick = async () => {
-        try {
-          await apiFetch(
-            "/workspace/" + encodeURIComponent(workspaceId) + "/agentlab/automations/" + encodeURIComponent(item.id),
-            { method: "DELETE" },
-          );
-          await refreshAutomations(workspaceId);
-        } catch (e) {
-          setStatus(e && e.message ? e.message : "Delete failed", "bad");
-        }
-      };
-
-      buttons.appendChild(runBtn);
-      buttons.appendChild(logBtn);
-      buttons.appendChild(delBtn);
-
-      top.appendChild(left);
-      top.appendChild(buttons);
-      row.appendChild(top);
-      automationsEl.appendChild(row);
-    }
-  } catch (e) {
-    const warn = document.createElement("div");
-    warn.className = "item";
-    warn.textContent = e && e.message ? e.message : "Automations unavailable";
-    automationsEl.appendChild(warn);
-  }
-}
-
-function updateAutomationScheduleUI() {
-  const kind = autoKindEl && autoKindEl.value ? String(autoKindEl.value) : "interval";
-  if (autoIntervalRow) autoIntervalRow.classList.toggle("hidden", kind !== "interval");
-  if (autoDailyRow) autoDailyRow.classList.toggle("hidden", kind !== "daily");
-  if (autoWeeklyRow) autoWeeklyRow.classList.toggle("hidden", kind !== "weekly");
-}
-
-async function saveAutomation(workspaceId) {
-  const name = autoNameEl && autoNameEl.value ? String(autoNameEl.value).trim() : "";
-  const prompt = autoPromptEl && autoPromptEl.value ? String(autoPromptEl.value).trim() : "";
-  if (!name) throw new Error("name_required");
-  if (!prompt) throw new Error("prompt_required");
-  const kind = autoKindEl && autoKindEl.value ? String(autoKindEl.value) : "interval";
-  let schedule = null;
-  if (kind === "interval") {
-    schedule = { kind: "interval", seconds: Number(autoIntervalEl && autoIntervalEl.value ? autoIntervalEl.value : 3600) };
-  } else if (kind === "daily") {
-    schedule = {
-      kind: "daily",
-      hour: Number(autoHourEl && autoHourEl.value ? autoHourEl.value : 9),
-      minute: Number(autoMinuteEl && autoMinuteEl.value ? autoMinuteEl.value : 0),
-    };
-  } else {
-    schedule = {
-      kind: "weekly",
-      weekday: Number(autoWeekdayEl && autoWeekdayEl.value ? autoWeekdayEl.value : 2),
-      hour: Number(autoWeeklyHourEl && autoWeeklyHourEl.value ? autoWeeklyHourEl.value : 9),
-      minute: Number(autoWeeklyMinuteEl && autoWeeklyMinuteEl.value ? autoWeeklyMinuteEl.value : 0),
-    };
-  }
-  await apiFetch("/workspace/" + encodeURIComponent(workspaceId) + "/agentlab/automations", {
-    method: "POST",
-    body: JSON.stringify({ name, prompt, enabled: true, schedule }),
-  });
-}
-
 async function refreshSkills(workspaceId) {
   if (!skillsEl) return;
   skillsEl.innerHTML = "";
@@ -1550,7 +1324,6 @@ async function main() {
         const tab = btn.getAttribute("data-tab") || "share";
         setTab(tab);
         try {
-          if (tab === "automations") await refreshAutomations(workspaceId);
           if (tab === "skills") await refreshSkills(workspaceId);
           if (tab === "plugins") await refreshPlugins(workspaceId);
           if (tab === "apps") await refreshMcp(workspaceId);
@@ -1561,11 +1334,6 @@ async function main() {
       };
     });
   }
-  if (autoKindEl) {
-    autoKindEl.onchange = () => updateAutomationScheduleUI();
-    updateAutomationScheduleUI();
-  }
-
   qs("#btn-new").onclick = async () => {
     try {
       writeSessionId(workspaceId, "");
@@ -1733,22 +1501,6 @@ async function main() {
       setStatus("Workspace deleted (refresh workspaces)", "ok");
     } catch (e) {
       setStatus(e && e.message ? e.message : "workspace delete failed", "bad");
-    }
-  };
-
-  qs("#btn-auto-refresh").onclick = async () => {
-    await refreshAutomations(workspaceId).catch((e) => setStatus(e && e.message ? e.message : "automations failed", "bad"));
-  };
-
-  qs("#btn-auto-save").onclick = async () => {
-    try {
-      await saveAutomation(workspaceId);
-      if (autoNameEl) autoNameEl.value = "";
-      if (autoPromptEl) autoPromptEl.value = "";
-      await refreshAutomations(workspaceId);
-      setStatus("Automation saved (apply schedule on host)", "ok");
-    } catch (e) {
-      setStatus(e && e.message ? e.message : "automation save failed", "bad");
     }
   };
 
