@@ -2,12 +2,12 @@ import { createContext, createEffect, useContext, type ParentProps } from "solid
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store";
 
 import { THINKING_PREF_KEY } from "../constants";
-import type { DashboardTab, ModelRef, View } from "../types";
+import type { ModelRef, SettingsTab, View } from "../types";
 import { Persist, persisted } from "../utils/persist";
 
 type LocalUIState = {
   view: View;
-  tab: DashboardTab;
+  tab: SettingsTab;
 };
 
 type LocalPreferences = {
@@ -30,8 +30,8 @@ export function LocalProvider(props: ParentProps) {
   const [ui, setUi, , uiReady] = persisted(
     Persist.global("local.ui", ["openwork.ui"]),
     createStore<LocalUIState>({
-      view: "dashboard",
-      tab: "scheduled",
+      view: "settings",
+      tab: "general",
     }),
   );
 

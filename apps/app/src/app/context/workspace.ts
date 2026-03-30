@@ -151,7 +151,7 @@ export function createWorkspaceStore(options: {
   opencodeEnableExa?: () => boolean;
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   setView: (value: any, sessionId?: string) => void;
-  setTab: (value: any) => void;
+  setSettingsTab: (value: any) => void;
   isWindowsPlatform: () => boolean;
   openworkServerSettings: () => OpenworkServerSettings;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
@@ -1926,7 +1926,7 @@ export function createWorkspaceStore(options: {
         options.setProviderConnectedIds(providerState.connectedIds);
 
         if (navigate && !options.selectedSessionId()) {
-          options.setTab("scheduled");
+          options.setSettingsTab("automations");
           options.setView("session");
         }
 

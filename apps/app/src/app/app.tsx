@@ -39,7 +39,7 @@ import ConnectionsModals from "./connections/modals";
 import { ConnectionsProvider } from "./connections/provider";
 import { ExtensionsProvider } from "./extensions/provider";
 import { AutomationsProvider } from "./automations/provider";
-import DashboardView from "./pages/dashboard";
+import SettingsShell from "./shell/settings-shell";
 import SessionView from "./pages/session";
 import { unwrap } from "./lib/opencode";
 import { createDenClient, writeDenSettings } from "./lib/den";
@@ -70,7 +70,6 @@ import {
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
-  DashboardTab,
   MessageWithParts,
   PlaceholderAssistantMessage,
   PlaceholderMessageInfo,
@@ -256,7 +255,7 @@ type SharedBundleImportChoice = {
 
 type SettingsReturnTarget = {
   view: View;
-  tab: DashboardTab;
+  tab: SettingsTab;
   sessionId: string | null;
 };
 
@@ -297,32 +296,31 @@ export default function App() {
   const currentView = createMemo<View>(() => {
     const path = location.pathname.toLowerCase();
     if (path.startsWith("/session")) return "session";
-    return "dashboard";
+    return "settings";
   });
 
-  const [tab, setTabState] = createSignal<DashboardTab>("scheduled");
-  const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
+  const [settingsTab, setSettingsTabState] = createSignal<SettingsTab>("general");
   const [pendingInitialSessionSelection, setPendingInitialSessionSelection] =
     createSignal<PendingInitialSessionSelection | null>(null);
 
-  const goToDashboard = (nextTab: DashboardTab, options?: { replace?: boolean }) => {
-    setTabState(nextTab);
-    navigate(`/dashboard/${nextTab}`, options);
+  const goToSettings = (nextTab: SettingsTab, options?: { replace?: boolean }) => {
+    setSettingsTabState(nextTab);
+    navigate(`/settings/${nextTab}`, options);
   };
 
-  const setTab = (nextTab: DashboardTab) => {
-    if (currentView() === "dashboard") {
-      goToDashboard(nextTab);
+  const setSettingsTab = (nextTab: SettingsTab) => {
+    if (currentView() === "settings") {
+      goToSettings(nextTab);
       return;
     }
-    setTabState(nextTab);
+    setSettingsTabState(nextTab);
   };
 
   const setView = (next: View, sessionId?: string) => {
-    if (next === "dashboard" && creatingSession()) {
+    if (next === "settings" && creatingSession()) {
       return;
     }
-    if (next === "dashboard" && Date.now() < sessionViewLockUntil()) {
+    if (next === "settings" && Date.now() < sessionViewLockUntil()) {
       return;
     }
     if (next === "session") {
@@ -333,7 +331,7 @@ export default function App() {
       navigate("/session");
       return;
     }
-    goToDashboard(tab());
+    goToSettings(settingsTab());
   };
 
   const goToSession = (sessionId: string, options?: { replace?: boolean }) => {
@@ -807,8 +805,8 @@ export default function App() {
     null
   );
   const [settingsReturnTarget, setSettingsReturnTarget] = createSignal<SettingsReturnTarget>({
-    view: "dashboard",
-    tab: "scheduled",
+    view: "settings",
+    tab: "general",
     sessionId: null,
   });
   const SESSION_BY_WORKSPACE_KEY = "openwork.workspace-last-session.v1";
@@ -856,8 +854,8 @@ export default function App() {
 
   createEffect(() => {
     const view = currentView();
-    const currentTab = tab();
-    if (view === "dashboard" && currentTab === "settings") return;
+    const currentTab = settingsTab();
+    if (view === "settings") return;
     setSettingsReturnTarget({
       view,
       tab: currentTab,
@@ -875,17 +873,36 @@ export default function App() {
       navigate("/session");
       return;
     }
-    goToDashboard(target.tab);
+    goToSettings(target.tab);
   };
 
   const toggleSettingsView = (nextTab: SettingsTab = "general") => {
-    const settingsOpen = currentView() === "dashboard" && tab() === "settings";
+    const settingsOpen = currentView() === "settings";
     if (settingsOpen) {
       restoreSettingsReturnTarget();
       return;
     }
     setSettingsTab(nextTab);
-    goToDashboard("settings");
+    goToSettings(nextTab);
+  };
+
+  const mapLegacySurfaceToSettingsTab = (surface: string): SettingsTab => {
+    switch (surface) {
+      case "scheduled":
+        return "automations";
+      case "skills":
+        return "skills";
+      case "plugins":
+      case "mcp":
+        return "extensions";
+      case "identities":
+        return "messaging";
+      case "config":
+        return "advanced";
+      case "settings":
+      default:
+        return "general";
+    }
   };
 
   let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
@@ -2108,7 +2125,7 @@ export default function App() {
     opencodeEnableExa,
     setEngineSource,
     setView,
-    setTab,
+    setSettingsTab,
     isWindowsPlatform,
     openworkServerSettings,
     updateOpenworkServerSettings,
@@ -2582,8 +2599,8 @@ export default function App() {
       return;
     }
 
-    setView("dashboard");
-    setTab("scheduled");
+    setView("settings");
+    setSettingsTab("automations");
     setError(null);
     setSharedSkillDestinationBusyId(workspaceId);
 
@@ -2614,24 +2631,24 @@ export default function App() {
     const bundle = await fetchSharedBundle(request.bundleUrl, openworkServerClient());
 
     if (bundle.type === "skill") {
-      setView("dashboard");
-      setTab("scheduled");
+      setView("settings");
+      setSettingsTab("automations");
       setError(null);
       setSharedSkillDestinationRequest({ request, bundle });
       return { mode: "choice" as const, bundle };
     }
 
     if (bundle.type === "skills-set") {
-      setView("dashboard");
-      setTab("skills");
+      setView("settings");
+      setSettingsTab("skills");
       setError(null);
       setSharedBundleImportChoice({ request, bundle });
       return { mode: "choice" as const, bundle };
     }
 
     if (bundle.type === "workspace-profile" && request.intent === "new_worker" && isTauriRuntime()) {
-      setView("dashboard");
-      setTab("scheduled");
+      setView("settings");
+      setSettingsTab("automations");
       setError(null);
       setSharedBundleCreateWorkerRequest(null);
       setSharedBundleImportChoice(null);
@@ -3102,7 +3119,7 @@ export default function App() {
     }
 
     setError(null);
-    setView("dashboard");
+    setView("settings");
     if (parsed.kind === "bundle") {
       setPendingSharedBundleInvite(null);
       setSharedBundleNoticeShown(false);
@@ -3142,7 +3159,7 @@ export default function App() {
     }
 
     setPendingRemoteConnectDeepLink(parsed.kind === "remote" ? parsed.link : null);
-    setTab("scheduled");
+    setSettingsTab("automations");
     return { ok: true, message: "Queued remote worker link. OpenWork should move into the connect flow." };
   };
 
@@ -3160,8 +3177,8 @@ export default function App() {
   }) => {
     const bundle = parseSharedBundle(input.templateData);
     setError(null);
-    setView("dashboard");
-    setTab("settings");
+    setView("settings");
+    setSettingsTab("general");
     setSharedSkillDestinationBusyId(null);
     setSharedBundleImportError(null);
     setSharedTemplateStartRequest(null);
@@ -3281,8 +3298,8 @@ export default function App() {
     setError(null);
 
     if (isTauriRuntime()) {
-      setView("dashboard");
-      setTab("scheduled");
+      setView("settings");
+      setSettingsTab("automations");
       setSharedBundleCreateWorkerRequest({
         request: choice.request,
         bundle: choice.bundle,
@@ -3333,8 +3350,8 @@ export default function App() {
     setError(null);
 
     try {
-      setView("dashboard");
-      setTab(choice.bundle.type === "workspace-profile" ? "scheduled" : "skills");
+      setView("settings");
+      setSettingsTab(choice.bundle.type === "workspace-profile" ? "automations" : "skills");
       const ok = await workspaceStore.activateWorkspace(workspace.id);
       if (!ok) {
         throw new Error(error() || `Failed to switch to ${workspace.displayName?.trim() || workspace.name || "the selected worker"}.`);
@@ -3360,9 +3377,9 @@ export default function App() {
 
     setProcessingDenAuthDeepLink(true);
     setPendingDenAuthDeepLink(null);
-    setView("dashboard");
+    setView("settings");
     setSettingsTab("den");
-    goToDashboard("settings");
+    goToSettings("den");
 
     void createDenClient({ baseUrl: pending.denBaseUrl })
       .exchangeDesktopHandoff(pending.grant)
@@ -3412,8 +3429,8 @@ export default function App() {
     if (pending.autoConnect) {
       setView("session");
     } else {
-      setView("dashboard");
-      setTab("scheduled");
+      setView("settings");
+      setSettingsTab("automations");
     }
     setPendingRemoteConnectDeepLink(null);
     void completeRemoteConnectDeepLink(pending);
@@ -3635,8 +3652,8 @@ export default function App() {
       setEditRemoteWorkspaceOpen(true);
       return;
     }
-    setTab("config");
-    setView("dashboard");
+    setSettingsTab("advanced");
+    setView("settings");
   };
 
   const canReloadLocalEngine = () =>
@@ -3911,8 +3928,8 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    if (currentView() !== "dashboard") return;
-    if (tab() !== "scheduled") return;
+    if (currentView() !== "settings") return;
+    if (settingsTab() !== "automations") return;
     if (!documentVisible()) return;
 
     const pollingAvailable = scheduledJobsPollingAvailable();
@@ -4375,8 +4392,8 @@ export default function App() {
   }
 
   function openSettingsFromModelPicker() {
-    setTab("settings");
-    setView("dashboard");
+    setSettingsTab("general");
+    setView("settings");
   }
 
   async function createSessionAndOpen() {
@@ -5313,7 +5330,7 @@ export default function App() {
     return seconds > 0 ? `${label} · ${seconds}s` : label;
   });
 
-  const dashboardProps = () => {
+  const settingsShellProps = () => {
     const workspaceType = selectedWorkspaceDisplay().workspaceType;
     const isRemoteWorkspace = workspaceType === "remote";
     const openworkStatus = openworkServerStatus();
@@ -5345,8 +5362,6 @@ export default function App() {
       : null;
 
     return {
-      tab: tab(),
-      setTab,
       settingsTab: settingsTab(),
       setSettingsTab,
       providers: providers(),
@@ -5548,9 +5563,7 @@ export default function App() {
     providerAuthWorkerType: providerAuthWorkerType(),
     selectedSessionId: activeSessionId(),
     setView,
-    tab: tab(),
     settingsTab: settingsTab(),
-    setTab,
     setSettingsTab,
     toggleSettings: () => toggleSettingsView("general"),
     selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
@@ -5671,22 +5684,27 @@ export default function App() {
     error: error(),
   });
 
-  const dashboardTabs = new Set<DashboardTab>([
-    "scheduled",
+  const settingsTabs = new Set<SettingsTab>([
+    "general",
+    "den",
+    "model",
+    "automations",
     "skills",
-    "plugins",
-    "mcp",
-    "identities",
-    "config",
-    "settings",
+    "extensions",
+    "messaging",
+    "advanced",
+    "appearance",
+    "updates",
+    "recovery",
+    "debug",
   ]);
 
-  const resolveDashboardTab = (value?: string | null) => {
+  const resolveSettingsTab = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? "";
-    if (dashboardTabs.has(normalized as DashboardTab)) {
-      return normalized as DashboardTab;
+    if (settingsTabs.has(normalized as SettingsTab)) {
+      return normalized as SettingsTab;
     }
-    return "scheduled";
+    return "general";
   };
 
   const initialRoute = () => {
@@ -5705,13 +5723,19 @@ export default function App() {
 
     if (path.startsWith("/dashboard")) {
       const [, , tabSegment] = path.split("/");
-      const resolvedTab = resolveDashboardTab(tabSegment);
+      goToSettings(mapLegacySurfaceToSettingsTab(tabSegment ?? "settings"), { replace: true });
+      return;
+    }
 
-      if (resolvedTab !== tab()) {
-        setTabState(resolvedTab);
+    if (path.startsWith("/settings")) {
+      const [, , tabSegment] = path.split("/");
+      const resolvedTab = resolveSettingsTab(tabSegment);
+
+      if (resolvedTab !== settingsTab()) {
+        setSettingsTabState(resolvedTab);
       }
       if (!tabSegment || tabSegment !== resolvedTab) {
-        goToDashboard(resolvedTab, { replace: true });
+        goToSettings(resolvedTab, { replace: true });
       }
       return;
     }
@@ -5760,11 +5784,11 @@ export default function App() {
 
     if (path.startsWith("/proto-v1-ux") || path.startsWith("/proto")) {
       if (isTauriRuntime()) {
-        navigate("/dashboard/scheduled", { replace: true });
+        navigate("/settings/automations", { replace: true });
         return;
       }
 
-      navigate("/dashboard/scheduled", { replace: true });
+      navigate("/settings/automations", { replace: true });
       return;
     }
 
@@ -5785,7 +5809,7 @@ export default function App() {
               <SessionView {...sessionProps()} />
             </Match>
             <Match when={true}>
-              <DashboardView {...dashboardProps()} />
+              <SettingsShell {...settingsShellProps()} />
             </Match>
           </Switch>
 

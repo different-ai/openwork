@@ -10,7 +10,6 @@ import {
 } from "solid-js";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
-  DashboardTab,
   ComposerDraft,
   MessageWithParts,
   PendingPermission,
@@ -109,9 +108,7 @@ export type SessionViewProps = {
   booting: boolean;
   selectedSessionId: string | null;
   setView: (view: View, sessionId?: string) => void;
-  tab: DashboardTab;
   settingsTab: SettingsTab;
-  setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
   toggleSettings: () => void;
   selectedWorkspaceDisplay: WorkspaceDisplay;
@@ -3097,13 +3094,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const openSettings = (tab: SettingsTab = "general") => {
     props.setSettingsTab(tab);
-    props.setTab("settings");
-    props.setView("dashboard");
+    props.setView("settings");
   };
 
   const openConfig = () => {
-    props.setTab(props.developerMode ? "config" : "identities");
-    props.setView("dashboard");
+    props.setSettingsTab(props.developerMode ? "advanced" : "messaging");
+    props.setView("settings");
   };
 
   const showUpdatePill = createMemo(() => {
@@ -3207,8 +3203,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const openMcp = () => {
     props.setSettingsTab("extensions");
-    props.setTab("settings");
-    props.setView("dashboard");
+    props.setView("settings");
   };
 
   const openProviderAuth = (preferredProviderId?: string) => {
@@ -3982,8 +3977,7 @@ export default function SessionView(props: SessionViewProps) {
             onOpenSettings={props.toggleSettings}
             onOpenMessaging={() => {
               props.setSettingsTab("messaging");
-              props.setTab("settings");
-              props.setView("dashboard");
+              props.setView("settings");
             }}
             onOpenProviders={openProviderAuth}
             onOpenMcp={openMcp}
@@ -4198,8 +4192,7 @@ export default function SessionView(props: SessionViewProps) {
         onOpenSingleSkillShare={() => {
           setShareWorkspaceId(null);
           props.setSettingsTab("skills");
-          props.setTab("settings");
-          props.setView("dashboard");
+          props.setView("settings");
         }}
         shareSkillsSetBusy={shareSkillsSetBusy()}
         shareSkillsSetUrl={shareSkillsSetUrl()}

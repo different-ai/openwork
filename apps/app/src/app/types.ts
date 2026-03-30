@@ -150,22 +150,13 @@ export type SessionCompactionState = {
   messageID: string | null;
 };
 
-export type View = "dashboard" | "session";
+export type View = "settings" | "session";
 
 export type StartupPreference = "local" | "server";
 
 export type EngineRuntime = "direct" | "openwork-orchestrator";
 
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
-
-export type DashboardTab =
-  | "scheduled"
-  | "skills"
-  | "plugins"
-  | "mcp"
-  | "identities"
-  | "config"
-  | "settings";
 
 export type SettingsTab =
   | "general"

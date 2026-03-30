@@ -1,14 +1,8 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import type {
-  DashboardTab,
   OpencodeConnectStatus,
-  PluginScope,
   ProviderListItem,
   SettingsTab,
-  ScheduledJob,
-  HubSkillCard,
-  HubSkillRepo,
-  SkillCard,
   StartupPreference,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
@@ -46,8 +40,7 @@ import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouter
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
 
 import Button from "../components/button";
-import ConfigView from "./config";
-import SettingsView from "./settings";
+import SettingsView from "../pages/settings";
 import StatusBar from "../components/status-bar";
 import { ProviderAuthModal,
   type ProviderAuthMethod,
@@ -68,9 +61,7 @@ import {
 } from "lucide-solid";
 import type { Language } from "../../i18n";
 
-export type DashboardViewProps = {
-  tab: DashboardTab;
-  setTab: (tab: DashboardTab) => void;
+export type SettingsShellProps = {
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   providers: ProviderListItem[];
@@ -297,29 +288,35 @@ type SkillsSetBundleV1 = {
   };
 };
 
-export default function DashboardView(props: DashboardViewProps) {
+export default function SettingsShell(props: SettingsShellProps) {
   const connections = useConnections();
   const extensions = useExtensions();
   const platform = usePlatform();
   const webDeployment = createMemo(() => getOpenWorkDeployment() === "web");
   const title = createMemo(() => {
-    switch (props.tab) {
-      case "scheduled":
+    switch (props.settingsTab) {
+      case "automations":
         return "Automations";
       case "skills":
         return "Skills";
-      case "plugins":
+      case "extensions":
         return "Extensions";
-      case "mcp":
-        return "Extensions";
-      case "identities":
+      case "messaging":
         return "Messaging";
-      case "config":
+      case "advanced":
         return "Advanced";
-      case "settings":
-        return "Settings";
+      case "appearance":
+        return "Appearance";
+      case "updates":
+        return "Updates";
+      case "recovery":
+        return "Recovery";
+      case "den":
+        return "Cloud";
+      case "debug":
+        return "Debug";
       default:
-        return "Automations";
+        return "Settings";
     }
   });
 
@@ -368,7 +365,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const openFeedback = () => {
     const resolved = buildFeedbackUrl({
-      entrypoint: "dashboard-status-bar",
+      entrypoint: "settings-shell-status-bar",
       deployment: getOpenWorkDeployment(),
       appVersion: props.appVersion,
       openworkServerVersion: props.openworkServerDiagnostics?.version ?? null,
@@ -433,18 +430,7 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   createEffect(() => {
-    const currentTab =
-      props.tab === "settings"
-        ? props.settingsTab
-        : props.tab === "scheduled"
-          ? "automations"
-          : props.tab === "skills"
-            ? "skills"
-            : props.tab === "plugins" || props.tab === "mcp"
-              ? "extensions"
-              : props.tab === "identities"
-                ? "messaging"
-                : props.tab;
+    const currentTab = props.settingsTab;
 
     // Skip if we already refreshed this tab or a refresh is in progress
     if (lastRefreshedTab() === currentTab || refreshInProgress()) {
@@ -485,7 +471,6 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const openSettings = (tab: SettingsTab = "general") => {
     props.setSettingsTab(tab);
-    props.setTab("settings");
   };
 
   const openMessaging = () => {
@@ -496,29 +481,9 @@ export default function DashboardView(props: DashboardViewProps) {
     openSettings("extensions");
   };
 
-  const openConfig = () => {
-    if (props.developerMode) {
-      props.setTab("config");
-      return;
-    }
-    openSettings("messaging");
+  const openAdvanced = () => {
+    openSettings(props.developerMode ? "advanced" : "messaging");
   };
-
-  const resolvedSettingsTab = createMemo<SettingsTab>(() => {
-    switch (props.tab) {
-      case "scheduled":
-        return "automations";
-      case "skills":
-        return "skills";
-      case "plugins":
-      case "mcp":
-        return "extensions";
-      case "identities":
-        return "messaging";
-      default:
-        return props.settingsTab;
-    }
-  });
 
   const revealWorkspaceInFinder = async (workspaceId: string) => {
     const workspace = props.workspaces.find((entry) => entry.id === workspaceId) ?? null;
@@ -536,12 +501,6 @@ export default function DashboardView(props: DashboardViewProps) {
       console.warn("Failed to reveal workspace", error);
     }
   };
-
-  createEffect(() => {
-    if (props.developerMode) return;
-    if (props.tab !== "config") return;
-    openSettings("messaging");
-  });
 
   const shareWorkspace = createMemo(() => {
     const id = shareWorkspaceId();
@@ -1243,11 +1202,9 @@ export default function DashboardView(props: DashboardViewProps) {
               </button>
             </Show>
             <h1 class="truncate text-[15px] font-semibold text-dls-text">{title()}</h1>
-            <Show when={props.tab === "settings"}>
-              <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                {workspaceLabel(props.selectedWorkspaceDisplay)}
-              </span>
-            </Show>
+            <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
+              {workspaceLabel(props.selectedWorkspaceDisplay)}
+            </span>
             <Show when={props.developerMode}>
               <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.headerStatus}</span>
             </Show>
@@ -1256,56 +1213,26 @@ export default function DashboardView(props: DashboardViewProps) {
             </Show>
           </div>
           <div class="flex items-center text-gray-10">
-            <Show when={props.tab === "settings"}>
-              <button
-                type="button"
-                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
-                onClick={props.toggleSettings}
-                title="Close settings"
-                aria-label="Close settings"
-              >
-                <X size={18} />
-              </button>
-            </Show>
+            <button
+              type="button"
+              class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+              onClick={props.toggleSettings}
+              title="Close settings"
+              aria-label="Close settings"
+            >
+              <X size={18} />
+            </button>
           </div>
         </header>
 
-        <div class={props.tab === "config" && props.developerMode ? "mx-auto w-full max-w-[1100px] space-y-10 p-6 md:p-10" : "w-full space-y-10 p-6 md:p-10"}>
-          <Switch>
-            <Match when={props.tab === "config" && props.developerMode}>
-              <ConfigView
-                busy={props.busy}
-                clientConnected={props.clientConnected}
-                anyActiveRuns={props.anyActiveRuns}
-                openworkServerStatus={props.openworkServerStatus}
-                openworkServerUrl={props.openworkServerUrl}
-                openworkServerSettings={props.openworkServerSettings}
-                openworkServerHostInfo={props.openworkServerHostInfo}
-                runtimeWorkspaceId={props.runtimeWorkspaceId}
-                updateOpenworkServerSettings={props.updateOpenworkServerSettings}
-                resetOpenworkServerSettings={props.resetOpenworkServerSettings}
-                testOpenworkServerConnection={props.testOpenworkServerConnection}
-                canReloadWorkspace={props.canReloadWorkspace}
-                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
-                reloadBusy={props.reloadBusy}
-                reloadError={props.reloadError}
-                workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
-                workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
-                setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
-                workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
-                setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
-                developerMode={props.developerMode}
-              />
-            </Match>
-
-            <Match when={true}>
-              <SettingsView
+        <div class="w-full space-y-10 p-6 md:p-10">
+          <SettingsView
                   startupPreference={props.startupPreference}
                   baseUrl={props.baseUrl}
                   headerStatus={props.headerStatus}
                   busy={props.busy}
                   clientConnected={props.clientConnected}
-                  settingsTab={resolvedSettingsTab()}
+                  settingsTab={props.settingsTab}
                   setSettingsTab={props.setSettingsTab}
                   providers={props.providers}
                   providerConnectedIds={props.providerConnectedIds}
@@ -1321,6 +1248,9 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerHostInfo={props.openworkServerHostInfo}
                   openworkServerCapabilities={props.openworkServerCapabilities}
                   openworkServerDiagnostics={props.openworkServerDiagnostics}
+                  updateOpenworkServerSettings={props.updateOpenworkServerSettings}
+                  resetOpenworkServerSettings={props.resetOpenworkServerSettings}
+                  testOpenworkServerConnection={props.testOpenworkServerConnection}
                   runtimeWorkspaceId={props.runtimeWorkspaceId}
                   selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   activeWorkspaceType={props.activeWorkspaceType}
@@ -1404,11 +1334,15 @@ export default function DashboardView(props: DashboardViewProps) {
                    canReloadWorkspace={props.canReloadWorkspace}
                    reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                    reloadBusy={props.reloadBusy}
+                   reloadError={props.reloadError}
+                   workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
+                   workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
+                   setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
+                   workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
+                   setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
                    connectRemoteWorkspace={props.connectRemoteWorkspace}
                    openCloudTemplate={props.openCloudTemplate}
-               />
-            </Match>
-          </Switch>
+                />
         </div>
 
         <Show when={props.error}>
@@ -1509,7 +1443,7 @@ export default function DashboardView(props: DashboardViewProps) {
               }
           }
           exportDisabledReason={exportDisabledReason()}
-          onOpenBots={openConfig}
+          onOpenBots={openAdvanced}
         />
         </div>
 
@@ -1517,7 +1451,7 @@ export default function DashboardView(props: DashboardViewProps) {
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
           developerMode={props.developerMode}
-          settingsOpen={props.tab === "settings"}
+          settingsOpen={true}
           showSettingsButton={true}
           onSendFeedback={openFeedback}
           onOpenSettings={props.toggleSettings}
@@ -1529,36 +1463,36 @@ export default function DashboardView(props: DashboardViewProps) {
         <nav class="hidden border-t border-dls-border bg-dls-surface">
           <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "settings" && props.settingsTab === "automations" ? "text-gray-12" : "text-gray-10"
-              }`}
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.settingsTab === "automations" ? "text-gray-12" : "text-gray-10"
+                }`}
               onClick={() => openSettings("automations")}
             >
               <History size={18} />
               Automations
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "settings" && props.settingsTab === "skills" ? "text-gray-12" : "text-gray-10"
-              }`}
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.settingsTab === "skills" ? "text-gray-12" : "text-gray-10"
+                }`}
               onClick={() => openSettings("skills")}
             >
               <Zap size={18} />
               Skills
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "settings" && props.settingsTab === "extensions" ? "text-gray-12" : "text-gray-10"
-              }`}
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.settingsTab === "extensions" ? "text-gray-12" : "text-gray-10"
+                }`}
               onClick={() => openSettings("extensions")}
             >
               <Box size={18} />
               Extensions
             </button>
             <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "settings" && props.settingsTab === "messaging" ? "text-gray-12" : "text-gray-10"
-              }`}
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.settingsTab === "messaging" ? "text-gray-12" : "text-gray-10"
+                }`}
               onClick={() => openSettings("messaging")}
             >
               <MessageCircle size={18} />
@@ -1567,9 +1501,9 @@ export default function DashboardView(props: DashboardViewProps) {
             <Show when={props.developerMode}>
               <button
                 class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "config" ? "text-gray-12" : "text-gray-10"
+                  props.settingsTab === "advanced" ? "text-gray-12" : "text-gray-10"
                 }`}
-                onClick={() => props.setTab("config")}
+                onClick={openAdvanced}
               >
                 <SlidersHorizontal size={18} />
                 Advanced

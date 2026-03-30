@@ -13,7 +13,7 @@ export type ExtensionsSection = "all" | "mcp" | "plugins";
 export type ExtensionsViewProps = PluginsViewProps & {
   isRemoteWorkspace: boolean;
   initialSection?: ExtensionsSection;
-  setDashboardTab?: (tab: "mcp" | "plugins") => void;
+  setSectionRoute?: (tab: "mcp" | "plugins") => void;
   showHeader?: boolean;
 };
 
@@ -50,7 +50,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
   const selectSection = (nextSection: ExtensionsSection) => {
     setSection(nextSection);
     if (nextSection === "mcp" || nextSection === "plugins") {
-      props.setDashboardTab?.(nextSection);
+      props.setSectionRoute?.(nextSection);
     }
   };
 

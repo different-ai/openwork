@@ -24,6 +24,7 @@ import DenSettingsPanel from "../components/den-settings-panel";
 import TextInput from "../components/text-input";
 import { useSessionDisplayPreferences } from "../app-settings/session-display-preferences";
 import { usePlatform } from "../context/platform";
+import ConfigView from "./config";
 import ExtensionsView from "./extensions";
 import IdentitiesView from "./identities";
 import ScheduledTasksView from "./scheduled";
@@ -107,6 +108,9 @@ export type SettingsViewProps = {
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
+  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
+  resetOpenworkServerSettings: () => void;
+  testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
   activeWorkspaceType: "local" | "remote";
@@ -201,6 +205,12 @@ export type SettingsViewProps = {
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
+  reloadError: string | null;
+  workspaceAutoReloadAvailable: boolean;
+  workspaceAutoReloadEnabled: boolean;
+  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
+  workspaceAutoReloadResumeEnabled: boolean;
+  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
   connectRemoteWorkspace: (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
@@ -2166,6 +2176,32 @@ export default function SettingsView(props: SettingsViewProps) {
                 {(value) => <div class="text-xs text-red-11">{value()}</div>}
               </Show>
             </div>
+
+            <Show when={props.developerMode}>
+              <ConfigView
+                busy={props.busy}
+                clientConnected={props.clientConnected}
+                anyActiveRuns={props.anyActiveRuns}
+                openworkServerStatus={props.openworkServerStatus}
+                openworkServerUrl={props.openworkServerUrl}
+                openworkServerSettings={props.openworkServerSettings}
+                openworkServerHostInfo={props.openworkServerHostInfo}
+                runtimeWorkspaceId={props.runtimeWorkspaceId}
+                updateOpenworkServerSettings={props.updateOpenworkServerSettings}
+                resetOpenworkServerSettings={props.resetOpenworkServerSettings}
+                testOpenworkServerConnection={props.testOpenworkServerConnection}
+                canReloadWorkspace={props.canReloadWorkspace}
+                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                reloadBusy={props.reloadBusy}
+                reloadError={props.reloadError}
+                workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
+                workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
+                setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
+                workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
+                setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
+                developerMode={props.developerMode}
+              />
+            </Show>
 
 
 
