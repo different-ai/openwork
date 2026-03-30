@@ -4,11 +4,10 @@ type PublishBundleInput = {
   payload: unknown;
   bundleType: string;
   name?: string;
-  baseUrl?: string;
   timeoutMs?: number;
 };
 
-const DEFAULT_PUBLISHER_BASE_URL = String(process.env.OPENWORK_PUBLISHER_BASE_URL ?? "").trim() || "https://share.openwork.software";
+const DEFAULT_PUBLISHER_BASE_URL = String(process.env.OPENWORK_PUBLISHER_BASE_URL ?? "").trim() || "https://share.openworklabs.com";
 const DEFAULT_PUBLISHER_ORIGIN = String(process.env.OPENWORK_PUBLISHER_REQUEST_ORIGIN ?? "").trim() || "https://app.openwork.software";
 const ALLOWED_BUNDLE_TYPES = new Set(["skill", "skills-set", "workspace-profile"]);
 
@@ -30,6 +29,46 @@ function normalizeBaseUrl(input: unknown): string {
     throw new ApiError(500, "publisher_base_url_missing", "Publisher base URL is required");
   }
   return trimmed.replace(/\/+$/, "");
+}
+
+function resolvePublisherBaseUrl(): string {
+  return normalizeBaseUrl(DEFAULT_PUBLISHER_BASE_URL);
+}
+
+function extractBundleId(url: URL): string {
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments[0] === "b" && segments[1] && (segments.length === 2 || (segments.length === 3 && segments[2] === "data"))) {
+    return segments[1];
+  }
+  throw new ApiError(400, "invalid_bundle_url", "Shared bundle URL must point to a bundle id");
+}
+
+export function resolveTrustedSharedBundleFetchUrl(bundleUrl: unknown): URL {
+  let inputUrl: URL;
+  try {
+    inputUrl = new URL(String(bundleUrl ?? "").trim());
+  } catch {
+    throw new ApiError(400, "invalid_bundle_url", "Invalid shared bundle URL");
+  }
+
+  if (inputUrl.protocol !== "https:" && inputUrl.protocol !== "http:") {
+    throw new ApiError(400, "invalid_bundle_url", "Shared bundle URL must use http(s)");
+  }
+
+  const trustedBaseUrl = new URL(resolvePublisherBaseUrl());
+  if (inputUrl.origin !== trustedBaseUrl.origin) {
+    throw new ApiError(
+      400,
+      "untrusted_bundle_url",
+      `Shared bundle URLs must use the configured OpenWork publisher (${trustedBaseUrl.origin}). Import only bundles from trusted sources.`,
+    );
+  }
+
+  const bundleId = extractBundleId(inputUrl);
+  trustedBaseUrl.pathname = `/b/${bundleId}/data`;
+  trustedBaseUrl.search = "";
+  trustedBaseUrl.searchParams.set("format", "json");
+  return trustedBaseUrl;
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -56,7 +95,7 @@ export async function publishSharedBundle(input: PublishBundleInput): Promise<{ 
     throw new ApiError(400, "invalid_bundle_type", `Unsupported bundle type: ${bundleType || "unknown"}`);
   }
 
-  const baseUrl = normalizeBaseUrl(input.baseUrl ?? DEFAULT_PUBLISHER_BASE_URL);
+  const baseUrl = resolvePublisherBaseUrl();
   const timeoutMs = typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs) ? input.timeoutMs : 15_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
@@ -64,6 +103,7 @@ export async function publishSharedBundle(input: PublishBundleInput): Promise<{ 
   try {
     const response = await fetch(`${baseUrl}/v1/bundles`, {
       method: "POST",
+      redirect: "manual",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
@@ -75,6 +115,10 @@ export async function publishSharedBundle(input: PublishBundleInput): Promise<{ 
       body: JSON.stringify(input.payload),
       signal: controller.signal,
     });
+
+    if (response.status >= 300 && response.status < 400) {
+      throw new ApiError(502, "bundle_publish_failed", "Publisher redirects are not allowed");
+    }
 
     if (!response.ok) {
       const details = await readErrorMessage(response);
@@ -98,22 +142,7 @@ export async function publishSharedBundle(input: PublishBundleInput): Promise<{ 
 }
 
 export async function fetchSharedBundle(bundleUrl: unknown, options?: { timeoutMs?: number }): Promise<unknown> {
-  let url: URL;
-  try {
-    url = new URL(String(bundleUrl ?? "").trim());
-  } catch {
-    throw new ApiError(400, "invalid_bundle_url", "Invalid shared bundle URL");
-  }
-
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new ApiError(400, "invalid_bundle_url", "Shared bundle URL must use http(s)");
-  }
-
-  url = normalizeSharedBundleFetchUrl(url);
-
-  if (!url.searchParams.has("format")) {
-    url.searchParams.set("format", "json");
-  }
+  const url = resolveTrustedSharedBundleFetchUrl(bundleUrl);
 
   const timeoutMs = typeof options?.timeoutMs === "number" && Number.isFinite(options.timeoutMs) ? options.timeoutMs : 15_000;
   const controller = new AbortController();
@@ -122,9 +151,14 @@ export async function fetchSharedBundle(bundleUrl: unknown, options?: { timeoutM
   try {
     const response = await fetch(url.toString(), {
       method: "GET",
+      redirect: "manual",
       headers: { Accept: "application/json" },
       signal: controller.signal,
     });
+
+    if (response.status >= 300 && response.status < 400) {
+      throw new ApiError(502, "bundle_fetch_failed", "Shared bundle redirects are not allowed");
+    }
 
     if (!response.ok) {
       const details = await readErrorMessage(response);

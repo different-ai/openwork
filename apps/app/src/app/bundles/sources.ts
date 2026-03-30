@@ -4,6 +4,7 @@ import type { OpenworkServerClient } from "../lib/openwork-server";
 import { isTauriRuntime, safeStringify } from "../utils";
 import { parseBundlePayload } from "./schema";
 import type { BundleImportIntent, BundleRequest, BundleV1 } from "./types";
+import { extractBundleId, isConfiguredBundlePublisherUrl } from "./url-policy";
 
 function isSupportedDeepLinkProtocol(protocol: string): boolean {
   const normalized = protocol.toLowerCase();
@@ -44,14 +45,7 @@ export function parseBundleDeepLink(rawUrl: string): BundleRequest | null {
 
   try {
     if ((protocol === "https:" || protocol === "http:") && !rawBundleUrl.trim()) {
-      const host = url.hostname.toLowerCase();
-      const path = url.pathname.replace(/^\/+/, "");
-      const segments = path.split("/").filter(Boolean);
-      if (
-        (host === "share.openworklabs.com" || host.endsWith(".openworklabs.com") || host === "share.openwork.software" || host.endsWith(".openwork.software"))
-        && segments[0] === "b"
-        && segments[1]
-      ) {
+      if (isConfiguredBundlePublisherUrl(url.toString())) {
         return {
           bundleUrl: url.toString(),
           intent: normalizeBundleImportIntent(url.searchParams.get("ow_intent") ?? url.searchParams.get("intent")),
@@ -100,7 +94,11 @@ export function stripBundleQuery(rawUrl: string): string | null {
   return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
 }
 
-export async function fetchBundle(bundleUrl: string, serverClient?: OpenworkServerClient | null): Promise<BundleV1> {
+export async function fetchBundle(
+  bundleUrl: string,
+  serverClient?: OpenworkServerClient | null,
+  options?: { forceClientFetch?: boolean },
+): Promise<BundleV1> {
   let targetUrl: URL;
   try {
     targetUrl = new URL(bundleUrl);
@@ -112,11 +110,9 @@ export async function fetchBundle(bundleUrl: string, serverClient?: OpenworkServ
     throw new Error("Bundle URL must use http(s).");
   }
 
-  const segments = targetUrl.pathname.split("/").filter(Boolean);
-  if (segments[0] === "b" && segments[1] && segments.length === 2) {
-    targetUrl.pathname = `/b/${segments[1]}/data`;
-    targetUrl.searchParams.delete("format");
-  } else if (segments[0] === "b" && segments[1] && segments[2] === "data") {
+  const bundleId = extractBundleId(targetUrl);
+  if (bundleId) {
+    targetUrl.pathname = `/b/${bundleId}/data`;
     targetUrl.searchParams.delete("format");
   }
 
@@ -124,7 +120,7 @@ export async function fetchBundle(bundleUrl: string, serverClient?: OpenworkServ
     targetUrl.searchParams.set("format", "json");
   }
 
-  if (serverClient) {
+  if (serverClient && !options?.forceClientFetch) {
     return parseBundlePayload(await serverClient.fetchBundle(targetUrl.toString()));
   }
 

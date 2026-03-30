@@ -16,6 +16,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import ModelPickerModal from "./components/model-picker-modal";
+import ConfirmModal from "./components/confirm-modal";
 import ResetModal from "./components/reset-modal";
 import SkillDestinationModal from "./bundles/skill-destination-modal";
 import BundleImportModal from "./bundles/import-modal";
@@ -2398,6 +2399,24 @@ export default function App() {
         onSelectWorker={(workspaceId) => {
           void bundlesStore.importBundleIntoExistingWorkspace(workspaceId);
         }}
+      />
+
+      <ConfirmModal
+        open={Boolean(bundlesStore.untrustedBundleWarning())}
+        title="Import from an untrusted bundle link?"
+        message={(() => {
+          const warning = bundlesStore.untrustedBundleWarning();
+          const actualOrigin = warning?.actualOrigin?.trim() || "an unknown origin";
+          const configuredOrigin = warning?.configuredOrigin?.trim() || "the configured OpenWork share service";
+          return `This link points to ${actualOrigin}, but OpenWork only auto-imports bundles from ${configuredOrigin}. Untrusted bundles can contain malicious instructions or settings. Only continue if you trust the sender and expect this import.`;
+        })()}
+        confirmLabel="Import anyway"
+        cancelLabel="Cancel"
+        variant="warning"
+        onConfirm={() => {
+          void bundlesStore.confirmUntrustedBundleWarning();
+        }}
+        onCancel={bundlesStore.dismissUntrustedBundleWarning}
       />
 
       <BundleStartModal

@@ -21,7 +21,6 @@ import {
   type OpenworkWorkspaceExportSensitiveMode,
   type OpenworkWorkspaceExportWarning,
 } from "../lib/openwork-server";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
 import type {
   EngineInfo,
   OpenworkServerInfo,
@@ -459,7 +458,6 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         client,
         workspaceId,
         workspaceName: options.workspaceLabel(workspace),
-        baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
         sensitiveMode: shareWorkspaceProfileSensitiveMode(),
       });
 
@@ -532,7 +530,6 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         client,
         workspaceId,
         workspaceName: options.workspaceLabel(workspace),
-        baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
       });
 
       setShareSkillsSetUrl(result.url);

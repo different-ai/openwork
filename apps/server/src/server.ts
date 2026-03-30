@@ -3559,11 +3559,17 @@ function createRoutes(
   addRoute(routes, "POST", "/share/bundles/publish", "client", async (ctx) => {
     requireClientScope(ctx, "viewer");
     const body = await readJsonBody(ctx.request);
+    if (typeof body.baseUrl === "string" && body.baseUrl.trim()) {
+      throw new ApiError(
+        400,
+        "publisher_base_url_forbidden",
+        "Bundle publishing always uses the configured OpenWork publisher. Remove baseUrl from the request.",
+      );
+    }
     const result = await publishSharedBundle({
       payload: body.payload,
       bundleType: String(body.bundleType ?? "").trim(),
       name: typeof body.name === "string" ? body.name : undefined,
-      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
       timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
     });
     return jsonResponse(result);

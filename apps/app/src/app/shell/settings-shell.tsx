@@ -44,7 +44,6 @@ import type {
   OpenworkWorkspaceExportWarning,
 } from "../lib/openwork-server";
 import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
 
 import Button from "../components/button";
 import SettingsView from "../pages/settings";
@@ -831,7 +830,6 @@ export default function SettingsShell(props: SettingsShellProps) {
         client,
         workspaceId,
         workspaceName: workspaceLabel(workspace),
-        baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
         sensitiveMode: shareWorkspaceProfileSensitiveMode(),
       });
 
@@ -900,7 +898,6 @@ export default function SettingsShell(props: SettingsShellProps) {
         client,
         workspaceId,
         workspaceName: workspaceLabel(workspace),
-        baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
       });
 
       setShareSkillsSetUrl(result.url);

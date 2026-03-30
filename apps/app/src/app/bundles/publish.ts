@@ -1,5 +1,4 @@
 import { createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
 import type {
   OpenworkServerClient,
   OpenworkWorkspaceExport,
@@ -47,7 +46,6 @@ export async function publishWorkspaceProfileBundleFromWorkspace(input: {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceName: string;
-  baseUrl?: string;
   sensitiveMode?: Exclude<OpenworkWorkspaceExportSensitiveMode, "auto"> | null;
 }) {
   const exported = await input.client.exportWorkspace(input.workspaceId, {
@@ -56,7 +54,6 @@ export async function publishWorkspaceProfileBundleFromWorkspace(input: {
   const payload = buildWorkspaceProfileBundle(input.workspaceName, exported);
   return input.client.publishBundle(payload, "workspace-profile", {
     name: payload.name,
-    baseUrl: input.baseUrl ?? DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
   });
 }
 
@@ -64,7 +61,6 @@ export async function publishSkillsSetBundleFromWorkspace(input: {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceName: string;
-  baseUrl?: string;
 }) {
   const exported = await input.client.exportWorkspace(input.workspaceId, {
     sensitiveMode: "exclude",
@@ -72,7 +68,6 @@ export async function publishSkillsSetBundleFromWorkspace(input: {
   const payload = buildSkillsSetBundle(input.workspaceName, exported);
   return input.client.publishBundle(payload, "skills-set", {
     name: payload.name,
-    baseUrl: input.baseUrl ?? DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
   });
 }
 

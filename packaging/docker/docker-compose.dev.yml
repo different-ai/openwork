@@ -119,6 +119,7 @@ services:
       OPENWORK_HOST_TOKEN: ${OPENWORK_HOST_TOKEN:-}
       OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
       OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
+      OPENWORK_PUBLISHER_BASE_URL: http://${OPENWORK_PUBLIC_HOST:-localhost}:${SHARE_PORT:-3006}
       OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
       OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.openwork-host-opencode-data
       OPENWORK_SIDECAR_SOURCE: external

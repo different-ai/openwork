@@ -20,6 +20,7 @@ import {
 } from "./apply";
 import { defaultPresetFromWorkspaceProfileBundle, describeBundleImport, parseBundlePayload } from "./schema";
 import { fetchBundle, parseBundleDeepLink } from "./sources";
+import { describeBundleUrlTrust } from "./url-policy";
 import type {
   BundleCreateWorkspaceRequest,
   BundleImportChoice,
@@ -39,7 +40,14 @@ type BundleProcessResult =
   | { mode: "start_modal"; bundle: BundleV1 }
   | { mode: "blocked_import_current"; bundle: BundleV1 }
   | { mode: "blocked_new_worker"; bundle: BundleV1 }
+  | { mode: "untrusted_warning" }
   | { mode: "imported"; bundle: BundleV1 };
+
+type UntrustedBundleWarning = {
+  request: BundleRequest;
+  actualOrigin: string | null;
+  configuredOrigin: string | null;
+};
 
 export type BundlesStore = ReturnType<typeof createBundlesStore>;
 
@@ -69,6 +77,7 @@ export function createBundlesStore(options: {
   const [bundleImportBusy, setBundleImportBusy] = createSignal(false);
   const [bundleImportError, setBundleImportError] = createSignal<string | null>(null);
   const [bundleNoticeShown, setBundleNoticeShown] = createSignal(false);
+  const [untrustedBundleWarning, setUntrustedBundleWarning] = createSignal<UntrustedBundleWarning | null>(null);
 
   const showSkillSuccessToast = (toast: { title: string; description: string }) => {
     options.showStatusToast({
@@ -86,6 +95,20 @@ export function createBundlesStore(options: {
     setCreateWorkspaceRequest(null);
     setBundleImportError(null);
     setBundleNoticeShown(false);
+    setUntrustedBundleWarning(null);
+  };
+
+  const maybeWarnAboutUntrustedBundle = (request: BundleRequest, options?: { allowUntrustedClientFetch?: boolean }) => {
+    const rawUrl = request.bundleUrl?.trim() ?? "";
+    if (!rawUrl || options?.allowUntrustedClientFetch) return false;
+    const trust = describeBundleUrlTrust(rawUrl);
+    if (trust.trusted) return false;
+    setUntrustedBundleWarning({
+      request,
+      actualOrigin: trust.actualOrigin,
+      configuredOrigin: trust.configuredOrigin,
+    });
+    return true;
   };
 
   const resolveBundleWorkerTarget = () => {
@@ -194,11 +217,14 @@ export function createBundlesStore(options: {
     request: BundleRequest,
     target?: BundleImportTarget,
     bundleOverride?: BundleV1,
+    importOptions?: { allowUntrustedClientFetch?: boolean },
   ) => {
     try {
       const bundle =
         bundleOverride ??
-        (await fetchBundle(request.bundleUrl?.trim() ?? "", options.openworkServer.openworkServerClient()));
+        (await fetchBundle(request.bundleUrl?.trim() ?? "", options.openworkServer.openworkServerClient(), {
+          forceClientFetch: importOptions?.allowUntrustedClientFetch,
+        }));
       await importBundlePayload(bundle, target);
       options.setError(null);
       return true;
@@ -320,8 +346,17 @@ export function createBundlesStore(options: {
     }
   };
 
-  const processBundleRequest = async (request: BundleRequest): Promise<BundleProcessResult> => {
-    const bundle = await fetchBundle(request.bundleUrl?.trim() ?? "", options.openworkServer.openworkServerClient());
+  const processBundleRequest = async (
+    request: BundleRequest,
+    processOptions?: { allowUntrustedClientFetch?: boolean },
+  ): Promise<BundleProcessResult> => {
+    if (maybeWarnAboutUntrustedBundle(request, processOptions)) {
+      return { mode: "untrusted_warning" };
+    }
+
+    const bundle = await fetchBundle(request.bundleUrl?.trim() ?? "", options.openworkServer.openworkServerClient(), {
+      forceClientFetch: processOptions?.allowUntrustedClientFetch,
+    });
 
     if (bundle.type === "skill") {
       options.setView("settings");
@@ -454,6 +489,8 @@ export function createBundlesStore(options: {
         case "blocked_import_current":
         case "blocked_new_worker":
           return { ok: false, message: options.error() || "The bundle needs more worker setup before it can open." };
+        case "untrusted_warning":
+          return { ok: false, message: "Showed a security warning for an untrusted bundle link." };
         case "imported":
           return { ok: true, message: "Imported the bundle into the current worker." };
       }
@@ -471,6 +508,30 @@ export function createBundlesStore(options: {
     if (bundleImportBusy()) return;
     setBundleImportChoice(null);
     setBundleImportError(null);
+  };
+
+  const dismissUntrustedBundleWarning = () => {
+    if (bundleImportBusy()) return;
+    setUntrustedBundleWarning(null);
+  };
+
+  const confirmUntrustedBundleWarning = async () => {
+    const warning = untrustedBundleWarning();
+    if (!warning || bundleImportBusy()) return;
+    setUntrustedBundleWarning(null);
+    setBundleImportError(null);
+    options.setError(null);
+
+    try {
+      setBundleImportBusy(true);
+      await processBundleRequest(warning.request, { allowUntrustedClientFetch: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      const friendly = addOpencodeCacheHint(message);
+      options.setError(friendly);
+    } finally {
+      setBundleImportBusy(false);
+    }
   };
 
   const openTeamBundle = async (input: {
@@ -805,6 +866,8 @@ export function createBundlesStore(options: {
     openRemoteConnectFromSkillDestination,
     handleCreateWorkspaceConfirm,
     handleCreateSandboxConfirm,
+    dismissUntrustedBundleWarning,
+    confirmUntrustedBundleWarning,
     bundleImportChoice,
     bundleImportSummary,
     bundleWorkerOptions,
@@ -815,6 +878,7 @@ export function createBundlesStore(options: {
     bundleStartBusy,
     createWorkspaceRequest,
     createWorkspaceDefaultPreset,
+    untrustedBundleWarning,
     skillDestinationRequest,
     skillDestinationWorkspaces,
     skillDestinationBusyId,
