@@ -34,10 +34,10 @@ const buildCreateAutomationPrompt = (
   const schedule = input.schedule.trim();
   const prompt = normalizeSentence(input.prompt);
   if (!schedule) {
-    return { ok: false, error: "Schedule is required." };
+    return { ok: false, error: t("automations.schedule_required") };
   }
   if (!prompt) {
-    return { ok: false, error: "Prompt is required." };
+    return { ok: false, error: t("automations.prompt_required") };
   }
   const workdir = (input.workdir ?? "").trim();
   const nameSegment = name ? ` named \"${name}\"` : "";
@@ -59,7 +59,7 @@ const buildRunAutomationPrompt = (
   if (job.run?.prompt || job.prompt) {
     const promptBody = (job.run?.prompt ?? job.prompt ?? "").trim();
     if (!promptBody) {
-      return { ok: false, error: "Automation prompt is empty." };
+      return { ok: false, error: t("automations.prompt_empty") };
     }
     return {
       ok: true,
@@ -181,7 +181,7 @@ export function createAutomationsStore(options: {
     } catch (error) {
       if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
       const message = error instanceof Error ? error.message : String(error);
-      setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+      setScheduledJobsStatus(message || t("automations.failed_to_load"));
       return "error";
     } finally {
       setScheduledJobsBusy(false);
@@ -193,7 +193,7 @@ export function createAutomationsStore(options: {
       const client = options.openworkServer.openworkServerClient();
       const workspaceId = (options.runtimeWorkspaceId() ?? "").trim();
       if (!client || !workspaceId) {
-        throw new Error("OpenWork server unavailable. Connect to sync scheduled tasks.");
+        throw new Error(t("automations.server_unavailable"));
       }
       const response = await client.deleteScheduledJob(workspaceId, name);
       setScheduledJobs((current) => current.filter((entry) => entry.slug !== response.job.slug));
@@ -201,7 +201,7 @@ export function createAutomationsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      throw new Error("Scheduled tasks require the desktop app.");
+      throw new Error(t("automations.desktop_required"));
     }
     const root = options.selectedWorkspaceRoot().trim();
     const job = await schedulerDeleteJob(name, root || undefined);

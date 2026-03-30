@@ -218,7 +218,7 @@ export default function QuestionModal(props: QuestionModalProps) {
                         <div class="flex gap-2">
                             <Show when={currentQuestion()?.multiple || currentQuestion()?.custom}>
                                 <Button onClick={handleNext} disabled={!canProceed() || props.busy} class="!px-6">
-                                    {isLastQuestion() ? "Submit" : "Next"}
+                                    {isLastQuestion() ? t("common.submit") : t("common.next")}
                                     <Show when={!isLastQuestion()}>
                                         <ChevronRight size={16} class="ml-1 -mr-1 opacity-60" />
                                     </Show>

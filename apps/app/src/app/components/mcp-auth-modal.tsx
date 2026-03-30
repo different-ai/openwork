@@ -168,7 +168,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     statusPoll = window.setInterval(async () => {
       if (Date.now() - startedAt >= MCP_AUTH_TIMEOUT_MS) {
         stopStatusPolling();
-        setError("Request timed out.");
+        setError(translate("mcp.auth.request_timed_out"));
         return;
       }
 

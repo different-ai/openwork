@@ -315,7 +315,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
     const resolved = providerId?.trim();
     if (!resolved) {
-      throw new Error("Provider ID is required");
+      throw new Error(t("providers.provider_id_required"));
     }
 
     if (!Number.isInteger(methodIndex) || methodIndex < 0) {
@@ -414,7 +414,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
     const resolved = providerId.trim();
     if (!resolved) {
-      throw new Error("Provider ID is required");
+      throw new Error(t("providers.provider_id_required"));
     }
 
     const provider = options.providers().find((entry) => entry.id === resolved) as

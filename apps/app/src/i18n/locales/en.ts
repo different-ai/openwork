@@ -1291,6 +1291,9 @@ export default {
   "automations.server_not_ready": "OpenWork server not ready.",
   "automations.failed_to_load": "Failed to load scheduled tasks.",
   "automations.desktop_required": "Scheduled tasks require the desktop app.",
+  "automations.schedule_required": "Schedule is required.",
+  "automations.prompt_required": "Prompt is required.",
+  "automations.prompt_empty": "Automation prompt is empty.",
 
   // ==================== Question Modal ====================
   "question_modal.question_counter": "Question {current} of {total}",
@@ -1356,4 +1359,5 @@ export default {
   "mcp.auth.authorization_link": "Authorization link",
   "mcp.auth.copied": "Copied",
   "mcp.auth.copy_link": "Copy link",
+  "mcp.auth.request_timed_out": "Request timed out.",
 } as const;
