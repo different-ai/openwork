@@ -1,6 +1,10 @@
 import { createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
-import type { OpenworkServerClient, OpenworkWorkspaceExport } from "../lib/openwork-server";
+import type {
+  OpenworkServerClient,
+  OpenworkWorkspaceExport,
+  OpenworkWorkspaceExportSensitiveMode,
+} from "../lib/openwork-server";
 import type { SkillsSetBundleV1, WorkspaceProfileBundleV1 } from "./types";
 
 export function buildWorkspaceProfileBundle(
@@ -44,8 +48,11 @@ export async function publishWorkspaceProfileBundleFromWorkspace(input: {
   workspaceId: string;
   workspaceName: string;
   baseUrl?: string;
+  sensitiveMode?: Exclude<OpenworkWorkspaceExportSensitiveMode, "auto"> | null;
 }) {
-  const exported = await input.client.exportWorkspace(input.workspaceId);
+  const exported = await input.client.exportWorkspace(input.workspaceId, {
+    sensitiveMode: input.sensitiveMode ?? undefined,
+  });
   const payload = buildWorkspaceProfileBundle(input.workspaceName, exported);
   return input.client.publishBundle(payload, "workspace-profile", {
     name: payload.name,
@@ -59,7 +66,9 @@ export async function publishSkillsSetBundleFromWorkspace(input: {
   workspaceName: string;
   baseUrl?: string;
 }) {
-  const exported = await input.client.exportWorkspace(input.workspaceId);
+  const exported = await input.client.exportWorkspace(input.workspaceId, {
+    sensitiveMode: "exclude",
+  });
   const payload = buildSkillsSetBundle(input.workspaceName, exported);
   return input.client.publishBundle(payload, "skills-set", {
     name: payload.name,
@@ -72,8 +81,11 @@ export async function saveWorkspaceProfileBundleToTeam(input: {
   workspaceId: string;
   workspaceName: string;
   requestedName: string;
+  sensitiveMode?: Exclude<OpenworkWorkspaceExportSensitiveMode, "auto"> | null;
 }) {
-  const exported = await input.client.exportWorkspace(input.workspaceId);
+  const exported = await input.client.exportWorkspace(input.workspaceId, {
+    sensitiveMode: input.sensitiveMode ?? undefined,
+  });
   const fallbackName = `${input.workspaceName} template`;
   const name = input.requestedName.trim() || fallbackName;
   const payload = {

@@ -375,6 +375,14 @@ export type OpenworkWorkspaceExport = {
   files?: Array<{ path: string; content: string }>;
 };
 
+export type OpenworkWorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
+
+export type OpenworkWorkspaceExportWarning = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
 export type OpenworkBlueprintSessionsMaterializeResult = {
   ok: boolean;
   created: Array<{ templateId: string; sessionId: string; title: string }>;
@@ -1003,12 +1011,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
-    exportWorkspace: (workspaceId: string) =>
-      requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
+    exportWorkspace: (
+      workspaceId: string,
+      options?: { sensitiveMode?: OpenworkWorkspaceExportSensitiveMode },
+    ) => {
+      const query = new URLSearchParams();
+      if (options?.sensitiveMode) {
+        query.set("sensitive", options.sensitiveMode);
+      }
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export${suffix}`, {
         token,
         hostToken,
         timeoutMs: timeouts.workspaceExport,
-      }),
+      });
+    },
     importWorkspace: (workspaceId: string, payload: Record<string, unknown>) =>
       requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
         token,

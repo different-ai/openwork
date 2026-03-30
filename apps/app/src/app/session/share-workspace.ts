@@ -16,7 +16,10 @@ import { buildDenAuthUrl, readDenSettings } from "../lib/den";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
+  OpenworkServerError,
   parseOpenworkWorkspaceIdFromUrl,
+  type OpenworkWorkspaceExportSensitiveMode,
+  type OpenworkWorkspaceExportWarning,
 } from "../lib/openwork-server";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
 import type {
@@ -40,6 +43,8 @@ type ShareWorkspaceStateOptions = {
 };
 
 export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
+  type ShareWorkspaceProfileSensitiveMode = Exclude<OpenworkWorkspaceExportSensitiveMode, "auto">;
+
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
   const [shareLocalOpenworkWorkspaceId, setShareLocalOpenworkWorkspaceId] =
     createSignal<string | null>(null);
@@ -49,6 +54,10 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
     createSignal<string | null>(null);
   const [shareWorkspaceProfileError, setShareWorkspaceProfileError] =
     createSignal<string | null>(null);
+  const [shareWorkspaceProfileSensitiveWarnings, setShareWorkspaceProfileSensitiveWarnings] =
+    createSignal<OpenworkWorkspaceExportWarning[] | null>(null);
+  const [shareWorkspaceProfileSensitiveMode, setShareWorkspaceProfileSensitiveMode] =
+    createSignal<ShareWorkspaceProfileSensitiveMode | null>(null);
   const [shareWorkspaceProfileTeamBusy, setShareWorkspaceProfileTeamBusy] =
     createSignal(false);
   const [shareWorkspaceProfileTeamError, setShareWorkspaceProfileTeamError] =
@@ -99,6 +108,8 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       setShareWorkspaceProfileBusy(false);
       setShareWorkspaceProfileUrl(null);
       setShareWorkspaceProfileError(null);
+      setShareWorkspaceProfileSensitiveWarnings(null);
+      setShareWorkspaceProfileSensitiveMode(null);
       setShareWorkspaceProfileTeamBusy(false);
       setShareWorkspaceProfileTeamError(null);
       setShareWorkspaceProfileTeamSuccess(null);
@@ -449,6 +460,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         workspaceId,
         workspaceName: options.workspaceLabel(workspace),
         baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
+        sensitiveMode: shareWorkspaceProfileSensitiveMode(),
       });
 
       setShareWorkspaceProfileUrl(result.url);
@@ -458,6 +470,12 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         // ignore
       }
     } catch (error) {
+      const warnings = readWorkspaceExportWarnings(error);
+      if (warnings) {
+        setShareWorkspaceProfileSensitiveWarnings(warnings);
+        setShareWorkspaceProfileError(null);
+        return;
+      }
       setShareWorkspaceProfileError(
         error instanceof Error
           ? error.message
@@ -481,12 +499,19 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         workspaceId,
         workspaceName: options.workspaceLabel(workspace),
         requestedName: templateName,
+        sensitiveMode: shareWorkspaceProfileSensitiveMode(),
       });
 
       setShareWorkspaceProfileTeamSuccess(
         `Saved ${created.name} to ${orgName || "your team templates"}.`,
       );
     } catch (error) {
+      const warnings = readWorkspaceExportWarnings(error);
+      if (warnings) {
+        setShareWorkspaceProfileSensitiveWarnings(warnings);
+        setShareWorkspaceProfileTeamError(null);
+        return;
+      }
       setShareWorkspaceProfileTeamError(
         error instanceof Error ? error.message : "Failed to save team template",
       );
@@ -550,6 +575,9 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
     shareWorkspaceProfileBusy,
     shareWorkspaceProfileUrl,
     shareWorkspaceProfileError,
+    shareWorkspaceProfileSensitiveWarnings,
+    shareWorkspaceProfileSensitiveMode,
+    setShareWorkspaceProfileSensitiveMode,
     publishWorkspaceProfileLink,
     shareWorkspaceProfileTeamBusy,
     shareWorkspaceProfileTeamError,
@@ -565,4 +593,25 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
     publishSkillsSetLink,
     exportDisabledReason,
   };
+}
+
+function readWorkspaceExportWarnings(error: unknown): OpenworkWorkspaceExportWarning[] | null {
+  if (!(error instanceof OpenworkServerError) || error.code !== "workspace_export_requires_decision") {
+    return null;
+  }
+  const warnings = Array.isArray((error.details as { warnings?: unknown } | undefined)?.warnings)
+    ? (error.details as { warnings: unknown[] }).warnings
+    : [];
+  const normalized = warnings
+    .map((warning) => {
+      if (!warning || typeof warning !== "object") return null;
+      const record = warning as Record<string, unknown>;
+      const id = typeof record.id === "string" ? record.id.trim() : "";
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      const detail = typeof record.detail === "string" ? record.detail.trim() : "";
+      if (!id || !label || !detail) return null;
+      return { id, label, detail } satisfies OpenworkWorkspaceExportWarning;
+    })
+    .filter((warning): warning is OpenworkWorkspaceExportWarning => Boolean(warning));
+  return normalized.length ? normalized : null;
 }

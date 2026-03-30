@@ -30,6 +30,7 @@ import {
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
+  OpenworkServerError,
   parseOpenworkWorkspaceIdFromUrl,
 } from "../lib/openwork-server";
 import type {
@@ -39,6 +40,8 @@ import type {
   OpenworkServerDiagnostics,
   OpenworkServerSettings,
   OpenworkServerStatus,
+  OpenworkWorkspaceExportSensitiveMode,
+  OpenworkWorkspaceExportWarning,
 } from "../lib/openwork-server";
 import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL } from "../lib/publisher";
@@ -496,10 +499,14 @@ export default function SettingsShell(props: SettingsShellProps) {
     return ws.path?.trim() || "";
   });
 
+  type ShareWorkspaceProfileSensitiveMode = Exclude<OpenworkWorkspaceExportSensitiveMode, "auto">;
+
   const [shareLocalOpenworkWorkspaceId, setShareLocalOpenworkWorkspaceId] = createSignal<string | null>(null);
   const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
   const [shareWorkspaceProfileUrl, setShareWorkspaceProfileUrl] = createSignal<string | null>(null);
   const [shareWorkspaceProfileError, setShareWorkspaceProfileError] = createSignal<string | null>(null);
+  const [shareWorkspaceProfileSensitiveWarnings, setShareWorkspaceProfileSensitiveWarnings] = createSignal<OpenworkWorkspaceExportWarning[] | null>(null);
+  const [shareWorkspaceProfileSensitiveMode, setShareWorkspaceProfileSensitiveMode] = createSignal<ShareWorkspaceProfileSensitiveMode | null>(null);
   const [shareWorkspaceProfileTeamBusy, setShareWorkspaceProfileTeamBusy] = createSignal(false);
   const [shareWorkspaceProfileTeamError, setShareWorkspaceProfileTeamError] = createSignal<string | null>(null);
   const [shareWorkspaceProfileTeamSuccess, setShareWorkspaceProfileTeamSuccess] = createSignal<string | null>(null);
@@ -513,6 +520,8 @@ export default function SettingsShell(props: SettingsShellProps) {
       setShareWorkspaceProfileBusy(false);
       setShareWorkspaceProfileUrl(null);
       setShareWorkspaceProfileError(null);
+      setShareWorkspaceProfileSensitiveWarnings(null);
+      setShareWorkspaceProfileSensitiveMode(null);
       setShareWorkspaceProfileTeamBusy(false);
       setShareWorkspaceProfileTeamError(null);
       setShareWorkspaceProfileTeamSuccess(null);
@@ -823,6 +832,7 @@ export default function SettingsShell(props: SettingsShellProps) {
         workspaceId,
         workspaceName: workspaceLabel(workspace),
         baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
+        sensitiveMode: shareWorkspaceProfileSensitiveMode(),
       });
 
       setShareWorkspaceProfileUrl(result.url);
@@ -832,6 +842,12 @@ export default function SettingsShell(props: SettingsShellProps) {
         // ignore
       }
     } catch (error) {
+      const warnings = readWorkspaceExportWarnings(error);
+      if (warnings) {
+        setShareWorkspaceProfileSensitiveWarnings(warnings);
+        setShareWorkspaceProfileError(null);
+        return;
+      }
       setShareWorkspaceProfileError(error instanceof Error ? error.message : "Failed to publish workspace profile");
     } finally {
       setShareWorkspaceProfileBusy(false);
@@ -851,12 +867,19 @@ export default function SettingsShell(props: SettingsShellProps) {
         workspaceId,
         workspaceName: workspaceLabel(workspace),
         requestedName: templateName,
+        sensitiveMode: shareWorkspaceProfileSensitiveMode(),
       });
 
       setShareWorkspaceProfileTeamSuccess(
         `Saved ${created.name} to ${orgName || "your team templates"}.`,
       );
     } catch (error) {
+      const warnings = readWorkspaceExportWarnings(error);
+      if (warnings) {
+        setShareWorkspaceProfileSensitiveWarnings(warnings);
+        setShareWorkspaceProfileTeamError(null);
+        return;
+      }
       setShareWorkspaceProfileTeamError(
         error instanceof Error ? error.message : "Failed to save team template",
       );
@@ -1304,6 +1327,9 @@ export default function SettingsShell(props: SettingsShellProps) {
           shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}
           shareWorkspaceProfileError={shareWorkspaceProfileError()}
           shareWorkspaceProfileDisabledReason={shareServiceDisabledReason()}
+          shareWorkspaceProfileSensitiveWarnings={shareWorkspaceProfileSensitiveWarnings()}
+          shareWorkspaceProfileSensitiveMode={shareWorkspaceProfileSensitiveMode()}
+          onShareWorkspaceProfileSensitiveModeChange={setShareWorkspaceProfileSensitiveMode}
           onShareWorkspaceProfileToTeam={shareWorkspaceProfileToTeam}
           shareWorkspaceProfileToTeamBusy={shareWorkspaceProfileTeamBusy()}
           shareWorkspaceProfileToTeamError={shareWorkspaceProfileTeamError()}
@@ -1400,4 +1426,25 @@ export default function SettingsShell(props: SettingsShellProps) {
 
     </div>
   );
+}
+
+function readWorkspaceExportWarnings(error: unknown): OpenworkWorkspaceExportWarning[] | null {
+  if (!(error instanceof OpenworkServerError) || error.code !== "workspace_export_requires_decision") {
+    return null;
+  }
+  const warnings = Array.isArray((error.details as { warnings?: unknown } | undefined)?.warnings)
+    ? (error.details as { warnings: unknown[] }).warnings
+    : [];
+  const normalized = warnings
+    .map((warning) => {
+      if (!warning || typeof warning !== "object") return null;
+      const record = warning as Record<string, unknown>;
+      const id = typeof record.id === "string" ? record.id.trim() : "";
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      const detail = typeof record.detail === "string" ? record.detail.trim() : "";
+      if (!id || !label || !detail) return null;
+      return { id, label, detail } satisfies OpenworkWorkspaceExportWarning;
+    })
+    .filter((warning): warning is OpenworkWorkspaceExportWarning => Boolean(warning));
+  return normalized.length ? normalized : null;
 }

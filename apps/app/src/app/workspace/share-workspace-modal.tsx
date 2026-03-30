@@ -193,6 +193,9 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
                 shareWorkspaceProfileUrl={props.shareWorkspaceProfileUrl}
                 shareWorkspaceProfileError={props.shareWorkspaceProfileError}
                 shareWorkspaceProfileDisabledReason={props.shareWorkspaceProfileDisabledReason}
+                shareWorkspaceProfileSensitiveWarnings={props.shareWorkspaceProfileSensitiveWarnings}
+                shareWorkspaceProfileSensitiveMode={props.shareWorkspaceProfileSensitiveMode}
+                onShareWorkspaceProfileSensitiveModeChange={props.onShareWorkspaceProfileSensitiveModeChange}
                 onShareWorkspaceProfileToTeam={props.onShareWorkspaceProfileToTeam}
                 shareWorkspaceProfileToTeamBusy={props.shareWorkspaceProfileToTeamBusy}
                 shareWorkspaceProfileToTeamError={props.shareWorkspaceProfileToTeamError}

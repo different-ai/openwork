@@ -1,4 +1,5 @@
 import type { DenTemplate } from "../lib/den";
+import type { OpenworkWorkspaceExportWarning } from "../lib/openwork-server";
 import type { WorkspacePreset } from "../types";
 
 export type CreateWorkspaceScreen = "chooser" | "local" | "remote" | "shared";
@@ -123,6 +124,9 @@ export type ShareWorkspaceModalProps = {
   shareWorkspaceProfileUrl?: string | null;
   shareWorkspaceProfileError?: string | null;
   shareWorkspaceProfileDisabledReason?: string | null;
+  shareWorkspaceProfileSensitiveWarnings?: OpenworkWorkspaceExportWarning[] | null;
+  shareWorkspaceProfileSensitiveMode?: "include" | "exclude" | null;
+  onShareWorkspaceProfileSensitiveModeChange?: (mode: "include" | "exclude") => void;
   onShareWorkspaceProfileToTeam?: (name: string) => void | Promise<void>;
   shareWorkspaceProfileToTeamBusy?: boolean;
   shareWorkspaceProfileToTeamError?: string | null;

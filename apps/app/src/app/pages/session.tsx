@@ -3568,6 +3568,9 @@ export default function SessionView(props: SessionViewProps) {
         shareWorkspaceProfileUrl={shareWorkspaceState.shareWorkspaceProfileUrl()}
         shareWorkspaceProfileError={shareWorkspaceState.shareWorkspaceProfileError()}
         shareWorkspaceProfileDisabledReason={shareWorkspaceState.shareServiceDisabledReason()}
+        shareWorkspaceProfileSensitiveWarnings={shareWorkspaceState.shareWorkspaceProfileSensitiveWarnings()}
+        shareWorkspaceProfileSensitiveMode={shareWorkspaceState.shareWorkspaceProfileSensitiveMode()}
+        onShareWorkspaceProfileSensitiveModeChange={shareWorkspaceState.setShareWorkspaceProfileSensitiveMode}
         onShareWorkspaceProfileToTeam={shareWorkspaceState.shareWorkspaceProfileToTeam}
         shareWorkspaceProfileToTeamBusy={shareWorkspaceState.shareWorkspaceProfileTeamBusy()}
         shareWorkspaceProfileToTeamError={shareWorkspaceState.shareWorkspaceProfileTeamError()}

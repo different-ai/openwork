@@ -36,6 +36,11 @@ import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection 
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
+import {
+  collectWorkspaceExportWarnings,
+  stripSensitiveWorkspaceExportData,
+  type WorkspaceExportSensitiveMode,
+} from "./workspace-export-safety.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -3581,7 +3586,8 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const exportPayload = await exportWorkspace(workspace);
+    const sensitiveMode = parseWorkspaceExportSensitiveMode(ctx.url.searchParams.get("sensitive"));
+    const exportPayload = await exportWorkspace(workspace, { sensitiveMode });
     return jsonResponse(exportPayload);
   });
 
@@ -4809,12 +4815,30 @@ async function requireApproval(
   }
 }
 
-async function exportWorkspace(workspace: WorkspaceInfo) {
-  const opencode = sanitizePortableOpencodeConfig(await readOpencodeConfig(workspace.path));
+async function exportWorkspace(
+  workspace: WorkspaceInfo,
+  options?: { sensitiveMode?: WorkspaceExportSensitiveMode },
+) {
+  const sensitiveMode = options?.sensitiveMode ?? "auto";
+  let opencode = sanitizePortableOpencodeConfig(await readOpencodeConfig(workspace.path));
   const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
-  const files = await listPortableFiles(workspace.path);
+  let files = await listPortableFiles(workspace.path);
+  const warnings = collectWorkspaceExportWarnings({ opencode, files });
+  if (warnings.length && sensitiveMode === "auto") {
+    throw new ApiError(
+      409,
+      "workspace_export_requires_decision",
+      "This workspace includes sensitive config. Choose whether to exclude it or include it before exporting.",
+      { warnings },
+    );
+  }
+  if (sensitiveMode === "exclude") {
+    const sanitized = stripSensitiveWorkspaceExportData({ opencode, files });
+    opencode = sanitized.opencode;
+    files = sanitized.files;
+  }
   const skillContents = await Promise.all(
     skills.map(async (skill) => ({
       name: skill.name,
@@ -4839,6 +4863,15 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
     commands: commandContents,
     ...(files.length ? { files } : {}),
   };
+}
+
+function parseWorkspaceExportSensitiveMode(input: string | null): WorkspaceExportSensitiveMode {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return "auto";
+  if (trimmed === "auto" || trimmed === "include" || trimmed === "exclude") {
+    return trimmed;
+  }
+  throw new ApiError(400, "invalid_workspace_export_sensitive_mode", `Invalid workspace export sensitive mode: ${trimmed}`);
 }
 
 async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {

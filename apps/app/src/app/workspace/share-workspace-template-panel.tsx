@@ -12,6 +12,7 @@ import {
   successBannerClass,
   surfaceCardClass,
   tagClass,
+  warningBannerClass,
 } from "./modal-styles";
 import type { ShareView } from "./types";
 
@@ -58,6 +59,9 @@ export default function ShareWorkspaceTemplatePanel(props: {
   shareWorkspaceProfileUrl?: string | null;
   shareWorkspaceProfileError?: string | null;
   shareWorkspaceProfileDisabledReason?: string | null;
+  shareWorkspaceProfileSensitiveWarnings?: Array<{ id: string; label: string; detail: string }> | null;
+  shareWorkspaceProfileSensitiveMode?: "include" | "exclude" | null;
+  onShareWorkspaceProfileSensitiveModeChange?: (mode: "include" | "exclude") => void;
   onShareWorkspaceProfileToTeam?: (name: string) => void | Promise<void>;
   shareWorkspaceProfileToTeamBusy?: boolean;
   shareWorkspaceProfileToTeamError?: string | null;
@@ -67,6 +71,17 @@ export default function ShareWorkspaceTemplatePanel(props: {
   shareWorkspaceProfileToTeamNeedsSignIn?: boolean;
   onShareWorkspaceProfileToTeamSignIn?: () => void | Promise<void>;
 }) {
+  const sensitiveWarnings = () => props.shareWorkspaceProfileSensitiveWarnings ?? [];
+  const exportDecisionMissing = () => sensitiveWarnings().length > 0 && !props.shareWorkspaceProfileSensitiveMode;
+  const sensitiveDecisionDisabledReason = () =>
+    exportDecisionMissing()
+      ? "Choose how to handle sensitive config before continuing."
+      : (props.shareWorkspaceProfileDisabledReason ?? null);
+  const teamDecisionDisabledReason = () =>
+    exportDecisionMissing()
+      ? "Choose how to handle sensitive config before continuing."
+      : (props.shareWorkspaceProfileToTeamDisabledReason ?? null);
+
   const renderGeneratedLink = (
     value: string | null | undefined,
     copyKey: string,
@@ -100,6 +115,44 @@ export default function ShareWorkspaceTemplatePanel(props: {
         <button type="button" onClick={() => regenerate?.()} disabled={busy} class={`${pillSecondaryClass} mt-3 w-full`}>
           {busy ? "Publishing…" : regenerateLabel}
         </button>
+      </div>
+    </Show>
+  );
+
+  const SensitiveExportWarningCard = () => (
+    <Show when={sensitiveWarnings().length > 0}>
+      <div class={warningBannerClass}>
+        <div class="text-[13px] font-medium text-dls-text">This export includes sensitive workspace config.</div>
+        <div class="mt-1 text-[12px] leading-relaxed text-dls-secondary">
+          OpenWork found config that can expose secrets, remote endpoints, or persistence points. Choose how to handle it before publishing.
+        </div>
+        <div class="mt-3 space-y-2 text-[12px] leading-relaxed text-dls-secondary">
+          <For each={sensitiveWarnings()}>
+            {(warning) => (
+              <div>
+                <span class="font-medium text-dls-text">{warning.label}:</span> {warning.detail}
+              </div>
+            )}
+          </For>
+        </div>
+        <div class="mt-4 grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => props.onShareWorkspaceProfileSensitiveModeChange?.("exclude")}
+            class={`${pillSecondaryClass} ${props.shareWorkspaceProfileSensitiveMode === "exclude" ? "border-[var(--dls-accent)] text-[var(--dls-accent)]" : ""}`}
+            aria-pressed={props.shareWorkspaceProfileSensitiveMode === "exclude"}
+          >
+            Exclude sensitive config
+          </button>
+          <button
+            type="button"
+            onClick={() => props.onShareWorkspaceProfileSensitiveModeChange?.("include")}
+            class={`${pillSecondaryClass} ${props.shareWorkspaceProfileSensitiveMode === "include" ? "border-[var(--dls-accent)] text-[var(--dls-accent)]" : ""}`}
+            aria-pressed={props.shareWorkspaceProfileSensitiveMode === "include"}
+          >
+            Include everything
+          </button>
+        </div>
       </div>
     </Show>
   );
@@ -166,9 +219,11 @@ export default function ShareWorkspaceTemplatePanel(props: {
             <Show when={props.shareWorkspaceProfileError?.trim()}>
               <div class={`mb-3 ${errorBannerClass}`}>{props.shareWorkspaceProfileError}</div>
             </Show>
-            <Show when={props.shareWorkspaceProfileDisabledReason?.trim()}>
-              <div class="mb-3 text-[12px] text-dls-secondary">{props.shareWorkspaceProfileDisabledReason}</div>
+            <Show when={sensitiveDecisionDisabledReason()?.trim()}>
+              <div class="mb-3 text-[12px] text-dls-secondary">{sensitiveDecisionDisabledReason()}</div>
             </Show>
+
+            <SensitiveExportWarningCard />
 
             {renderGeneratedLink(
               props.shareWorkspaceProfileUrl,
@@ -178,7 +233,7 @@ export default function ShareWorkspaceTemplatePanel(props: {
               "Create template link",
               "Regenerate link",
               props.onShareWorkspaceProfile,
-              props.shareWorkspaceProfileDisabledReason,
+              sensitiveDecisionDisabledReason(),
             )}
 
             <IncludedTemplateItems items={templateIncludedItems} />
@@ -216,9 +271,11 @@ export default function ShareWorkspaceTemplatePanel(props: {
               <div class={`mt-4 ${successBannerClass}`}>{props.shareWorkspaceProfileToTeamSuccess}</div>
             </Show>
 
-            <Show when={props.shareWorkspaceProfileToTeamDisabledReason?.trim() && !needsSignIn}>
-              <div class="mt-4 text-[12px] text-dls-secondary">{props.shareWorkspaceProfileToTeamDisabledReason}</div>
+            <Show when={teamDecisionDisabledReason()?.trim() && !needsSignIn}>
+              <div class="mt-4 text-[12px] text-dls-secondary">{teamDecisionDisabledReason()}</div>
             </Show>
+
+            <SensitiveExportWarningCard />
 
             <button
               type="button"
@@ -232,7 +289,7 @@ export default function ShareWorkspaceTemplatePanel(props: {
               disabled={
                 needsSignIn
                   ? !props.onShareWorkspaceProfileToTeamSignIn
-                  : Boolean(props.shareWorkspaceProfileToTeamDisabledReason) ||
+                  : Boolean(teamDecisionDisabledReason()) ||
                     !props.onShareWorkspaceProfileToTeam ||
                     props.shareWorkspaceProfileToTeamBusy ||
                     !props.teamTemplateName.trim()
