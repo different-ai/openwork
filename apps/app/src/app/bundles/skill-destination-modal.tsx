@@ -106,7 +106,7 @@ export default function SkillDestinationModal(props: {
               <div class="min-w-0 space-y-3">
                 <div class="inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-2 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-10">
                   <Sparkles size={12} />
-                  Shared skill
+                  {translate("share_skill_destination.skill_label")}
                 </div>
                 <div class="rounded-xl border border-gray-6 bg-gray-2/40 px-4 py-4">
                   <div class="flex items-start gap-3">

@@ -50,7 +50,7 @@ export default function WorkspaceChip(props: {
           </span>
           {props.workspace.workspaceType === "remote" ? (
             <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-4 text-gray-11">
-              {isSandboxWorkspace ? "Sandbox" : translate("dashboard.remote")}
+              {isSandboxWorkspace ? translate("workspace.sandbox_badge") : translate("dashboard.remote")}
             </span>
           ) : null}
         </div>

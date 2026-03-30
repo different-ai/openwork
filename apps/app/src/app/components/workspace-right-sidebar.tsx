@@ -1,4 +1,5 @@
 import { Show, type JSX } from "solid-js";
+import { t } from "../../i18n";
 import {
   Box,
   ChevronLeft,
@@ -80,7 +81,7 @@ export default function WorkspaceRightSidebar(props: Props) {
         <Show when={props.expanded}>
           <div class="min-w-0 px-1">
             <div class="truncate text-[11px] font-medium uppercase tracking-[0.18em] text-gray-8">
-              {(props.activeWorkspaceLabel || "Workspace")} configuration
+              {(props.activeWorkspaceLabel || t("dashboard.workspaces"))} {t("workspace_sidebar.configuration")}
             </div>
           </div>
         </Show>
@@ -88,8 +89,8 @@ export default function WorkspaceRightSidebar(props: Props) {
           type="button"
           class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
           onClick={mobile() ? closeMobile : props.onToggleExpanded}
-          title={mobile() ? "Close sidebar" : props.expanded ? "Collapse sidebar" : "Expand sidebar"}
-          aria-label={mobile() ? "Close sidebar" : props.expanded ? "Collapse sidebar" : "Expand sidebar"}
+          title={mobile() ? t("workspace_sidebar.close_sidebar") : props.expanded ? t("workspace_sidebar.collapse_sidebar") : t("workspace_sidebar.expand_sidebar")}
+          aria-label={mobile() ? t("workspace_sidebar.close_sidebar") : props.expanded ? t("workspace_sidebar.collapse_sidebar") : t("workspace_sidebar.expand_sidebar")}
         >
           <Show
             when={mobile()}
@@ -102,32 +103,32 @@ export default function WorkspaceRightSidebar(props: Props) {
       <div class={`flex-1 overflow-y-auto ${props.expanded ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
         <div class="mb-2 space-y-1">
           {sidebarButton(
-            "Automations",
+            t("workspace_sidebar.automations"),
             <History size={18} />,
             showSelection() && props.settingsTab === "automations",
             props.onOpenAutomations,
           )}
           {sidebarButton(
-            "Skills",
+            t("dashboard.skills"),
             <Zap size={18} />,
             showSelection() && props.settingsTab === "skills",
             props.onOpenSkills,
           )}
           {sidebarButton(
-            "Extensions",
+            t("workspace_sidebar.extensions"),
             <Box size={18} />,
             showSelection() && props.settingsTab === "extensions",
             props.onOpenExtensions,
           )}
           {sidebarButton(
-            "Messaging",
+            t("workspace_sidebar.messaging"),
             <MessageCircle size={18} />,
             showSelection() && props.settingsTab === "messaging",
             props.onOpenMessaging,
           )}
           <Show when={props.developerMode}>
             {sidebarButton(
-              "Advanced",
+              t("settings.advanced_title"),
               <SlidersHorizontal size={18} />,
                 showSelection() && props.settingsTab === "advanced",
               props.onOpenAdvanced,
@@ -149,7 +150,7 @@ export default function WorkspaceRightSidebar(props: Props) {
 
       <div class={`pt-3 ${props.expanded ? "mt-3 border-t border-dls-border/70" : "mt-2"}`}>
         {sidebarButton(
-          "Settings",
+          t("dashboard.settings"),
           <Settings size={18} />,
           showSelection() && props.settingsTab === "general",
           props.onOpenSettings,

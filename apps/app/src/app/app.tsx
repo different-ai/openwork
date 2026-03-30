@@ -2389,7 +2389,7 @@ export default function App() {
 
       <BundleImportModal
         open={Boolean(bundlesStore.bundleImportChoice())}
-        title={bundlesStore.bundleImportSummary()?.title ?? "Import bundle"}
+        title={bundlesStore.bundleImportSummary()?.title ?? t("app.import_shared_bundle")}
         description={bundlesStore.bundleImportSummary()?.description ?? "Choose how to import this bundle."}
         items={bundlesStore.bundleImportSummary()?.items ?? []}
         workers={bundlesStore.bundleWorkerOptions()}

@@ -66,6 +66,7 @@ import {
   Zap,
 } from "lucide-solid";
 import type { Language } from "../../i18n";
+import { t } from "../../i18n";
 
 export type SettingsShellProps = {
   settingsTab: SettingsTab;
@@ -268,27 +269,27 @@ export default function SettingsShell(props: SettingsShellProps) {
   const title = createMemo(() => {
     switch (props.settingsTab) {
       case "automations":
-        return "Automations";
+        return t("settings.tab_automations");
       case "skills":
-        return "Skills";
+        return t("settings.tab_skills");
       case "extensions":
-        return "Extensions";
+        return t("settings.tab_extensions");
       case "messaging":
-        return "Messaging";
+        return t("settings.tab_messaging");
       case "advanced":
-        return "Advanced";
+        return t("settings.tab_advanced");
       case "appearance":
-        return "Appearance";
+        return t("settings.tab_appearance");
       case "updates":
-        return "Updates";
+        return t("settings.tab_updates");
       case "recovery":
-        return "Recovery";
+        return t("settings.tab_recovery");
       case "den":
-        return "Cloud";
+        return t("settings.tab_cloud");
       case "debug":
-        return "Debug";
+        return t("settings.tab_debug");
       default:
-        return "Settings";
+        return t("settings.tab_general");
     }
   });
 
@@ -297,15 +298,15 @@ export default function SettingsShell(props: SettingsShellProps) {
     workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Workspace";
+    t("share.workspace_fallback");
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
       ? workspace.sandboxBackend === "docker" ||
         Boolean(workspace.sandboxRunId?.trim()) ||
         Boolean(workspace.sandboxContainerName?.trim())
-        ? "Sandbox"
-        : "Remote"
-      : "Local";
+        ? t("workspace.sandbox_badge")
+        : t("workspace.remote_badge")
+      : t("workspace.local_badge");
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     void (async () => {
@@ -355,7 +356,7 @@ export default function SettingsShell(props: SettingsShellProps) {
     methodIndex?: number,
   ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
-      throw new Error("Provider auth is already in progress.");
+      throw new Error(t("session.provider_auth_in_progress"));
     }
     setProviderAuthActionBusy(true);
     try {
@@ -938,13 +939,13 @@ export default function SettingsShell(props: SettingsShellProps) {
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return props.anyActiveRuns ? "Update ready" : "Install update";
+      return props.anyActiveRuns ? t("session.update_ready") : t("session.install_update");
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? "Downloading" : `Downloading ${percent}%`;
+      return percent == null ? t("session.downloading") : t("session.downloading_percent", undefined, { percent });
     }
-    return "Update available";
+    return t("session.update_available");
   });
 
   const updatePillButtonTone = createMemo(() => {
@@ -998,11 +999,11 @@ export default function SettingsShell(props: SettingsShellProps) {
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? `Update ready ${version}. Stop active runs to restart.`
-        : `Restart to apply update ${version}`;
+        ? t("session.update_ready_stop_runs_title", undefined, { version })
+        : t("session.restart_update_title", undefined, { version });
     }
-    if (state === "downloading") return `Downloading update ${version}`;
-    return `Update available ${version}`;
+    if (state === "downloading") return t("session.downloading_update_title", undefined, { version });
+    return t("session.update_available_title", undefined, { version });
   });
 
   const handleUpdatePillClick = () => {
@@ -1079,8 +1080,8 @@ export default function SettingsShell(props: SettingsShellProps) {
         <div
           class="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 md:block"
           onPointerDown={startLeftSidebarResize}
-          title="Resize workspace column"
-          aria-label="Resize workspace column"
+          title={t("session.resize_workspace_column")}
+          aria-label={t("session.resize_workspace_column")}
         />
 
       </aside>
@@ -1133,8 +1134,8 @@ export default function SettingsShell(props: SettingsShellProps) {
               type="button"
               class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
               onClick={props.toggleSettings}
-              title="Close settings"
-              aria-label="Close settings"
+              title={t("dashboard.close_settings")}
+              aria-label={t("dashboard.close_settings")}
             >
               <X size={18} />
             </button>
@@ -1264,7 +1265,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !props.developerMode}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {props.cacheRepairBusy ? t("dashboard.repairing_cache") : t("dashboard.repair_cache")}
                   </Button>
                   <Button
                     variant="outline"
@@ -1272,7 +1273,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                     onClick={props.stopHost}
                     disabled={props.busy}
                   >
-                    Retry
+                    {t("common.retry")}
                   </Button>
                   <Show when={props.cacheRepairResult}>
                     <span class="text-xs text-red-12/80">
@@ -1379,7 +1380,7 @@ export default function SettingsShell(props: SettingsShellProps) {
               onClick={() => openSettings("automations")}
             >
               <History size={18} />
-              Automations
+              {t("scheduled.title")}
             </button>
             <button
                 class={`flex flex-col items-center gap-1 text-xs ${
@@ -1388,7 +1389,7 @@ export default function SettingsShell(props: SettingsShellProps) {
               onClick={() => openSettings("skills")}
             >
               <Zap size={18} />
-              Skills
+              {t("dashboard.skills")}
             </button>
             <button
                 class={`flex flex-col items-center gap-1 text-xs ${
@@ -1397,7 +1398,7 @@ export default function SettingsShell(props: SettingsShellProps) {
               onClick={() => openSettings("extensions")}
             >
               <Box size={18} />
-              Extensions
+              {t("extensions.title")}
             </button>
             <button
                 class={`flex flex-col items-center gap-1 text-xs ${
@@ -1406,7 +1407,7 @@ export default function SettingsShell(props: SettingsShellProps) {
               onClick={() => openSettings("messaging")}
             >
               <MessageCircle size={18} />
-              IDs
+              {t("dashboard.nav_ids")}
             </button>
             <Show when={props.developerMode}>
               <button
@@ -1416,7 +1417,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                 onClick={openAdvanced}
               >
                 <SlidersHorizontal size={18} />
-                Advanced
+                {t("settings.tab_advanced")}
               </button>
             </Show>
           </div>

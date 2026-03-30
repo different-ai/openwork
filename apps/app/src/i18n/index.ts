@@ -90,21 +90,29 @@ export const setLocale = (newLocale: Language) => {
  * @param localeOverride - Optional locale override (defaults to current locale)
  * @returns Translated string or fallback
  */
-export const t = (key: string, localeOverride?: Language): string => {
+export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
   const loc = localeOverride ?? locale();
 
   // Try target language first
+  let result: string;
   if (TRANSLATIONS[loc]?.[key]) {
-    return TRANSLATIONS[loc][key];
+    result = TRANSLATIONS[loc][key];
+  } else if (loc !== "en" && TRANSLATIONS.en?.[key]) {
+    // Fallback to English
+    result = TRANSLATIONS.en[key];
+  } else {
+    // Final fallback to key itself (prevents raw keys from showing in UI)
+    return key;
   }
 
-  // Fallback to English
-  if (loc !== "en" && TRANSLATIONS.en?.[key]) {
-    return TRANSLATIONS.en[key];
+  // Replace params if provided
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      result = result.replace(`{${k}}`, String(v));
+    }
   }
 
-  // Final fallback to key itself (prevents raw keys from showing in UI)
-  return key;
+  return result;
 };
 
 /**

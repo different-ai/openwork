@@ -8,6 +8,7 @@ import type {
   WorkspacePreset,
 } from "../types";
 import { normalizeOpenworkServerUrl, parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
+import { t } from "../i18n";
 import { isTauriRuntime, safeStringify, addOpencodeCacheHint } from "../utils";
 import type { WorkspaceStore } from "../context/workspace";
 import type { StartupPreference } from "../types";
@@ -243,7 +244,7 @@ export function createBundlesStore(options: {
       throw new Error("Bundle link detected. Configure an OpenWork worker host and token, then open the link again.");
     }
 
-    const label = (request.label?.trim() || bundle.name?.trim() || "Shared setup").slice(0, 80);
+    const label = (request.label?.trim() || bundle.name?.trim() || t("app.shared_setup")).slice(0, 80);
     const ok = await options.workspaceStore.createRemoteWorkspaceFlow({
       openworkHostUrl: hostUrl,
       openworkToken: token,
@@ -335,7 +336,7 @@ export function createBundlesStore(options: {
       if (!imported) return;
 
       showSkillSuccessToast({
-        title: "Skill added",
+        title: t("app.skill_added"),
         description: `Added '${destination.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForBundleToasts(workspace)}.`,
       });
       setSkillDestinationRequest(null);
@@ -658,19 +659,19 @@ export function createBundlesStore(options: {
         workspace.openworkWorkspaceName?.trim() ||
         workspace.name?.trim() ||
         workspace.path?.trim() ||
-        "Worker";
+        t("app.worker_fallback");
       const badge =
         workspace.workspaceType === "remote"
           ? workspace.sandboxBackend === "docker" ||
             Boolean(workspace.sandboxRunId?.trim()) ||
             Boolean(workspace.sandboxContainerName?.trim())
-            ? "Sandbox"
-            : "Remote"
-          : "Local";
+            ? t("workspace.sandbox_badge")
+            : t("workspace.remote_badge")
+          : t("workspace.local_badge");
       const detail =
         workspace.workspaceType === "local"
-          ? workspace.path?.trim() || "Local worker"
-          : workspace.directory?.trim() || workspace.baseUrl?.trim() || workspace.openworkHostUrl?.trim() || "Remote worker";
+          ? workspace.path?.trim() || t("app.local_worker_detail")
+          : workspace.directory?.trim() || workspace.baseUrl?.trim() || workspace.openworkHostUrl?.trim() || t("app.remote_worker_detail");
 
       return {
         id: workspace.id,
@@ -797,7 +798,7 @@ export function createBundlesStore(options: {
     if (imported) {
       if (request.bundle.type === "skill") {
         showSkillSuccessToast({
-          title: "Skill added",
+          title: t("app.skill_added"),
           description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForBundleToasts(options.workspaceStore.selectedWorkspaceDisplay())}.`,
         });
       }
@@ -828,7 +829,7 @@ export function createBundlesStore(options: {
               );
               if (request.bundle.type === "skill") {
                 showSkillSuccessToast({
-                  title: "Skill added",
+                  title: t("app.skill_added"),
                   description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForBundleToasts(active)}.`,
                 });
               }
