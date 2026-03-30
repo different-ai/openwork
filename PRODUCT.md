@@ -1,60 +1,261 @@
-## Product
+# OpenWork Product
 
-OpenWork helps individual create, consume, and maintain their agentic workflows.
+## Target Users
 
-OpenWork helps companies share their agentic workflows and provision their entire team.
+> Bob the IT guy.
+> Bob might already use opencode, he can setup agents and workflows and share them with his team. The only thing he needs is a way to share this. The way he does is by using OpenWork and creating "workpaces".
 
-The chat interfaces is where people consume the workflows.
+> Susan in accounting
 
-Interfaces for consuming workflows:
-- Desktop app
-- Slack
-- Telegram
+Susan in accounting doesn't use opencode. She certaintly doesn't paly aorund to create workflow create agents. She wants something that works.
+Openwork should be given to give her a good taste of what she can do.
+We should also eventually guide ther to:
 
-What is a "agentic workflow":
-- LLM providers
-- Skills
-- MCP
-- Agents
-- Plugins
-- Tools
-- Background Agents
+- creating her own skills
+- adding custom MCP / login into mcp oauth servers through ui)
+- adding skills from a list of skills
+- adding plugins from a list of plugins
+- create her own commands
 
-Where are workflows created:
-- Desktop app (using slash commands like `/create-skills`)
-- Web App
-- [We need better places for this to happen[
+1. **knowledge worker**: "Do this for me" workflows with guardrails.
+2. **Mobile-first user**: start/monitor tasks from phone.
+3. **Power user**: wants UI parity + speed + inspection.
+4. **Admin/host**: manages a shared machine + profiles.
 
-Where are workflows maintain:
-- In OpenWork Cloud (internal name is Den).
+## Success Metrics
 
-Where are workflow hosted:
-- Local Machine
-- Remote via a OpenWork Host (CLI or desktop)
-- Remote on OpenWork Cloud (via Den sandbox workers)
+- < 5 minutes to first successful task on fresh install.
+- > 80% task success without terminal fallback.
+- Permission prompts understood/accepted (low confusion + low deny-by-accident).
+- UI performance: 60fps; <100ms interaction latency; no jank.
 
-## Current OpenWork Cloud flow
+## Product Primitives (What OpenWork Exposes)
 
-- Users can sign in with the standard web auth providers or accept an org invite through the hosted join flow.
-- Invite signup keeps the invited email fixed, verifies the user by email code, and then drops them into the org join path.
-- Cloud workers are a paid flow: users complete checkout before they can launch hosted workers.
-- After a worker is ready, the user connects from the OpenWork app with `Add a worker` -> `Connect remote`, or opens the generated deep link directly.
+OpenWork must feel like "OpenCode, but for everyone."
 
-## Team distribution
+### 1) Tasks
 
-- Organizations can publish shared skill hubs so members discover approved skills from one managed place instead of collecting local-only installs by hand.
+- A Task = a user-described outcome.
+- A Run = an OpenCode session + event stream.
 
-## Actors
-Bob IT guy makes the config.
-Susan the accountant consumes the config.
+### 2) Plans / Todo Lists
 
-Constraints:
-- We use standards were possible
-- We use opencode where possible
-- We stay platform agnostic
+OpenWork provides a first-class plan UI:
 
+- Plan is generated before execution (editable).
+- Plan is updated during execution (step status + timestamps).
+- Plan is stored as a structured artifact attached to the session (JSON) so it's reconstructable.
 
-How to decide if OpenWork should do something:
-- Does it help Bob share config more easily?
-- Does it help Susan consume automations more easily?
-- Is this something that is coding specific?
+Implementation detail:
+
+- The plan is represented in OpenCode as structured `parts` (or a dedicated "plan message") and mirrored in OpenWork.
+
+### 3) Steps
+
+- Each tool call becomes a step row with:
+  - tool name
+  - arguments summary
+  - permission state
+  - start/end time
+  - output preview
+
+### 4) Artifacts
+
+Artifacts are user-visible outputs:
+
+- files created/modified
+- generated documents/spreadsheets/presentations
+- exported logs and summaries
+
+OpenWork lists artifacts per run and supports open/share/download.
+
+### 5) Audit Log
+
+Every run provides an exportable audit log:
+
+- prompts
+- plan
+- tool calls
+- permission decisions
+- outputs
+
+## UI/UX Requirements (Slick as a Core Goal)
+
+### Design Targets
+
+- premium, calm, high-contrast
+- subtle motion, springy transitions
+- zero "developer vibes" in default mode
+
+### Performance Targets
+
+- 60fps animations
+- <100ms input-to-feedback
+- no blocking spinners (always show progress state)
+
+### Mobile-first Interaction
+
+- bottom navigation
+- swipe gestures (dismiss, approve, cancel)
+- haptics for major events
+- adaptive layouts (phone/tablet)
+
+### Accessibility
+
+- WCAG 2.1 AA
+- reduced motion mode
+- screen-reader labels for steps + permissions
+
+## Design Reference
+
+use the design from ./design.ts that is your core reference for building the entire ui
+
+## Functional Requirements
+
+### Workspace Setup
+
+- create a local workspace or connect a remote worker from the workspace shell
+- provider/model setup
+- authorized folders management from Settings when a workspace needs paths outside its root
+- first-run task from the session surface
+
+### Cloud Worker Onboarding (Current)
+
+- Sign in (or sign up) on OpenWork cloud control surface.
+- Launch worker with a human-readable name.
+- If needed, complete checkout and return.
+- Select launched worker from list/detail shell.
+- Connect from OpenWork app via `Add a worker` -> `Connect remote`.
+- Prefer one-click deep link when available; always provide manual URL + token fallback.
+
+### Task Execution
+
+- create task
+- plan preview and edit
+- run with streaming updates
+- pause/resume/cancel
+- show artifacts and summaries
+
+### Permissions
+
+- clear prompts with "why"
+- allow once/session
+- audit of decisions
+
+### Commands
+
+- save a task as a command
+- arguments + quick run
+
+### Scheduling (Future)
+
+- schedule command runs
+- notify on completion
+
+## User Flow Map (Exhaustive)
+
+### 0. Install & Launch
+
+1. User installs OpenWork.
+2. App launches into the workspace/settings shell.
+3. User either creates a local workspace or chooses `Add a worker` -> `Connect remote`.
+4. Local flow starts the host stack for the selected workspace.
+5. Remote flow stores the worker URL + token and reconnects to that worker.
+
+### 1. Local Workspace Setup
+
+1. User picks or creates a workspace folder.
+2. OpenWork starts the local host stack for that workspace.
+3. User configures providers and model defaults.
+4. If needed, user adds extra authorized folders from Settings.
+5. User opens a session and runs the first task.
+
+### 2. Remote Worker Connect
+
+1. User chooses `Add a worker` -> `Connect remote`.
+2. UI accepts a shared OpenWork worker URL and token (or deep link).
+3. OpenWork verifies server health and available capabilities.
+4. User lands in the same workspace/session shell used for local workers.
+5. User can now list sessions and monitor runs.
+
+### 3. Runtime Health & Recovery
+
+1. UI pings `global.health()`.
+2. If unhealthy:
+   - Host: attempt restart via `createOpencode()`.
+   - Client: show reconnect + diagnostics.
+
+### 4. Quick Task Flow
+
+1. User types goal.
+2. OpenWork generates plan (structured).
+3. User approves.
+4. Create session: `session.create()`.
+5. Send prompt: `session.prompt()`.
+6. Subscribe to events: `event.subscribe()`.
+7. Render streaming output + steps.
+8. Show artifacts.
+
+### 5. Guided Task Flow
+
+1. Wizard collects goal, constraints, outputs.
+2. Plan preview with "risky step" highlights.
+3. Run execution with progress UI.
+
+### 6. File-Driven Task Flow
+
+1. User attaches files.
+2. OpenWork injects context into session.
+3. Execute prompt.
+
+### 7. Permissions Flow (Any)
+
+1. Event indicates permission request.
+2. UI modal shows request.
+3. User chooses allow/deny.
+4. UI calls `client.permission.reply({ requestID, reply })`.
+5. Run continues or fails gracefully.
+
+### 8. Cancel / Abort
+
+1. User clicks "Stop".
+2. UI calls `client.session.abort({ sessionID })`.
+3. UI marks run stopped.
+
+### 9. Summarize
+
+1. User taps "Summarize".
+2. UI calls `client.session.summarize({ sessionID })`.
+3. Summary displayed as an artifact.
+
+### 10. Run History
+
+1. UI calls `session.list()`.
+2. Tap a session to load `session.messages()`.
+3. UI reconstructs plan and steps.
+
+### 11. File Explorer + Search
+
+1. User searches: `find.text()`.
+2. Open file: `file.read()`.
+3. Show changed files: `file.status()`.
+
+### 12. Commands
+
+1. Save a plan + prompt as a command.
+2. Re-run command creates a new session.
+
+### 13. Multi-user (Future)
+
+- separate profiles
+- separate allowed folders
+- separate providers/keys
+
+### 14. Hosted Cloud Worker Connect Flow (Current)
+
+1. User opens OpenWork cloud control page and authenticates.
+2. User launches a worker (with optional checkout).
+3. UI polls until worker is healthy.
+4. UI resolves workspace-scoped connect URL (`/w/ws_*`) and access token.
+5. User clicks `Open in OpenWork` or copies manual credentials.
+6. In OpenWork app, user uses `Add a worker` -> `Connect remote` and starts working.
