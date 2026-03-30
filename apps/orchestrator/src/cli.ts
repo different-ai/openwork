@@ -1801,6 +1801,12 @@ function shQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+function addEnvPassThroughArgs(args: string[], names: string[]) {
+  for (const name of names) {
+    args.push("--env", name);
+  }
+}
+
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
   const override =
     readFlag(flags, "sidecar-dir") ?? process.env.OPENWORK_SIDECAR_DIR;
@@ -3784,10 +3790,6 @@ async function startOpenworkServer(options: {
     options.host,
     "--port",
     String(options.port),
-    "--token",
-    options.token,
-    "--host-token",
-    options.hostToken,
     "--workspace",
     options.workspace,
     "--approval",
@@ -3809,12 +3811,6 @@ async function startOpenworkServer(options: {
   }
   if (options.opencodeDirectory) {
     args.push("--opencode-directory", options.opencodeDirectory);
-  }
-  if (options.opencodeUsername) {
-    args.push("--opencode-username", options.opencodeUsername);
-  }
-  if (options.opencodePassword) {
-    args.push("--opencode-password", options.opencodePassword);
   }
   if (options.logFormat) {
     args.push("--log-format", options.logFormat);
@@ -4190,27 +4186,24 @@ async function writeSandboxEntrypoint(options: {
     ? `--cors ${shQuote(options.openwork.corsOrigins.join(","))}`
     : "";
 
-  const opencodeAuthEnv = [
+  const requiredSecretEnv = [
+    ': "${OPENWORK_TOKEN:?OPENWORK_TOKEN is required}"',
+    ': "${OPENWORK_HOST_TOKEN:?OPENWORK_HOST_TOKEN is required}"',
     options.opencode.username
-      ? `export OPENCODE_SERVER_USERNAME=${shQuote(options.opencode.username)}`
+      ? ': "${OPENCODE_SERVER_USERNAME:?OPENCODE_SERVER_USERNAME is required}"'
       : "",
     options.opencode.password
-      ? `export OPENCODE_SERVER_PASSWORD=${shQuote(options.opencode.password)}`
+      ? ': "${OPENCODE_SERVER_PASSWORD:?OPENCODE_SERVER_PASSWORD is required}"'
+      : "",
+    options.openwork.opencodeUsername
+      ? ': "${OPENWORK_OPENCODE_USERNAME:?OPENWORK_OPENCODE_USERNAME is required}"'
+      : "",
+    options.openwork.opencodePassword
+      ? ': "${OPENWORK_OPENCODE_PASSWORD:?OPENWORK_OPENCODE_PASSWORD is required}"'
       : "",
   ]
     .filter(Boolean)
     .join("\n");
-
-  const openworkAuthArgs = [
-    options.openwork.opencodeUsername
-      ? `--opencode-username ${shQuote(options.openwork.opencodeUsername)}`
-      : "",
-    options.openwork.opencodePassword
-      ? `--opencode-password ${shQuote(options.openwork.opencodePassword)}`
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
 
   const opencodeRouterEnv = options.openwork.opencodeRouterEnabled
     ? `export OPENCODE_ROUTER_HEALTH_PORT=${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}`
@@ -4249,7 +4242,7 @@ async function writeSandboxEntrypoint(options: {
     `export OPENWORK_SANDBOX_ENABLED=1`,
     `export OPENWORK_SANDBOX_BACKEND=${shQuote(options.backend)}`,
     opencodeRouterEnv,
-    opencodeAuthEnv,
+    requiredSecretEnv,
     'opencode_pid=""',
     'opencodeRouter_pid=""',
     "cleanup() {",
@@ -4264,14 +4257,12 @@ async function writeSandboxEntrypoint(options: {
       : "",
     options.openwork.opencodeRouterEnabled ? "opencodeRouter_pid=$!" : "",
     `exec ${shQuote(openworkBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_OPENWORK_PORT))}` +
-      ` --token ${shQuote(options.openwork.token)} --host-token ${shQuote(options.openwork.hostToken)}` +
       ` --workspace ${shQuote(workspaceDir)}` +
       ` --approval ${shQuote(options.openwork.approvalMode)}` +
       ` --approval-timeout ${shQuote(String(options.openwork.approvalTimeoutMs))}` +
       (options.openwork.readOnly ? " --read-only" : "") +
       ` --opencode-base-url ${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}` +
       ` --opencode-directory ${shQuote(workspaceDir)}` +
-      ` ${openworkAuthArgs}` +
       ` --log-format ${shQuote(options.openwork.logFormat)}` +
       (options.openwork.opencodeRouterEnabled
         ? ` --opencode-router-health-port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}`
@@ -4404,6 +4395,15 @@ async function startDockerSandbox(options: {
     );
   }
 
+  addEnvPassThroughArgs(args, [
+    "OPENWORK_TOKEN",
+    "OPENWORK_HOST_TOKEN",
+    "OPENCODE_SERVER_USERNAME",
+    "OPENCODE_SERVER_PASSWORD",
+    "OPENWORK_OPENCODE_USERNAME",
+    "OPENWORK_OPENCODE_PASSWORD",
+  ]);
+
   for (const mount of options.extraMounts) {
     const suffix = mount.readonly ? ":ro" : "";
     args.push("-v", `${mount.hostPath}:${mount.containerPath}${suffix}`);
@@ -4426,6 +4426,23 @@ async function startDockerSandbox(options: {
 
   const child = spawnProcess(options.dockerCommand, args, {
     stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      OPENWORK_TOKEN: options.openwork.token,
+      OPENWORK_HOST_TOKEN: options.openwork.hostToken,
+      ...(options.opencode.username
+        ? { OPENCODE_SERVER_USERNAME: options.opencode.username }
+        : {}),
+      ...(options.opencode.password
+        ? { OPENCODE_SERVER_PASSWORD: options.opencode.password }
+        : {}),
+      ...(options.openwork.opencodeUsername
+        ? { OPENWORK_OPENCODE_USERNAME: options.openwork.opencodeUsername }
+        : {}),
+      ...(options.openwork.opencodePassword
+        ? { OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword }
+        : {}),
+    },
   });
   prefixStream(
     child.stdout,
@@ -4566,6 +4583,15 @@ async function startAppleContainerSandbox(options: {
     );
   }
 
+  addEnvPassThroughArgs(args, [
+    "OPENWORK_TOKEN",
+    "OPENWORK_HOST_TOKEN",
+    "OPENCODE_SERVER_USERNAME",
+    "OPENCODE_SERVER_PASSWORD",
+    "OPENWORK_OPENCODE_USERNAME",
+    "OPENWORK_OPENCODE_PASSWORD",
+  ]);
+
   for (const mount of options.extraMounts) {
     if (mount.readonly) {
       args.push(
@@ -4586,6 +4612,23 @@ async function startAppleContainerSandbox(options: {
 
   const child = spawnProcess("container", args, {
     stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      OPENWORK_TOKEN: options.openwork.token,
+      OPENWORK_HOST_TOKEN: options.openwork.hostToken,
+      ...(options.opencode.username
+        ? { OPENCODE_SERVER_USERNAME: options.opencode.username }
+        : {}),
+      ...(options.opencode.password
+        ? { OPENCODE_SERVER_PASSWORD: options.opencode.password }
+        : {}),
+      ...(options.openwork.opencodeUsername
+        ? { OPENWORK_OPENCODE_USERNAME: options.openwork.opencodeUsername }
+        : {}),
+      ...(options.openwork.opencodePassword
+        ? { OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword }
+        : {}),
+    },
   });
   prefixStream(
     child.stdout,
@@ -5129,6 +5172,108 @@ function mergeResourceAttributes(
     .join(",");
 }
 
+const REDACTED_LOG_VALUE = "[REDACTED]";
+
+const SENSITIVE_FLAG_NAMES = [
+  "--token",
+  "--host-token",
+  "--openwork-token",
+  "--openwork-host-token",
+  "--opencode-password",
+  "--opencode-username",
+];
+
+const SENSITIVE_ATTRIBUTE_KEYS = new Set([
+  "token",
+  "hosttoken",
+  "ownertoken",
+  "collaboratortoken",
+  "controltoken",
+  "authorization",
+  "password",
+  "opencodepassword",
+  "opencodeusername",
+  "bottoken",
+  "apptoken",
+]);
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isSensitiveAttributeKey(key?: string): boolean {
+  const trimmed = key?.trim() ?? "";
+  if (!trimmed) return false;
+  const normalized = trimmed.toLowerCase();
+  if (SENSITIVE_ATTRIBUTE_KEYS.has(normalized)) return true;
+  return (
+    (trimmed.startsWith("OPENWORK_") ||
+      trimmed.startsWith("OPENCODE_") ||
+      trimmed.startsWith("DEN_")) &&
+    /TOKEN|PASSWORD|USERNAME|AUTHORIZATION/.test(trimmed)
+  );
+}
+
+function redactSensitiveString(input: string): string {
+  let redacted = input;
+  redacted = redacted.replace(/\b(Bearer)\s+[^\s"']+/gi, "$1 [REDACTED]");
+  redacted = redacted.replace(/\b(Basic)\s+[A-Za-z0-9+/=]+/g, "$1 [REDACTED]");
+  redacted = redacted.replace(
+    /((?:OPENWORK|OPENCODE|DEN)_[A-Z0-9_]*(?:TOKEN|PASSWORD|USERNAME|AUTHORIZATION)[A-Z0-9_]*=)([^\s]+)/g,
+    `$1${REDACTED_LOG_VALUE}`,
+  );
+  redacted = redacted.replace(
+    /("?(?:token|hostToken|ownerToken|collaboratorToken|controlToken|password|authorization|opencodePassword|opencodeUsername|botToken|appToken)"?\s*[:=]\s*")([^"]*)(")/g,
+    `$1${REDACTED_LOG_VALUE}$3`,
+  );
+  redacted = redacted.replace(
+    /("?(?:token|hostToken|ownerToken|collaboratorToken|controlToken|password|authorization|opencodePassword|opencodeUsername|botToken|appToken)"?\s*[:=]\s*)([^,\s}]+)/g,
+    `$1${REDACTED_LOG_VALUE}`,
+  );
+  for (const flag of SENSITIVE_FLAG_NAMES) {
+    redacted = redacted.replace(
+      new RegExp(`(${escapeRegExp(flag)}\\s+)([^\\s]+)`, "g"),
+      `$1${REDACTED_LOG_VALUE}`,
+    );
+  }
+  return redacted;
+}
+
+function redactLogValue(value: unknown, key?: string): unknown {
+  if (isSensitiveAttributeKey(key)) {
+    return REDACTED_LOG_VALUE;
+  }
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return redactSensitiveString(value);
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactLogValue(item, key));
+  }
+  if (value instanceof Error) {
+    return `${value.name}: ${redactSensitiveString(value.message)}`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).map(
+      ([entryKey, entryValue]) => [
+        entryKey,
+        redactLogValue(entryValue, entryKey),
+      ],
+    );
+    return Object.fromEntries(entries);
+  }
+  return redactSensitiveString(String(value));
+}
+
 function createLogger(options: {
   format: LogFormat;
   runId: string;
@@ -5180,12 +5325,14 @@ function createLogger(options: {
       ...(component ? { "service.component": component } : {}),
       ...(attributes ?? {}),
     };
+    const redactedMessage = redactSensitiveString(message);
+    const redactedAttributes = redactLogValue(mergedAttributes) as LogAttributes;
     options.onLog?.({
       time: Date.now(),
       level,
-      message,
+      message: redactedMessage,
       component,
-      attributes: mergedAttributes,
+      attributes: redactedAttributes,
     });
     if (output === "silent") return;
     if (options.format === "json") {
@@ -5193,8 +5340,8 @@ function createLogger(options: {
         timeUnixNano: toUnixNano(),
         severityText: level.toUpperCase(),
         severityNumber: LOG_LEVEL_NUMBERS[level],
-        body: message,
-        attributes: mergedAttributes,
+        body: redactedMessage,
+        attributes: redactedAttributes,
         resource,
       };
       process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -5210,7 +5357,7 @@ function createLogger(options: {
       ? colorize(levelTag, levelColors[level] ?? ANSI.gray, colorEnabled)
       : "";
     const tag = [coloredLabel, coloredLevel].filter(Boolean).join(" ");
-    const line = tag ? `${tag} ${message}` : message;
+    const line = tag ? `${tag} ${redactedMessage}` : redactedMessage;
     process.stdout.write(`${line}\n`);
   };
 
@@ -5421,8 +5568,6 @@ async function spawnRouterDaemon(
       "--opencode-hot-reload-cooldown-ms",
       String(opencodeHotReloadCooldownMs),
     );
-  commandArgs.push("--opencode-username", opencodeCredentials.username);
-  commandArgs.push("--opencode-password", opencodeCredentials.password);
   if (corsValue) commandArgs.push("--cors", corsValue);
   if (allowExternal) commandArgs.push("--allow-external");
   if (sidecarSource) commandArgs.push("--sidecar-source", sidecarSource);
@@ -5436,6 +5581,8 @@ async function spawnRouterDaemon(
     stdio: "ignore",
     env: {
       ...process.env,
+      OPENWORK_OPENCODE_USERNAME: opencodeUsername,
+      OPENWORK_OPENCODE_PASSWORD: opencodePassword,
     },
   });
   child.unref();
@@ -7418,12 +7565,11 @@ async function runStart(args: ParsedArgs) {
           ]
         : []),
       `OpenWork URL: ${openworkConnectUrl}`,
-      `OpenWork Collaborator Token: ${openworkToken}`,
-      ...(openworkOwnerToken
-        ? [`OpenWork Owner Token: ${openworkOwnerToken}`]
-        : []),
+      "Credentials withheld from detached stdout.",
+      ...(openworkOwnerToken ? ["OpenWork owner token issued."] : []),
       `OpenCode URL: ${opencodeConnectUrl}`,
-      `Attach: ${attachCommand}`,
+      `Attach: ${redactSensitiveString(attachCommand)}`,
+      "Use `--json` only when you explicitly need the raw tokens or passwords in command output.",
     ].join("\n");
     process.stdout.write(`${summary}\n`);
     process.exit(0);
@@ -8352,25 +8498,24 @@ async function runStart(args: ParsedArgs) {
       console.log(`OpenCode: ${payload.opencode.baseUrl}`);
       console.log(`OpenCode connect URL: ${payload.opencode.connectUrl}`);
       if (payload.opencode.username && payload.opencode.password) {
-        console.log(
-          `OpenCode auth: ${payload.opencode.username} / ${payload.opencode.password}`,
-        );
+        console.log("OpenCode auth: managed credentials configured (withheld from stdout)");
       }
       console.log(`OpenWork server: ${payload.openwork.baseUrl}`);
       console.log(`OpenWork connect URL: ${payload.openwork.connectUrl}`);
-      console.log(
-        `OpenWork Collaborator Token: ${payload.openwork.collaboratorToken}`,
-      );
+      console.log("OpenWork collaborator token: issued (withheld from stdout)");
       console.log("  Routine remote access for shared workers.");
       if (payload.openwork.ownerToken) {
-        console.log(`OpenWork Owner Token: ${payload.openwork.ownerToken}`);
+        console.log("OpenWork owner token: issued (withheld from stdout)");
         console.log(
           "  Use this when the remote client must answer permission prompts.",
         );
       }
-      console.log(`OpenWork Host Admin Token: ${payload.openwork.hostToken}`);
+      console.log("OpenWork host admin token: issued (withheld from stdout)");
       console.log(
         "  Internal host/admin token for approvals CLI and host-only APIs.",
+      );
+      console.log(
+        "Use `--json` only when you explicitly need raw credentials in command output.",
       );
     }
 

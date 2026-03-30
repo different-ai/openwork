@@ -242,20 +242,6 @@ pub fn spawn_orchestrator_daemon(
         args.push(port.to_string());
     }
 
-    if let Some(username) = &options.opencode_username {
-        if !username.trim().is_empty() {
-            args.push("--opencode-username".to_string());
-            args.push(username.to_string());
-        }
-    }
-
-    if let Some(password) = &options.opencode_password {
-        if !password.trim().is_empty() {
-            args.push("--opencode-password".to_string());
-            args.push(password.to_string());
-        }
-    }
-
     if let Some(cors) = &options.cors {
         if !cors.trim().is_empty() {
             args.push("--cors".to_string());
@@ -273,6 +259,18 @@ pub fn spawn_orchestrator_daemon(
         sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref());
     if let Some(path_env) = prepended_path_env(&sidecar_paths) {
         command = command.env("PATH", path_env);
+    }
+
+    if let Some(username) = &options.opencode_username {
+        if !username.trim().is_empty() {
+            command = command.env("OPENWORK_OPENCODE_USERNAME", username);
+        }
+    }
+
+    if let Some(password) = &options.opencode_password {
+        if !password.trim().is_empty() {
+            command = command.env("OPENWORK_OPENCODE_PASSWORD", password);
+        }
     }
 
     for (key, value) in crate::bun_env::bun_env_overrides() {

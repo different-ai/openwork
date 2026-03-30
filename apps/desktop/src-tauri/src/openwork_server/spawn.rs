@@ -116,8 +116,6 @@ pub fn build_openwork_args(
     host: &str,
     port: u16,
     workspace_paths: &[String],
-    token: &str,
-    host_token: &str,
     opencode_base_url: Option<&str>,
     opencode_directory: Option<&str>,
 ) -> Vec<String> {
@@ -126,10 +124,6 @@ pub fn build_openwork_args(
         host.to_string(),
         "--port".to_string(),
         port.to_string(),
-        "--token".to_string(),
-        token.to_string(),
-        "--host-token".to_string(),
-        host_token.to_string(),
         // Always allow all origins since the OpenWork server is designed to accept
         // remote connections from client devices (phones, laptops) which may use
         // different origins (localhost dev servers, tauri apps, web browsers).
@@ -187,8 +181,6 @@ pub fn spawn_openwork_server(
         host,
         port,
         workspace_paths,
-        token,
-        host_token,
         opencode_base_url,
         opencode_directory,
     );
@@ -197,6 +189,10 @@ pub fn spawn_openwork_server(
         .map(|path| Path::new(path))
         .unwrap_or_else(|| Path::new("."));
     let mut command = command.args(args).current_dir(cwd);
+
+    command = command
+        .env("OPENWORK_TOKEN", token)
+        .env("OPENWORK_HOST_TOKEN", host_token);
 
     if let Some(port) = opencode_router_health_port {
         command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());

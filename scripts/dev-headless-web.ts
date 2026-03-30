@@ -257,8 +257,8 @@ logLine(`[dev:headless-web] Web URL: ${webUrl}`);
 logLine(
   `[dev:headless-web] OpenCodeRouter: ${opencodeRouterEnabled ? "on" : "off"} (set OPENWORK_DEV_OPENCODE_ROUTER=0 to disable)`,
 );
-logLine(`[dev:headless-web] OPENWORK_TOKEN: ${openworkToken}`);
-logLine(`[dev:headless-web] OPENWORK_HOST_TOKEN: ${openworkHostToken}`);
+logLine("[dev:headless-web] OPENWORK_TOKEN: [REDACTED]");
+logLine("[dev:headless-web] OPENWORK_HOST_TOKEN: [REDACTED]");
 logLine(
   `[dev:headless-web] Web logs: ${path.relative(cwd, path.join(tmpDir, "dev-web.log"))}`,
 );
@@ -302,10 +302,6 @@ const headlessProcess = spawnLogged(
     ...(remoteAccessEnabled ? ["--remote-access"] : []),
     "--openwork-port",
     String(openworkPort),
-    "--openwork-token",
-    openworkToken,
-    "--openwork-host-token",
-    openworkHostToken,
   ],
   path.join(tmpDir, "dev-headless.log"),
   headlessEnv,

@@ -456,6 +456,49 @@ fn truncate_for_report(input: &str) -> String {
     format!("{}...[truncated]", &trimmed[..MAX_LEN])
 }
 
+fn is_sensitive_progress_key(key: &str) -> bool {
+    let normalized = key.trim().to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "token"
+            | "hosttoken"
+            | "ownertoken"
+            | "collaboratortoken"
+            | "password"
+            | "opencodepassword"
+            | "opencodeusername"
+            | "authorization"
+    ) || ((key.starts_with("OPENWORK_") || key.starts_with("OPENCODE_") || key.starts_with("DEN_"))
+        && (key.contains("TOKEN") || key.contains("PASSWORD") || key.contains("USERNAME")))
+}
+
+fn redact_progress_value(value: serde_json::Value, key: Option<&str>) -> serde_json::Value {
+    if let Some(key) = key {
+        if is_sensitive_progress_key(key) {
+            return serde_json::Value::String("[REDACTED]".to_string());
+        }
+    }
+
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(entry_key, entry_value)| {
+                    let redacted = redact_progress_value(entry_value, Some(&entry_key));
+                    (entry_key, redacted)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|item| redact_progress_value(item, key))
+                .collect(),
+        ),
+        serde_json::Value::String(text) => serde_json::Value::String(text),
+        other => other,
+    }
+}
+
 fn to_command_debug(result: DockerCommandResult) -> SandboxDoctorCommandDebug {
     SandboxDoctorCommandDebug {
         status: result.status,
@@ -535,6 +578,7 @@ fn emit_sandbox_progress(
     message: &str,
     payload: serde_json::Value,
 ) {
+    let payload = redact_progress_value(payload, None);
     let at = now_ms();
     let elapsed = payload
         .get("elapsedMs")
@@ -827,11 +871,11 @@ pub fn orchestrator_start_detached(
             "docker.config",
             "Inspecting Docker configuration...",
             json!({
-                "candidates": candidates,
+                "candidateCount": candidates.len(),
                 "resolvedDockerBin": resolved,
-                "openworkDockerBin": env::var("OPENWORK_DOCKER_BIN").ok(),
-                "openwrkDockerBin": env::var("OPENWRK_DOCKER_BIN").ok(),
-                "dockerBin": env::var("DOCKER_BIN").ok(),
+                "hasOpenworkDockerBinOverride": env::var("OPENWORK_DOCKER_BIN").ok().is_some(),
+                "hasOpenwrkDockerBinOverride": env::var("OPENWRK_DOCKER_BIN").ok().is_some(),
+                "hasDockerBinOverride": env::var("DOCKER_BIN").ok().is_some(),
             }),
         );
     }
@@ -855,10 +899,6 @@ pub fn orchestrator_start_detached(
             "--detach".to_string(),
             "--openwork-port".to_string(),
             port.to_string(),
-            "--openwork-token".to_string(),
-            token.clone(),
-            "--openwork-host-token".to_string(),
-            host_token.clone(),
             "--run-id".to_string(),
             sandbox_run_id.clone(),
         ];
@@ -881,17 +921,21 @@ pub fn orchestrator_start_detached(
             "Launching sandbox host...",
             json!({
                 "command": command_label,
-                "args": args,
-                "env": {
-                    "PATH": env::var("PATH").ok(),
-                    "OPENWORK_DOCKER_BIN": env::var("OPENWORK_DOCKER_BIN").ok(),
-                    "OPENWRK_DOCKER_BIN": env::var("OPENWRK_DOCKER_BIN").ok(),
-                    "DOCKER_BIN": env::var("DOCKER_BIN").ok(),
-                }
+                "workspacePath": workspace_path,
+                "openworkUrl": openwork_url,
+                "argCount": args.len(),
+                "hasDockerOverrides": env::var("OPENWORK_DOCKER_BIN").ok().is_some()
+                    || env::var("OPENWRK_DOCKER_BIN").ok().is_some()
+                    || env::var("DOCKER_BIN").ok().is_some(),
             }),
         );
 
-        if let Err(err) = command.args(str_args).spawn() {
+        if let Err(err) = command
+            .args(str_args)
+            .env("OPENWORK_TOKEN", token.clone())
+            .env("OPENWORK_HOST_TOKEN", host_token.clone())
+            .spawn()
+        {
             emit_sandbox_progress(
                 &app,
                 &sandbox_run_id,
