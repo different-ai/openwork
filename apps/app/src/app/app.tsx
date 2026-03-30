@@ -121,6 +121,14 @@ import {
 } from "./theme";
 import { createSystemState } from "./system-state";
 import { createSessionStore } from "./context/session";
+import {
+  createModelConfigStore,
+  parseSessionChoiceOverrides,
+  parseWorkspaceModelVariants,
+  serializeSessionChoiceOverrides,
+  sessionModelOverridesKey,
+  workspaceModelVariantsKey,
+} from "./context/model-config";
 import { createProvidersStore } from "./context/providers";
 import { useSessionDisplayPreferences } from "./app-settings/session-display-preferences";
 import {
@@ -775,14 +783,6 @@ export default function App() {
       // ignore
     }
   };
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [sessionModelById, setSessionModelById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [pendingSessionModel, setPendingSessionModel] = createSignal<ModelRef | null>(null);
-  const [sessionModelOverridesReady, setSessionModelOverridesReady] = createSignal(false);
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
@@ -796,6 +796,7 @@ export default function App() {
   type PromptFocusReturnTarget = "none" | "composer";
 
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
+  const modelConfig = createModelConfigStore();
 
   createEffect(() => {
     const view = currentView();
@@ -860,19 +861,8 @@ export default function App() {
     selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot().trim(),
     selectedSessionId,
     setSelectedSessionId,
-    sessionModelState: () => ({
-      overrides: sessionModelOverrideById(),
-      resolved: sessionModelById(),
-    }),
-    setSessionModelState: (updater) => {
-      const next = updater({
-        overrides: sessionModelOverrideById(),
-        resolved: sessionModelById(),
-      });
-      setSessionModelOverrideById(next.overrides);
-      setSessionModelById(next.resolved);
-      return next;
-    },
+    sessionModelState: modelConfig.sessionModelState,
+    setSessionModelState: modelConfig.setSessionModelState,
     lastUserModelFromMessages,
     developerMode,
     setError,
@@ -1196,7 +1186,7 @@ export default function App() {
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
       const parts = await buildPromptParts(resolvedDraft);
-      const selectedVariant = sanitizeModelVariantForRef(model, getVariantFor(model)) ?? undefined;
+      const selectedVariant = sanitizeModelVariantForRef(model, modelVariant()) ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = reasoningEffort
@@ -1250,17 +1240,12 @@ export default function App() {
         });
         assertNoClientError(result);
 
-        setSessionModelById((current) => ({
+        modelConfig.setSessionModelById((current) => ({
           ...current,
           [sessionID]: model,
         }));
 
-        setSessionModelOverrideById((current) => {
-          if (!current[sessionID]) return current;
-          const copy = { ...current };
-          delete copy[sessionID];
-          return copy;
-        });
+        modelConfig.clearSessionModelOverride(sessionID);
       }
 
       finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
@@ -1329,7 +1314,7 @@ export default function App() {
       sessionID,
       messageCount: visible.length,
       model: modelLabel,
-      variant: sanitizeModelVariantForRef(model, getVariantFor(model)) ?? null,
+      variant: sanitizeModelVariantForRef(model, modelVariant()) ?? null,
     });
 
     try {
@@ -1817,48 +1802,6 @@ export default function App() {
   };
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const sessionModelOverridesKey = (workspaceId: string) =>
-    `${SESSION_MODEL_PREF_KEY}.${workspaceId}`;
-
-  const parseSessionModelOverrides = (raw: string | null) => {
-    if (!raw) return {} as Record<string, ModelRef>;
-    try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return {} as Record<string, ModelRef>;
-      }
-      const next: Record<string, ModelRef> = {};
-      for (const [sessionId, value] of Object.entries(parsed)) {
-        if (typeof value === "string") {
-          const model = parseModelRef(value);
-          if (model) next[sessionId] = model;
-          continue;
-        }
-        if (!value || typeof value !== "object") continue;
-        const record = value as Record<string, unknown>;
-        if (typeof record.providerID === "string" && typeof record.modelID === "string") {
-          next[sessionId] = {
-            providerID: record.providerID,
-            modelID: record.modelID,
-          };
-        }
-      }
-      return next;
-    } catch {
-      return {} as Record<string, ModelRef>;
-    }
-  };
-
-  const serializeSessionModelOverrides = (overrides: Record<string, ModelRef>) => {
-    const entries = Object.entries(overrides);
-    if (!entries.length) return null;
-    const payload: Record<string, string> = {};
-    for (const [sessionId, model] of entries) {
-      payload[sessionId] = formatModelRef(model);
-    }
-    return JSON.stringify(payload);
-  };
-
   const parseDefaultModelFromConfig = (content: string | null) => {
     if (!content) return null;
     try {
@@ -1972,18 +1915,7 @@ export default function App() {
 
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  const [modelVariantMap, setModelVariantMap] = createSignal<Record<string, string>>({});
-  const modelVariant = () => getVariantFor(selectedSessionModel());
-  const getVariantFor = (ref: ModelRef) => modelVariantMap()[`${ref.providerID}/${ref.modelID}`] ?? null;
-  const updateModelVariant = (ref: ModelRef, value: string | null) => {
-    const key = `${ref.providerID}/${ref.modelID}`;
-    setModelVariantMap((prev) => {
-      const next = { ...prev };
-      if (value) next[key] = value;
-      else delete next[key];
-      return next;
-    });
-  };
+  const modelVariant = () => modelConfig.getVariantFor(selectedSessionModel(), selectedSessionId());
   const toggleAutoCompactContext = () => {
     if (autoCompactContextSaving()) return;
     setAutoCompactContext((value) => !value);
@@ -2976,11 +2908,12 @@ export default function App() {
       if (typeof window !== "undefined") {
         try {
           const sessionOverridePrefix = `${SESSION_MODEL_PREF_KEY}.`;
+          const workspaceVariantPrefix = `${VARIANT_PREF_KEY}.`;
           const keysToRemove: string[] = [];
           for (let index = 0; index < window.localStorage.length; index += 1) {
             const key = window.localStorage.key(index);
             if (!key) continue;
-            if (key.startsWith(sessionOverridePrefix)) {
+            if (key.startsWith(sessionOverridePrefix) || key.startsWith(workspaceVariantPrefix) || key === VARIANT_PREF_KEY) {
               keysToRemove.push(key);
             }
           }
@@ -3003,7 +2936,9 @@ export default function App() {
       resetSessionDisplayPreferences();
       setHideTitlebar(false);
       setAutoCompactContext(false);
-      updateModelVariant(selectedSessionModel(), null);
+      modelConfig.clearPendingSessionChoice();
+      modelConfig.setSessionChoiceOverrideById({});
+      modelConfig.setWorkspaceVariantMap({});
       setUpdateAutoCheck(true);
       setUpdateAutoDownload(false);
       setUpdateStatus({ state: "idle", lastCheckedAt: null });
@@ -3341,12 +3276,13 @@ export default function App() {
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
     const id = selectedSessionId();
-    if (!id) return pendingSessionModel() ?? defaultModel();
+    const pendingChoice = modelConfig.pendingSessionChoice();
+    if (!id) return pendingChoice?.model ?? defaultModel();
 
-    const override = sessionModelOverrideById()[id];
+    const override = modelConfig.sessionChoiceOverrideById()[id]?.model;
     if (override) return override;
 
-    const known = sessionModelById()[id];
+    const known = modelConfig.sessionModelById()[id];
     if (known) return known;
 
     const fromMessages = lastUserModelFromMessages(messages());
@@ -3405,7 +3341,7 @@ export default function App() {
     const currentDefault = defaultModel();
 
     if (!allProviders.length) {
-      const behavior = getModelBehaviorCopy(DEFAULT_MODEL, getVariantFor(DEFAULT_MODEL));
+      const behavior = getModelBehaviorCopy(DEFAULT_MODEL, modelConfig.getWorkspaceVariantFor(DEFAULT_MODEL));
       return [
         {
           providerID: DEFAULT_MODEL.providerID,
@@ -3416,7 +3352,7 @@ export default function App() {
           behaviorTitle: behavior.title,
           behaviorLabel: behavior.label,
           behaviorDescription: behavior.description,
-          behaviorValue: normalizeModelBehaviorValue(getVariantFor(DEFAULT_MODEL)),
+          behaviorValue: normalizeModelBehaviorValue(modelConfig.getWorkspaceVariantFor(DEFAULT_MODEL)),
           behaviorOptions: behavior.options,
           isFree: true,
           isConnected: false,
@@ -3447,8 +3383,12 @@ export default function App() {
         const isDefault =
           provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
         const ref = { providerID: provider.id, modelID: model.id };
-        const behavior = getModelBehaviorSummary(provider.id, model, getVariantFor(ref));
-        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, getVariantFor(ref));
+        const activeVariant =
+          modelPickerTarget() === "session" && modelEquals(ref, selectedSessionModel())
+            ? modelVariant()
+            : modelConfig.getWorkspaceVariantFor(ref);
+        const behavior = getModelBehaviorSummary(provider.id, model, activeVariant);
+        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, activeVariant);
         const footerBits: string[] = [];
         if (defaultModelID === model.id || isDefault) {
           footerBits.push(t("settings.model_default", currentLocale()));
@@ -3574,19 +3514,18 @@ export default function App() {
 
     if (target === "default") {
       applyDefaultModelChoice(next);
+      closeModelPicker({ restorePromptFocus: false });
       return;
     }
 
     const id = selectedSessionId();
     if (!id) {
-      setPendingSessionModel(next);
-      applyDefaultModelChoice(next);
+      modelConfig.setPendingSessionModel(next);
       closeModelPicker({ restorePromptFocus });
       return;
     }
 
-    setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
-    applyDefaultModelChoice(next);
+    modelConfig.setSessionModelOverride(id, next);
     closeModelPicker({ restorePromptFocus });
   }
 
@@ -3695,20 +3634,13 @@ export default function App() {
       }
 
       const session = unwrap(rawResult);
-      const pendingModel = pendingSessionModel();
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
       mark("session:select:ok", { sessionID: session.id });
 
-      if (pendingModel) {
-        setSessionModelOverrideById((current) => ({
-          ...current,
-          [session.id]: pendingModel,
-        }));
-        setPendingSessionModel(null);
-      }
+      modelConfig.applyPendingSessionChoice(session.id);
 
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
@@ -3855,20 +3787,6 @@ export default function App() {
           }
         }
 
-        const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
-        if (storedVariant && storedVariant.trim()) {
-          try {
-            const parsed = JSON.parse(storedVariant);
-            if (typeof parsed === "object" && parsed !== null) {
-              setModelVariantMap(parsed);
-            } else {
-              setModelVariantMap({ [`${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`]: normalizeModelBehaviorValue(storedVariant)! });
-            }
-          } catch {
-            setModelVariantMap({ [`${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`]: normalizeModelBehaviorValue(storedVariant)! });
-          }
-        }
-
         const storedUpdateAutoCheck = window.localStorage.getItem(
           "openwork.updateAutoCheck"
         );
@@ -3943,24 +3861,57 @@ export default function App() {
     const workspaceId = workspaceStore.selectedWorkspaceId();
     if (!workspaceId) return;
 
-    setSessionModelOverridesReady(false);
+    modelConfig.setSessionModelOverridesReady(false);
     const raw = window.localStorage.getItem(sessionModelOverridesKey(workspaceId));
-    setSessionModelOverrideById(parseSessionModelOverrides(raw));
-    setSessionModelOverridesReady(true);
+    modelConfig.setSessionChoiceOverrideById(parseSessionChoiceOverrides(raw));
+    modelConfig.setSessionModelOverridesReady(true);
   });
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    if (!sessionModelOverridesReady()) return;
+    if (!modelConfig.sessionModelOverridesReady()) return;
     const workspaceId = workspaceStore.selectedWorkspaceId();
     if (!workspaceId) return;
 
-    const payload = serializeSessionModelOverrides(sessionModelOverrideById());
+    const payload = serializeSessionChoiceOverrides(modelConfig.sessionChoiceOverrideById());
     try {
       if (payload) {
         window.localStorage.setItem(sessionModelOverridesKey(workspaceId), payload);
       } else {
         window.localStorage.removeItem(sessionModelOverridesKey(workspaceId));
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    if (!workspaceId) {
+      modelConfig.setWorkspaceVariantMap({});
+      return;
+    }
+
+    const scopedRaw = window.localStorage.getItem(workspaceModelVariantsKey(workspaceId));
+    const legacyRaw = scopedRaw == null ? window.localStorage.getItem(VARIANT_PREF_KEY) : null;
+    modelConfig.setWorkspaceVariantMap(
+      parseWorkspaceModelVariants(scopedRaw ?? legacyRaw, defaultModel()),
+    );
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    if (!workspaceId) return;
+
+    try {
+      const map = modelConfig.workspaceVariantMap();
+      const key = workspaceModelVariantsKey(workspaceId);
+      if (Object.keys(map).length > 0) {
+        window.localStorage.setItem(key, JSON.stringify(map));
+      } else {
+        window.localStorage.removeItem(key);
       }
     } catch {
       // ignore
@@ -4425,20 +4376,6 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const map = modelVariantMap();
-      if (Object.keys(map).length > 0) {
-        window.localStorage.setItem(VARIANT_PREF_KEY, JSON.stringify(map));
-      } else {
-        window.localStorage.removeItem(VARIANT_PREF_KEY);
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
     const state = updateStatus();
     if (typeof window === "undefined") return;
     if (state.state === "idle" && state.lastCheckedAt) {
@@ -4673,7 +4610,7 @@ export default function App() {
       autoCompactContextBusy: autoCompactContextSaving(),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
-      modelVariantLabel: getModelBehaviorCopy(defaultModel(), getVariantFor(defaultModel())).label,
+      modelVariantLabel: getModelBehaviorCopy(defaultModel(), modelConfig.getWorkspaceVariantFor(defaultModel())).label,
       editModelVariant: openDefaultModelPicker,
       updateAutoCheck: updateAutoCheck(),
       toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
@@ -4807,10 +4744,17 @@ export default function App() {
     installUpdateAndRestart,
     selectedSessionModelLabel: selectedSessionModelLabel(),
     openSessionModelPicker: openSessionModelPicker,
-    modelVariantLabel: getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).label,
-    modelVariant: getVariantFor(selectedSessionModel()),
-    modelBehaviorOptions: getModelBehaviorCopy(selectedSessionModel(), getVariantFor(selectedSessionModel())).options,
-    setModelVariant: (value: string | null) => updateModelVariant(selectedSessionModel(), value),
+    modelVariantLabel: getModelBehaviorCopy(selectedSessionModel(), modelVariant()).label,
+    modelVariant: modelVariant(),
+    modelBehaviorOptions: getModelBehaviorCopy(selectedSessionModel(), modelVariant()).options,
+    setModelVariant: (value: string | null) => {
+      const sessionId = selectedSessionId();
+      if (sessionId) {
+        modelConfig.setSessionVariantOverride(sessionId, sanitizeModelVariantForRef(selectedSessionModel(), value));
+        return;
+      }
+      modelConfig.setPendingSessionVariant(sanitizeModelVariantForRef(selectedSessionModel(), value));
+    },
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
     skills: skills(),
@@ -5024,7 +4968,19 @@ export default function App() {
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
         onBehaviorChange={(model, value) => {
-          updateModelVariant(model, sanitizeModelVariantForRef(model, value));
+          const nextValue = sanitizeModelVariantForRef(model, value);
+          if (modelPickerTarget() === "default") {
+            modelConfig.setWorkspaceVariant(model, nextValue);
+            return;
+          }
+
+          const sessionId = selectedSessionId();
+          if (sessionId) {
+            modelConfig.setSessionVariantOverride(sessionId, nextValue);
+            return;
+          }
+
+          modelConfig.setPendingSessionVariant(nextValue);
         }}
         onOpenSettings={openSettingsFromModelPicker}
         onClose={closeModelPicker}
