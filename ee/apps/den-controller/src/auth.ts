@@ -8,7 +8,7 @@ import { createDenTypeId, normalizeDenTypeId } from "./db/typeid.js"
 import { sendDenOrganizationInvitationEmail, sendDenVerificationEmail } from "./email.js"
 import { env } from "./env.js"
 import { syncDenSignupContact } from "./loops.js"
-import { ensureUserOrgAccess, seedDefaultOrganizationRoles } from "./orgs.js"
+import { seedDefaultOrganizationRoles } from "./orgs.js"
 import { denOrganizationAccess, denOrganizationStaticRoles } from "./organization-access.js"
 
 const socialProviders = {
@@ -43,7 +43,7 @@ function getInvitationOrigin() {
 }
 
 function buildInvitationLink(invitationId: string) {
-  return new URL(`/?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
+  return new URL(`/join-org?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
 }
 
 export const auth = betterAuth({
@@ -123,18 +123,10 @@ export const auth = betterAuth({
     sendOnSignUp: true,
     sendOnSignIn: true,
     afterEmailVerification: async (user) => {
-      const userId = normalizeDenTypeId("user", user.id)
-      await Promise.all([
-        ensureUserOrgAccess({
-          userId,
-          email: user.email,
-          name: user.name,
-        }),
-        syncDenSignupContact({
-          email: user.email,
-          name: user.name,
-        }),
-      ])
+      await syncDenSignupContact({
+        email: user.email,
+        name: user.name,
+      })
     },
   },
   emailAndPassword: {

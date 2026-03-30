@@ -1,4 +1,4 @@
-import { and, asc, eq, gt } from "./db/drizzle.js"
+import { and, asc, eq } from "./db/drizzle.js"
 import { db } from "./db/index.js"
 import {
   AuthSessionTable,
@@ -18,6 +18,24 @@ type SessionId = typeof AuthSessionTable.$inferSelect.id
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberRow = typeof MemberTable.$inferSelect
 type InvitationRow = typeof InvitationTable.$inferSelect
+
+export type InvitationStatus = "pending" | "accepted" | "canceled" | "expired"
+
+export type InvitationPreview = {
+  invitation: {
+    id: string
+    email: string
+    role: string
+    status: InvitationStatus
+    expiresAt: Date
+    createdAt: Date
+  }
+  organization: {
+    id: OrgId
+    name: string
+    slug: string
+  }
+}
 
 export type UserOrgSummary = {
   id: OrgId
@@ -142,18 +160,29 @@ async function listMembershipRows(userId: UserId) {
     .orderBy(asc(MemberTable.createdAt))
 }
 
-async function listPendingInvitations(email: string) {
-  return db
+function getInvitationStatus(invitation: Pick<InvitationRow, "status" | "expiresAt">): InvitationStatus {
+  if (invitation.status !== "pending") {
+    return invitation.status as Exclude<InvitationStatus, "expired">
+  }
+
+  return invitation.expiresAt > new Date() ? "pending" : "expired"
+}
+
+async function getInvitationById(invitationIdRaw: string) {
+  let invitationId
+  try {
+    invitationId = normalizeDenTypeId("invitation", invitationIdRaw)
+  } catch {
+    return null
+  }
+
+  const rows = await db
     .select()
     .from(InvitationTable)
-    .where(
-      and(
-        eq(InvitationTable.email, email.trim().toLowerCase()),
-        eq(InvitationTable.status, "pending"),
-        gt(InvitationTable.expiresAt, new Date()),
-      ),
-    )
-    .orderBy(asc(InvitationTable.createdAt))
+    .where(eq(InvitationTable.id, invitationId))
+    .limit(1)
+
+  return rows[0] ?? null
 }
 
 async function ensureDefaultDynamicRoles(orgId: OrgId) {
@@ -292,14 +321,23 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
 export async function acceptInvitationForUser(input: {
   userId: UserId
   email: string
-  invitationId?: string | null
+  invitationId: string | null
 }) {
-  const invitations = await listPendingInvitations(input.email)
-  const invitation = input.invitationId
-    ? invitations.find((candidate) => candidate.id === input.invitationId) ?? null
-    : (invitations[0] ?? null)
+  if (!input.invitationId) {
+    return null
+  }
+
+  const invitation = await getInvitationById(input.invitationId)
 
   if (!invitation) {
+    return null
+  }
+
+  if (invitation.email.trim().toLowerCase() !== input.email.trim().toLowerCase()) {
+    return null
+  }
+
+  if (getInvitationStatus(invitation) !== "pending") {
     return null
   }
 
@@ -307,6 +345,49 @@ export async function acceptInvitationForUser(input: {
   return {
     invitation,
     member,
+  }
+}
+
+export async function getInvitationPreview(invitationIdRaw: string): Promise<InvitationPreview | null> {
+  let invitationId
+  try {
+    invitationId = normalizeDenTypeId("invitation", invitationIdRaw)
+  } catch {
+    return null
+  }
+
+  const rows = await db
+    .select({
+      invitation: {
+        id: InvitationTable.id,
+        email: InvitationTable.email,
+        role: InvitationTable.role,
+        status: InvitationTable.status,
+        expiresAt: InvitationTable.expiresAt,
+        createdAt: InvitationTable.createdAt,
+      },
+      organization: {
+        id: OrganizationTable.id,
+        name: OrganizationTable.name,
+        slug: OrganizationTable.slug,
+      },
+    })
+    .from(InvitationTable)
+    .innerJoin(OrganizationTable, eq(InvitationTable.organizationId, OrganizationTable.id))
+    .where(eq(InvitationTable.id, invitationId))
+    .limit(1)
+
+  const row = rows[0]
+  if (!row) {
+    return null
+  }
+
+  return {
+    invitation: {
+      ...row.invitation,
+      status: getInvitationStatus(row.invitation),
+    },
+    organization: row.organization,
   }
 }
 
@@ -340,8 +421,6 @@ async function createOrganizationRecord(input: {
 
 export async function ensureUserOrgAccess(input: {
   userId: UserId
-  email: string
-  name?: string | null
 }) {
   const memberships = await listMembershipRows(input.userId)
   if (memberships.length > 0) {
@@ -350,16 +429,7 @@ export async function ensureUserOrgAccess(input: {
     return memberships[0].organizationId
   }
 
-  const pendingInvitation = (await listPendingInvitations(input.email))[0]
-  if (pendingInvitation) {
-    const acceptedMember = await acceptInvitation(pendingInvitation, input.userId)
-    return acceptedMember.organizationId
-  }
-
-  return createOrganizationRecord({
-    userId: input.userId,
-    name: buildPersonalOrgName(input.email),
-  })
+  return null
 }
 
 export async function createOrganizationForUser(input: {
@@ -425,11 +495,18 @@ export async function resolveUserOrganizationsForSession(input: {
 }) {
   await ensureUserOrgAccess({
     userId: input.userId,
-    email: input.email,
-    name: input.name,
   })
 
-  const orgs = await listUserOrgs(input.userId)
+  let orgs = await listUserOrgs(input.userId)
+  if (orgs.length === 0) {
+    await createOrganizationRecord({
+      userId: input.userId,
+      name: buildPersonalOrgName(input.email),
+    })
+
+    orgs = await listUserOrgs(input.userId)
+  }
+
   const availableOrgIds = new Set(orgs.map((org) => org.id))
 
   let activeOrgId: OrgId | null = null

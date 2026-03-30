@@ -55,11 +55,13 @@ import {
 } from "../_lib/den-flow";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
+  getJoinOrgRoute,
   getOrgDashboardRoute,
   parseOrgListPayload,
 } from "../_lib/den-org";
 
 type LaunchWorkerResult = "success" | "checkout" | "error";
+type AuthNavigationResult = "dashboard" | "checkout" | "join-org" | null;
 
 type DenFlowContextValue = {
   authMode: AuthMode;
@@ -81,8 +83,8 @@ type DenFlowContextValue = {
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
   showAuthFeedback: boolean;
-  submitAuth: (event: FormEvent<HTMLFormElement>) => Promise<"dashboard" | "checkout" | null>;
-  submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<"dashboard" | "checkout" | null>;
+  submitAuth: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
+  submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   resendVerificationCode: () => Promise<void>;
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
@@ -163,6 +165,15 @@ function readLocalStorage<T>(key: string): T | null {
   } catch {
     return null;
   }
+}
+
+function getPendingOrgInvitationId() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const invitationId = window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)?.trim() ?? "";
+  return invitationId || null;
 }
 
 export function DenFlowProvider({ children }: { children: ReactNode }) {
@@ -357,7 +368,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     nextMode: AuthMode,
     trimmedEmail: string,
     payloadOverride?: unknown,
-  ): Promise<"dashboard" | "checkout" | null> {
+  ): Promise<AuthNavigationResult> {
     let payload = payloadOverride;
 
     if (payload === undefined || (!getToken(payload) && nextMode === "sign-up" && Boolean(password))) {
@@ -424,6 +435,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (desktopAuthRequested) {
       setAuthInfo("Signed in. Returning to OpenWork...");
       return null;
+    }
+
+    if (authenticatedUser && getPendingOrgInvitationId()) {
+      return "join-org";
     }
 
     if (authenticatedUser && nextMode === "sign-up") {
@@ -976,46 +991,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     return parseOrgListPayload(payload);
   }
 
-  async function acceptPendingInvitationIfNeeded() {
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    const invitationId = window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)?.trim() ?? "";
-    if (!invitationId) {
-      return null;
-    }
-
-    const headers = new Headers();
-    if (authToken) {
-      headers.set("Authorization", `Bearer ${authToken}`);
-    }
-
-    const { response, payload } = await requestJson(
-      `/v1/orgs/invitations/accept?id=${encodeURIComponent(invitationId)}`,
-      { method: "GET", headers },
-      12000,
-    );
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
-      }
-      return null;
-    }
-
-    window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
-    if (typeof payload === "object" && payload && "organizationSlug" in payload && typeof payload.organizationSlug === "string") {
-      return payload.organizationSlug;
-    }
-
-    return null;
-  }
-
   async function resolveDashboardRoute() {
-    const acceptedOrgSlug = await acceptPendingInvitationIfNeeded();
     const orgDirectory = await loadOrgDirectory();
-    const activeOrgSlug = acceptedOrgSlug ?? orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
+    const activeOrgSlug = orgDirectory.activeOrgSlug ?? orgDirectory.orgs[0]?.slug ?? null;
     return activeOrgSlug ? getOrgDashboardRoute(activeOrgSlug) : null;
   }
 
@@ -1087,6 +1065,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   async function resolveUserLandingRoute() {
     if (!user || desktopAuthRequested) {
       return null;
+    }
+
+    const pendingInvitationId = getPendingOrgInvitationId();
+    if (pendingInvitationId) {
+      return getJoinOrgRoute(pendingInvitationId);
     }
 
     const dashboardRoute = await resolveDashboardRoute();
@@ -1874,6 +1857,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       method: pendingSocialSignup,
       email_domain: getEmailDomain(user.email)
     });
+
+    if (getPendingOrgInvitationId()) {
+      return;
+    }
+
     void beginSignupOnboarding(user, pendingSocialSignup);
   }, [user?.id]);
 

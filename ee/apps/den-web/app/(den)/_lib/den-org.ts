@@ -34,6 +34,22 @@ export type DenOrgInvitation = {
   createdAt: string | null;
 };
 
+export type DenInvitationPreview = {
+  invitation: {
+    id: string;
+    email: string;
+    role: string;
+    status: string;
+    expiresAt: string | null;
+    createdAt: string | null;
+  };
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+};
+
 export type DenOrgRole = {
   id: string;
   role: string;
@@ -138,6 +154,10 @@ export function formatRoleLabel(role: string): string {
 
 export function getOrgDashboardRoute(orgSlug: string): string {
   return `/o/${encodeURIComponent(orgSlug)}/dashboard`;
+}
+
+export function getJoinOrgRoute(invitationId: string): string {
+  return `/join-org?invite=${encodeURIComponent(invitationId)}`;
 }
 
 export function getManageMembersRoute(orgSlug: string): string {
@@ -336,5 +356,41 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     members,
     invitations,
     roles,
+  };
+}
+
+export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPreview | null {
+  if (!isRecord(payload) || !isRecord(payload.invitation) || !isRecord(payload.organization)) {
+    return null;
+  }
+
+  const invitation = payload.invitation;
+  const organization = payload.organization;
+  const invitationId = asString(invitation.id);
+  const invitationEmail = asString(invitation.email);
+  const invitationRole = asString(invitation.role);
+  const invitationStatus = asString(invitation.status);
+  const organizationId = asString(organization.id);
+  const organizationName = asString(organization.name);
+  const organizationSlug = asString(organization.slug);
+
+  if (!invitationId || !invitationEmail || !invitationRole || !invitationStatus || !organizationId || !organizationName || !organizationSlug) {
+    return null;
+  }
+
+  return {
+    invitation: {
+      id: invitationId,
+      email: invitationEmail,
+      role: invitationRole,
+      status: invitationStatus,
+      expiresAt: asIsoString(invitation.expiresAt),
+      createdAt: asIsoString(invitation.createdAt),
+    },
+    organization: {
+      id: organizationId,
+      name: organizationName,
+      slug: organizationSlug,
+    },
   };
 }

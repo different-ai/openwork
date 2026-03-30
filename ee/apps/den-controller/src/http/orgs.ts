@@ -16,6 +16,7 @@ import { env } from "../env.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
+  getInvitationPreview,
   getOrganizationContextForUser,
   listAssignableRoles,
   removeOrganizationMember,
@@ -33,6 +34,10 @@ const createOrganizationSchema = z.object({
 const inviteMemberSchema = z.object({
   email: z.string().email(),
   role: z.string().trim().min(1).max(64),
+})
+
+const acceptInvitationSchema = z.object({
+  id: z.string().trim().min(1),
 })
 
 const updateMemberRoleSchema = z.object({
@@ -95,7 +100,7 @@ function getInvitationOrigin() {
 }
 
 function buildInvitationLink(invitationId: string) {
-  return new URL(`/?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
+  return new URL(`/join-org?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
 }
 
 function parseTemplateJson(value: string) {
@@ -222,17 +227,34 @@ orgsRouter.post("/", asyncRoute(async (req, res) => {
   res.status(201).json({ organization: context?.organization ?? null })
 }))
 
-orgsRouter.get("/invitations/accept", asyncRoute(async (req, res) => {
+orgsRouter.get("/invitations/preview", asyncRoute(async (req, res) => {
+  const invitationIdRaw = typeof req.query.id === "string" ? req.query.id.trim() : ""
+  const invitation = invitationIdRaw ? await getInvitationPreview(invitationIdRaw) : null
+
+  if (!invitation) {
+    res.status(404).json({ error: "invitation_not_found" })
+    return
+  }
+
+  res.json(invitation)
+}))
+
+orgsRouter.post("/invitations/accept", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) {
     return
   }
 
-  const invitationIdRaw = typeof req.query.id === "string" ? req.query.id.trim() : ""
+  const parsed = acceptInvitationSchema.safeParse(req.body ?? {})
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+    return
+  }
+
   const accepted = await acceptInvitationForUser({
     userId: session.user.id,
     email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    invitationId: invitationIdRaw || null,
+    invitationId: parsed.data.id,
   })
 
   if (!accepted) {

@@ -8,7 +8,7 @@ import { AuditEventTable, AuthUserTable, DaytonaSandboxTable, OrgMembershipTable
 import { env } from "../env.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
 import { getRequestSession } from "./session.js"
-import { resolveUserOrganizationsForSession } from "../orgs.js"
+import { ensureUserOrgAccess, listUserOrgs, setSessionActiveOrganization } from "../orgs.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
 import { customDomainForWorker } from "../workers/vanity-domain.js"
 import { createDenTypeId, normalizeDenTypeId } from "../db/typeid.js"
@@ -290,15 +290,34 @@ async function resolveActiveOrgId(session: Awaited<ReturnType<typeof requireSess
     ? normalizeDenTypeId("session", session.session.id)
     : null
 
-  const resolved = await resolveUserOrganizationsForSession({
-    sessionId,
-    activeOrganizationId: session.session?.activeOrganizationId ?? null,
+  const existingOrgId = await ensureUserOrgAccess({
     userId: session.user.id,
-    email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    name: session.user.name,
   })
+  if (!existingOrgId) {
+    return null
+  }
 
-  return resolved.activeOrgId
+  const orgs = await listUserOrgs(session.user.id)
+  const availableOrgIds = new Set(orgs.map((org) => org.id))
+
+  let activeOrgId: OrgId | null = null
+  if (session.session?.activeOrganizationId) {
+    try {
+      const normalized = normalizeDenTypeId("organization", session.session.activeOrganizationId)
+      if (availableOrgIds.has(normalized)) {
+        activeOrgId = normalized
+      }
+    } catch {
+      activeOrgId = null
+    }
+  }
+
+  activeOrgId ??= orgs[0]?.id ?? null
+  if (sessionId && activeOrgId && activeOrgId !== session.session?.activeOrganizationId) {
+    await setSessionActiveOrganization(sessionId, activeOrgId)
+  }
+
+  return activeOrgId
 }
 
 async function countUserCloudWorkers(userId: UserId) {

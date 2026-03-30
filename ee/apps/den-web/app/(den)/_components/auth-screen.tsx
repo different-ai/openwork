@@ -293,7 +293,7 @@ export function AuthScreen() {
                 const next = verificationRequired
                   ? await submitVerificationCode(event)
                   : await submitAuth(event);
-                if (next === "dashboard") {
+                if (next === "dashboard" || next === "join-org") {
                   const target = await resolveUserLandingRoute();
                   if (target && !isSamePathname(pathname, target)) {
                     router.replace(target);
