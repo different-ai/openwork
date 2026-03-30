@@ -5,6 +5,7 @@ import { schedulerDeleteJob, schedulerListJobs } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
 import { createWorkspaceContextKey } from "./workspace-context";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
+import { t } from "../../i18n";
 
 export type AutomationsStore = ReturnType<typeof createAutomationsStore>;
 
@@ -136,10 +137,10 @@ export function createAutomationsStore(options: {
         if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const status =
           options.openworkServer.openworkServerStatus() === "disconnected"
-            ? "OpenWork server unavailable. Connect to sync scheduled tasks."
+            ? t("automations.server_unavailable")
             : options.openworkServer.openworkServerStatus() === "limited"
-              ? "OpenWork server needs a token to load scheduled tasks."
-              : "OpenWork server not ready.";
+              ? t("automations.server_needs_token")
+              : t("automations.server_not_ready");
         setScheduledJobsStatus(status);
         return "unavailable";
       }
@@ -155,7 +156,7 @@ export function createAutomationsStore(options: {
       } catch (error) {
         if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const message = error instanceof Error ? error.message : String(error);
-        setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+        setScheduledJobsStatus(message || t("automations.failed_to_load"));
         return "error";
       } finally {
         setScheduledJobsBusy(false);

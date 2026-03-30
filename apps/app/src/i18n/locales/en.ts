@@ -1284,4 +1284,76 @@ export default {
   "session.restart_update_title": "Restart to apply update {version}",
   "session.downloading_update_title": "Downloading update {version}",
   "session.update_available_title": "Update available {version}",
+
+  // ==================== Automations context ====================
+  "automations.server_unavailable": "OpenWork server unavailable. Connect to sync scheduled tasks.",
+  "automations.server_needs_token": "OpenWork server needs a token to load scheduled tasks.",
+  "automations.server_not_ready": "OpenWork server not ready.",
+  "automations.failed_to_load": "Failed to load scheduled tasks.",
+  "automations.desktop_required": "Scheduled tasks require the desktop app.",
+
+  // ==================== Question Modal ====================
+  "question_modal.question_counter": "Question {current} of {total}",
+  "question_modal.custom_answer_label": "Or type a custom answer",
+  "question_modal.custom_answer_placeholder": "Type your answer here...",
+
+  // ==================== Onboarding Workspace Selector ====================
+  "onboarding.empty_worker": "Empty worker",
+  "onboarding.empty_worker_desc": "Start with a blank folder and add what you need.",
+
+  // ==================== Common (additions) ====================
+  "common.something_went_wrong": "Something went wrong",
+  "common.navigate": "navigate",
+  "common.select": "select",
+  "common.submit": "Submit",
+  "common.next": "Next",
+  "common.question": "Question",
+
+  // ==================== Shared bundle import ====================
+  "bundle.import_one_skill": "Import 1 skill",
+  "bundle.skill_description": "Add `{name}` to an existing worker or create a new one for it.",
+  "bundle.import_n_skills": "Import {count} skills",
+  "bundle.skills_set_description": "{name} is ready to import into an existing worker or a new worker.",
+  "bundle.shared_skills_fallback": "Shared skills",
+  "bundle.open_workspace_template": "Open workspace template",
+  "bundle.workspace_profile_description": "{name} is ready to start in a new worker or import into an existing one.",
+  "bundle.workspace_template_fallback": "This shared workspace template",
+  "bundle.shared_workspace_profile_fallback": "Shared workspace profile",
+  "bundle.invalid_payload": "Invalid shared bundle payload.",
+  "bundle.unsupported_version": "Unsupported bundle schema version.",
+  "bundle.invalid_skill_payload": "Invalid skill bundle payload.",
+  "bundle.no_importable_skills": "Skills set bundle has no importable skills.",
+  "bundle.missing_workspace_payload": "Workspace profile bundle is missing workspace payload.",
+  "bundle.invalid_url": "Invalid shared bundle URL.",
+  "bundle.url_must_be_https": "Shared bundle URL must use http(s).",
+
+  // ==================== Providers store ====================
+  "providers.api_key_label": "API key",
+  "providers.not_connected": "Not connected to a server",
+  "providers.connect_failed": "Failed to connect provider",
+  "providers.oauth_failed": "Failed to complete OAuth",
+  "providers.save_api_key_failed": "Failed to save API key",
+  "providers.disconnect_failed": "Failed to disconnect provider",
+  "providers.load_failed": "Failed to load providers",
+  "providers.auth_failed": "Authentication failed",
+  "providers.rate_limit_exceeded": "Rate limit exceeded",
+  "providers.provider_error": "Provider error ({provider})",
+  "providers.request_failed": "Request failed",
+  "providers.api_key_required": "API key is required",
+  "providers.no_providers_available": "No providers available",
+  "providers.provider_id_required": "Provider ID is required",
+  "providers.unknown_provider": "Unknown provider",
+  "providers.no_oauth_prefix": "No OAuth flow available for",
+  "providers.use_api_key_suffix": "Use an API key instead.",
+  "providers.not_oauth_flow_prefix": "Selected auth method is not an OAuth flow for",
+  "providers.oauth_method_required": "OAuth method is required",
+  "providers.removal_unsupported": "Provider auth removal is not supported by this client.",
+  "providers.disconnected_prefix": "Disconnected",
+  "providers.disabled_in_config_suffix": "and disabled it in OpenCode config.",
+  "providers.still_connected_suffix": ", but the worker still reports it as connected. Clear any remaining API key or OAuth credentials and restart the worker to fully disconnect.",
+
+  // ==================== MCP Auth Modal (additions) ====================
+  "mcp.auth.authorization_link": "Authorization link",
+  "mcp.auth.copied": "Copied",
+  "mcp.auth.copy_link": "Copy link",
 } as const;
