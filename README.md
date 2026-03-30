@@ -1,6 +1,5 @@
 > OpenWork is the open source alternative to Claude Cowork/Codex (desktop app).
 
-
 ## Core Philosophy
 
 - Local-first, cloud-ready: OpenWork runs on your machine in one click. Send a message instantly.
@@ -15,6 +14,7 @@
 OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
 
 ## Alternate UIs
+
 - **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
   - install: `npm install -g openwork-orchestrator`
   - run: `openwork start --workspace /path/to/workspace --approval auto`
@@ -37,14 +37,16 @@ OpenWork is designed to be:
 
 ## What’s Included
 
-- **Host mode**: runs opencode locally on your computer
-- **Client mode**: connect to an existing OpenCode server by URL.
-- **Workspaces**: create local workspaces from the desktop app or connect remote workers from the same sidebar flow.
+- **Local host mode**: run OpenCode locally on your computer.
+- **Remote connect**: attach to an OpenWork worker with a shared URL + token.
+- **Workspaces**: create local workspaces or connect remote workers from the same workspace sidebar.
 - **Sessions**: create/select sessions and send prompts.
 - **Live streaming**: SSE `/event` subscription for realtime updates.
 - **Execution plan**: render OpenCode todos as a timeline.
 - **Permissions**: surface permission requests and reply (allow once / always / deny).
 - **Templates**: save and re-run common workflows (stored locally).
+- **Unified settings shell**: manage skills, extensions, automations, messaging, and appearance from one shell instead of separate dashboard tabs.
+- **Authorized folders**: manage extra filesystem access from Settings when a workspace needs directories outside its root.
 - **Skills manager**:
   - list installed `.opencode/skills` folders
   - install from OpenPackage (`opkg install ...`)
@@ -155,7 +157,7 @@ pnpm dlx opkg install <package>
 
 ## OpenCode Plugins
 
-Plugins are the **native** way to extend OpenCode. OpenWork now manages them from the Skills tab by
+Plugins are the **native** way to extend OpenCode. OpenWork now manages them from `Settings -> Extensions` by
 reading and writing `opencode.json`.
 
 - **Project scope**: `<workspace>/opencode.json`

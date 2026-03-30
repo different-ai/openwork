@@ -31,9 +31,8 @@ Auto-detection can exist as a convenience, but should be tiered and explainable:
 The readiness check should be a clear, single command (e.g. `docker info`) and the UI should show the exact error output when it fails.
 
 ## Minimal use of Tauri
+
 We move most of the functionality to the openwork server which interfaces mostly with FS and proxies to opencode.
-
-
 
 ## Filesystem mutation policy
 
@@ -56,12 +55,12 @@ Guidelines:
 
 When OpenWork is edited from `openwork-enterprise`, architecture and runtime behavior should be sourced from this document.
 
-| Entry point | Role | Architecture authority |
-| --- | --- | --- |
-| `openwork-enterprise/AGENTS.md` | OpenWork Factory multi-repo orchestration | Defers OpenWork runtime flow, server-vs-shell ownership, and filesystem mutation behavior to `_repos/openwork/ARCHITECTURE.md`. |
-| `openwork-enterprise/.opencode/agents/openwork-surgeon.md` | Surgical fix agent for `_repos/openwork` | Uses `_repos/openwork/ARCHITECTURE.md` as the runtime and architecture source of truth before changing product behavior. |
-| `_repos/openwork/AGENTS.md` | Product vocabulary, audience, and repo-local development guidance | Refers to `ARCHITECTURE.md` for runtime flow, server ownership, and architectural boundaries. |
-| Skills / commands / agents that mutate workspace state | Capability layer on top of the product runtime | Should assume the OpenWork server path is canonical for workspace creation, config writes, `.opencode/` mutation, and reload signaling. |
+| Entry point                                                | Role                                                              | Architecture authority                                                                                                                  |
+| ---------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `openwork-enterprise/AGENTS.md`                            | OpenWork Factory multi-repo orchestration                         | Defers OpenWork runtime flow, server-vs-shell ownership, and filesystem mutation behavior to `_repos/openwork/ARCHITECTURE.md`.         |
+| `openwork-enterprise/.opencode/agents/openwork-surgeon.md` | Surgical fix agent for `_repos/openwork`                          | Uses `_repos/openwork/ARCHITECTURE.md` as the runtime and architecture source of truth before changing product behavior.                |
+| `_repos/openwork/AGENTS.md`                                | Product vocabulary, audience, and repo-local development guidance | Refers to `ARCHITECTURE.md` for runtime flow, server ownership, and architectural boundaries.                                           |
+| Skills / commands / agents that mutate workspace state     | Capability layer on top of the product runtime                    | Should assume the OpenWork server path is canonical for workspace creation, config writes, `.opencode/` mutation, and reload signaling. |
 
 ### Agent access to server-owned behavior
 
@@ -86,37 +85,38 @@ Tauri or other native shell behavior remains the fallback or shell boundary for:
 If an agent needs one of the server-owned behaviors above and only a Tauri path exists, treat that as an architecture gap to close rather than a parallel capability surface to preserve.
 
 ## opencode primitives
-how to pick the right extension abstraction for 
+
+how to pick the right extension abstraction for
 @opencode
 
 opencode has a lot of extensibility options:
 mcp / plugins / skills / bash / agents / commands
 
 - mcp
-use when you need authenticated third-party flows (oauth) and want to expose that safely to end users
-good fit when "auth + capability surface" is the product boundary
-downside: you're limited to whatever surface area the server exposes
+  use when you need authenticated third-party flows (oauth) and want to expose that safely to end users
+  good fit when "auth + capability surface" is the product boundary
+  downside: you're limited to whatever surface area the server exposes
 
 - bash / raw cli
-use only for the most advanced users or internal power workflows
-highest risk, easiest to get out of hand (context creep + permission creep + footguns)
-great for power users and prototyping, terrifying as a default for non-tech users
+  use only for the most advanced users or internal power workflows
+  highest risk, easiest to get out of hand (context creep + permission creep + footguns)
+  great for power users and prototyping, terrifying as a default for non-tech users
 
 - plugins
-use when you need real tools in code and want to scope permissions around them
-good middle ground: safer than raw cli, more flexible than mcp, reusable and testable
-basically "guardrails + capability packaging"
+  use when you need real tools in code and want to scope permissions around them
+  good middle ground: safer than raw cli, more flexible than mcp, reusable and testable
+  basically "guardrails + capability packaging"
 
 - skills
-use when you want reliable plain-english patterns that shape behavior
-best for repeatability and making workflows legible
-pro tip: pair skills with plugins or cli (i literally embed skills inside plugins right now and expose commands like get_skills / retrieve)
+  use when you want reliable plain-english patterns that shape behavior
+  best for repeatability and making workflows legible
+  pro tip: pair skills with plugins or cli (i literally embed skills inside plugins right now and expose commands like get_skills / retrieve)
 
 - agents
-use when you need to create tasks that are executed by different models than the main one and might have some extra context to find skills or interact with mcps.
+  use when you need to create tasks that are executed by different models than the main one and might have some extra context to find skills or interact with mcps.
 
-- commands 
-`/` commands that trigger tools
+- commands
+  `/` commands that trigger tools
 
 These are all opencode primitives you can read the docs to find out exactly how to set them up.
 
@@ -124,12 +124,13 @@ These are all opencode primitives you can read the docs to find out exactly how 
 
 - uses all these primitives
 - uses native OpenCode commands for reusable flows (markdown files in `.opencode/commands`)
-- adds a new abstraction "workspace" is a project folder and a simple .json file that includes a list of opencode primitives that map perfectly to an opencode workdir (not fully implemented)
-  - openwork can open a workpace.json and decide where to populate a folder with thse settings (not implemented today
+- adds a new abstraction "workspace": a project folder plus OpenWork-managed connection/config state that still maps cleanly to an OpenCode workdir
+- the current product surface treats local and remote workers through the same workspace/session shell rather than a separate dashboard concept
 
 ## Repository/component map
 
 - `/apps/app/`: OpenWork app UI (desktop/mobile/web client experience layer).
+  - the settings shell owns the workspace list plus user-facing tabs for general settings, skills, extensions, automations, messaging, appearance, and recovery.
 - `/apps/desktop/`: Tauri desktop shell that hosts the app UI and manages native process lifecycles.
 - `/apps/server/`: OpenWork server (API/control layer consumed by the app).
 - `/apps/orchestrator/`: OpenWork orchestrator CLI/daemon. In `start`/`serve` host mode it manages OpenWork server + OpenCode + `opencode-router`; in daemon mode it manages workspace activation and OpenCode lifecycle for desktop runtime.
@@ -579,8 +580,9 @@ This is optional and not required for non-technical MVP.
 OpenWork enforces folder access through **two layers**:
 
 1. **OpenWork UI authorization**
-   - user explicitly selects allowed folders via native picker
-   - OpenWork remembers allowed roots per profile
+   - workspace root access is implicit for the active workspace
+   - extra folders are managed from the Authorized folders panel in Settings
+   - OpenWork persists those extra directories through workspace config updates on the OpenWork server
 
 2. **OpenCode server permissions**
    - OpenCode requests permissions as needed

@@ -3,20 +3,19 @@
 ## Target Users
 
 > Bob the IT guy.
-Bob might already use opencode, he can setup agents and workflows and share them with his team. The only thing he needs is a way to share this. The way he does is by using OpenWork and creating "workpaces".
+> Bob might already use opencode, he can setup agents and workflows and share them with his team. The only thing he needs is a way to share this. The way he does is by using OpenWork and creating "workpaces".
 
 > Susan in accounting
 
 Susan in accounting doesn't use opencode. She certaintly doesn't paly aorund to create workflow create agents. She wants something that works.
-Openwork should be given to give her a good taste of what she can do. 
+Openwork should be given to give her a good taste of what she can do.
 We should also eventually guide ther to:
+
 - creating her own skills
 - adding custom MCP / login into mcp oauth servers through ui)
 - adding skills from a list of skills
 - adding plugins from a list of plugins
 - create her own commands
-
-
 
 1. **knowledge worker**: "Do this for me" workflows with guardrails.
 2. **Mobile-first user**: start/monitor tasks from phone.
@@ -113,13 +112,12 @@ use the design from ./design.ts that is your core reference for building the ent
 
 ## Functional Requirements
 
-### Onboarding
+### Workspace Setup
 
-- Host vs Client selection
-- workspace selection (Host)
-- connect to host (Client)
+- create a local workspace or connect a remote worker from the workspace shell
 - provider/model setup
-- first-run "hello world" task
+- authorized folders management from Settings when a workspace needs paths outside its root
+- first-run task from the session surface
 
 ### Cloud Worker Onboarding (Current)
 
@@ -159,28 +157,26 @@ use the design from ./design.ts that is your core reference for building the ent
 ### 0. Install & Launch
 
 1. User installs OpenWork.
-2. App launches.
-3. App shows "Choose mode: Host / Client".
-4. Host: start local OpenCode via SDK.
-5. Client: connect flow to an existing host.
+2. App launches into the workspace/settings shell.
+3. User either creates a local workspace or chooses `Add a worker` -> `Connect remote`.
+4. Local flow starts the host stack for the selected workspace.
+5. Remote flow stores the worker URL + token and reconnects to that worker.
 
-### 1. First-Run Onboarding (Host)
+### 1. Local Workspace Setup
 
-1. Welcome + safety overview.
-2. Workspace folder selection.
-3. Allowed folders selection (can be multiple).
-4. Provider/model configuration.
-5. `global.health()` check.
-6. Run a test session using `session.create()` + `session.prompt()`.
-7. Success + sample commands.
+1. User picks or creates a workspace folder.
+2. OpenWork starts the local host stack for that workspace.
+3. User configures providers and model defaults.
+4. If needed, user adds extra authorized folders from Settings.
+5. User opens a session and runs the first task.
 
-### 2. Pairing Onboarding (Client / Mobile)
+### 2. Remote Worker Connect
 
-1. User selects "Client".
-2. UI explains it connects to a trusted host.
-3. User scans QR code shown on host device.
-4. Client verifies connection with `global.health()`.
-5. Client can now list sessions and monitor runs.
+1. User chooses `Add a worker` -> `Connect remote`.
+2. UI accepts a shared OpenWork worker URL and token (or deep link).
+3. OpenWork verifies server health and available capabilities.
+4. User lands in the same workspace/session shell used for local workers.
+5. User can now list sessions and monitor runs.
 
 ### 3. Runtime Health & Recovery
 
