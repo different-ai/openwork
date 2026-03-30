@@ -2313,7 +2313,7 @@ export default function SessionView(props: SessionViewProps) {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
-      showStatusToast(message || "Failed to delete session", "error");
+      showStatusToast(message || t("session.failed_to_delete"), "error");
     } finally {
       setDeleteSessionBusy(false);
     }
@@ -2361,7 +2361,7 @@ export default function SessionView(props: SessionViewProps) {
     methodIndex?: number,
   ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
-      throw new Error("Provider auth is already in progress.");
+      throw new Error(t("session.provider_auth_in_progress"));
     }
     setProviderAuthActionBusy(true);
     try {
@@ -2385,12 +2385,12 @@ export default function SessionView(props: SessionViewProps) {
         code,
       );
       if (result.connected) {
-        showStatusToast(result.message || "Provider connected", "success");
+        showStatusToast(result.message || t("session.provider_connected"), "success");
         props.closeProviderAuthModal();
       }
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "OAuth failed";
+      const message = error instanceof Error ? error.message : t("session.oauth_failed");
       showStatusToast(message, "error");
       return { connected: false };
     } finally {
@@ -2406,11 +2406,11 @@ export default function SessionView(props: SessionViewProps) {
     setProviderAuthActionBusy(true);
     try {
       const message = await props.submitProviderApiKey(providerId, apiKey);
-      showStatusToast(message || "API key saved", "success");
+      showStatusToast(message || t("session.api_key_saved"), "success");
       props.closeProviderAuthModal();
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to save API key";
+        error instanceof Error ? error.message : t("session.failed_to_save_api_key");
       showStatusToast(message, "error");
     } finally {
       setProviderAuthActionBusy(false);
@@ -3060,11 +3060,11 @@ export default function SessionView(props: SessionViewProps) {
                   }
                   window.setTimeout(() => openCommandPalette(), 0);
                 }}
-                title="Quick actions (Ctrl/Cmd+K)"
-                aria-label="Quick actions"
+                title={t("session.quick_actions_title")}
+                aria-label={t("session.quick_actions_label")}
               >
                 <Menu size={15} />
-                <span>Menu</span>
+                <span>{t("session.menu_label")}</span>
                 <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">
                   ⌘K
                 </span>
@@ -3083,8 +3083,8 @@ export default function SessionView(props: SessionViewProps) {
                   }
                   openSearch();
                 }}
-                title="Search conversation (Ctrl/Cmd+F)"
-                aria-label="Search conversation"
+                title={t("session.search_conversation_title")}
+                aria-label={t("session.search_conversation_label")}
               >
                 <Search size={16} />
               </button>
@@ -3094,8 +3094,8 @@ export default function SessionView(props: SessionViewProps) {
                 class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={undoLastMessage}
                 disabled={!canUndoLastMessage() || historyActionBusy() !== null}
-                title="Undo last message"
-                aria-label="Undo last message"
+                title={t("session.undo_title")}
+                aria-label={t("session.undo_label")}
               >
                 <Show
                   when={historyActionBusy() === "undo"}
@@ -3103,15 +3103,15 @@ export default function SessionView(props: SessionViewProps) {
                 >
                   <Loader2 size={16} class="animate-spin" />
                 </Show>
-                <span class="hidden lg:inline">Revert</span>
+                <span class="hidden lg:inline">{t("session.revert_label")}</span>
               </button>
               <button
                 type="button"
                 class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={redoLastMessage}
                 disabled={!canRedoLastMessage() || historyActionBusy() !== null}
-                title="Redo last reverted message"
-                aria-label="Redo last reverted message"
+                title={t("session.redo_title")}
+                aria-label={t("session.redo_aria_label")}
               >
                 <Show
                   when={historyActionBusy() === "redo"}

@@ -114,7 +114,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     const path = toInboxWorkspacePath(item);
     try {
       await navigator.clipboard.writeText(path);
-      toast(`Copied: ${path}`);
+      toast(t("inbox_panel.copied_path", undefined, { path }));
     } catch {
       toast(t("inbox_panel.copy_failed"));
     }
@@ -145,7 +145,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Download failed";
+      const message = err instanceof Error ? err.message : t("inbox_panel.download_failed");
       toast(message);
     }
   };

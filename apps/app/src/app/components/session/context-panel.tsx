@@ -183,7 +183,7 @@ export default function ContextPanel(props: ContextPanelProps) {
                                 : "cursor-default opacity-70"
                             }`.trim()}
                             onClick={() => props.onFileClick?.(file)}
-                            title={canOpen() ? `Open ${displayPath()}` : displayPath()}
+                            title={canOpen() ? t("context_panel.open_file", undefined, { path: displayPath() }) : displayPath()}
                             disabled={!canOpen()}
                           >
                             <File size={12} class="text-gray-9" />

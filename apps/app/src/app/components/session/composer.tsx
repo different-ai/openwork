@@ -1059,7 +1059,7 @@ export default function Composer(props: ComposerProps) {
   const addAttachments = async (files: File[]) => {
     if (attachmentsDisabled()) {
       props.onNotice({
-        title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
+        title: props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"),
         tone: "warning",
       });
       return;
@@ -1079,7 +1079,7 @@ export default function Composer(props: ComposerProps) {
     for (const file of supportedFiles) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
         props.onNotice({
-          title: `${file.name} exceeds the 8MB limit.`,
+          title: t("composer.file_exceeds_limit", undefined, { name: file.name }),
           tone: "warning",
         });
         continue;
@@ -1090,7 +1090,7 @@ export default function Composer(props: ComposerProps) {
         const estimatedJsonBytes = estimateInlineAttachmentBytes(processed);
         if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
           props.onNotice({
-            title: `${file.name} is too large after encoding. Try a smaller image.`,
+            title: t("composer.file_too_large_encoding", undefined, { name: file.name }),
             tone: "warning",
           });
           continue;
@@ -1222,29 +1222,29 @@ export default function Composer(props: ComposerProps) {
           props.onNotice({
             title:
               links.length === 1
-                ? `Uploaded ${links[0].name} to the shared folder and inserted a link.`
-                : `Uploaded ${links.length} files to the shared folder and inserted links.`,
+                ? t("composer.uploaded_single_file", undefined, { name: links[0].name })
+                : t("composer.uploaded_multiple_files", undefined, { count: links.length }),
             tone: "success",
           });
           return;
         }
       }
       props.onNotice({
-        title: "Couldn't upload to the shared folder. Inserted local links instead.",
+        title: t("composer.upload_failed_local_links"),
         tone: "warning",
       });
     }
 
     const text = formatLinks(fallbackLinks());
     if (!text) {
-      props.onNotice({ title: "Unsupported attachment type.", tone: "warning" });
+      props.onNotice({ title: t("composer.unsupported_attachment_type"), tone: "warning" });
       return;
     }
     insertPlainTextAtSelection(text);
     updateMentionQuery();
     updateSlashQuery();
     emitDraftChange();
-    props.onNotice({ title: "Inserted links for unsupported files.", tone: "info" });
+    props.onNotice({ title: t("composer.inserted_links_unsupported"), tone: "info" });
   };
 
   const handlePaste = (event: ClipboardEvent) => {
@@ -1278,10 +1278,9 @@ export default function Composer(props: ComposerProps) {
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
         props.onNotice({
-          title:
-            "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Shared folder in the sidebar.",
+          title: t("composer.remote_worker_paste_warning"),
           tone: "warning",
-          actionLabel: props.onUploadInboxFiles ? "Upload to shared folder" : undefined,
+          actionLabel: props.onUploadInboxFiles ? t("composer.upload_to_shared_folder") : undefined,
           onAction: props.onUploadInboxFiles ? () => inboxFileInputRef?.click() : undefined,
         });
       }
@@ -1722,7 +1721,7 @@ export default function Composer(props: ComposerProps) {
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                     <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
-                        Describe your task...
+                        {t("composer.placeholder")}
                     </div>
                   </Show>
                     <div
@@ -1776,7 +1775,7 @@ export default function Composer(props: ComposerProps) {
                           disabled={attachmentsDisabled()}
                           title={
                             attachmentsDisabled()
-                              ? props.attachmentsDisabledReason ?? "Attachments are unavailable."
+                              ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
                               : t("composer.attach_files")
                           }
                         >
@@ -1932,7 +1931,7 @@ export default function Composer(props: ComposerProps) {
                 <Show when={variantMenuOpen()}>
                   <div class="absolute left-0 bottom-full z-40 mb-2 w-48 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                     <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                      Behavior
+                      {t("composer.behavior_label")}
                     </div>
                     <div class="p-2 space-y-1">
                       <For each={props.modelBehaviorOptions}>

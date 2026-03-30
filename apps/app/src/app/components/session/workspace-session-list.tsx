@@ -161,7 +161,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.openworkWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
-  "Workspace";
+  t("workspace_list.workspace_fallback");
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
@@ -525,7 +525,7 @@ export default function WorkspaceSessionList(props: Props) {
               getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
             const statusLabel = () => {
               if (group.status === "error") return taskLoadError().label;
-              if (isConnectionActionBusy()) return "Connecting";
+              if (isConnectionActionBusy()) return t("workspace_list.connecting");
               if (!props.developerMode) return "";
               if (props.selectedWorkspaceId === workspace().id) return t("workspace.selected");
               return workspaceKindLabel(workspace());

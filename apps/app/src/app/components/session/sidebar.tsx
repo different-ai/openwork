@@ -455,14 +455,14 @@ export default function SessionSidebar(props: SidebarProps) {
                               disabled={isActivelyConnecting()}
                             >
                               <Trash2 size={12} />
-                              Remove
+                              {t("sidebar.remove_workspace")}
                             </button>
                           </div>
                           <Show
                             when={sessions().length > 0}
                             fallback={
                               <div class="px-3 py-2 rounded-lg border border-dashed border-gray-6 text-xs text-gray-9">
-                                No sessions yet.
+                                {t("sidebar.no_sessions_yet")}
                               </div>
                             }
                           >

@@ -200,28 +200,28 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
           label: t("session.share_worker_url"),
           value: url,
           placeholder: !isTauriRuntime()
-            ? t("session.share_desktop_required")
+            ? t("session.share_desktop_app_required")
             : t("session.share_starting_server"),
           hint: mountedUrl
-            ? t("session.share_url_worker_hint")
+            ? t("session.share_worker_url_phones_hint")
             : hostUrl
-              ? t("session.share_url_resolving_hint")
+              ? t("session.share_worker_url_resolving_hint")
               : undefined,
         },
         {
           label: t("session.share_password"),
           value: ownerToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_required"),
+          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
           hint: mountedUrl
-            ? t("session.share_url_worker_hint")
-            : t("session.share_password_owner_hint"),
+            ? t("session.share_worker_url_phones_hint")
+            : t("session.share_owner_permission_hint"),
         },
         {
-          label: t("session.share_collaborator_token"),
+          label: t("session.share_collaborator_label"),
           value: collaboratorToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_required"),
+          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
           hint: mountedUrl
             ? t("session.share_collaborator_hint")
             : t("session.share_collaborator_host_hint"),
