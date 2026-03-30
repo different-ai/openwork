@@ -1610,32 +1610,17 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     await resolveWorkspace(config, ctx.params.id);
 
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/health", {
-      port,
-      requestHost,
-      timeoutMs: 2_000,
-    });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", "/health", { timeoutMs: 2_000 });
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       return jsonResponse(apply.body, apply.status ?? 200);
     }
 
     if (apply.applied) {
-      throw new ApiError(502, "opencodeRouter_invalid_health", "OpenCodeRouter returned an invalid health response", {
-        port,
-        host: apply.host ?? null,
-        hosts: apply.hosts,
-      });
+      throw new ApiError(502, "opencodeRouter_invalid_health", "OpenCodeRouter returned an invalid health response");
     }
 
-    throw new ApiError(apply.status ?? 503, "opencodeRouter_unreachable", apply.error ?? "OpenCodeRouter health unavailable", {
-      port,
-      host: apply.host ?? null,
-      hosts: apply.hosts,
-    });
+    throw new ApiError(apply.status ?? 503, "opencodeRouter_unreachable", apply.error ?? "OpenCodeRouter health unavailable");
   });
 
   addRoute(routes, "POST", "/workspace/:id/opencode-router/telegram-token", "client", async (ctx) => {
@@ -1644,14 +1629,10 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const token = typeof body.token === "string" ? body.token.trim() : "";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     logOpenCodeRouterDebug("telegram-token:request", {
       workspaceId: workspace.id,
       actor: ctx.actor?.type ?? "unknown",
       hasToken: Boolean(token),
-      healthPort: healthPort ?? null,
-      requestHost,
     });
     if (!token) {
       throw new ApiError(400, "token_required", "Telegram token is required");
@@ -1667,11 +1648,10 @@ function createRoutes(
     const identityId = normalizeOpenCodeRouterIdentityId(workspace.id);
     await persistOpenCodeRouterTelegramIdentity({ id: identityId, token, enabled: true, directory: workspace.path });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/telegram",
       { id: identityId, token, enabled: true, directory: workspace.path },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const result: Record<string, unknown> = {
@@ -1744,8 +1724,6 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const enabled = body.enabled === true || body.enabled === "true";
     const clearToken = body.clearToken === true || body.clearToken === "true";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
 
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -1786,15 +1764,11 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const botToken = typeof body.botToken === "string" ? body.botToken.trim() : "";
     const appToken = typeof body.appToken === "string" ? body.appToken.trim() : "";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     logOpenCodeRouterDebug("slack-tokens:request", {
       workspaceId: workspace.id,
       actor: ctx.actor?.type ?? "unknown",
       hasBotToken: Boolean(botToken),
       hasAppToken: Boolean(appToken),
-      healthPort: healthPort ?? null,
-      requestHost,
     });
     if (!botToken || !appToken) {
       throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
@@ -1810,11 +1784,10 @@ function createRoutes(
     const identityId = normalizeOpenCodeRouterIdentityId(workspace.id);
     await persistOpenCodeRouterSlackIdentity({ id: identityId, botToken, appToken, enabled: true, directory: workspace.path });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/slack",
       { id: identityId, botToken, appToken, enabled: true, directory: workspace.path },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const result: Record<string, unknown> = {
@@ -1872,15 +1845,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
 
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/telegram", {
-      port,
-      requestHost,
-      timeoutMs: 2_000,
-    });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/telegram", { timeoutMs: 2_000 });
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       const payload = apply.body as Record<string, unknown>;
@@ -1963,8 +1928,6 @@ function createRoutes(
     if (identityId === "env") {
       throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
     }
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     if (!token) {
       throw new ApiError(400, "token_required", "Telegram token is required");
     }
@@ -1985,7 +1948,6 @@ function createRoutes(
       ...(access === "private" ? { pairingCodeHash } : {}),
     });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/telegram",
       {
@@ -1996,7 +1958,7 @@ function createRoutes(
         access,
         ...(access === "private" ? { pairingCodeHash } : {}),
       },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2075,17 +2037,10 @@ function createRoutes(
     });
 
     const deleted = await deleteOpenCodeRouterTelegramIdentity(identityId);
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
     const apply = await tryFetchOpenCodeRouterHealth(
       "DELETE",
       `/identities/telegram/${encodeURIComponent(identityId)}`,
-      {
-        port,
-        requestHost,
-        timeoutMs: 3_000,
-      },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2126,15 +2081,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
 
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/slack", {
-      port,
-      requestHost,
-      timeoutMs: 2_000,
-    });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/slack", { timeoutMs: 2_000 });
 
     if (apply.applied && apply.body && typeof apply.body === "object") {
       const payload = apply.body as Record<string, unknown>;
@@ -2194,8 +2141,6 @@ function createRoutes(
     if (identityId === "env") {
       throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
     }
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
     if (!botToken || !appToken) {
       throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
     }
@@ -2209,11 +2154,10 @@ function createRoutes(
 
     await persistOpenCodeRouterSlackIdentity({ id: identityId, botToken, appToken, enabled, directory: workspace.path });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/slack",
       { id: identityId, botToken, appToken, enabled, directory: workspace.path },
-      { port, requestHost, timeoutMs: 3_000 },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2275,17 +2219,10 @@ function createRoutes(
     });
 
     const deleted = await deleteOpenCodeRouterSlackIdentity(identityId);
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
     const apply = await tryFetchOpenCodeRouterHealth(
       "DELETE",
       `/identities/slack/${encodeURIComponent(identityId)}`,
-      {
-        port,
-        requestHost,
-        timeoutMs: 3_000,
-      },
+      { timeoutMs: 3_000 },
     );
 
     const response: Record<string, unknown> = {
@@ -2325,9 +2262,6 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const healthPortParam = parseInteger(ctx.url.searchParams.get("healthPort") ?? undefined);
-    const port = healthPortParam ?? resolveOpenCodeRouterHealthPort();
-    const requestHost = ctx.url.hostname;
 
     const search = new URLSearchParams();
     const channel = (ctx.url.searchParams.get("channel") ?? "").trim();
@@ -2346,15 +2280,11 @@ function createRoutes(
     const suffix = search.toString();
     const pathname = suffix ? `/bindings?${suffix}` : "/bindings";
 
-    const apply = await tryFetchOpenCodeRouterHealth("GET", pathname, { port, requestHost, timeoutMs: 2_000 });
+    const apply = await tryFetchOpenCodeRouterHealth("GET", pathname, { timeoutMs: 2_000 });
     if (apply.applied && apply.body && typeof apply.body === "object") {
       return jsonResponse(apply.body);
     }
-    throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host", {
-      port,
-      error: apply.error,
-      status: apply.status,
-    });
+    throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host");
   });
 
   addRoute(routes, "POST", "/workspace/:id/opencode-router/bindings", "client", async (ctx) => {
@@ -2377,8 +2307,6 @@ function createRoutes(
     const identityId = workspaceIdentityId;
     const peerId = typeof body.peerId === "string" ? body.peerId.trim() : "";
     const directory = typeof body.directory === "string" ? body.directory.trim() : "";
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
 
     if (channel !== "telegram" && channel !== "slack") {
       throw new ApiError(400, "invalid_channel", "channel must be 'telegram' or 'slack'");
@@ -2399,20 +2327,15 @@ function createRoutes(
       paths: [resolveOpenCodeRouterConfigPath()],
     });
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const payload: Record<string, unknown> = {
       channel,
       identityId,
       peerId,
       ...(directory ? { directory } : {}),
     };
-    const apply = await tryPostOpenCodeRouterHealth("/bindings", payload, { port, requestHost, timeoutMs: 3_000 });
+    const apply = await tryPostOpenCodeRouterHealth("/bindings", payload, { timeoutMs: 3_000 });
     if (!apply.applied) {
-      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not apply binding update", {
-        port,
-        error: apply.error,
-        status: apply.status,
-      });
+      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not apply binding update");
     }
 
     await recordAudit(workspace.path, {
@@ -2442,8 +2365,6 @@ function createRoutes(
     const autoBind = body.autoBind === true || body.autoBind === "true";
     const directoryInput = typeof body.directory === "string" ? body.directory.trim() : "";
     const directory = directoryInput || workspace.path;
-    const healthPort = normalizeHealthPort(body.healthPort);
-    const requestHost = ctx.url.hostname;
 
     const identityIdParam = typeof body.identityId === "string" ? body.identityId.trim() : "";
     const requestedId = identityIdParam ? normalizeOpenCodeRouterIdentityId(identityIdParam) : "";
@@ -2467,7 +2388,6 @@ function createRoutes(
       throw new ApiError(400, "text_required", "text is required");
     }
 
-    const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/send",
       {
@@ -2478,15 +2398,11 @@ function createRoutes(
         ...(autoBind ? { autoBind: true } : {}),
         text,
       },
-      { port, requestHost, timeoutMs: 5_000 },
+      { timeoutMs: 5_000 },
     );
 
     if (!apply.applied) {
-      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not send the message", {
-        port,
-        error: apply.error,
-        status: apply.status,
-      });
+      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not send the message");
     }
 
     await recordAudit(workspace.path, {
@@ -3764,13 +3680,6 @@ function parseJsonResponse(text: string): unknown {
   }
 }
 
-function normalizeHealthPort(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const port = Math.trunc(value);
-  if (port <= 0 || port > 65535) return null;
-  return port;
-}
-
 type OpenCodeRouterConfigFile = Record<string, unknown> & {
   version?: number;
   channels?: Record<string, unknown> & {
@@ -4405,188 +4314,137 @@ async function deleteOpenCodeRouterSlackIdentity(idRaw: string): Promise<boolean
 
 type OpenCodeRouterApplyAttempt = {
   applied: boolean;
-  port: number;
-  hosts: string[];
-  host?: string;
+  baseUrl: string;
   status?: number;
   error?: string;
   body?: unknown;
 };
 
+function buildOpenCodeRouterHealthUrl(pathname: string): { baseUrl: string; url: string } {
+  const baseUrl = resolveOpenCodeRouterBaseUrl();
+  const url = new URL(pathname, `${baseUrl}/`);
+  return { baseUrl, url: url.toString() };
+}
+
 async function tryPostOpenCodeRouterHealth(
   pathname: string,
   payload: unknown,
-  options: { port: number; requestHost?: string | null; timeoutMs: number },
+  options: { timeoutMs: number },
 ): Promise<OpenCodeRouterApplyAttempt> {
-  const candidates = Array.from(
-    new Set(
-      ["127.0.0.1", options.requestHost].filter(
-        (host): host is string => Boolean(host && host.trim()),
-      ),
-    ),
-  );
-  const port = options.port;
+  const { baseUrl, url } = buildOpenCodeRouterHealthUrl(pathname);
 
-  let lastError: OpenCodeRouterApplyAttempt | null = null;
-  for (const host of candidates) {
-    const url = `http://${host}:${port}${pathname}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
 
-      const text = await response.text();
-      const parsed = parseJsonResponse(text);
+    const text = await response.text();
+    const parsed = parseJsonResponse(text);
 
-      if (response.ok) {
-        return {
-          applied: true,
-          port,
-          hosts: candidates,
-          host,
-          status: response.status,
-          body: parsed,
-        };
-      }
-
-      const detail =
-        typeof parsed === "object" && parsed && "error" in parsed
-          ? String((parsed as Record<string, unknown>).error)
-          : response.statusText || "OpenCodeRouter request failed";
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
+    if (response.ok) {
+      return {
+        applied: true,
+        baseUrl,
         status: response.status,
-        error: detail,
         body: parsed,
       };
-    } catch (error) {
-      clearTimeout(timer);
-      const message =
-        error instanceof Error && error.name === "AbortError"
-          ? `Timeout after ${options.timeoutMs}ms`
-          : String(error);
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
-        error: message,
-      };
     }
-  }
 
-  return (
-    lastError ?? {
+    const detail =
+      typeof parsed === "object" && parsed && "error" in parsed
+        ? String((parsed as Record<string, unknown>).error)
+        : response.statusText || "OpenCodeRouter request failed";
+    return {
       applied: false,
-      port,
-      hosts: candidates,
-      error: "OpenCodeRouter health server is unavailable",
-    }
-  );
+      baseUrl,
+      status: response.status,
+      error: detail,
+      body: parsed,
+    };
+  } catch (error) {
+    clearTimeout(timer);
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? `Timeout after ${options.timeoutMs}ms`
+        : String(error);
+    return {
+      applied: false,
+      baseUrl,
+      error: message,
+    };
+  }
 }
 
 async function tryFetchOpenCodeRouterHealth(
   method: "GET" | "DELETE",
   pathname: string,
-  options: { port: number; requestHost?: string | null; timeoutMs: number },
+  options: { timeoutMs: number },
 ): Promise<OpenCodeRouterApplyAttempt> {
-  const candidates = Array.from(
-    new Set(
-      ["127.0.0.1", options.requestHost].filter(
-        (host): host is string => Boolean(host && host.trim()),
-      ),
-    ),
-  );
-  const port = options.port;
+  const { baseUrl, url } = buildOpenCodeRouterHealthUrl(pathname);
 
-  let lastError: OpenCodeRouterApplyAttempt | null = null;
-  for (const host of candidates) {
-    const url = `http://${host}:${port}${pathname}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
 
-      const text = await response.text();
-      const parsed = parseJsonResponse(text);
+    const text = await response.text();
+    const parsed = parseJsonResponse(text);
 
-      if (response.ok) {
-        return {
-          applied: true,
-          port,
-          hosts: candidates,
-          host,
-          status: response.status,
-          body: parsed,
-        };
-      }
-
-      const detail =
-        typeof parsed === "object" && parsed && "error" in parsed
-          ? String((parsed as Record<string, unknown>).error)
-          : response.statusText || "OpenCodeRouter request failed";
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
+    if (response.ok) {
+      return {
+        applied: true,
+        baseUrl,
         status: response.status,
-        error: detail,
         body: parsed,
       };
-    } catch (error) {
-      clearTimeout(timer);
-      const message =
-        error instanceof Error && error.name === "AbortError"
-          ? `Timeout after ${options.timeoutMs}ms`
-          : String(error);
-      lastError = {
-        applied: false,
-        port,
-        hosts: candidates,
-        host,
-        error: message,
-      };
     }
-  }
 
-  return (
-    lastError ?? {
+    const detail =
+      typeof parsed === "object" && parsed && "error" in parsed
+        ? String((parsed as Record<string, unknown>).error)
+        : response.statusText || "OpenCodeRouter request failed";
+    return {
       applied: false,
-      port,
-      hosts: candidates,
-      error: "OpenCodeRouter health server is unavailable",
-    }
-  );
+      baseUrl,
+      status: response.status,
+      error: detail,
+      body: parsed,
+    };
+  } catch (error) {
+    clearTimeout(timer);
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? `Timeout after ${options.timeoutMs}ms`
+        : String(error);
+    return {
+      applied: false,
+      baseUrl,
+      error: message,
+    };
+  }
 }
 
 async function updateOpenCodeRouterTelegramToken(
   token: string,
-  healthPortOverride?: number | null,
-  requestHost?: string | null,
 ): Promise<Record<string, unknown>> {
   // Always persist first so the token is saved even if opencodeRouter is offline.
   await persistOpenCodeRouterTelegramToken(token);
 
-  const port = healthPortOverride ?? resolveOpenCodeRouterHealthPort();
   const apply = await tryPostOpenCodeRouterHealth(
     "/config/telegram-token",
     { token },
-    { port, requestHost, timeoutMs: 3_000 },
+    { timeoutMs: 3_000 },
   );
 
   const response: Record<string, unknown> = {
@@ -4667,16 +4525,13 @@ async function fetchRuntimeControl(path: string, init?: { method?: string; body?
 async function updateOpenCodeRouterSlackTokens(
   botToken: string,
   appToken: string,
-  healthPortOverride?: number | null,
-  requestHost?: string | null,
 ): Promise<Record<string, unknown>> {
   await persistOpenCodeRouterSlackTokens(botToken, appToken);
 
-  const port = healthPortOverride ?? resolveOpenCodeRouterHealthPort();
   const apply = await tryPostOpenCodeRouterHealth(
     "/config/slack-tokens",
     { botToken, appToken },
-    { port, requestHost, timeoutMs: 3_000 },
+    { timeoutMs: 3_000 },
   );
 
   const response: Record<string, unknown> = {

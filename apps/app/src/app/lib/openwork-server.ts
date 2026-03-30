@@ -948,14 +948,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     opencodeRouterHealth: () =>
       requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(baseUrl, "/opencode-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    getOpenCodeRouterHealth: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(
+    getOpenCodeRouterHealth: (workspaceId: string) =>
+      requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/health${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/health`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      );
-    },
+      ),
     opencodeRouterBindings: (filters?: { channel?: string; identityId?: string }) => {
       const search = new URLSearchParams();
       if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
@@ -1062,7 +1060,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     setOpenCodeRouterTelegramToken: (
       workspaceId: string,
       tokenValue: string,
-      healthPort?: number | null,
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramResult>(
         baseUrl,
@@ -1071,7 +1068,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { token: tokenValue, healthPort },
+          body: { token: tokenValue },
           timeoutMs: timeouts.opencodeRouter,
         },
       ),
@@ -1079,7 +1076,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       botToken: string,
       appToken: string,
-      healthPort?: number | null,
     ) =>
       requestJson<OpenworkOpenCodeRouterSlackResult>(
         baseUrl,
@@ -1088,7 +1084,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { botToken, appToken, healthPort },
+          body: { botToken, appToken },
           timeoutMs: timeouts.opencodeRouter,
         },
       ),
@@ -1098,18 +1094,15 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
       ),
-    getOpenCodeRouterTelegramIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterTelegramIdentitiesResult>(
+    getOpenCodeRouterTelegramIdentities: (workspaceId: string) =>
+      requestJson<OpenworkOpenCodeRouterTelegramIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      );
-    },
+      ),
     upsertOpenCodeRouterTelegramIdentity: (
       workspaceId: string,
       input: { id?: string; token: string; enabled?: boolean; access?: "public" | "private"; pairingCode?: string },
-      options?: { healthPort?: number | null },
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramIdentityUpsertResult>(
         baseUrl,
@@ -1124,30 +1117,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
             ...(input.access ? { access: input.access } : {}),
             ...(input.pairingCode?.trim() ? { pairingCode: input.pairingCode.trim() } : {}),
-            healthPort: options?.healthPort ?? null,
           },
         },
       ),
-    deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterTelegramIdentityDeleteResult>(
+    deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string) =>
+      requestJson<OpenworkOpenCodeRouterTelegramIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}`,
         { token, hostToken, method: "DELETE" },
-      );
-    },
-    getOpenCodeRouterSlackIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterSlackIdentitiesResult>(
+      ),
+    getOpenCodeRouterSlackIdentities: (workspaceId: string) =>
+      requestJson<OpenworkOpenCodeRouterSlackIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
         { token, hostToken },
-      );
-    },
+      ),
     upsertOpenCodeRouterSlackIdentity: (
       workspaceId: string,
       input: { id?: string; botToken: string; appToken: string; enabled?: boolean },
-      options?: { healthPort?: number | null },
     ) =>
       requestJson<OpenworkOpenCodeRouterSlackIdentityUpsertResult>(
         baseUrl,
@@ -1161,26 +1148,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             botToken: input.botToken,
             appToken: input.appToken,
             ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
-            healthPort: options?.healthPort ?? null,
           },
         },
       ),
-    deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
-      const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterSlackIdentityDeleteResult>(
+    deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string) =>
+      requestJson<OpenworkOpenCodeRouterSlackIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}`,
         { token, hostToken, method: "DELETE" },
-      );
-    },
+      ),
     getOpenCodeRouterBindings: (
       workspaceId: string,
-      filters?: { channel?: string; identityId?: string; healthPort?: number | null },
+      filters?: { channel?: string; identityId?: string },
     ) => {
       const search = new URLSearchParams();
       if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
       if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
-      if (typeof filters?.healthPort === "number") search.set("healthPort", String(filters.healthPort));
       const suffix = search.toString();
       return requestJson<OpenworkOpenCodeRouterBindingsResult>(
         baseUrl,
@@ -1191,7 +1174,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     setOpenCodeRouterBinding: (
       workspaceId: string,
       input: { channel: string; identityId?: string; peerId: string; directory?: string },
-      options?: { healthPort?: number | null },
     ) =>
       requestJson<OpenworkOpenCodeRouterBindingUpdateResult>(
         baseUrl,
@@ -1205,7 +1187,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             ...(input.identityId?.trim() ? { identityId: input.identityId.trim() } : {}),
             peerId: input.peerId,
             ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
-            healthPort: options?.healthPort ?? null,
           },
         },
       ),
@@ -1219,7 +1200,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         peerId?: string;
         autoBind?: boolean;
       },
-      options?: { healthPort?: number | null },
     ) => {
       const payload = {
         channel: input.channel,
@@ -1228,7 +1208,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
         ...(input.peerId?.trim() ? { peerId: input.peerId.trim() } : {}),
         ...(input.autoBind === true ? { autoBind: true } : {}),
-        healthPort: options?.healthPort ?? null,
       };
 
       const primaryPath = `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/send`;
@@ -1260,7 +1239,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     setOpenCodeRouterTelegramEnabled: (
       workspaceId: string,
       enabled: boolean,
-      options?: { clearToken?: boolean; healthPort?: number | null },
+      options?: { clearToken?: boolean },
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramEnabledResult>(
         baseUrl,
@@ -1269,7 +1248,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "POST",
-          body: { enabled, clearToken: options?.clearToken ?? false, healthPort: options?.healthPort ?? null },
+          body: { enabled, clearToken: options?.clearToken ?? false },
         },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
