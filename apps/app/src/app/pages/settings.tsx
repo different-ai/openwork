@@ -217,7 +217,7 @@ export type SettingsViewProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
-  openCloudTemplate: (input: {
+  openTeamBundle: (input: {
     templateId: string;
     name: string;
     templateData: unknown;
@@ -1894,11 +1894,11 @@ export default function SettingsView(props: SettingsViewProps) {
         </Match>
 
         <Match when={activeTab() === "den"}>
-          <DenSettingsPanel
-            developerMode={props.developerMode}
-            connectRemoteWorkspace={props.connectRemoteWorkspace}
-            openCloudTemplate={props.openCloudTemplate}
-          />
+            <DenSettingsPanel
+              developerMode={props.developerMode}
+              connectRemoteWorkspace={props.connectRemoteWorkspace}
+              openTeamBundle={props.openTeamBundle}
+            />
         </Match>
 
         <Match when={activeTab() === "advanced"}>

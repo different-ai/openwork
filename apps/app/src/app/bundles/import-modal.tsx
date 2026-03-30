@@ -2,21 +2,14 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 
 import { Boxes, ChevronDown, ChevronRight, Plus, Sparkles, X } from "lucide-solid";
 
-type ExistingWorkerOption = {
-  id: string;
-  label: string;
-  detail: string;
-  badge: string;
-  current: boolean;
-  disabledReason?: string | null;
-};
+import type { BundleWorkerOption } from "./types";
 
-export default function SharedBundleImportModal(props: {
+export default function BundleImportModal(props: {
   open: boolean;
   title: string;
   description: string;
   items: string[];
-  workers: ExistingWorkerOption[];
+  workers: BundleWorkerOption[];
   busy?: boolean;
   error?: string | null;
   onClose: () => void;
@@ -105,7 +98,7 @@ export default function SharedBundleImportModal(props: {
                   <Plus size={18} />
                 </div>
                 <div>
-                  <div class="text-sm font-semibold text-gray-12">Create New Worker</div>
+                  <div class="text-sm font-semibold text-gray-12">Create new worker</div>
                   <div class="mt-1 text-sm text-gray-10">Open the existing new worker flow, then import this bundle into it.</div>
                 </div>
               </div>
@@ -122,7 +115,7 @@ export default function SharedBundleImportModal(props: {
               >
                 <div>
                   <div class="text-sm font-semibold text-gray-12">Add to existing worker</div>
-                  <div class="mt-1 text-sm text-gray-10">Pick an existing worker and import this shared bundle there.</div>
+                  <div class="mt-1 text-sm text-gray-10">Pick an existing worker and import this bundle there.</div>
                 </div>
                 <Show when={showWorkers()} fallback={<ChevronRight size={18} class="text-gray-10" />}>
                   <ChevronDown size={18} class="text-gray-10" />

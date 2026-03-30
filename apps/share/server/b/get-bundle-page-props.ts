@@ -55,7 +55,7 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
     const urls = buildBundleUrls(requestLike, normalizedId);
     const ogImageUrls = buildOgImageUrls(requestLike, normalizedId);
     const ogImageUrl = ogImageUrls.default;
-    const { openInAppDeepLink, openInWebAppUrl } = buildOpenInAppUrls(urls.shareUrl, {
+    const { openInAppDeepLink } = buildOpenInAppUrls(urls.shareUrl, {
       label: bundle.name || "Shared worker package"
     });
     const counts = getBundleCounts(bundle);
@@ -69,7 +69,7 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
         ? "Open in app to choose where to add this skill."
         : bundle.type === "skills-set"
           ? "Open in app to add this full skills set to an existing worker or create a new worker with it attached."
-          : "Open in app to create a new worker with these skills, commands, config, and extra template files already bundled.";
+          : "Open in app to create a new worker with these skills, commands, config, and portable .opencode files already bundled.";
 
     return {
       missing: false,
@@ -84,7 +84,6 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
       twitterImageUrl: ogImageUrls.twitter,
       ogImageUrls,
       openInAppDeepLink,
-      openInWebAppUrl,
       installHint,
       bundleType: bundle.type || "unknown",
       typeLabel,

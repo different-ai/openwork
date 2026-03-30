@@ -17,11 +17,16 @@ import {
 } from "../utils";
 import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
-import { buildDenAuthUrl, createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
+import { buildDenAuthUrl, readDenSettings } from "../lib/den";
 import { useConnections } from "../connections/provider";
 import { useExtensions } from "../extensions/provider";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
+import {
+  publishSkillsSetBundleFromWorkspace,
+  publishWorkspaceProfileBundleFromWorkspace,
+  saveWorkspaceProfileBundleToTeam,
+} from "../bundles/publish";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
@@ -32,7 +37,6 @@ import type {
   OpenworkServerClient,
   OpenworkServerCapabilities,
   OpenworkServerDiagnostics,
-  OpenworkWorkspaceExport,
   OpenworkServerSettings,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
@@ -149,7 +153,7 @@ export type SettingsShellProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
-  openCloudTemplate: (input: {
+  openTeamBundle: (input: {
     templateId: string;
     name: string;
     templateData: unknown;
@@ -259,33 +263,6 @@ export type SettingsShellProps = {
   dockerCleanupResult: string | null;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   openDebugDeepLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
-};
-
-type SharedSkillItem = {
-  name: string;
-  description?: string;
-  content: string;
-  trigger?: string;
-};
-
-type WorkspaceProfileBundleV1 = {
-  schemaVersion: 1;
-  type: "workspace-profile";
-  name: string;
-  description: string;
-  workspace: OpenworkWorkspaceExport;
-};
-
-type SkillsSetBundleV1 = {
-  schemaVersion: 1;
-  type: "skills-set";
-  name: string;
-  description: string;
-  skills: SharedSkillItem[];
-  sourceWorkspace?: {
-    id?: string;
-    name?: string;
-  };
 };
 
 export default function SettingsShell(props: SettingsShellProps) {
@@ -849,17 +826,10 @@ export default function SettingsShell(props: SettingsShellProps) {
 
     try {
       const { client, workspaceId, workspace } = await resolveShareExportContext();
-      const exported = await client.exportWorkspace(workspaceId);
-      const payload: WorkspaceProfileBundleV1 = {
-        schemaVersion: 1,
-        type: "workspace-profile",
-        name: `${workspaceLabel(workspace)} template`,
-        description: "Full OpenWork workspace template with config, commands, skills, and extra .opencode files.",
-        workspace: exported,
-      };
-
-      const result = await client.publishBundle(payload, "workspace-profile", {
-        name: payload.name,
+      const result = await publishWorkspaceProfileBundleFromWorkspace({
+        client,
+        workspaceId,
+        workspaceName: workspaceLabel(workspace),
         baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
       });
 
@@ -884,52 +854,11 @@ export default function SettingsShell(props: SettingsShellProps) {
 
     try {
       const { client, workspaceId, workspace } = await resolveShareExportContext();
-      const exported = await client.exportWorkspace(workspaceId);
-      const fallbackName = `${workspaceLabel(workspace)} template`;
-      const name = templateName.trim() || fallbackName;
-      const payload: WorkspaceProfileBundleV1 = {
-        schemaVersion: 1,
-        type: "workspace-profile",
-        name,
-        description: "Full OpenWork workspace template with config, commands, skills, and extra .opencode files.",
-        workspace: exported,
-      };
-
-      const settings = readDenSettings();
-      const token = settings.authToken?.trim() ?? "";
-      if (!token) {
-        throw new Error("Sign in to OpenWork Cloud in Settings to share with your team.");
-      }
-
-      const cloudClient = createDenClient({ baseUrl: settings.baseUrl, token });
-      let orgId = settings.activeOrgId?.trim() ?? "";
-      let orgSlug = settings.activeOrgSlug?.trim() ?? "";
-      let orgName = settings.activeOrgName?.trim() ?? "";
-
-      if (!orgSlug || !orgName) {
-        const response = await cloudClient.listOrgs();
-        const match = orgId
-          ? response.orgs.find((org) => org.id === orgId)
-          : response.orgs.find((org) => org.slug === orgSlug) ?? response.orgs[0];
-        if (!match) {
-          throw new Error("Choose an organization in Settings -> Cloud before sharing with your team.");
-        }
-        orgId = match.id;
-        orgSlug = match.slug;
-        orgName = match.name;
-        writeDenSettings({
-          ...settings,
-          baseUrl: settings.baseUrl,
-          authToken: token,
-          activeOrgId: orgId,
-          activeOrgSlug: orgSlug,
-          activeOrgName: orgName,
-        });
-      }
-
-      const created = await cloudClient.createTemplate(orgSlug, {
-        name,
-        templateData: payload,
+      const { created, orgName } = await saveWorkspaceProfileBundleToTeam({
+        client,
+        workspaceId,
+        workspaceName: workspaceLabel(workspace),
+        requestedName: templateName,
       });
 
       setShareWorkspaceProfileTeamSuccess(
@@ -952,31 +881,10 @@ export default function SettingsShell(props: SettingsShellProps) {
 
     try {
       const { client, workspaceId, workspace } = await resolveShareExportContext();
-      const exported = await client.exportWorkspace(workspaceId);
-      const skills = Array.isArray(exported.skills) ? exported.skills : [];
-      if (!skills.length) {
-        throw new Error("No skills found in this workspace.");
-      }
-
-      const payload: SkillsSetBundleV1 = {
-        schemaVersion: 1,
-        type: "skills-set",
-        name: `${workspaceLabel(workspace)} skills`,
-        description: "Complete skills set from an OpenWork workspace.",
-        skills: skills.map((skill) => ({
-          name: skill.name,
-          description: skill.description,
-          trigger: skill.trigger,
-          content: skill.content,
-        })),
-        sourceWorkspace: {
-          id: workspaceId,
-          name: workspaceLabel(workspace),
-        },
-      };
-
-      const result = await client.publishBundle(payload, "skills-set", {
-        name: payload.name,
+      const result = await publishSkillsSetBundleFromWorkspace({
+        client,
+        workspaceId,
+        workspaceName: workspaceLabel(workspace),
         baseUrl: DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
       });
 
@@ -1341,7 +1249,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                    workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
                    setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
                    connectRemoteWorkspace={props.connectRemoteWorkspace}
-                   openCloudTemplate={props.openCloudTemplate}
+                    openTeamBundle={props.openTeamBundle}
                 />
         </div>
 
@@ -1410,7 +1318,6 @@ export default function SettingsShell(props: SettingsShellProps) {
               }
             : undefined}
           note={shareNote()}
-          publisherBaseUrl={DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
           onShareWorkspaceProfile={publishWorkspaceProfileLink}
           shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}
           shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}
@@ -1425,10 +1332,6 @@ export default function SettingsShell(props: SettingsShellProps) {
           shareWorkspaceProfileToTeamNeedsSignIn={shareWorkspaceProfileToTeamNeedsSignIn()}
           onShareWorkspaceProfileToTeamSignIn={startShareWorkspaceProfileToTeamSignIn}
           onShareSkillsSet={publishSkillsSetLink}
-          onOpenSingleSkillShare={() => {
-            setShareWorkspaceId(null);
-            openSettings("skills");
-          }}
           shareSkillsSetBusy={shareSkillsSetBusy()}
           shareSkillsSetUrl={shareSkillsSetUrl()}
           shareSkillsSetError={shareSkillsSetError()}

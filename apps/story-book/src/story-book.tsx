@@ -1036,6 +1036,7 @@ export default function StoryBookApp() {
                     <DenSettingsPanel
                       developerMode
                       connectRemoteWorkspace={async () => true}
+                      openTeamBundle={async () => {}}
                     />
                   </div>
                 </Show>
@@ -1223,14 +1224,12 @@ export default function StoryBookApp() {
         workspaceDetail={shareWorkspaceDetail()}
         fields={[...mockShareFields]}
         note="This is the real share modal from the app, mounted with safe mock values for shell review."
-        publisherBaseUrl="https://share.openworklabs.com"
         onShareWorkspaceProfile={publishMockWorkspaceProfile}
         shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}
         shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}
         shareWorkspaceProfileError={null}
         shareWorkspaceProfileDisabledReason={null}
         onShareSkillsSet={publishMockSkillsSet}
-        onOpenSingleSkillShare={() => setComposerToast("Story-book: single skill share is mocked in this shell.")}
         shareSkillsSetBusy={shareSkillsSetBusy()}
         shareSkillsSetUrl={shareSkillsSetUrl()}
         shareSkillsSetError={null}

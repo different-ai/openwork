@@ -28,7 +28,6 @@ It keeps the existing bundle APIs, but the public share surface now runs as a si
     - `ow_bundle=<share-url>`
     - `ow_intent=new_worker` (desktop OpenWork converts single-skill bundles into a destination picker before import)
     - `ow_source=share_service`
-  - Also includes a web fallback action that opens `PUBLIC_OPENWORK_APP_URL` with the same query params.
   - Returns raw JSON for API/programmatic requests:
     - send `Accept: application/json`, or
     - append `?format=json`.
@@ -73,10 +72,6 @@ The packager rejects files that appear to contain secrets in shareable config.
 - `OPENWORK_PUBLISHER_ALLOWED_ORIGINS`
   - Optional comma-separated browser origins allowed to publish bundles.
   - Defaults include the share origin, the hosted OpenWork app origin, and common local dev origins.
-
-- `PUBLIC_OPENWORK_APP_URL`
-  - Default: `https://app.openworklabs.com`
-  - Target app URL for the Open in app action on bundle pages.
 
 - `LOCAL_BLOB_DIR`
   - Optional local filesystem storage root for bundle JSON.

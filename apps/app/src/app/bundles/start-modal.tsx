@@ -2,9 +2,9 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 
 import { FolderPlus, Loader2, Rocket, X } from "lucide-solid";
 
-import Button from "./button";
+import Button from "../components/button";
 
-export default function StartWithTemplateModal(props: {
+export default function BundleStartModal(props: {
   open: boolean;
   templateName: string;
   description?: string | null;

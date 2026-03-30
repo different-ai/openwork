@@ -2,22 +2,14 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 
 import type { HubSkillCard, HubSkillRepo, SkillCard } from "../types";
 import { useExtensions } from "../extensions/provider";
+import type { SkillBundleV1 } from "../bundles/types";
 
 import Button from "../components/button";
-import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
+import { Copy, Edit2, FolderOpen, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
 
 type InstallResult = { ok: boolean; message: string };
-
-type SkillBundleV1 = {
-  schemaVersion: 1;
-  type: "skill";
-  name: string;
-  content: string;
-  description?: string;
-  trigger?: string;
-};
 
 const OPENWORK_DEFAULT_SKILL_NAMES = new Set([
   "workspace-guide",
@@ -63,12 +55,6 @@ export default function SkillsView(props: SkillsViewProps) {
   const [shareUrl, setShareUrl] = createSignal<string | null>(null);
   const [shareError, setShareError] = createSignal<string | null>(null);
 
-  const [installLinkOpen, setInstallLinkOpen] = createSignal(false);
-  const [installLinkUrl, setInstallLinkUrl] = createSignal("");
-  const [installLinkBusy, setInstallLinkBusy] = createSignal(false);
-  const [installLinkError, setInstallLinkError] = createSignal<string | null>(null);
-  const [installLinkBundle, setInstallLinkBundle] = createSignal<SkillBundleV1 | null>(null);
-
   const [selectedSkill, setSelectedSkill] = createSignal<SkillCard | null>(null);
   const [selectedContent, setSelectedContent] = createSignal("");
   const [selectedLoading, setSelectedLoading] = createSignal(false);
@@ -91,24 +77,6 @@ export default function SkillsView(props: SkillsViewProps) {
   });
 
   const maskError = (value: unknown) => (value instanceof Error ? value.message : "Something went wrong");
-
-  const stripFrontmatter = (content: string) => {
-    const raw = String(content ?? "");
-    const match = raw.match(/^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?/);
-    if (!match) return raw;
-    return raw.slice(match[0].length);
-  };
-
-  const resolveUniqueSkillName = (base: string, taken: Set<string>) => {
-    const trimmed = String(base ?? "").trim();
-    if (!trimmed) return "";
-    if (!taken.has(trimmed)) return trimmed;
-    for (let i = 2; i < 1_000; i++) {
-      const candidate = `${trimmed}-${i}`;
-      if (!taken.has(candidate)) return candidate;
-    }
-    return `${trimmed}-${Date.now()}`;
-  };
 
   const hubRepoKey = (repo: HubSkillRepo) => `${repo.owner}/${repo.repo}@${repo.ref}`;
   const defaultHubRepoKey = "different-ai/openwork-hub@main";
@@ -330,108 +298,6 @@ export default function SkillsView(props: SkillsViewProps) {
       setToast("Link copied");
     } catch {
       setShareError("Failed to copy link");
-    }
-  };
-
-  const openInstallFromLink = () => {
-    if (props.busy) return;
-    setInstallLinkOpen(true);
-    setInstallLinkUrl("");
-    setInstallLinkBusy(false);
-    setInstallLinkError(null);
-    setInstallLinkBundle(null);
-  };
-
-  const closeInstallFromLink = () => {
-    setInstallLinkOpen(false);
-    setInstallLinkBusy(false);
-    setInstallLinkError(null);
-    setInstallLinkBundle(null);
-  };
-
-  const previewInstallLink = async () => {
-    const raw = installLinkUrl().trim();
-    if (!raw) {
-      setInstallLinkError("Paste a link to preview");
-      return;
-    }
-    if (installLinkBusy()) return;
-
-    setInstallLinkBusy(true);
-    setInstallLinkError(null);
-    setInstallLinkBundle(null);
-    try {
-      const url = new URL(raw);
-      const controller = new AbortController();
-      const timer = window.setTimeout(() => controller.abort(), 15_000);
-      try {
-        const response = await fetch(url.toString(), {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const text = (await response.text()).trim();
-          const suffix = text ? `: ${text}` : "";
-          throw new Error(`Failed to fetch bundle (${response.status})${suffix}`);
-        }
-        const json = (await response.json()) as Record<string, unknown>;
-        const schemaVersion = typeof json.schemaVersion === "number" ? json.schemaVersion : null;
-        const type = typeof json.type === "string" ? json.type : "";
-        const name = typeof json.name === "string" ? json.name.trim() : "";
-        const content = typeof json.content === "string" ? json.content : "";
-        if (schemaVersion !== 1 || type !== "skill") {
-          throw new Error("This link is not an OpenWork skill bundle");
-        }
-        if (!name) throw new Error("Bundle is missing a skill name");
-        if (!content) throw new Error("Bundle is missing skill content");
-        setInstallLinkBundle({
-          schemaVersion: 1,
-          type: "skill",
-          name,
-          content,
-          description: typeof json.description === "string" ? json.description : undefined,
-          trigger: typeof json.trigger === "string" ? json.trigger : undefined,
-        });
-      } finally {
-        window.clearTimeout(timer);
-      }
-    } catch (e) {
-      setInstallLinkError(maskError(e));
-    } finally {
-      setInstallLinkBusy(false);
-    }
-  };
-
-  const installFromPreview = async (mode: "overwrite" | "keep-both") => {
-    const bundle = installLinkBundle();
-    if (!bundle) return;
-    if (props.busy || installLinkBusy()) return;
-    setInstallLinkBusy(true);
-    setInstallLinkError(null);
-
-    try {
-      const taken = installedNames();
-      const desiredName = bundle.name.trim();
-      const conflict = taken.has(desiredName);
-      const shouldRename = conflict && mode === "keep-both";
-      const finalName = shouldRename ? resolveUniqueSkillName(desiredName, taken) : desiredName;
-      const content = shouldRename ? stripFrontmatter(bundle.content) : bundle.content;
-
-      await Promise.resolve(
-        extensions.saveSkill({
-          name: finalName,
-          content,
-          description: bundle.description,
-        }),
-      );
-      void extensions.refreshSkills({ force: true });
-      setToast(`Installed ${finalName}`);
-      closeInstallFromLink();
-    } catch (e) {
-      setInstallLinkError(maskError(e));
-    } finally {
-      setInstallLinkBusy(false);
     }
   };
 
@@ -1138,107 +1004,6 @@ export default function SkillsView(props: SkillsViewProps) {
                   </Button>
                 </div>
               </Show>
-            </div>
-          </div>
-        </div>
-      </Show>
-
-      <Show when={installLinkOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6 space-y-4">
-              <div>
-                <h3 class="text-lg font-semibold text-dls-text">Install from link</h3>
-                <p class="text-sm text-dls-secondary mt-1">Paste a skill bundle URL, preview it, then install.</p>
-              </div>
-
-              <div class="space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Link</div>
-                <input
-                  type="url"
-                  value={installLinkUrl()}
-                  onInput={(e) => setInstallLinkUrl(e.currentTarget.value)}
-                  placeholder="https://share.openworklabs.com/b/..."
-                  class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
-                  spellcheck={false}
-                />
-              </div>
-
-              <Show when={installLinkError()}>
-                <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
-                  {installLinkError()}
-                </div>
-              </Show>
-
-              <Show when={installLinkBundle()}>
-                {(bundle) => {
-                  const taken = installedNames();
-                  const conflict = taken.has(bundle().name.trim());
-                  return (
-                    <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
-                      <div class="text-xs font-semibold text-dls-text">Preview</div>
-                      <div class="text-xs text-dls-secondary">
-                        Skill: <span class="font-mono">{bundle().name}</span>
-                      </div>
-                      <Show when={bundle().description}>
-                        <div class="text-xs text-dls-secondary">{bundle().description}</div>
-                      </Show>
-                      <Show when={conflict}>
-                        <div class="text-xs text-amber-11">A skill with this name is already installed.</div>
-                      </Show>
-                    </div>
-                  );
-                }}
-              </Show>
-
-              <div class="flex justify-end gap-2">
-                <Button variant="outline" onClick={closeInstallFromLink} disabled={installLinkBusy()}>
-                  {translate("common.cancel")}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void previewInstallLink()}
-                  disabled={installLinkBusy() || !installLinkUrl().trim()}
-                >
-                  {installLinkBusy() && !installLinkBundle() ? "Loading…" : "Preview"}
-                </Button>
-                <Show when={installLinkBundle()} keyed>
-                  {(bundle) => {
-                    const conflict = installedNames().has(bundle.name.trim());
-                    return (
-                      <Show
-                        when={conflict}
-                        fallback={
-                          <Button
-                            variant="secondary"
-                            onClick={() => void installFromPreview("overwrite")}
-                            disabled={installLinkBusy()}
-                          >
-                            {installLinkBusy() ? "Installing…" : "Install"}
-                          </Button>
-                        }
-                      >
-                        <div class="flex gap-2">
-                          <Button
-                            variant="outline"
-                            onClick={() => void installFromPreview("keep-both")}
-                            disabled={installLinkBusy()}
-                          >
-                            {installLinkBusy() ? "Installing…" : "Keep both"}
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => void installFromPreview("overwrite")}
-                            disabled={installLinkBusy()}
-                          >
-                            {installLinkBusy() ? "Installing…" : "Overwrite"}
-                          </Button>
-                        </div>
-                      </Show>
-                    );
-                  }}
-                </Show>
-              </div>
             </div>
           </div>
         </div>

@@ -35,7 +35,7 @@ import {
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
-import { listTemplateFiles, planTemplateFiles, writeTemplateFiles } from "./template-files.js";
+import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -3916,7 +3916,7 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const templateFiles = planTemplateFiles(workspace.path, body.files);
+    const portableFiles = planPortableFiles(workspace.path, body.files);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.import",
@@ -3924,7 +3924,7 @@ function createRoutes(
       paths: [
         opencodeConfigPath(workspace.path),
         openworkConfigPath(workspace.path),
-        ...templateFiles.map((file) => file.absolutePath),
+        ...portableFiles.map((file) => file.absolutePath),
       ],
     });
     await importWorkspace(workspace, body);
@@ -5140,7 +5140,7 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
   const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
-  const files = await listTemplateFiles(workspace.path);
+  const files = await listPortableFiles(workspace.path);
   const skillContents = await Promise.all(
     skills.map(async (skill) => ({
       name: skill.name,
@@ -5239,7 +5239,7 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
   }
 
   if (Array.isArray(files) && files.length > 0) {
-    await writeTemplateFiles(workspace.path, files, { replace: modes.files === "replace" });
+    await writePortableFiles(workspace.path, files, { replace: modes.files === "replace" });
   }
 }
 

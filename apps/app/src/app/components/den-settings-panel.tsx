@@ -30,7 +30,7 @@ type DenSettingsPanelProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
-  openCloudTemplate: (input: {
+  openTeamBundle: (input: {
     templateId: string;
     name: string;
     templateData: unknown;
@@ -573,7 +573,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setTemplateActionError(null);
 
     try {
-      await props.openCloudTemplate({
+      await props.openTeamBundle({
         templateId: template.id,
         name: template.name,
         templateData: template.templateData,

@@ -51,7 +51,6 @@ export default function ShareWorkspaceModal(props: {
     onSave: (enabled: boolean) => void | Promise<void>;
   };
   note?: string | null;
-  publisherBaseUrl?: string;
   onShareWorkspaceProfile?: () => void;
   shareWorkspaceProfileBusy?: boolean;
   shareWorkspaceProfileUrl?: string | null;
@@ -66,7 +65,6 @@ export default function ShareWorkspaceModal(props: {
   shareWorkspaceProfileToTeamNeedsSignIn?: boolean;
   onShareWorkspaceProfileToTeamSignIn?: () => void | Promise<void>;
   onShareSkillsSet?: () => void;
-  onOpenSingleSkillShare?: () => void;
   shareSkillsSetBusy?: boolean;
   shareSkillsSetUrl?: string | null;
   shareSkillsSetError?: string | null;
@@ -110,7 +108,7 @@ export default function ShareWorkspaceModal(props: {
     },
     {
       title: "Commands and config",
-      detail: "Reusable commands plus OpenWork/OpenCode config.",
+      detail: "Reusable commands, OpenWork/OpenCode config, and portable .opencode files.",
       icon: FileCode2,
     },
   ]);

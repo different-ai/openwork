@@ -4,17 +4,17 @@ import { CheckCircle2, Folder, FolderPlus, Globe, Loader2, Sparkles, X } from "l
 import type { WorkspaceInfo } from "../lib/tauri";
 import { t, currentLocale } from "../../i18n";
 
-import Button from "./button";
+import Button from "../components/button";
 
-type SharedSkillSummary = {
+type SkillSummary = {
   name: string;
   description?: string | null;
   trigger?: string | null;
 };
 
-export default function SharedSkillDestinationModal(props: {
+export default function SkillDestinationModal(props: {
   open: boolean;
-  skill: SharedSkillSummary | null;
+  skill: SkillSummary | null;
   workspaces: WorkspaceInfo[];
   selectedWorkspaceId?: string | null;
   busyWorkspaceId?: string | null;
@@ -229,73 +229,77 @@ export default function SharedSkillDestinationModal(props: {
               </Show>
             </div>
 
-            <div class="space-y-3">
-              <div class="text-sm font-medium text-gray-12">{translate("share_skill_destination.new_destination")}</div>
-              <div class="grid gap-2 md:grid-cols-2">
-                <Show when={props.onCreateWorker}>
-                  <button
-                    type="button"
-                    onClick={props.onCreateWorker}
-                    disabled={footerBusy()}
-                    class={`rounded-xl border border-gray-6/40 bg-transparent px-4 py-3 text-left transition-colors hover:border-gray-7/50 hover:bg-gray-2 ${footerBusy() ? "cursor-wait opacity-70" : ""}`.trim()}
-                  >
-                    <div class="flex items-start gap-3">
-                      <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-green-7/20 bg-green-7/10 text-green-11">
-                        <FolderPlus size={16} />
+            <Show when={props.onCreateWorker || props.onConnectRemote}>
+              <div class="space-y-3 border-t border-gray-6 pt-5">
+                <div class="text-sm font-medium text-gray-12">{translate("share_skill_destination.more_options")}</div>
+                <div class="grid gap-3 md:grid-cols-2">
+                  <Show when={props.onCreateWorker}>
+                    <button
+                      type="button"
+                      onClick={() => props.onCreateWorker?.()}
+                      disabled={footerBusy()}
+                      class={`rounded-xl border border-indigo-7/30 bg-indigo-7/10 px-4 py-4 text-left transition hover:border-indigo-7/50 hover:bg-indigo-7/15 ${footerBusy() ? "cursor-not-allowed opacity-60" : ""}`.trim()}
+                    >
+                      <div class="flex items-start gap-3">
+                        <div class="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full border border-indigo-7/30 bg-indigo-7/15 text-indigo-11">
+                          <FolderPlus size={17} />
+                        </div>
+                        <div>
+                          <div class="text-sm font-semibold text-gray-12">{translate("share_skill_destination.create_worker")}</div>
+                          <div class="mt-1 text-sm text-gray-10">{translate("share_skill_destination.create_worker_hint")}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div class="text-sm font-medium text-gray-12">{translate("share_skill_destination.create_worker")}</div>
-                        <div class="mt-1 text-xs leading-relaxed text-gray-10">{translate("share_skill_destination.create_worker_desc")}</div>
-                      </div>
-                    </div>
-                  </button>
-                </Show>
+                    </button>
+                  </Show>
 
-                <Show when={props.onConnectRemote}>
-                  <button
-                    type="button"
-                    onClick={props.onConnectRemote}
-                    disabled={footerBusy()}
-                    class={`rounded-xl border border-gray-6/40 bg-transparent px-4 py-3 text-left transition-colors hover:border-gray-7/50 hover:bg-gray-2 ${footerBusy() ? "cursor-wait opacity-70" : ""}`.trim()}
-                  >
-                    <div class="flex items-start gap-3">
-                      <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sky-7/20 bg-sky-7/10 text-sky-11">
-                        <Globe size={16} />
+                  <Show when={props.onConnectRemote}>
+                    <button
+                      type="button"
+                      onClick={() => props.onConnectRemote?.()}
+                      disabled={footerBusy()}
+                      class={`rounded-xl border border-sky-7/30 bg-sky-7/10 px-4 py-4 text-left transition hover:border-sky-7/50 hover:bg-sky-7/15 ${footerBusy() ? "cursor-not-allowed opacity-60" : ""}`.trim()}
+                    >
+                      <div class="flex items-start gap-3">
+                        <div class="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full border border-sky-7/30 bg-sky-7/15 text-sky-11">
+                          <Globe size={17} />
+                        </div>
+                        <div>
+                          <div class="text-sm font-semibold text-gray-12">{translate("share_skill_destination.connect_remote")}</div>
+                          <div class="mt-1 text-sm text-gray-10">{translate("share_skill_destination.connect_remote_hint")}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div class="text-sm font-medium text-gray-12">{translate("share_skill_destination.connect_remote")}</div>
-                        <div class="mt-1 text-xs leading-relaxed text-gray-10">{translate("share_skill_destination.connect_remote_desc")}</div>
-                      </div>
-                    </div>
-                  </button>
-                </Show>
+                    </button>
+                  </Show>
+                </div>
               </div>
-            </div>
+            </Show>
           </div>
 
-          <div class="flex flex-col gap-3 border-t border-gray-6 bg-gray-1 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div class="text-sm text-gray-10">
-              <Show when={selectedWorkspace()} fallback={<span>{translate("share_skill_destination.footer_idle")}</span>}>
+          <div class="border-t border-gray-6 bg-gray-1 px-6 py-4">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <Show when={selectedWorkspace()}>
                 {(workspace) => (
-                  <span>
-                    {translate("share_skill_destination.footer_selected")} <span class="font-medium text-gray-12">{displayName(workspace())}</span>
-                  </span>
+                  <div class="min-w-0 text-sm text-gray-10">
+                    <span class="font-medium text-gray-12">{displayName(workspace())}</span>
+                    <span class="mx-2 text-gray-8">·</span>
+                    <span class="truncate align-middle">{subtitle(workspace())}</span>
+                  </div>
                 )}
               </Show>
-            </div>
 
-            <div class="flex items-center justify-end gap-2">
-              <Button variant="ghost" onClick={props.onClose} disabled={footerBusy()}>
-                {translate("common.cancel")}
-              </Button>
-              <Button onClick={submitSelectedWorkspace} disabled={!selectedWorkspaceId() || footerBusy()}>
-                <Show when={footerBusy()} fallback={translate("share_skill_destination.confirm_button")}>
-                  <>
-                    <Loader2 size={15} class="animate-spin" />
-                    {translate("share_skill_destination.confirm_busy")}
-                  </>
-                </Show>
-              </Button>
+              <div class="flex items-center justify-end gap-3">
+                <Button variant="ghost" onClick={props.onClose} disabled={footerBusy()}>
+                  {translate("common.cancel")}
+                </Button>
+                <Button variant="primary" onClick={submitSelectedWorkspace} disabled={!selectedWorkspace() || footerBusy()}>
+                  <Show when={footerBusy()} fallback={translate("share_skill_destination.add_to_workspace")}>
+                    <span class="inline-flex items-center gap-2">
+                      <Loader2 size={16} class="animate-spin" />
+                      {translate("share_skill_destination.adding")}
+                    </span>
+                  </Show>
+                </Button>
+              </div>
             </div>
           </div>
         </div>

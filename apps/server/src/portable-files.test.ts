@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { listTemplateFiles, planTemplateFiles, writeTemplateFiles } from "./template-files.js";
+import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
 
 const tempDirs: string[] = [];
 
@@ -16,13 +16,13 @@ afterEach(async () => {
 });
 
 async function makeWorkspace(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-template-files-"));
+  const dir = await mkdtemp(join(tmpdir(), "openwork-portable-files-"));
   tempDirs.push(dir);
   await mkdir(join(dir, ".opencode"), { recursive: true });
   return dir;
 }
 
-describe("template files", () => {
+describe("portable files", () => {
   test("lists only extra shareable .opencode files", async () => {
     const workspaceRoot = await makeWorkspace();
     await mkdir(join(workspaceRoot, ".opencode", "agents"), { recursive: true });
@@ -42,7 +42,7 @@ describe("template files", () => {
     await writeFile(join(workspaceRoot, ".opencode", "opencode.db"), "sqlite-bytes", "utf8");
     await writeFile(join(workspaceRoot, ".opencode", ".env"), "SECRET=value\n", "utf8");
 
-    const files = await listTemplateFiles(workspaceRoot);
+    const files = await listPortableFiles(workspaceRoot);
 
     expect(files).toEqual([
       { path: ".opencode/agents/openwork.md", content: "# agent\n" },
@@ -51,9 +51,9 @@ describe("template files", () => {
     ]);
   });
 
-  test("plans and writes validated template files", async () => {
+  test("plans and writes validated portable files", async () => {
     const workspaceRoot = await makeWorkspace();
-    const planned = planTemplateFiles(workspaceRoot, [
+    const planned = planPortableFiles(workspaceRoot, [
       { path: ".opencode/agents/demo.md", content: "hello\n" },
       { path: ".opencode/tools/demo.ts", content: "export default {};\n" },
     ]);
@@ -61,7 +61,7 @@ describe("template files", () => {
     expect(planned[0]?.absolutePath.endsWith("/.opencode/agents/demo.md")).toBe(true);
     expect(planned[1]?.absolutePath.endsWith("/.opencode/tools/demo.ts")).toBe(true);
 
-    await writeTemplateFiles(workspaceRoot, [
+    await writePortableFiles(workspaceRoot, [
       { path: ".opencode/agents/demo.md", content: "hello\n" },
       { path: ".opencode/tools/demo.ts", content: "export default {};\n" },
     ]);
@@ -72,27 +72,27 @@ describe("template files", () => {
     expect(toolContents).toBe("export default {};\n");
   });
 
-  test("rejects non-allowlisted template files and path traversal", async () => {
+  test("rejects non-allowlisted portable files and path traversal", async () => {
     const workspaceRoot = await makeWorkspace();
 
     expect(() =>
-      planTemplateFiles(workspaceRoot, [{ path: ".opencode/.env", content: "SECRET=value" }]),
+      planPortableFiles(workspaceRoot, [{ path: ".opencode/.env", content: "SECRET=value" }]),
     ).toThrow(/not allowed/i);
 
     expect(() =>
-      planTemplateFiles(workspaceRoot, [{ path: ".opencode/package.json", content: "{}" }]),
+      planPortableFiles(workspaceRoot, [{ path: ".opencode/package.json", content: "{}" }]),
     ).toThrow(/not allowed/i);
 
     expect(() =>
-      planTemplateFiles(workspaceRoot, [{ path: ".opencode/openwork.json", content: "{}" }]),
+      planPortableFiles(workspaceRoot, [{ path: ".opencode/openwork.json", content: "{}" }]),
     ).toThrow(/not allowed/i);
 
     expect(() =>
-      planTemplateFiles(workspaceRoot, [{ path: "../outside.md", content: "oops" }]),
+      planPortableFiles(workspaceRoot, [{ path: "../outside.md", content: "oops" }]),
     ).toThrow(/invalid/i);
 
     expect(() =>
-      planTemplateFiles(workspaceRoot, [{ path: ".opencode/node_modules/demo/index.js", content: "oops" }]),
+      planPortableFiles(workspaceRoot, [{ path: ".opencode/node_modules/demo/index.js", content: "oops" }]),
     ).toThrow(/not allowed/i);
   });
 });

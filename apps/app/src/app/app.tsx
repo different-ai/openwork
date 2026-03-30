@@ -29,9 +29,9 @@ import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
-import SharedSkillDestinationModal from "./components/shared-skill-destination-modal";
-import SharedBundleImportModal from "./components/shared-bundle-import-modal";
-import StartWithTemplateModal from "./components/start-with-template-modal";
+import SkillDestinationModal from "./bundles/skill-destination-modal";
+import BundleImportModal from "./bundles/import-modal";
+import BundleStartModal from "./bundles/start-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import StatusToast from "./components/status-toast";
@@ -181,9 +181,7 @@ import {
 } from "./lib/font-zoom";
 import {
   parseOpenworkWorkspaceIdFromUrl,
-  readOpenworkBundleInviteFromSearch,
   readOpenworkConnectInviteFromSearch,
-  stripOpenworkBundleInviteFromUrl,
   stripOpenworkConnectInviteFromUrl,
   createOpenworkServerClient,
   hydrateOpenworkServerSettingsFromEnv,
@@ -200,58 +198,18 @@ import {
   OpenworkServerError,
 } from "./lib/openwork-server";
 import {
-  buildImportPayloadFromBundle,
-  defaultPresetFromTemplateBundle,
-  describeSharedBundleImport,
-  fetchSharedBundle,
-  normalizeSharedBundleImportIntent,
+  parseBundleDeepLink,
+  stripBundleQuery,
+} from "./bundles";
+import { createBundlesStore } from "./bundles/store";
+import {
   parseDebugDeepLinkInput,
   parseDenAuthDeepLink,
   parseRemoteConnectDeepLink,
-  parseSharedBundle,
-  parseSharedBundleDeepLink,
   stripRemoteConnectQuery,
-  stripSharedBundleQuery,
   type DenAuthDeepLink,
   type RemoteWorkspaceDefaults,
-  type SharedBundleDeepLink,
-  type SharedBundleV1,
-  type SharedSkillBundleV1,
-  type SharedWorkspaceProfileBundleV1,
-} from "./lib/shared-bundles";
-
-type SharedBundleCreateWorkerRequest = {
-  request: SharedBundleDeepLink;
-  bundle: SharedBundleV1;
-  defaultPreset: WorkspacePreset;
-};
-
-type SharedTemplateStartRequest = {
-  request: SharedBundleDeepLink;
-  bundle: SharedWorkspaceProfileBundleV1;
-  defaultPreset: WorkspacePreset;
-};
-
-type SharedSkillDestinationRequest = {
-  request: SharedBundleDeepLink;
-  bundle: SharedSkillBundleV1;
-};
-
-type SharedSkillSuccessToast = {
-  title: string;
-  description: string;
-};
-
-type SharedBundleImportTarget = {
-  workspaceId?: string | null;
-  localRoot?: string | null;
-  directoryHint?: string | null;
-};
-
-type SharedBundleImportChoice = {
-  request: SharedBundleDeepLink;
-  bundle: SharedBundleV1;
-};
+ } from "./lib/openwork-links";
 
 type SettingsReturnTarget = {
   view: View;
@@ -428,7 +386,7 @@ export default function App() {
 
     const stored = readOpenworkServerSettings();
     const invite = readOpenworkConnectInviteFromSearch(window.location.search);
-    const bundleInvite = readOpenworkBundleInviteFromSearch(window.location.search);
+    const bundleInvite = parseBundleDeepLink(window.location.href);
 
     if (!invite) {
       setOpenworkServerSettings(stored);
@@ -449,14 +407,7 @@ export default function App() {
     }
 
     if (bundleInvite?.bundleUrl) {
-      setPendingSharedBundleInvite({
-        bundleUrl: bundleInvite.bundleUrl,
-        intent: normalizeSharedBundleImportIntent(bundleInvite.intent),
-        source: bundleInvite.source,
-        orgId: bundleInvite.orgId,
-        label: bundleInvite.label,
-      });
-      setSharedBundleNoticeShown(false);
+      bundlesStore.queueBundleLink(window.location.href);
     }
 
     if (invite?.autoConnect) {
@@ -470,7 +421,7 @@ export default function App() {
     }
 
     const cleanedConnect = stripOpenworkConnectInviteFromUrl(window.location.href);
-    const cleaned = stripOpenworkBundleInviteFromUrl(cleanedConnect);
+    const cleaned = stripBundleQuery(cleanedConnect) ?? cleanedConnect;
     if (cleaned !== window.location.href) {
       window.history.replaceState(window.history.state ?? null, "", cleaned);
     }
@@ -2171,6 +2122,24 @@ export default function App() {
 
   const runtimeWorkspaceId = createMemo(() => workspaceStore.runtimeWorkspaceId());
   const activeWorkspaceServerConfig = createMemo(() => workspaceStore.runtimeWorkspaceConfig());
+  const bundlesStore = createBundlesStore({
+    booting,
+    startupPreference,
+    openworkServerClient,
+    openworkServerStatus,
+    openworkServerHostInfo,
+    openworkServerSettings,
+    runtimeWorkspaceId,
+    workspaceStore,
+    setError,
+    error,
+    setView,
+    setSettingsTab,
+    refreshActiveWorkspaceServerConfig: workspaceStore.refreshRuntimeWorkspaceConfig,
+    refreshSkills,
+    refreshHubSkills,
+    markReloadRequired,
+  });
 
   const logWorkspaceScopeSnapshot = (label: string, extra?: Record<string, unknown>) => {
     if (!developerMode()) return;
@@ -2357,383 +2326,6 @@ export default function App() {
     return;
   });
 
-  const resolveSharedBundleWorkerTarget = () => {
-    const pref = startupPreference();
-    const hostInfo = openworkServerHostInfo();
-    const settings = openworkServerSettings();
-
-    const localHostUrl = normalizeOpenworkServerUrl(hostInfo?.baseUrl ?? "") ?? "";
-    const localToken = hostInfo?.clientToken?.trim() ?? "";
-    const serverHostUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
-    const serverToken = settings.token?.trim() ?? "";
-
-    if (pref === "server") {
-      return {
-        hostUrl: serverHostUrl || localHostUrl,
-        token: serverToken || localToken,
-      };
-    }
-
-    if (pref === "local") {
-      return {
-        hostUrl: localHostUrl || serverHostUrl,
-        token: localToken || serverToken,
-      };
-    }
-
-    if (localHostUrl) {
-      return {
-        hostUrl: localHostUrl,
-        token: localToken || serverToken,
-      };
-    }
-
-    return {
-      hostUrl: serverHostUrl,
-      token: serverToken || localToken,
-    };
-  };
-
-  const isSharedBundleImportWorkspace = (workspace: WorkspaceDisplay | WorkspaceInfo | null) => {
-    if (!workspace?.id?.trim()) return false;
-    if (workspace.workspaceType === "local") {
-      return Boolean(workspace.path?.trim());
-    }
-    return Boolean(
-      workspace.remoteType === "openwork" ||
-        workspace.openworkHostUrl?.trim() ||
-        workspace.openworkWorkspaceId?.trim()
-    );
-  };
-
-  const resolveSharedBundleImportTargetForWorkspace = (
-    workspace: WorkspaceDisplay | WorkspaceInfo | null,
-  ): SharedBundleImportTarget | undefined => {
-    if (!workspace) return undefined;
-    if (workspace.workspaceType === "local") {
-      const localRoot = workspace.path?.trim() ?? "";
-      return localRoot ? { localRoot } : undefined;
-    }
-
-    const workspaceId =
-      workspace.openworkWorkspaceId?.trim() ||
-      parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
-      parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
-      null;
-    const directoryHint = workspace.directory?.trim() || workspace.path?.trim() || null;
-    if (workspaceId || directoryHint) {
-      return {
-        workspaceId,
-        directoryHint,
-      };
-    }
-    return undefined;
-  };
-
-  const resolveActiveSharedBundleImportTarget = (): SharedBundleImportTarget => {
-    const active = workspaceStore.selectedWorkspaceDisplay();
-    if (active.workspaceType === "local") {
-      return { localRoot: workspaceStore.selectedWorkspaceRoot().trim() };
-    }
-
-    return {
-      workspaceId:
-        active.openworkWorkspaceId?.trim() ||
-        parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
-        parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
-        null,
-      directoryHint: active.directory?.trim() || active.path?.trim() || null,
-    };
-  };
-
-  const waitForSharedBundleImportTarget = async (timeoutMs = 20_000, target?: SharedBundleImportTarget) => {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-      const client = openworkServerClient();
-      if (client && openworkServerStatus() === "connected") {
-        if (target?.workspaceId?.trim() || target?.localRoot?.trim() || target?.directoryHint?.trim()) {
-          try {
-            const matchId = await workspaceStore.ensureRuntimeWorkspaceId({
-              workspaceId: target.workspaceId,
-              localRoot: target.localRoot,
-              directoryHint: target.directoryHint,
-              strictMatch: true,
-            });
-            if (matchId) {
-              return { client, workspaceId: matchId };
-            }
-          } catch {
-            // ignore and keep polling
-          }
-        } else {
-          const workspaceId = runtimeWorkspaceId();
-          if (workspaceId) {
-            return { client, workspaceId };
-          }
-        }
-      }
-      await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, 200);
-      });
-    }
-    throw new Error("OpenWork worker is not ready yet.");
-  };
-
-  const importSharedBundlePayload = async (bundle: SharedBundleV1, target?: SharedBundleImportTarget) => {
-    const { client, workspaceId } = await waitForSharedBundleImportTarget(20_000, target);
-    const { payload, importedSkillsCount } = buildImportPayloadFromBundle(bundle);
-    await client.importWorkspace(workspaceId, payload);
-    await refreshActiveWorkspaceServerConfig(workspaceId);
-    await refreshSkills({ force: true });
-    await refreshHubSkills({ force: true });
-    if (importedSkillsCount > 0) {
-      markReloadRequired("skills", {
-        type: "skill",
-        name: bundle.name?.trim() || undefined,
-        action: "added",
-      });
-      console.log(`[openwork] imported ${importedSkillsCount} skills from share bundle`);
-    }
-  };
-
-  const importSharedBundleIntoActiveWorker = async (
-    request: SharedBundleDeepLink,
-    target?: SharedBundleImportTarget,
-    bundleOverride?: SharedBundleV1,
-  ) => {
-    try {
-      const bundle = bundleOverride ?? (await fetchSharedBundle(request.bundleUrl, openworkServerClient()));
-      await importSharedBundlePayload(bundle, target);
-      setError(null);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      setError(addOpencodeCacheHint(message));
-      return false;
-    }
-  };
-
-  const createWorkerForSharedBundle = async (request: SharedBundleDeepLink, bundle: SharedBundleV1) => {
-    const target = resolveSharedBundleWorkerTarget();
-    const hostUrl = target.hostUrl.trim();
-    const token = target.token.trim();
-    if (!hostUrl || !token) {
-      throw new Error("Share link detected. Configure an OpenWork worker host and token, then open the link again.");
-    }
-
-    const label = (request.label?.trim() || bundle.name?.trim() || "Shared setup").slice(0, 80);
-    const ok = await workspaceStore.createRemoteWorkspaceFlow({
-      openworkHostUrl: hostUrl,
-      openworkToken: token,
-      directory: null,
-      displayName: label,
-      manageBusy: false,
-      closeModal: false,
-    });
-
-    if (!ok) {
-      throw new Error("Failed to create a worker from this share link.");
-    }
-  };
-
-  const startWorkspaceFromTemplate = async (folder: string | null) => {
-    const request = sharedTemplateStartRequest();
-    if (!request || sharedTemplateStartBusy()) return false;
-
-    setSharedTemplateStartBusy(true);
-
-    try {
-      const ok = await workspaceStore.createWorkspaceFlow(request.defaultPreset, folder);
-      if (!ok) return false;
-
-      const imported = await importSharedBundleIntoActiveWorker(
-        request.request,
-        {
-          localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-        },
-        request.bundle,
-      );
-
-      if (!imported) return false;
-
-      setSharedTemplateStartRequest(null);
-      setError(null);
-      return true;
-    } finally {
-      setSharedTemplateStartBusy(false);
-    }
-  };
-
-  const createWorkspaceFromBundle = async (
-    bundle: SharedWorkspaceProfileBundleV1,
-    folder: string | null,
-    defaultPreset = defaultPresetFromTemplateBundle(bundle),
-  ) => {
-    const request = {
-      bundleUrl: "",
-      intent: "new_worker" as const,
-      source: "cloud-template" as const,
-      label: bundle.name,
-    };
-
-    const ok = await workspaceStore.createWorkspaceFlow(defaultPreset, folder);
-    if (!ok) return false;
-
-    return importSharedBundleIntoActiveWorker(
-      request,
-      {
-        localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-      },
-      bundle,
-    );
-  };
-
-  const importSharedSkillIntoWorkspace = async (workspaceId: string) => {
-    if (sharedSkillDestinationBusyId()) return;
-    const destination = sharedSkillDestinationRequest();
-    if (!destination) return;
-
-    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
-    if (!isSharedBundleImportWorkspace(workspace)) {
-      setError("This worker cannot accept shared skills yet.");
-      return;
-    }
-
-    setView("settings");
-    setSettingsTab("automations");
-    setError(null);
-    setSharedSkillDestinationBusyId(workspaceId);
-
-    try {
-      const ok = await workspaceStore.activateWorkspace(workspaceId);
-      if (!ok) return;
-
-      const imported = await importSharedBundleIntoActiveWorker(
-        destination.request,
-        resolveSharedBundleImportTargetForWorkspace(workspace),
-        destination.bundle,
-      );
-      if (!imported) return;
-
-      showSharedSkillSuccessToast({
-        title: "Skill added",
-        description: `Added '${destination.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspace)}.`,
-      });
-      setSharedSkillDestinationRequest(null);
-      setSharedBundleCreateWorkerRequest(null);
-      setSharedBundleNoticeShown(false);
-    } finally {
-      setSharedSkillDestinationBusyId(null);
-    }
-  };
-
-  const processSharedBundleInvite = async (request: SharedBundleDeepLink) => {
-    const bundle = await fetchSharedBundle(request.bundleUrl, openworkServerClient());
-
-    if (bundle.type === "skill") {
-      setView("settings");
-      setSettingsTab("automations");
-      setError(null);
-      setSharedSkillDestinationRequest({ request, bundle });
-      return { mode: "choice" as const, bundle };
-    }
-
-    if (bundle.type === "skills-set") {
-      setView("settings");
-      setSettingsTab("skills");
-      setError(null);
-      setSharedBundleImportChoice({ request, bundle });
-      return { mode: "choice" as const, bundle };
-    }
-
-    if (bundle.type === "workspace-profile" && request.intent === "new_worker" && isTauriRuntime()) {
-      setView("settings");
-      setSettingsTab("automations");
-      setError(null);
-      setSharedBundleCreateWorkerRequest(null);
-      setSharedBundleImportChoice(null);
-      setSharedTemplateStartRequest({
-        request,
-        bundle,
-        defaultPreset: defaultPresetFromTemplateBundle(bundle),
-      });
-      return { mode: "start_with_template_modal" as const, bundle };
-    }
-
-    if (request.intent === "import_current") {
-      const client = openworkServerClient();
-      const connected = openworkServerStatus() === "connected";
-      const target = resolveActiveSharedBundleImportTarget();
-      const hasTargetHint = Boolean(target.workspaceId?.trim() || target.localRoot?.trim() || target.directoryHint?.trim());
-      if (!client || !connected || !hasTargetHint) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Connect to a writable OpenWork worker to import this bundle.");
-        }
-        return { mode: "blocked_import_current" as const, bundle };
-      }
-    } else {
-      const target = resolveSharedBundleWorkerTarget();
-      if (!target.hostUrl.trim() || !target.token.trim()) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Configure an OpenWork host and token to create a new worker.");
-        }
-        return { mode: "blocked_new_worker" as const, bundle };
-      }
-    }
-
-    if (request.intent === "new_worker") {
-      await createWorkerForSharedBundle(request, bundle);
-    }
-
-    await importSharedBundlePayload(bundle, resolveActiveSharedBundleImportTarget());
-    setError(null);
-    return { mode: "imported" as const, bundle };
-  };
-
-  createEffect(() => {
-    const request = pendingSharedBundleInvite();
-    if (!request || booting()) {
-      return;
-    }
-
-    if (untrack(sharedBundleImportBusy)) {
-      return;
-    }
-
-    let cancelled = false;
-    setSharedBundleImportBusy(true);
-
-    void (async () => {
-      try {
-        await processSharedBundleInvite(request);
-        if (cancelled) return;
-      } catch (error) {
-        if (!cancelled) {
-          const message = error instanceof Error ? error.message : safeStringify(error);
-          setError(addOpencodeCacheHint(message));
-        }
-      } finally {
-        if (!cancelled) {
-          const nextPendingInvite = pendingSharedBundleInvite();
-          const shouldClearPendingInvite = nextPendingInvite === request;
-          setSharedBundleImportBusy(false);
-          if (shouldClearPendingInvite) {
-            setPendingSharedBundleInvite(null);
-            setSharedBundleNoticeShown(false);
-          } else if (nextPendingInvite) {
-            setPendingSharedBundleInvite({ ...nextPendingInvite });
-          }
-        }
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
   createEffect(() => {
     if (!developerMode()) {
       setDevtoolsWorkspaceId(null);
@@ -2904,97 +2496,11 @@ export default function App() {
   const [autoConnectRemoteWorkspaceOverlayOpen, setAutoConnectRemoteWorkspaceOverlayOpen] = createSignal(false);
   const [pendingDenAuthDeepLink, setPendingDenAuthDeepLink] = createSignal<DenAuthDeepLink | null>(null);
   const [processingDenAuthDeepLink, setProcessingDenAuthDeepLink] = createSignal(false);
-  const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
-  const [sharedTemplateStartRequest, setSharedTemplateStartRequest] =
-    createSignal<SharedTemplateStartRequest | null>(null);
-  const [sharedTemplateStartBusy, setSharedTemplateStartBusy] = createSignal(false);
-  const [sharedBundleCreateWorkerRequest, setSharedBundleCreateWorkerRequest] =
-    createSignal<SharedBundleCreateWorkerRequest | null>(null);
-  const [sharedSkillDestinationRequest, setSharedSkillDestinationRequest] =
-    createSignal<SharedSkillDestinationRequest | null>(null);
-  const [sharedSkillDestinationBusyId, setSharedSkillDestinationBusyId] = createSignal<string | null>(null);
-  const [sharedBundleImportChoice, setSharedBundleImportChoice] = createSignal<SharedBundleImportChoice | null>(null);
-  const [sharedBundleImportBusy, setSharedBundleImportBusy] = createSignal(false);
-  const [sharedBundleImportError, setSharedBundleImportError] = createSignal<string | null>(null);
-  const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
-  const [sharedSkillSuccessToast, setSharedSkillSuccessToast] = createSignal<SharedSkillSuccessToast | null>(null);
   const recentClaimedDeepLinks = new Map<string, number>();
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
   const [renameWorkspaceName, setRenameWorkspaceName] = createSignal("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = createSignal(false);
-  let sharedSkillSuccessToastTimer: number | null = null;
-
-  const clearSharedSkillSuccessToast = () => {
-    if (sharedSkillSuccessToastTimer) {
-      window.clearTimeout(sharedSkillSuccessToastTimer);
-      sharedSkillSuccessToastTimer = null;
-    }
-    setSharedSkillSuccessToast(null);
-  };
-
-  const showSharedSkillSuccessToast = (toast: SharedSkillSuccessToast) => {
-    if (sharedSkillSuccessToastTimer) {
-      window.clearTimeout(sharedSkillSuccessToastTimer);
-    }
-    setSharedSkillSuccessToast(toast);
-    sharedSkillSuccessToastTimer = window.setTimeout(() => {
-      sharedSkillSuccessToastTimer = null;
-      setSharedSkillSuccessToast(null);
-    }, 4200);
-  };
-
-  onCleanup(() => {
-    if (sharedSkillSuccessToastTimer) {
-      window.clearTimeout(sharedSkillSuccessToastTimer);
-    }
-  });
-
-  const createWorkspaceDefaultPreset = createMemo<WorkspacePreset>(() =>
-    sharedBundleCreateWorkerRequest()?.defaultPreset ?? "starter"
-  );
-  const sharedTemplateStartItems = createMemo(() => {
-    const request = sharedTemplateStartRequest();
-    return request ? describeSharedBundleImport(request.bundle).items : [];
-  });
-
-  const sharedSkillDestinationWorkspaces = createMemo(() => {
-    const activeId = workspaceStore.selectedWorkspaceId();
-    return workspaceStore
-      .workspaces()
-      .filter((workspace) => isSharedBundleImportWorkspace(workspace))
-      .slice()
-      .sort((a, b) => {
-        if (a.id === activeId && b.id !== activeId) return -1;
-        if (b.id === activeId && a.id !== activeId) return 1;
-        const aLabel =
-          a.displayName?.trim() ||
-          a.openworkWorkspaceName?.trim() ||
-          a.name?.trim() ||
-          a.directory?.trim() ||
-          a.path?.trim() ||
-          a.baseUrl?.trim() ||
-          "";
-        const bLabel =
-          b.displayName?.trim() ||
-          b.openworkWorkspaceName?.trim() ||
-          b.name?.trim() ||
-          b.directory?.trim() ||
-          b.path?.trim() ||
-          b.baseUrl?.trim() ||
-          "";
-        return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });
-      });
-  });
-
-  const describeWorkspaceForToasts = (workspace: WorkspaceDisplay | WorkspaceInfo | null) =>
-    workspace?.displayName?.trim() ||
-    workspace?.openworkWorkspaceName?.trim() ||
-    workspace?.name?.trim() ||
-    workspace?.directory?.trim() ||
-    workspace?.path?.trim() ||
-    workspace?.baseUrl?.trim() ||
-    "the selected worker";
 
   const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
     const parsed = parseRemoteConnectDeepLink(rawUrl);
@@ -3044,21 +2550,6 @@ export default function App() {
     return true;
   };
 
-  const queueSharedBundleDeepLink = (rawUrl: string): boolean => {
-    const parsed = parseSharedBundleDeepLink(rawUrl);
-    if (!parsed) {
-      return false;
-    }
-    setPendingSharedBundleInvite(parsed);
-    setSharedSkillDestinationRequest(null);
-    setSharedSkillDestinationBusyId(null);
-    setSharedBundleImportChoice(null);
-    setSharedBundleCreateWorkerRequest(null);
-    setSharedBundleImportError(null);
-    setSharedBundleNoticeShown(false);
-    return true;
-  };
-
   const stripHandledBrowserDeepLink = (rawUrl: string) => {
     if (typeof window === "undefined" || isTauriRuntime()) {
       return;
@@ -3069,7 +2560,7 @@ export default function App() {
     }
 
     const remoteStripped = stripRemoteConnectQuery(rawUrl) ?? rawUrl;
-    const bundleStripped = stripSharedBundleQuery(remoteStripped) ?? remoteStripped;
+    const bundleStripped = stripBundleQuery(remoteStripped) ?? remoteStripped;
     if (bundleStripped !== rawUrl) {
       window.history.replaceState({}, "", bundleStripped);
     }
@@ -3100,7 +2591,7 @@ export default function App() {
 
       const matchedDen = queueDenAuthDeepLink(url);
       const matchedRemote = !matchedDen && queueRemoteConnectDeepLink(url);
-      const matchedBundle = !matchedDen && !matchedRemote && queueSharedBundleDeepLink(url);
+      const matchedBundle = !matchedDen && !matchedRemote && bundlesStore.queueBundleLink(url);
       const claimed = matchedDen || matchedRemote || matchedBundle;
       if (!claimed) {
         continue;
@@ -3121,37 +2612,7 @@ export default function App() {
     setError(null);
     setView("settings");
     if (parsed.kind === "bundle") {
-      setPendingSharedBundleInvite(null);
-      setSharedBundleNoticeShown(false);
-      setSharedSkillDestinationRequest(null);
-      setSharedSkillDestinationBusyId(null);
-      setSharedBundleImportError(null);
-      setSharedBundleImportChoice(null);
-      setSharedTemplateStartRequest(null);
-      setSharedBundleCreateWorkerRequest(null);
-
-      try {
-        setSharedBundleImportBusy(true);
-        const result = await processSharedBundleInvite(parsed.link);
-        switch (result.mode) {
-          case "choice":
-            return { ok: true, message: "Opened the share import chooser." };
-          case "start_with_template_modal":
-            return { ok: true, message: "Opened the template start flow." };
-          case "blocked_import_current":
-          case "blocked_new_worker":
-            return { ok: false, message: error() || "The share link needs more worker setup before it can open." };
-          case "imported":
-            return { ok: true, message: "Imported the shared bundle into the current worker." };
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        const friendly = addOpencodeCacheHint(message);
-        setError(friendly);
-        return { ok: false, message: friendly };
-      } finally {
-        setSharedBundleImportBusy(false);
-      }
+      return bundlesStore.openDebugBundleRequest(parsed.link);
     }
     if (parsed.kind === "auth") {
       setPendingDenAuthDeepLink(parsed.link);
@@ -3161,212 +2622,6 @@ export default function App() {
     setPendingRemoteConnectDeepLink(parsed.kind === "remote" ? parsed.link : null);
     setSettingsTab("automations");
     return { ok: true, message: "Queued remote worker link. OpenWork should move into the connect flow." };
-  };
-
-  const closeSharedBundleImportChoice = () => {
-    if (sharedBundleImportBusy()) return;
-    setSharedBundleImportChoice(null);
-    setSharedBundleImportError(null);
-  };
-
-  const openCloudTemplate = async (input: {
-    templateId: string;
-    name: string;
-    templateData: unknown;
-    organizationName?: string | null;
-  }) => {
-    const bundle = parseSharedBundle(input.templateData);
-    setError(null);
-    setView("settings");
-    setSettingsTab("general");
-    setSharedSkillDestinationBusyId(null);
-    setSharedBundleImportError(null);
-    setSharedTemplateStartRequest(null);
-    setSharedBundleCreateWorkerRequest(null);
-
-    if (bundle.type === "skill") {
-      setSharedBundleImportChoice(null);
-      setSharedSkillDestinationRequest({
-        request: {
-          bundleUrl: "",
-          intent: "import_current",
-          source: "cloud-template",
-          label: input.name,
-        },
-        bundle,
-      });
-      return;
-    }
-
-    setSharedSkillDestinationRequest(null);
-    setSharedBundleImportChoice({
-      request: {
-        bundleUrl: "",
-        intent: "import_current",
-        source: "cloud-template",
-        label: input.name,
-      },
-      bundle,
-    });
-  };
-
-  const startWorkspaceFromCloudTemplate = async (input: {
-    name: string;
-    templateData: unknown;
-    folder: string | null;
-    preset?: WorkspacePreset;
-  }) => {
-    const bundle = parseSharedBundle(input.templateData);
-    if (bundle.type !== "workspace-profile") {
-      throw new Error("Only workspace templates can start a new workspace.");
-    }
-
-    setError(null);
-    setSharedSkillDestinationRequest(null);
-    setSharedBundleImportChoice(null);
-    setSharedBundleImportError(null);
-    setSharedBundleCreateWorkerRequest(null);
-    setSharedTemplateStartRequest(null);
-
-    const imported = await createWorkspaceFromBundle(
-      bundle,
-      input.folder,
-      input.preset ?? defaultPresetFromTemplateBundle(bundle),
-    );
-    if (!imported) {
-      throw new Error(`Failed to create ${input.name} from template.`);
-    }
-  };
-
-  const sharedBundleImportCopy = createMemo(() => {
-    const choice = sharedBundleImportChoice();
-    if (!choice) return null;
-    return describeSharedBundleImport(choice.bundle);
-  });
-
-  const sharedBundleWorkerOptions = createMemo(() => {
-    const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
-    const items = workspaceStore.workspaces().map((workspace) => {
-        let disabledReason: string | null = null;
-        if (!resolveSharedBundleImportTargetForWorkspace(workspace)) {
-          disabledReason =
-            workspace.workspaceType === "remote" && workspace.remoteType !== "openwork"
-            ? "Only OpenWork-connected workers support direct shared bundle imports."
-            : "This worker is missing the info OpenWork needs to import the bundle.";
-        }
-
-      const label =
-        workspace.displayName?.trim() ||
-        workspace.openworkWorkspaceName?.trim() ||
-        workspace.name?.trim() ||
-        workspace.path?.trim() ||
-        "Worker";
-      const badge =
-        workspace.workspaceType === "remote"
-          ? workspace.sandboxBackend === "docker" ||
-            Boolean(workspace.sandboxRunId?.trim()) ||
-            Boolean(workspace.sandboxContainerName?.trim())
-            ? "Sandbox"
-            : "Remote"
-          : "Local";
-      const detail =
-        workspace.workspaceType === "local"
-          ? workspace.path?.trim() || "Local worker"
-          : workspace.directory?.trim() || workspace.baseUrl?.trim() || workspace.openworkHostUrl?.trim() || "Remote worker";
-
-      return {
-        id: workspace.id,
-        label,
-        detail,
-        badge,
-        current: workspace.id === selectedWorkspaceId,
-        disabledReason,
-      };
-    });
-
-    return items.sort((a, b) => {
-      if (a.current !== b.current) return a.current ? -1 : 1;
-      return a.label.localeCompare(b.label);
-    });
-  });
-
-  const openSharedBundleCreateWorkerFlow = async () => {
-    const choice = sharedBundleImportChoice();
-    if (!choice || sharedBundleImportBusy()) return;
-
-    setSharedBundleImportError(null);
-    setError(null);
-
-    if (isTauriRuntime()) {
-      setView("settings");
-      setSettingsTab("automations");
-      setSharedBundleCreateWorkerRequest({
-        request: choice.request,
-        bundle: choice.bundle,
-        defaultPreset:
-          choice.bundle.type === "workspace-profile"
-            ? defaultPresetFromTemplateBundle(choice.bundle)
-            : "starter",
-      });
-      setSharedBundleImportChoice(null);
-      workspaceStore.setCreateWorkspaceOpen(true);
-      return;
-    }
-
-    setSharedBundleImportBusy(true);
-    try {
-      await createWorkerForSharedBundle(choice.request, choice.bundle);
-      await importSharedBundlePayload(choice.bundle, resolveActiveSharedBundleImportTarget());
-      setSharedBundleImportChoice(null);
-      setError(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      const friendly = addOpencodeCacheHint(message);
-      setSharedBundleImportError(friendly);
-      setError(friendly);
-    } finally {
-      setSharedBundleImportBusy(false);
-    }
-  };
-
-  const importSharedBundleIntoExistingWorkspace = async (workspaceId: string) => {
-    const choice = sharedBundleImportChoice();
-    if (!choice || sharedBundleImportBusy()) return;
-
-    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
-    if (!workspace) {
-      setSharedBundleImportError("The selected worker is no longer available.");
-      return;
-    }
-
-    const target = resolveSharedBundleImportTargetForWorkspace(workspace);
-    if (!target) {
-      setSharedBundleImportError("This worker cannot accept shared bundle imports yet.");
-      return;
-    }
-
-    setSharedBundleImportBusy(true);
-    setSharedBundleImportError(null);
-    setError(null);
-
-    try {
-      setView("settings");
-      setSettingsTab(choice.bundle.type === "workspace-profile" ? "automations" : "skills");
-      const ok = await workspaceStore.activateWorkspace(workspace.id);
-      if (!ok) {
-        throw new Error(error() || `Failed to switch to ${workspace.displayName?.trim() || workspace.name || "the selected worker"}.`);
-      }
-      await importSharedBundlePayload(choice.bundle, target);
-      setSharedBundleImportChoice(null);
-      setError(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      const friendly = addOpencodeCacheHint(message);
-      setSharedBundleImportError(friendly);
-      setError(friendly);
-    } finally {
-      setSharedBundleImportBusy(false);
-    }
   };
 
   createEffect(() => {
@@ -5437,7 +4692,7 @@ export default function App() {
       pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
-      openCloudTemplate,
+      openTeamBundle: bundlesStore.openTeamBundle,
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
@@ -5857,36 +5112,35 @@ export default function App() {
         onReloadEngine={() => reloadWorkspaceEngineAndResume()}
       />
 
-      <SharedBundleImportModal
-        open={Boolean(sharedBundleImportChoice())}
-        title={sharedBundleImportCopy()?.title ?? "Import shared bundle"}
-        description={sharedBundleImportCopy()?.description ?? "Choose how to import this shared bundle."}
-        items={sharedBundleImportCopy()?.items ?? []}
-        workers={sharedBundleWorkerOptions()}
-        busy={sharedBundleImportBusy()}
-        error={sharedBundleImportError()}
-        onClose={closeSharedBundleImportChoice}
+      <BundleImportModal
+        open={Boolean(bundlesStore.bundleImportChoice())}
+        title={bundlesStore.bundleImportSummary()?.title ?? "Import bundle"}
+        description={bundlesStore.bundleImportSummary()?.description ?? "Choose how to import this bundle."}
+        items={bundlesStore.bundleImportSummary()?.items ?? []}
+        workers={bundlesStore.bundleWorkerOptions()}
+        busy={bundlesStore.bundleImportBusy()}
+        error={bundlesStore.bundleImportError()}
+        onClose={bundlesStore.closeBundleImportChoice}
         onCreateNewWorker={() => {
-          void openSharedBundleCreateWorkerFlow();
+          void bundlesStore.openCreateWorkspaceFromChoice();
         }}
         onSelectWorker={(workspaceId) => {
-          void importSharedBundleIntoExistingWorkspace(workspaceId);
+          void bundlesStore.importBundleIntoExistingWorkspace(workspaceId);
         }}
       />
 
-      <StartWithTemplateModal
-        open={Boolean(sharedTemplateStartRequest())}
-        templateName={sharedTemplateStartRequest()?.bundle.name?.trim() || "this template"}
-        description={sharedTemplateStartRequest()?.bundle.description ?? ""}
-        items={sharedTemplateStartItems()}
-        busy={sharedTemplateStartBusy()}
+      <BundleStartModal
+        open={Boolean(bundlesStore.bundleStartRequest())}
+        templateName={bundlesStore.bundleStartRequest()?.bundle.name?.trim() || "this template"}
+        description={bundlesStore.bundleStartRequest()?.bundle.description ?? ""}
+        items={bundlesStore.bundleStartItems()}
+        busy={bundlesStore.bundleStartBusy()}
         onClose={() => {
-          if (sharedTemplateStartBusy()) return;
-          setSharedTemplateStartRequest(null);
+          bundlesStore.clearBundleStartRequest();
         }}
         onPickFolder={workspaceStore.pickWorkspaceFolder}
         onConfirm={(folder) => {
-          void startWorkspaceFromTemplate(folder);
+          void bundlesStore.startWorkspaceFromBundle(folder);
         }}
       />
 
@@ -5895,72 +5149,23 @@ export default function App() {
         onClose={() => {
           workspaceStore.setCreateWorkspaceOpen(false);
           workspaceStore.clearSandboxCreateProgress?.();
-          setSharedBundleCreateWorkerRequest(null);
+          bundlesStore.clearCreateWorkspaceRequest();
         }}
         onPickFolder={workspaceStore.pickWorkspaceFolder}
-        defaultPreset={createWorkspaceDefaultPreset()}
+        defaultPreset={bundlesStore.createWorkspaceDefaultPreset()}
         onConfirmRemote={(input) => workspaceStore.createRemoteWorkspaceFlow(input)}
         onConfirmTemplate={(template, preset, folder) =>
-          startWorkspaceFromCloudTemplate({
+          bundlesStore.startWorkspaceFromTeamTemplate({
             name: template.name,
             templateData: template.templateData,
             folder,
             preset,
           })
         }
-        onConfirm={async (preset, folder) => {
-          const request = sharedBundleCreateWorkerRequest();
-          const ok = await workspaceStore.createWorkspaceFlow(preset, folder);
-          if (!ok || !request) return;
-          const imported = await importSharedBundleIntoActiveWorker(request.request, {
-            localRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-          }, request.bundle);
-          setSharedBundleCreateWorkerRequest(null);
-          if (imported) {
-            if (request.bundle.type === "skill") {
-              showSharedSkillSuccessToast({
-                title: "Skill added",
-                description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspaceStore.selectedWorkspaceDisplay())}.`,
-              });
-            }
-            setSharedSkillDestinationRequest(null);
-          }
-        }}
+        onConfirm={bundlesStore.handleCreateWorkspaceConfirm}
         onConfirmWorker={
           isTauriRuntime()
-            ? async (preset, folder) => {
-                const request = sharedBundleCreateWorkerRequest();
-                const ok = await workspaceStore.createSandboxFlow(
-                  preset,
-                  folder,
-                  request
-                    ? {
-                        onReady: async () => {
-                          const active = workspaceStore.selectedWorkspaceDisplay();
-                          await importSharedBundleIntoActiveWorker(request.request, {
-                            workspaceId:
-                              active.openworkWorkspaceId?.trim() ||
-                              parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
-                              parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
-                              null,
-                            directoryHint: active.directory?.trim() || active.path?.trim() || null,
-                          }, request.bundle);
-                          if (request.bundle.type === "skill") {
-                            showSharedSkillSuccessToast({
-                              title: "Skill added",
-                              description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(active)}.`,
-                            });
-                          }
-                        },
-                      }
-                    : undefined,
-                );
-                if (!ok) return;
-                setSharedBundleCreateWorkerRequest(null);
-                if (request) {
-                  setSharedSkillDestinationRequest(null);
-                }
-              }
+            ? bundlesStore.handleCreateSandboxConfirm
             : undefined
         }
         workerDisabled={(() => {
@@ -6027,14 +5232,14 @@ export default function App() {
         submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
       />
 
-      <SharedSkillDestinationModal
+      <SkillDestinationModal
         open={
-          Boolean(sharedSkillDestinationRequest()) &&
+          Boolean(bundlesStore.skillDestinationRequest()) &&
           !workspaceStore.createWorkspaceOpen() &&
           !workspaceStore.createRemoteWorkspaceOpen()
         }
         skill={(() => {
-          const request = sharedSkillDestinationRequest();
+          const request = bundlesStore.skillDestinationRequest();
           if (!request) return null;
           return {
             name: request.bundle.name,
@@ -6042,32 +5247,20 @@ export default function App() {
             trigger: request.bundle.trigger ?? null,
           };
         })()}
-        workspaces={sharedSkillDestinationWorkspaces()}
+        workspaces={bundlesStore.skillDestinationWorkspaces()}
         selectedWorkspaceId={workspaceStore.selectedWorkspaceId()}
-        busyWorkspaceId={sharedSkillDestinationBusyId()}
+        busyWorkspaceId={bundlesStore.skillDestinationBusyId()}
         onClose={() => {
-          if (sharedSkillDestinationBusyId()) return;
-          setSharedSkillDestinationRequest(null);
+          bundlesStore.clearSkillDestinationRequest();
         }}
-        onSubmitWorkspace={importSharedSkillIntoWorkspace}
+        onSubmitWorkspace={bundlesStore.importSkillIntoWorkspace}
         onCreateWorker={
           isTauriRuntime()
-            ? () => {
-                const request = sharedSkillDestinationRequest();
-                if (!request) return;
-                setError(null);
-                setSharedBundleCreateWorkerRequest({
-                  request: request.request,
-                  bundle: request.bundle,
-                  defaultPreset: "minimal",
-                });
-                workspaceStore.setCreateWorkspaceOpen(true);
-              }
+            ? bundlesStore.openCreateWorkspaceFromSkillDestination
             : undefined
         }
         onConnectRemote={() => {
-          setError(null);
-          workspaceStore.setCreateRemoteWorkspaceOpen(true);
+          bundlesStore.openRemoteConnectFromSkillDestination();
         }}
       />
 
@@ -6109,12 +5302,12 @@ export default function App() {
 
         <div class="pointer-events-auto">
           <StatusToast
-            open={Boolean(sharedSkillSuccessToast())}
+            open={Boolean(bundlesStore.skillSuccessToast())}
             tone="success"
-            title={sharedSkillSuccessToast()?.title ?? "Skill added"}
-            description={sharedSkillSuccessToast()?.description ?? null}
+            title={bundlesStore.skillSuccessToast()?.title ?? "Skill added"}
+            description={bundlesStore.skillSuccessToast()?.description ?? null}
             dismissLabel="Dismiss"
-            onDismiss={clearSharedSkillSuccessToast}
+            onDismiss={bundlesStore.clearSkillSuccessToast}
           />
         </div>
 
