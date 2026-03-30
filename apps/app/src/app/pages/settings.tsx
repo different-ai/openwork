@@ -869,12 +869,12 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const formatActor = (entry: OpenworkAuditEntry) => {
     const actor = entry.actor;
-    if (!actor) return "unknown";
-    if (actor.type === "host") return "host";
+    if (!actor) return translate("settings.actor_unknown");
+    if (actor.type === "host") return translate("settings.actor_host");
     if (actor.type === "remote") {
-      return actor.clientId ? `remote:${actor.clientId}` : "remote";
+      return actor.clientId ? `${translate("settings.actor_remote")}:${actor.clientId}` : translate("settings.actor_remote");
     }
-    return "unknown";
+    return translate("settings.actor_unknown");
   };
 
   const formatCapability = (cap?: {
@@ -883,7 +883,7 @@ export default function SettingsView(props: SettingsViewProps) {
     source?: string;
   }) => {
     if (!cap) return translate("config.unavailable");
-    const parts = [cap.read ? "read" : null, cap.write ? "write" : null]
+    const parts = [cap.read ? translate("settings.cap_read") : null, cap.write ? translate("settings.cap_write") : null]
       .filter(Boolean)
       .join(" / ");
     const label = parts || translate("settings.no_access");
@@ -1786,7 +1786,7 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "skills"}>
           <WebUnavailableSurface unavailable={webDeployment()}>
             <SkillsView
-              workspaceName={props.selectedWorkspaceRoot.trim() || "Workspace"}
+              workspaceName={props.selectedWorkspaceRoot.trim() || translate("settings.workspace_fallback_name")}
               busy={props.busy}
               canInstallSkillCreator={props.canInstallSkillCreator}
               canUseDesktopTools={props.canUseDesktopTools}
@@ -2111,13 +2111,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           {debugDeepLinkBusy() ? translate("settings.opening") : translate("settings.open_deeplink_action")}
                         </Button>
                         <div class="text-[11px] text-gray-8">
-                          Accepts <span class="font-mono">openwork://</span>,{" "}
-                          <span class="font-mono">openwork-dev://</span>, or a
-                          raw supported{" "}
-                          <span class="font-mono">
-                            https://share.openworklabs.com/b/...
-                          </span>{" "}
-                          URL.
+                          {translate("settings.deeplink_hint")}
                         </div>
                       </div>
                     </div>
@@ -3485,7 +3479,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
                         {props.runtimeWorkspaceId
-                          ? `Worker ${props.runtimeWorkspaceId}`
+                          ? t("settings.worker_id_label", undefined, { id: props.runtimeWorkspaceId })
                           : translate("settings.worker_unresolved")}
                       </div>
                     </div>
@@ -3526,8 +3520,8 @@ export default function SettingsView(props: SettingsViewProps) {
                                 const files = caps().toolProviders?.files;
                                 if (!files) return translate("config.unavailable");
                                 const parts = [
-                                  files.injection ? "inbox on" : "inbox off",
-                                  files.outbox ? "outbox on" : "outbox off",
+                                  files.injection ? translate("settings.cap_inbox_on") : translate("settings.cap_inbox_off"),
+                                  files.outbox ? translate("settings.cap_outbox_on") : translate("settings.cap_outbox_off"),
                                 ];
                                 return parts.join(" · ");
                               })()
@@ -3538,7 +3532,7 @@ export default function SettingsView(props: SettingsViewProps) {
                               value: (() => {
                                 const sandbox = caps().sandbox;
                                 return sandbox
-                                  ? `${sandbox.backend} (${sandbox.enabled ? "on" : "off"})`
+                                  ? `${sandbox.backend} (${sandbox.enabled ? translate("settings.on") : translate("settings.off")})`
                                   : translate("config.unavailable");
                               })()
                             })}

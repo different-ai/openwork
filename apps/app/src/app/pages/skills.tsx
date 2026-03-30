@@ -1155,7 +1155,7 @@ export default function SkillsView(props: SkillsViewProps) {
               </Show>
               <Show
                 when={!selectedLoading()}
-                fallback={<div class="text-xs text-dls-secondary">Loading…</div>}
+                fallback={<div class="text-xs text-dls-secondary">{translate("skills.loading")}</div>}
               >
                 <textarea
                   value={selectedContent()}

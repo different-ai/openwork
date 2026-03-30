@@ -1645,4 +1645,57 @@ export default {
   "skills.install_name_title": "Install {name}",
   "skills.shown_count": "{count} shown",
   "skills.trigger_label": "Trigger: {trigger}",
+
+  // ==================== Second Pass Additions ====================
+
+  // Identities (second pass)
+  "identities.minutes_ago": "{minutes}m ago",
+  "identities.hours_ago": "{hours}h ago",
+  "identities.days_ago": "{days}d ago",
+  "identities.dispatched_messages": "Dispatched {sent}/{attempted} messages.",
+  "identities.health_unavailable_status": "OpenCodeRouter health unavailable ({status})",
+  "identities.telegram_private_saved_pair": "Private bot saved. Pair via /pair {code}",
+  "identities.telegram_saved_username": "Saved (@{username})",
+  "identities.botfather_step1_open": "1. Open @BotFather in Telegram",
+  "identities.botfather_step1_run": "and run /newbot",
+  "identities.botfather_step3_choose": "3. Choose a name and username for your bot",
+  "identities.botfather_step_public": "Public bots can be found by anyone.",
+  "identities.botfather_step_or_private": "Or create a private bot:",
+  "identities.botfather_step_private": "Private bots require an invite link to start.",
+  "identities.botfather_step_to_require": "To require users to be added, enable the privacy mode via @BotFather.",
+  "identities.bot_token_placeholder": "Paste Telegram bot token from @BotFather",
+  "identities.pairing_code_instruction_prefix": "Send",
+  "identities.open_bot_link": "Open @{username} in Telegram",
+  "identities.routing_override_prefix": "All messages routed to",
+  "identities.routing_override_suffix": "(override active)",
+  "identities.agent_scope_status": "Active scope: workspace · status: {status} · selected agent: {agent}",
+  "identities.agent_status_loaded": "loaded",
+  "identities.agent_status_missing": "missing",
+  "identities.agent_status_none": "none",
+  "identities.peer_id_placeholder_telegram": "e.g. telegram:123456789",
+  "identities.peer_id_placeholder_slack": "e.g. slack:U12345678",
+
+  // Automations/Scheduled (second pass)
+  "scheduled.scheduler_install_requested": "Scheduler install requested.",
+  "scheduled.prepared_automation_in_chat": "Prepared automation in chat.",
+  "scheduled.prepared_job_in_chat": "Prepared {name} in chat.",
+  "scheduled.removed_job": "Removed {name}.",
+  "scheduled.delete_confirm_desc": "This removes the schedule and deletes the job definition from {source}.",
+
+  // Settings (second pass)
+  "settings.actor_unknown": "unknown",
+  "settings.actor_host": "host",
+  "settings.actor_remote": "remote",
+  "settings.cap_read": "read",
+  "settings.cap_write": "write",
+  "settings.workspace_fallback_name": "Workspace",
+  "settings.deeplink_hint": "Accepts openwork://, openwork-dev://, or a raw supported https://share.openworklabs.com/b/... URL.",
+  "settings.worker_id_label": "Worker {id}",
+  "settings.cap_inbox_on": "inbox on",
+  "settings.cap_inbox_off": "inbox off",
+  "settings.cap_outbox_on": "outbox on",
+  "settings.cap_outbox_off": "outbox off",
+
+  // Skills (second pass)
+  "skills.loading": "Loading…",
 } as const;

@@ -270,11 +270,11 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     const elapsedMs = Math.max(0, Date.now() - ts);
     if (elapsedMs < 60_000) return t("identities.just_now");
     const minutes = Math.floor(elapsedMs / 60_000);
-    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 60) return t("identities.minutes_ago", { minutes });
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
+    if (hours < 24) return t("identities.hours_ago", { hours });
     const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+    return t("identities.days_ago", { days });
   });
 
   const workspaceAgentStatus = createMemo(() => {
@@ -416,7 +416,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         ...(sendAutoBind() ? { autoBind: true } : {}),
       });
       setSendResult(result);
-      const base = `Dispatched ${result.sent}/${result.attempted} messages.`;
+      const base = t("identities.dispatched_messages", { sent: result.sent, attempted: result.attempted });
       setSendStatus(result.reason?.trim() ? `${base} ${result.reason.trim()}` : base);
     } catch (error) {
       setSendError(formatRequestError(error));
@@ -493,7 +493,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const message =
             (healthRes.json && typeof (healthRes.json as any).message === "string")
               ? String((healthRes.json as any).message)
-              : `OpenCodeRouter health unavailable (${healthRes.status})`;
+              : t("identities.health_unavailable_status", { status: healthRes.status });
           setHealthError(message);
         }
         setMessagingRestartRequired(true);
@@ -666,7 +666,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         const pairingCode = typeof result.telegram?.pairingCode === "string" ? result.telegram.pairingCode.trim() : "";
         if (access === "private" && pairingCode) {
           setTelegramPairingCode(pairingCode);
-          setTelegramStatus(`Private bot saved. Pair via /pair ${pairingCode}`);
+          setTelegramStatus(t("identities.telegram_private_saved_pair", { code: pairingCode }));
         } else {
           setTelegramPairingCode(null);
         }
@@ -675,7 +675,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const normalized = String(username).trim().replace(/^@+/, "");
           setTelegramBotUsername(normalized || null);
           if (access !== "private" || !pairingCode) {
-            setTelegramStatus(`Saved (@${normalized || String(username)})`);
+            setTelegramStatus(t("identities.telegram_saved_username", { username: normalized || String(username) }));
           }
         } else {
           if (access !== "private" || !pairingCode) {
@@ -1176,7 +1176,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">1</span>
                             <span>
-                              Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" class="font-medium text-gray-12 underline">@BotFather</a> and run <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/newbot</code>.
+                              {t("identities.botfather_step1_open")} <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" class="font-medium text-gray-12 underline">@BotFather</a> {t("identities.botfather_step1_run")} <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/newbot</code>.
                             </span>
                           </li>
                           <li class="flex items-start gap-2">
@@ -1185,7 +1185,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           </li>
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">3</span>
-                            <span>Choose <span class="font-medium text-gray-12">Public</span> for open inbox or <span class="font-medium text-gray-12">Private</span> to require <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/pair &lt;code&gt;</code>.</span>
+                            <span>{t("identities.botfather_step3_choose")} <span class="font-medium text-gray-12">{t("identities.botfather_step3_public")}</span> {t("identities.botfather_step3_or_private")} <span class="font-medium text-gray-12">{t("identities.botfather_step3_private")}</span> {t("identities.botfather_step3_to_require")} <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/pair &lt;code&gt;</code>.</span>
                           </li>
                         </ol>
                       </div>
@@ -1195,7 +1195,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                       <label class="text-[12px] text-gray-9 block mb-1">{t("identities.bot_token_label")}</label>
                       <input
                         class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
-                        placeholder="Paste Telegram bot token from @BotFather"
+                        placeholder={t("identities.bot_token_placeholder")}
                         type="password"
                         value={telegramToken()}
                         onInput={(e) => setTelegramToken(e.currentTarget.value)}
@@ -1266,7 +1266,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                             {code()}
                           </div>
                           <div class="text-[11px] text-sky-11/90 leading-relaxed">
-                            In Telegram, open the chat that should control this worker and send <code class="rounded bg-sky-3/60 px-1 py-0.5 font-mono text-[10px]">/pair {code()}</code>.
+                            {t("identities.pairing_code_instruction_prefix")} <code class="rounded bg-sky-3/60 px-1 py-0.5 font-mono text-[10px]">/pair {code()}</code>.
                           </div>
                           <div class="flex items-center gap-2">
                             <Button variant="outline" class="h-7 px-2.5 text-[11px]" onClick={() => void copyTelegramPairingCode()}>
@@ -1290,7 +1290,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           class="inline-flex items-center gap-2 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[12px] font-medium text-gray-11 hover:bg-gray-2"
                         >
                           <Link size={14} />
-                          Open @{telegramBotUsername()} in Telegram
+                          {t("identities.open_bot_link", { username: telegramBotUsername() })}
                         </a>
                       )}
                     </Show>
@@ -1525,7 +1525,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           </div>
 
           <div class="text-xs text-gray-10 mt-2.5">
-            Advanced: reply with <code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">/dir &lt;path&gt;</code> in Slack/Telegram to override the directory for a specific chat (limited to this workspace root).
+            {t("identities.routing_override_prefix")} <code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">/dir &lt;path&gt;</code> {t("identities.routing_override_suffix")}
           </div>
         </div>
 
@@ -1546,7 +1546,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           <Show when={workspaceAgentStatus()}>
             {(value) => (
               <div class="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10">
-                Active scope: workspace · status: {value().loaded ? "loaded" : "missing"} · selected agent: {value().selected || "(none)"}
+                {t("identities.agent_scope_status", { status: value().loaded ? t("identities.agent_status_loaded") : t("identities.agent_status_missing"), agent: value().selected || t("identities.agent_none") })}
               </div>
             )}
           </Show>
@@ -1633,7 +1633,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               <label class="text-[12px] text-gray-9 block mb-1">{t("identities.peer_id_label")}</label>
               <input
                 class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
-                placeholder={sendChannel() === "telegram" ? "Telegram chat id (e.g. 123456789)" : "Slack peer id (e.g. D12345678|thread_ts)"}
+                placeholder={sendChannel() === "telegram" ? t("identities.peer_id_placeholder_telegram") : t("identities.peer_id_placeholder_slack")}
                 value={sendPeerId()}
                 onInput={(e) => setSendPeerId(e.currentTarget.value)}
               />

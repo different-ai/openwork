@@ -550,7 +550,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
     setSchedulerInstallRequested(true);
     try {
       await Promise.resolve(props.addPlugin("opencode-scheduler"));
-      showToast("Scheduler install requested.", "success");
+      showToast(t("scheduled.scheduler_install_requested"), "success");
     } finally {
       setInstallingScheduler(false);
     }
@@ -592,7 +592,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
     try {
       await Promise.resolve(props.createSessionAndOpen(plan.prompt));
       setCreateModalOpen(false);
-      showToast("Prepared automation in chat.", "success");
+      showToast(t("scheduled.prepared_automation_in_chat"), "success");
     } catch (error) {
       setCreateError(
         error instanceof Error ? error.message : t("scheduled.prepare_error_fallback"),
@@ -610,7 +610,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
       return;
     }
     await Promise.resolve(props.createSessionAndOpen(plan.prompt));
-    showToast(`Prepared ${job.name} in chat.`, "success");
+    showToast(t("scheduled.prepared_job_in_chat", undefined, { name: job.name }), "success");
   };
 
   const confirmDelete = async () => {
@@ -621,7 +621,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
     try {
       await automations.remove(target.slug);
       setDeleteTarget(null);
-      showToast(`Removed ${target.name}.`, "success");
+      showToast(t("scheduled.removed_job", undefined, { name: target.name }), "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setDeleteError(message || t("scheduled.delete_error_fallback"));
@@ -864,7 +864,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
               <div>
                 <h3 class="text-lg font-semibold text-dls-text">{t("scheduled.delete_confirm_title")}</h3>
                 <p class="mt-1 text-sm text-dls-secondary">
-                  This removes the schedule and deletes the job definition from {sourceLabel().toLowerCase()}.
+                  {t("scheduled.delete_confirm_desc", undefined, { source: sourceLabel().toLowerCase() })}
                 </p>
               </div>
 
