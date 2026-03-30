@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { storeBundleJson } from "../_lib/blob-store.ts";
-import { buildBundleUrls, getEnv, readBody, setCors, validateBundlePayload } from "../_lib/share-utils.ts";
+import { buildCanonicalRequest, buildRequestLike } from "../_lib/request-like.ts";
+import { buildCorsHeaders, rateLimitPublishRequest, validateTrustedOrigin, verifyShareBotProtection } from "../_lib/publish-security.ts";
+import { buildBundleUrls, getEnv, readBody, validateBundlePayload } from "../_lib/share-utils.ts";
 
 interface LegacyApiRequest extends IncomingMessage {
   method?: string;
@@ -21,14 +23,58 @@ function formatPublishError(error: unknown): string {
   return message;
 }
 
+function applyHeaders(res: LegacyApiResponse, headers: Record<string, string>): void {
+  for (const [name, value] of Object.entries(headers)) {
+    res.setHeader(name, value);
+  }
+}
+
+function json(res: LegacyApiResponse, body: unknown, status = 200, headers: Record<string, string> = {}): void {
+  applyHeaders(res, {
+    ...headers,
+    "Content-Type": "application/json",
+  });
+  res.status(status).end(JSON.stringify(body));
+}
+
 export default async function handler(req: LegacyApiRequest, res: LegacyApiResponse): Promise<void> {
-  setCors(res);
+  const request = buildCanonicalRequest({
+    pathname: "/v1/bundles",
+    method: req.method,
+    headers: req.headers,
+  });
+
+  applyHeaders(res, buildCorsHeaders(request));
   if (req.method === "OPTIONS") {
     res.status(204).end();
     return;
   }
+
+  const originCheck = validateTrustedOrigin(request);
+  if (!originCheck.ok) {
+    json(res, { message: originCheck.message }, originCheck.status);
+    return;
+  }
+
+  const rateLimit = rateLimitPublishRequest(request);
+  if (!rateLimit.ok) {
+    json(
+      res,
+      { message: "Publishing is temporarily rate limited." },
+      429,
+      { "X-Retry-After": String(rateLimit.retryAfterSeconds) },
+    );
+    return;
+  }
+
+  const botProtection = await verifyShareBotProtection(request);
+  if (!botProtection.ok) {
+    json(res, { message: botProtection.message }, botProtection.status);
+    return;
+  }
+
   if (req.method !== "POST") {
-    res.status(405).json({ message: "Method not allowed" });
+    json(res, { message: "Method not allowed" }, 405);
     return;
   }
 
@@ -36,33 +82,32 @@ export default async function handler(req: LegacyApiRequest, res: LegacyApiRespo
 
   const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
   if (!contentType.includes("application/json")) {
-    res.status(415).json({ message: "Expected application/json" });
+    json(res, { message: "Expected application/json" }, 415);
     return;
   }
 
   const raw = await readBody(req);
   if (!raw || raw.length === 0) {
-    res.status(400).json({ message: "Body is required" });
+    json(res, { message: "Body is required" }, 400);
     return;
   }
   if (raw.length > maxBytes) {
-    res.status(413).json({ message: "Bundle exceeds upload limit", maxBytes });
+    json(res, { message: "Bundle exceeds upload limit", maxBytes }, 413);
     return;
   }
 
   const rawJson = raw.toString("utf8");
   const validation = validateBundlePayload(rawJson);
   if (!validation.ok) {
-    res.status(422).json({ message: validation.message });
+    json(res, { message: validation.message }, 422);
     return;
   }
 
   try {
     const { id } = await storeBundleJson(rawJson);
-    const urls = buildBundleUrls(req as unknown as import("../_lib/types").RequestLike, id);
-    res.setHeader("Content-Type", "application/json");
-    res.status(200).end(JSON.stringify({ url: urls.shareUrl }));
+    const urls = buildBundleUrls(buildRequestLike({ headers: request.headers }), id);
+    json(res, { url: urls.shareUrl });
   } catch (e) {
-    res.status(500).json({ message: formatPublishError(e) });
+    json(res, { message: formatPublishError(e) }, 500);
   }
 }

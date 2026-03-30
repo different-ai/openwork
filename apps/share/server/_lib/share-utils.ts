@@ -47,6 +47,10 @@ export function normalizeBaseUrl(input: unknown): string {
   return String(input ?? "").trim().replace(/\/+$/, "");
 }
 
+export function getPublicBaseUrl(): string {
+  return normalizeBaseUrl(getEnv("PUBLIC_BASE_URL")) || DEFAULT_PUBLIC_BASE_URL;
+}
+
 export function setCors(
   res: { setHeader(name: string, value: string): void },
   options: { methods?: string; headers?: string } = {},
@@ -104,28 +108,8 @@ export function truncate(value: unknown, maxChars = 3200): string {
   return `${text.slice(0, maxChars)}\n\n... (truncated for display)`;
 }
 
-function getOrigin(req: RequestLike): string {
-  const configuredPublicBaseUrl = normalizeBaseUrl(getEnv("PUBLIC_BASE_URL"));
-  if (configuredPublicBaseUrl) {
-    return configuredPublicBaseUrl;
-  }
-
-  const protocolHeader = String(req.headers?.["x-forwarded-proto"] ?? "https")
-    .split(",")[0]
-    .trim();
-  const hostHeader = String(req.headers?.["x-forwarded-host"] ?? req.headers?.host ?? "")
-    .split(",")[0]
-    .trim();
-
-  if (!hostHeader) {
-    return DEFAULT_PUBLIC_BASE_URL;
-  }
-
-  return `${protocolHeader || "https"}://${hostHeader}`;
-}
-
-export function buildRootUrl(req: RequestLike): string {
-  return normalizeBaseUrl(getOrigin(req)) || DEFAULT_PUBLIC_BASE_URL;
+export function buildRootUrl(_req: RequestLike): string {
+  return getPublicBaseUrl();
 }
 
 export function buildOgImageUrlFromOrigin(

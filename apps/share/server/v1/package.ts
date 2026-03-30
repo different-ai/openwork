@@ -2,7 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { storeBundleJson } from "../_lib/blob-store.ts";
 import { packageOpenworkFiles } from "../_lib/package-openwork-files.ts";
-import { buildBundleUrls, getEnv, readBody, setCors } from "../_lib/share-utils.ts";
+import { buildCanonicalRequest, buildRequestLike } from "../_lib/request-like.ts";
+import { buildCorsHeaders, rateLimitPublishRequest, validateTrustedOrigin, verifyShareBotProtection } from "../_lib/publish-security.ts";
+import { buildBundleUrls, getEnv, readBody } from "../_lib/share-utils.ts";
 
 interface LegacyApiRequest extends IncomingMessage {
   method?: string;
@@ -22,31 +24,75 @@ function formatPublishError(error: unknown): string {
   return message;
 }
 
+function applyHeaders(res: LegacyApiResponse, headers: Record<string, string>): void {
+  for (const [name, value] of Object.entries(headers)) {
+    res.setHeader(name, value);
+  }
+}
+
+function json(res: LegacyApiResponse, body: unknown, status = 200, headers: Record<string, string> = {}): void {
+  applyHeaders(res, {
+    ...headers,
+    "Content-Type": "application/json",
+  });
+  res.status(status).end(JSON.stringify(body));
+}
+
 export default async function handler(req: LegacyApiRequest, res: LegacyApiResponse): Promise<void> {
-  setCors(res);
+  const request = buildCanonicalRequest({
+    pathname: "/v1/package",
+    method: req.method,
+    headers: req.headers,
+  });
+
+  applyHeaders(res, buildCorsHeaders(request));
   if (req.method === "OPTIONS") {
     res.status(204).end();
     return;
   }
+
+  const originCheck = validateTrustedOrigin(request);
+  if (!originCheck.ok) {
+    json(res, { message: originCheck.message }, originCheck.status);
+    return;
+  }
+
+  const rateLimit = rateLimitPublishRequest(request);
+  if (!rateLimit.ok) {
+    json(
+      res,
+      { message: "Publishing is temporarily rate limited." },
+      429,
+      { "X-Retry-After": String(rateLimit.retryAfterSeconds) },
+    );
+    return;
+  }
+
+  const botProtection = await verifyShareBotProtection(request);
+  if (!botProtection.ok) {
+    json(res, { message: botProtection.message }, botProtection.status);
+    return;
+  }
+
   if (req.method !== "POST") {
-    res.status(405).json({ message: "Method not allowed" });
+    json(res, { message: "Method not allowed" }, 405);
     return;
   }
 
   const maxBytes = Number.parseInt(getEnv("MAX_BYTES", "5242880"), 10);
   const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
   if (!contentType.includes("application/json")) {
-    res.status(415).json({ message: "Expected application/json" });
+    json(res, { message: "Expected application/json" }, 415);
     return;
   }
 
   const raw = await readBody(req);
   if (!raw || raw.length === 0) {
-    res.status(400).json({ message: "Body is required" });
+    json(res, { message: "Body is required" }, 400);
     return;
   }
   if (raw.length > maxBytes) {
-    res.status(413).json({ message: "Package request exceeds upload limit", maxBytes });
+    json(res, { message: "Package request exceeds upload limit", maxBytes }, 413);
     return;
   }
 
@@ -54,25 +100,25 @@ export default async function handler(req: LegacyApiRequest, res: LegacyApiRespo
   try {
     body = JSON.parse(raw.toString("utf8"));
   } catch {
-    res.status(422).json({ message: "Invalid JSON" });
+    json(res, { message: "Invalid JSON" }, 422);
     return;
   }
 
   try {
     const packaged = packageOpenworkFiles(body);
     if (body?.preview) {
-      res.status(200).json(packaged);
+      json(res, packaged);
       return;
     }
 
     const { id } = await storeBundleJson(JSON.stringify(packaged.bundle));
-    const urls = buildBundleUrls(req as unknown as import("../_lib/types").RequestLike, id);
-    res.status(200).json({
+    const urls = buildBundleUrls(buildRequestLike({ headers: request.headers }), id);
+    json(res, {
       ...packaged,
       url: urls.shareUrl,
       id,
     });
   } catch (error) {
-    res.status(422).json({ message: formatPublishError(error) });
+    json(res, { message: formatPublishError(error) }, 422);
   }
 }

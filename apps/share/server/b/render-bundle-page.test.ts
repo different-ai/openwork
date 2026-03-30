@@ -22,11 +22,11 @@ test("wantsDownload only enables on download=1", () => {
   assert.equal(wantsDownload(makeReq()), false);
 });
 
-test("buildBundleUrls uses forwarded origin", () => {
+test("buildBundleUrls uses the fixed share origin", () => {
   const urls = buildBundleUrls(makeReq({ host: "example.test" }), "01ABC");
-  assert.equal(urls.shareUrl, "https://example.test/b/01ABC");
-  assert.equal(urls.jsonUrl, "https://example.test/b/01ABC/data");
-  assert.equal(urls.downloadUrl, "https://example.test/b/01ABC/data?download=1");
+  assert.equal(urls.shareUrl, "https://share.openworklabs.com/b/01ABC");
+  assert.equal(urls.jsonUrl, "https://share.openworklabs.com/b/01ABC/data");
+  assert.equal(urls.downloadUrl, "https://share.openworklabs.com/b/01ABC/data?download=1");
 });
 
 test("renderBundlePage includes machine-readable metadata and escaped json script", () => {

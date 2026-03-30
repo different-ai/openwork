@@ -1,4 +1,5 @@
 import type { RequestLike } from "./types.ts";
+import { getPublicBaseUrl } from "./share-utils.ts";
 
 export function headersToObject(
   headersInput: Headers | Record<string, string | string[] | undefined> | null,
@@ -41,4 +42,27 @@ export function buildRequestLike({
     headers: headersToObject(headers ?? null),
     query: searchParamsToQuery(searchParams ?? null),
   };
+}
+
+export function buildCanonicalRequest({
+  pathname,
+  method,
+  headers,
+  searchParams,
+}: {
+  pathname: string;
+  method?: string;
+  headers?: Headers | Record<string, string | string[] | undefined> | null;
+  searchParams?: URLSearchParams | null;
+}): Request {
+  const url = new URL(pathname, `${getPublicBaseUrl()}/`);
+  const query = searchParamsToQuery(searchParams ?? null);
+  for (const [key, value] of Object.entries(query)) {
+    url.searchParams.set(key, value);
+  }
+
+  return new Request(url.toString(), {
+    method: method ?? "GET",
+    headers: new Headers(headersToObject(headers ?? null)),
+  });
 }

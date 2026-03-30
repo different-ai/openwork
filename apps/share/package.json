@@ -7,7 +7,7 @@
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "test": "node --test server/b/render-bundle-page.test.ts server/_lib/package-openwork-files.test.ts server/_lib/render-og-image.test.ts server/_lib/share-utils.test.ts",
+    "test": "node --test server/b/render-bundle-page.test.ts server/_lib/package-openwork-files.test.ts server/_lib/publish-security.test.ts server/_lib/render-og-image.test.ts server/_lib/share-utils.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
