@@ -1150,7 +1150,7 @@ export default function App() {
     const workspacePath = activeLocalPath || runningProjectDir;
 
     if (!workspacePath) {
-      setError("Pick a local worker folder before restarting the local server.");
+      setError(t("app.error_pick_local_folder"));
       return false;
     }
 
@@ -1178,7 +1178,7 @@ export default function App() {
     const client = openworkServerClient();
     const workspaceId = runtimeWorkspaceId();
     if (!client || !workspaceId || openworkServerStatus() !== "connected") {
-      setError("Connect to this worker before applying runtime changes.");
+      setError(t("app.error_connect_first"));
       return false;
     }
 
@@ -1188,7 +1188,7 @@ export default function App() {
       await refreshMcpServers();
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to apply runtime changes.";
+      const message = error instanceof Error ? error.message : t("app.error_runtime_changes");
       setError(message);
       return false;
     }
@@ -1271,9 +1271,9 @@ export default function App() {
 
       resetOpenworkServerSettings();
 
-      return { ok: true, message: "Reset app config defaults. Restart OpenWork if any stale settings remain." };
+      return { ok: true, message: t("app.reset_config_ok") };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
+      const message = error instanceof Error ? error.message : t("app.error_reset_config");
       return { ok: false, message };
     }
   };
@@ -1922,21 +1922,21 @@ export default function App() {
     const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
     const skillsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills."
+        ? t("app.skills_hint_disconnected")
         : openworkStatus === "limited"
-          ? "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect."
+          ? t("app.skills_hint_limited")
           : openworkServerCanWriteSkills()
             ? null
-            : "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs."
+            : t("app.skills_hint_readonly")
       : null;
     const pluginsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Plugins are read-only."
+        ? t("app.plugins_hint_disconnected")
         : openworkStatus === "limited"
-          ? "OpenWork server needs a token to edit plugins."
+          ? t("app.plugins_hint_limited")
           : openworkServerCanWritePlugins()
             ? null
-            : "OpenWork server is read-only for plugins."
+            : t("app.plugins_hint_readonly")
       : null;
 
     return {
@@ -2390,7 +2390,7 @@ export default function App() {
       <BundleImportModal
         open={Boolean(bundlesStore.bundleImportChoice())}
         title={bundlesStore.bundleImportSummary()?.title ?? t("app.import_shared_bundle")}
-        description={bundlesStore.bundleImportSummary()?.description ?? "Choose how to import this bundle."}
+        description={bundlesStore.bundleImportSummary()?.description ?? t("app.import_bundle_desc")}
         items={bundlesStore.bundleImportSummary()?.items ?? []}
         workers={bundlesStore.bundleWorkerOptions()}
         busy={bundlesStore.bundleImportBusy()}
@@ -2520,7 +2520,7 @@ export default function App() {
         localDisabled={!isTauriRuntime()}
         localDisabledReason={
           !isTauriRuntime()
-            ? "Create local workspaces in the desktop app. Remote and shared workspaces still work here."
+            ? t("app.local_disabled_reason")
             : null
         }
         remoteSubmitting={busy() && busyLabel() === "status.connecting"}
@@ -2585,8 +2585,8 @@ export default function App() {
         reloadDescription={reloadCopy().body}
         reloadTrigger={reloadTrigger()}
         reloadError={reloadError()}
-        reloadLabel={activeReloadBlockingSessions().length > 0 ? "Reload & Stop Tasks" : "Reload now"}
-        dismissLabel="Later"
+        reloadLabel={activeReloadBlockingSessions().length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")}
+        dismissLabel={t("app.reload_later")}
         reloadBusy={reloadBusy()}
         canReload={canReloadWorkspace()}
         hasActiveRuns={activeReloadBlockingSessions().length > 0}

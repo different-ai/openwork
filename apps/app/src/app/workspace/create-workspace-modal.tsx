@@ -90,7 +90,7 @@ function workerSecondaryLine(worker: DenWorkerSummary, translate: (key: string) 
 
 export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   let remoteUrlRef: HTMLInputElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
   const platform = usePlatform();
 
   const [screen, setScreen] = createSignal<CreateWorkspaceScreen>("chooser");
@@ -397,13 +397,13 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         }),
       );
       if (ok === false) {
-        throw new Error(`Failed to connect to ${worker.workerName}.`);
+        throw new Error(translate("dashboard.error_connect_worker", { name: worker.workerName }));
       }
     } catch (error) {
       setWorkersError(
         error instanceof Error
           ? error.message
-          : `Failed to connect to ${worker.workerName}.`,
+          : translate("dashboard.error_connect_worker", { name: worker.workerName }),
       );
     } finally {
       setOpeningWorkerId(null);
@@ -420,7 +420,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         setTemplateError(
           error instanceof Error
             ? error.message
-            : `Failed to create ${template.name}.`,
+            : translate("dashboard.error_create_template", { name: template.name }),
         );
       }
       return;
@@ -474,7 +474,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               icon={FolderPlus}
               onClick={() => setScreen("local")}
               disabled={props.localDisabled}
-              endAdornment={props.localDisabled ? <span class={tagClass}>Desktop</span> : undefined}
+              endAdornment={props.localDisabled ? <span class={tagClass}>{translate("dashboard.desktop_badge")}</span> : undefined}
             />
             <WorkspaceOptionCard
               title={translate("dashboard.create_remote_custom_title")}
@@ -497,10 +497,10 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                   disabled={props.importingConfig}
                   class={pillGhostClass}
                 >
-                  <Show when={props.importingConfig} fallback="Import config">
+                  <Show when={props.importingConfig} fallback={translate("dashboard.import_config")}>
                     <span class="inline-flex items-center gap-2">
                       <Loader2 size={14} class="animate-spin" />
-                      Importing…
+                      {translate("dashboard.importing")}
                     </span>
                   </Show>
                 </button>
