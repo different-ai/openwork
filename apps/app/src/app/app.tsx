@@ -3977,22 +3977,6 @@ export default function App() {
   );
   const refreshActiveWorkspaceServerConfig = workspaceStore.refreshRuntimeWorkspaceConfig;
   const activePermissionMemo = createMemo(() => activePermission());
-  const migrationRepairUnavailableReason = createMemo<string | null>(() => {
-    if (workspaceStore.canRepairOpencodeMigration()) return null;
-    if (!isTauriRuntime()) {
-      return t("app.migration.desktop_required", currentLocale());
-    }
-
-    if (selectedWorkspaceDisplay().workspaceType !== "local") {
-      return t("app.migration.local_only", currentLocale());
-    }
-
-    if (!workspaceStore.selectedWorkspacePath().trim()) {
-      return t("app.migration.workspace_required", currentLocale());
-    }
-
-    return t("app.migration.local_only", currentLocale());
-  });
 
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(
     new Set()
@@ -5524,11 +5508,6 @@ export default function App() {
       sandboxCreateProgressLast: workspaceStore.lastSandboxCreateProgress(),
       clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
       safeStringify,
-      repairOpencodeMigration: workspaceStore.repairOpencodeMigration,
-      migrationRepairBusy: workspaceStore.migrationRepairBusy(),
-      migrationRepairResult: workspaceStore.migrationRepairResult(),
-      migrationRepairAvailable: workspaceStore.canRepairOpencodeMigration(),
-      migrationRepairUnavailableReason: migrationRepairUnavailableReason(),
       repairOpencodeCache,
       cacheRepairBusy: cacheRepairBusy(),
       cacheRepairResult: cacheRepairResult(),

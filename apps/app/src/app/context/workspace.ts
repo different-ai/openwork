@@ -39,7 +39,6 @@ import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
-  opencodeDbMigrate,
   engineInstall,
   engineStart,
   engineStop,
@@ -102,11 +101,6 @@ export type SandboxCreateProgressState = {
 };
 
 export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
-
-export type MigrationRepairResult = {
-  ok: boolean;
-  message: string;
-};
 
 type RuntimeWorkspaceLookup = {
   workspaceId?: string | null;
@@ -211,13 +205,6 @@ export function createWorkspaceStore(options: {
   const LONG_BOOT_CONNECT_REASONS = new Set(["host-start", "bootstrap-local"]);
   const DEFAULT_WORKSPACE_HOME_FOLDER_NAME = "OpenWork";
   const FIRST_RUN_WELCOME_WORKSPACE_NAME = "Welcome";
-  const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
-    /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
-    /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
-    /no such command[:\s]+db/i,
-    /found argument ['"`]db['"`] which wasn't expected/i,
-  ] as const;
-
   const preferredInitialSessionTitleForPreset = (preset: WorkspacePreset) => {
     const trimmed = defaultBlueprintSessionsForPreset(preset)
       .find((session) => session.openOnFirstLoad === true)?.title?.trim();
@@ -267,18 +254,6 @@ export function createWorkspaceStore(options: {
       return LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS;
     }
     return DEFAULT_CONNECT_HEALTH_TIMEOUT_MS;
-  };
-
-  const formatExecOutput = (result: { stdout: string; stderr: string }) => {
-    const stderr = result.stderr.trim();
-    const stdout = result.stdout.trim();
-    return [stderr, stdout].filter(Boolean).join("\n\n");
-  };
-
-  const isDbMigrateUnsupported = (output: string) => {
-    const normalized = output.trim();
-    if (!normalized) return false;
-    return DB_MIGRATE_UNSUPPORTED_PATTERNS.some((pattern) => pattern.test(normalized));
   };
 
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
@@ -402,9 +377,6 @@ export function createWorkspaceStore(options: {
   >({});
   const [exportingWorkspaceConfig, setExportingWorkspaceConfig] = createSignal(false);
   const [importingWorkspaceConfig, setImportingWorkspaceConfig] = createSignal(false);
-  const [migrationRepairBusy, setMigrationRepairBusy] = createSignal(false);
-  const [migrationRepairResult, setMigrationRepairResult] = createSignal<MigrationRepairResult | null>(null);
-
   const selectedWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === selectedWorkspaceId()) ?? null);
   const connectedWorkspaceInfo = createMemo(() => {
     const id = connectedWorkspaceId()?.trim() ?? "";
@@ -3175,109 +3147,6 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  function canRepairOpencodeMigration() {
-    if (!isTauriRuntime()) return false;
-    const workspace = selectedWorkspaceInfo();
-    if (!workspace || workspace.workspaceType !== "local") return false;
-    return Boolean(selectedWorkspacePath().trim());
-  }
-
-  async function repairOpencodeMigration(optionsOverride?: { navigate?: boolean }) {
-    if (!isTauriRuntime()) {
-      const message = t("app.migration.desktop_required", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    if (migrationRepairBusy()) return false;
-
-    const workspace = selectedWorkspaceInfo();
-    if (!workspace || workspace.workspaceType !== "local") {
-      const message = t("app.migration.local_only", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    const root = selectedWorkspacePath().trim();
-    if (!root) {
-      const message = t("app.migration.workspace_required", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    setMigrationRepairBusy(true);
-    setMigrationRepairResult(null);
-    options.setError(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.repairing_migration");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      if (engine()?.running) {
-        const info = await engineStop();
-        setEngine(info);
-      }
-
-      const source = options.engineSource();
-      const result = await opencodeDbMigrate({
-        projectDir: root,
-        preferSidecar: source === "sidecar",
-        opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-      });
-
-      if (!result.ok) {
-        const output = formatExecOutput(result);
-        if (isDbMigrateUnsupported(output)) {
-          const message = t("app.migration.unsupported", currentLocale());
-          setMigrationRepairResult({ ok: false, message });
-          options.setError(message);
-          return false;
-        }
-
-        const fallback = t("app.migration.failed", currentLocale());
-        const message = output ? `${fallback}\n\n${output}` : fallback;
-        setMigrationRepairResult({ ok: false, message });
-        options.setError(addOpencodeCacheHint(message));
-        return false;
-      }
-
-      const started = await startHost({
-        workspacePath: root,
-        navigate: optionsOverride?.navigate ?? false,
-      });
-      if (!started) {
-        const message = t("app.migration.restart_failed", currentLocale());
-        setMigrationRepairResult({ ok: false, message });
-        return false;
-      }
-
-      setMigrationRepairResult({ ok: true, message: t("app.migration.success", currentLocale()) });
-      return true;
-    } catch (error) {
-      const message = addOpencodeCacheHint(error instanceof Error ? error.message : safeStringify(error));
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    } finally {
-      setMigrationRepairBusy(false);
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function onRepairOpencodeMigration() {
-    options.setStartupPreference("local");
-    options.setOnboardingStep("connecting");
-    const ok = await repairOpencodeMigration({ navigate: true });
-    if (!ok) {
-      options.setOnboardingStep("local");
-    }
-  }
-
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -3329,7 +3198,6 @@ export function createWorkspaceStore(options: {
     }
 
     options.setError(null);
-    setMigrationRepairResult(null);
     options.setBusy(true);
     options.setBusyLabel("status.starting_engine");
     options.setBusyStartedAt(Date.now());
@@ -3989,8 +3857,6 @@ export function createWorkspaceStore(options: {
     workspaceConnectionStateById,
     exportingWorkspaceConfig,
     importingWorkspaceConfig,
-    migrationRepairBusy,
-    migrationRepairResult,
     selectedWorkspaceInfo,
     selectedWorkspaceDisplay,
     selectedWorkspacePath,
@@ -4024,8 +3890,6 @@ export function createWorkspaceStore(options: {
     pickWorkspaceFolder,
     exportWorkspaceConfig,
     importWorkspaceConfig,
-    canRepairOpencodeMigration,
-    repairOpencodeMigration,
     startHost,
     stopHost,
     reloadWorkspaceEngine,
@@ -4034,7 +3898,6 @@ export function createWorkspaceStore(options: {
     onSelectStartup,
     onBackToWelcome,
     onStartHost,
-    onRepairOpencodeMigration,
     onAttachHost,
     onConnectClient,
     onRememberStartupToggle,

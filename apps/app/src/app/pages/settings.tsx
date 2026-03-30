@@ -174,11 +174,6 @@ export type SettingsViewProps = {
   sandboxCreateProgressLast: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
-  repairOpencodeMigration: () => void;
-  migrationRepairBusy: boolean;
-  migrationRepairResult: { ok: boolean; message: string } | null;
-  migrationRepairAvailable: boolean;
-  migrationRepairUnavailableReason: string | null;
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
@@ -2380,103 +2375,47 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "recovery"}>
           <div class="space-y-6">
-            <div class={`${settingsPanelClass} space-y-4`}>
-              <div>
-                <div class="text-sm font-medium text-gray-12">
-                  {translate("settings.migration_recovery_label")}
-                </div>
-                <div class="text-xs text-gray-9">
-                  {translate("settings.migration_recovery_hint")}
-                </div>
+            <div class={`${settingsPanelClass} space-y-3`}>
+              <div class="text-sm font-medium text-gray-12">
+                Workspace config
+              </div>
+              <div class="text-xs text-gray-10">
+                Reveal or reset `.opencode/openwork.json` defaults for this
+                app workspace.
+              </div>
+              <div class="text-[11px] text-gray-7 font-mono break-all">
+                {workspaceConfigPath() || "No active local workspace."}
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   class="text-xs h-8 py-0 px-3"
-                  onClick={props.repairOpencodeMigration}
+                  onClick={revealWorkspaceConfig}
                   disabled={
-                    webDeployment() ||
-                    props.busy ||
-                    props.migrationRepairBusy ||
-                    !props.migrationRepairAvailable
+                    !isTauriRuntime() ||
+                    revealConfigBusy() ||
+                    !workspaceConfigPath()
                   }
                   title={
-                    webDeployment()
-                      ? "Migration repair requires the desktop app."
-                      : (props.migrationRepairUnavailableReason ?? "")
+                    !isTauriRuntime()
+                      ? "Reveal config requires the desktop app"
+                      : ""
                   }
                 >
-                  {props.migrationRepairBusy
-                    ? translate("settings.fixing_migration")
-                    : translate("settings.fix_migration")}
+                  <FolderOpen size={13} class="mr-1.5" />
+                  {revealConfigBusy() ? "Opening..." : "Reveal config"}
                 </Button>
-              </div>
-
-              <Show when={props.migrationRepairUnavailableReason}>
-                {(reason) => (
-                  <div class="text-xs text-amber-11">{reason()}</div>
-                )}
-              </Show>
-              <Show when={props.migrationRepairBusy}>
-                <div class="text-xs text-gray-10">
-                  {translate("status.repairing_migration")}
-                </div>
-              </Show>
-              <Show when={props.migrationRepairResult}>
-                {(result) => (
-                  <div
-                    class={`rounded-xl border px-3 py-2 text-xs ${
-                      result().ok
-                        ? "border-green-7/30 bg-green-2/30 text-green-12"
-                        : "border-red-7/30 bg-red-2/30 text-red-12"
-                    }`}
-                  >
-                    {result().message}
-                  </div>
-                )}
-              </Show>
-            </div>
-                <div class={`${settingsPanelClass} space-y-3`}>
-                  <div class="text-sm font-medium text-gray-12">
-                    Workspace config
-                  </div>
-                  <div class="text-xs text-gray-10">
-                    Reveal or reset `.opencode/openwork.json` defaults for this
-                    app workspace.
-                  </div>
-                  <div class="text-[11px] text-gray-7 font-mono break-all">
-                    {workspaceConfigPath() || "No active local workspace."}
-                  </div>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="outline"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={revealWorkspaceConfig}
-                      disabled={
-                        !isTauriRuntime() ||
-                        revealConfigBusy() ||
-                        !workspaceConfigPath()
-                      }
-                      title={
-                        !isTauriRuntime()
-                          ? "Reveal config requires the desktop app"
-                          : ""
-                      }
-                    >
-                      <FolderOpen size={13} class="mr-1.5" />
-                      {revealConfigBusy() ? "Opening..." : "Reveal config"}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={resetAppConfigDefaults}
-                      disabled={resetConfigBusy() || props.anyActiveRuns}
-                      title={
-                        props.anyActiveRuns
-                          ? "Stop active runs before resetting config"
-                          : ""
-                      }
-                    >
+                <Button
+                  variant="danger"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={resetAppConfigDefaults}
+                  disabled={resetConfigBusy() || props.anyActiveRuns}
+                  title={
+                    props.anyActiveRuns
+                      ? "Stop active runs before resetting config"
+                      : ""
+                  }
+                >
                       {resetConfigBusy()
                         ? "Resetting..."
                         : "Reset config defaults"}

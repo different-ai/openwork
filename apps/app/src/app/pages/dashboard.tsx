@@ -260,11 +260,6 @@ export type DashboardViewProps = {
   sandboxCreateProgressLast: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
-  repairOpencodeMigration: () => void;
-  migrationRepairBusy: boolean;
-  migrationRepairResult: { ok: boolean; message: string } | null;
-  migrationRepairAvailable: boolean;
-  migrationRepairUnavailableReason: string | null;
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
@@ -1385,11 +1380,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   sandboxCreateProgressLast={props.sandboxCreateProgressLast}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
-                  repairOpencodeMigration={props.repairOpencodeMigration}
-                  migrationRepairBusy={props.migrationRepairBusy}
-                  migrationRepairResult={props.migrationRepairResult}
-                  migrationRepairAvailable={props.migrationRepairAvailable}
-                  migrationRepairUnavailableReason={props.migrationRepairUnavailableReason}
                   repairOpencodeCache={props.repairOpencodeCache}
                   cacheRepairBusy={props.cacheRepairBusy}
                   cacheRepairResult={props.cacheRepairResult}

@@ -474,38 +474,6 @@ pub fn nuke_openwork_and_opencode_config_and_exit(
     Ok(())
 }
 
-#[tauri::command]
-pub fn opencode_db_migrate(
-    app: AppHandle,
-    project_dir: String,
-    prefer_sidecar: Option<bool>,
-    opencode_bin_path: Option<String>,
-) -> Result<ExecResult, String> {
-    let project_dir = validate_project_dir(&app, &project_dir)?;
-    let program =
-        resolve_opencode_program(&app, prefer_sidecar.unwrap_or(false), opencode_bin_path)?;
-
-    let mut command = command_for_program(&program);
-    for (key, value) in crate::bun_env::bun_env_overrides() {
-        command.env(key, value);
-    }
-
-    let output = command
-        .arg("db")
-        .arg("migrate")
-        .current_dir(&project_dir)
-        .output()
-        .map_err(|e| format!("Failed to run opencode db migrate: {e}"))?;
-
-    let status = output.status.code().unwrap_or(-1);
-    Ok(ExecResult {
-        ok: output.status.success(),
-        status,
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    })
-}
-
 /// Run `opencode mcp auth <server_name>` in the given project directory.
 /// This spawns the process detached so the OAuth flow can open a browser.
 #[tauri::command]
