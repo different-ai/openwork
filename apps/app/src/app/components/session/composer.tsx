@@ -7,6 +7,7 @@ import ComposerNotice, { type ComposerNotice as ComposerNoticeData } from "./com
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { t } from "../../../i18n";
 
 type MentionOption = {
   id: string;
@@ -516,7 +517,7 @@ export default function Composer(props: ComposerProps) {
     span.dataset.pasteId = part.id;
     span.dataset.pasteLabel = part.label;
     span.dataset.pasteLines = String(part.lines);
-    span.title = "Click to expand pasted text";
+    span.title = t("composer.expand_pasted");
     span.className =
       "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-gray-3 text-gray-10 border border-gray-6 cursor-pointer hover:bg-gray-4 hover:text-gray-11";
     return span;
@@ -1105,7 +1106,7 @@ export default function Composer(props: ComposerProps) {
         });
       } catch (error) {
         props.onNotice({
-          title: error instanceof Error ? error.message : "Failed to read attachment",
+          title: error instanceof Error ? error.message : t("composer.failed_read_attachment"),
           tone: "error",
         });
       }
@@ -1572,7 +1573,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="max-h-64 overflow-y-auto bg-dls-surface p-2" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                   <Show
                     when={mentionVisible().length}
-                    fallback={<div class="px-3 py-2 text-xs text-gray-10">No matches found.</div>}
+                    fallback={<div class="px-3 py-2 text-xs text-gray-10">{t("composer.no_matches")}</div>}
                   >
                     <For each={mentionVisible()}>
                       {(option: MentionOption) => {
@@ -1635,7 +1636,7 @@ export default function Composer(props: ComposerProps) {
                     when={slashFiltered().length}
                     fallback={
                       <div class="px-3 py-2 text-xs text-gray-10">
-                        {slashLoading() ? "Loading commands..." : "No commands found."}
+                        {slashLoading() ? t("composer.loading_commands") : t("composer.no_commands")}
                       </div>
                     }
                   >
@@ -1662,7 +1663,7 @@ export default function Composer(props: ComposerProps) {
                             </div>
                             <Show when={cmd.source && cmd.source !== "command"}>
                               <span class="text-[10px] uppercase tracking-wider text-gray-10 shrink-0">
-                                {cmd.source === "skill" ? "Skill" : cmd.source === "mcp" ? "MCP" : ""}
+                                {cmd.source === "skill" ? t("composer.skill_source") : cmd.source === "mcp" ? "MCP" : ""}
                               </span>
                             </Show>
                           </button>
@@ -1697,7 +1698,7 @@ export default function Composer(props: ComposerProps) {
                       <div class="max-w-[160px]">
                         <div class="truncate text-gray-11">{attachment.name}</div>
                         <div class="text-[10px] text-gray-10">
-                          {attachment.kind === "image" ? "Image" : attachment.mimeType || "File"}
+                          {attachment.kind === "image" ? t("composer.image_kind") : attachment.mimeType || t("composer.file_kind")}
                         </div>
                       </div>
                       <button
@@ -1776,7 +1777,7 @@ export default function Composer(props: ComposerProps) {
                           title={
                             attachmentsDisabled()
                               ? props.attachmentsDisabledReason ?? "Attachments are unavailable."
-                              : "Attach files"
+                              : t("composer.attach_files")
                           }
                         >
                           <Paperclip size={16} />
@@ -1794,10 +1795,10 @@ export default function Composer(props: ComposerProps) {
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-dls-accent text-white hover:bg-[var(--dls-accent-hover)]"
                                 }`}
-                              title="Run task"
+                              title={t("composer.run_task")}
                             >
                               <ArrowUp size={15} />
-                              <span>Run task</span>
+                              <span>{t("composer.run_task")}</span>
                             </button>
                           }
                         >
@@ -1805,10 +1806,10 @@ export default function Composer(props: ComposerProps) {
                             type="button"
                             onClick={() => props.onStop()}
                             class="inline-flex items-center gap-2 rounded-full bg-gray-12 px-4 py-2 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
-                            title="Stop"
+                            title={t("composer.stop")}
                           >
                             <Square size={12} fill="currentColor" />
-                            <span>Stop</span>
+                            <span>{t("composer.stop")}</span>
                           </button>
                         </Show>
                       </div>
@@ -1829,7 +1830,7 @@ export default function Composer(props: ComposerProps) {
                 onClick={props.onToggleAgentPicker}
                 disabled={props.busy}
                 aria-expanded={props.agentPickerOpen}
-                title="Agent"
+                title={t("composer.agent_label")}
               >
                 <span class="max-w-[140px] truncate">{props.agentLabel}</span>
                 <ChevronDown size={13} />
@@ -1838,14 +1839,14 @@ export default function Composer(props: ComposerProps) {
               <Show when={props.agentPickerOpen}>
                 <div class="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                   <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                    Agent
+                    {t("composer.agent_label")}
                   </div>
 
                   <div class="p-2 space-y-1 max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                     <Show
                       when={!props.agentPickerBusy}
                       fallback={
-                        <div class="px-3 py-2 text-xs text-gray-10">Loading agents...</div>
+                        <div class="px-3 py-2 text-xs text-gray-10">{t("composer.loading_agents")}</div>
                       }
                     >
                       <Show when={!props.agentPickerError}>
@@ -1860,7 +1861,7 @@ export default function Composer(props: ComposerProps) {
                             props.onSelectAgent(null);
                           }}
                         >
-                          <span>Default agent</span>
+                          <span>{t("composer.default_agent")}</span>
                           <Show when={!props.selectedAgent}>
                             <Check size={14} class="text-gray-10" />
                           </Show>

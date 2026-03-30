@@ -31,6 +31,7 @@ import {
 } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { t } from "../../../i18n";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -753,7 +754,7 @@ export default function MessageList(props: MessageListProps) {
             <div class="mt-3 rounded-[18px] border border-dls-border/70 bg-dls-surface px-3 py-3">
               <Show
                 when={childMessages().length > 0}
-                fallback={<div class="text-[12px] leading-5 text-gray-9">Waiting for the subagent transcript to arrive.</div>}
+                fallback={<div class="text-[12px] leading-5 text-gray-9">{t("message.waiting_subagent")}</div>}
               >
                 <MessageList
                   messages={childMessages()}
@@ -854,13 +855,13 @@ export default function MessageList(props: MessageListProps) {
           <div class="mt-3 ml-[22px] space-y-3">
             <Show when={hasStructuredValue(toolInput())}>
               <div>
-                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Request</div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{t("message.tool_request_label")}</div>
                 <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolInput())}</pre>
               </div>
             </Show>
             <Show when={hasStructuredValue(toolOutput())}>
               <div>
-                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Result</div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{t("message.tool_result_label")}</div>
                 <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolOutput())}</pre>
               </div>
             </Show>
@@ -1142,7 +1143,7 @@ export default function MessageList(props: MessageListProps) {
             <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
               <button
                 class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                title="Copy message"
+                title={t("message_list.copy_message")}
                 onClick={() => {
                   const text = block.renderableParts
                     .map((part) => partToText(part))
