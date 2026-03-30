@@ -15,8 +15,6 @@ import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { parse } from "jsonc-parser";
-
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import SkillDestinationModal from "./bundles/skill-destination-modal";
@@ -45,14 +43,9 @@ import { createDenClient, writeDenSettings } from "./lib/den";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
 import {
-  DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
-  MODEL_PREF_KEY,
-  SESSION_MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
-  VARIANT_PREF_KEY,
 } from "./constants";
-import { compareProviders, providerPriorityRank } from "./utils/providers";
 import {
   blueprintMaterializedSessions,
   blueprintSessions,
@@ -65,8 +58,6 @@ import type {
   PlaceholderMessageInfo,
   StartupPreference,
   EngineRuntime,
-  ModelOption,
-  ModelRef,
   OnboardingStep,
   ReloadReason,
   ReloadTrigger,
@@ -83,19 +74,14 @@ import {
   clearStartupPreference,
   deriveArtifacts,
   deriveWorkingFiles,
-  formatModelLabel,
-  formatModelRef,
   isVisibleTextPart,
   isTauriRuntime,
-  modelEquals,
   normalizeDirectoryPath,
 } from "./utils";
 import { currentLocale, setLocale, t } from "../i18n";
 import {
   isWindowsPlatform,
   lastUserModelFromMessages,
-  // normalizeDirectoryPath,
-  parseModelRef,
   readStartupPreference,
   safeStringify,
   addOpencodeCacheHint,
@@ -111,22 +97,11 @@ import { createSystemState } from "./system-state";
 import { createSessionStore } from "./context/session";
 import {
   createModelConfigStore,
-  parseSessionChoiceOverrides,
-  parseWorkspaceModelVariants,
-  serializeSessionChoiceOverrides,
-  sessionModelOverridesKey,
-  workspaceModelVariantsKey,
 } from "./context/model-config";
 import { createProvidersStore } from "./context/providers";
 import { ModelControlsProvider } from "./app-settings/model-controls-provider";
 import { createModelControlsStore } from "./app-settings/model-controls-store";
 import { useSessionDisplayPreferences } from "./app-settings/session-display-preferences";
-import {
-  formatGenericBehaviorLabel,
-  getModelBehaviorSummary,
-  normalizeModelBehaviorValue,
-  sanitizeModelBehaviorValue,
-} from "./lib/model-behavior";
 import {
   describeDirectoryScope,
   shouldRedirectMissingSessionAfterScopedLoad,
@@ -466,19 +441,46 @@ export default function App() {
       // ignore
     }
   };
-  const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
-  const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
-  const [pendingDefaultModelByWorkspace, setPendingDefaultModelByWorkspace] = createSignal<
-    Record<string, string>
-  >({});
-  const [autoCompactContextReady, setAutoCompactContextReady] = createSignal(false);
-  const [autoCompactContextDirty, setAutoCompactContextDirty] = createSignal(false);
-  const [autoCompactContextApplied, setAutoCompactContextApplied] = createSignal(true);
-  const [autoCompactContextSaving, setAutoCompactContextSaving] = createSignal(false);
-  type PromptFocusReturnTarget = "none" | "composer";
 
-  const modelConfig = createModelConfigStore();
+  const globalSync = useGlobalSync();
+  const providers = createMemo(() => globalSync.data.provider.all ?? []);
+  const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
+  const providerConnectedIds = createMemo(() => globalSync.data.provider.connected ?? []);
+  const setProviders = (value: ProviderListItem[]) => {
+    globalSync.set("provider", "all", value);
+  };
+  const setProviderDefaults = (value: Record<string, string>) => {
+    globalSync.set("provider", "default", value);
+  };
+  const setProviderConnectedIds = (value: string[]) => {
+    globalSync.set("provider", "connected", value);
+  };
+
+  let workspaceStore!: ReturnType<typeof createWorkspaceStore>;
+  let sessionStore!: ReturnType<typeof createSessionStore>;
+  let openworkServerStore!: ReturnType<typeof createOpenworkServerStore>;
+
+  const modelConfig = createModelConfigStore({
+    client,
+    selectedSessionId,
+    messages: () => sessionStore?.messages?.() ?? [],
+    providers,
+    providerDefaults,
+    providerConnectedIds,
+    selectedWorkspaceId: () => workspaceStore?.selectedWorkspaceId?.() ?? "",
+    selectedWorkspaceDisplay: () =>
+      workspaceStore?.selectedWorkspaceDisplay?.() ?? ({ workspaceType: "local" } as WorkspaceDisplay),
+    selectedWorkspacePath: () => workspaceStore?.selectedWorkspacePath?.() ?? "",
+    openworkServerClient: () => openworkServerStore?.openworkServerClient?.() ?? null,
+    openworkServerStatus: () => openworkServerStore?.openworkServerStatus?.() ?? "disconnected",
+    openworkServerCapabilities: () => openworkServerStore?.openworkServerCapabilities?.() ?? null,
+    runtimeWorkspaceId: () => workspaceStore?.runtimeWorkspaceId?.() ?? null,
+    focusSessionPromptSoon: () => focusSessionPromptSoon(),
+    setError,
+    setLastKnownConfigSnapshot,
+    markOpencodeConfigReloadRequired: () =>
+      markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" }),
+  });
 
   createEffect(() => {
     const view = currentView();
@@ -538,7 +540,7 @@ export default function App() {
     markReloadRequiredHandler?.(reason, trigger);
   };
 
-  const sessionStore = createSessionStore({
+  sessionStore = createSessionStore({
     client,
     selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot().trim(),
     selectedSessionId,
@@ -844,9 +846,7 @@ export default function App() {
     await respondPermission(requestID, reply);
   }
 
-  let workspaceStore!: ReturnType<typeof createWorkspaceStore>;
-
-  const openworkServerStore = createOpenworkServerStore({
+  openworkServerStore = createOpenworkServerStore({
     startupPreference,
     documentVisible,
     developerMode,
@@ -929,149 +929,36 @@ export default function App() {
 
   const { refreshMcpServers } = connectionsStore;
 
-  const globalSync = useGlobalSync();
-  const providers = createMemo(() => globalSync.data.provider.all ?? []);
-  const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
-  const providerConnectedIds = createMemo(() => globalSync.data.provider.connected ?? []);
-  const setProviders = (value: ProviderListItem[]) => {
-    globalSync.set("provider", "all", value);
-  };
-  const setProviderDefaults = (value: Record<string, string>) => {
-    globalSync.set("provider", "default", value);
-  };
-  const setProviderConnectedIds = (value: string[]) => {
-    globalSync.set("provider", "connected", value);
-  };
-
-  const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const parseDefaultModelFromConfig = (content: string | null) => {
-    if (!content) return null;
-    try {
-      const parsed = parse(content) as Record<string, unknown> | undefined;
-      const rawModel = typeof parsed?.model === "string" ? parsed.model : null;
-      return parseModelRef(rawModel);
-    } catch {
-      return null;
-    }
-  };
-
-  const formatConfigWithDefaultModel = (content: string | null, model: ModelRef) => {
-    let config: Record<string, unknown> = {};
-    if (content?.trim()) {
-      try {
-        const parsed = parse(content) as Record<string, unknown> | undefined;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          config = { ...parsed };
-        }
-      } catch {
-        config = {};
-      }
-    }
-
-    if (!config["$schema"]) {
-      config["$schema"] = "https://opencode.ai/config.json";
-    }
-
-    config.model = formatModelRef(model);
-    return `${JSON.stringify(config, null, 2)}\n`;
-  };
-
-  const parseAutoCompactContextFromConfig = (content: string | null) => {
-    if (!content) return null;
-    try {
-      const parsed = parse(content) as Record<string, unknown> | undefined;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return null;
-      }
-      const compaction = parsed.compaction;
-      if (!compaction || typeof compaction !== "object" || Array.isArray(compaction)) {
-        return null;
-      }
-      return typeof (compaction as Record<string, unknown>).auto === "boolean"
-        ? ((compaction as Record<string, unknown>).auto as boolean)
-        : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const formatConfigWithAutoCompactContext = (content: string | null, enabled: boolean) => {
-    let config: Record<string, unknown> = {};
-    if (content?.trim()) {
-      try {
-        const parsed = parse(content) as Record<string, unknown> | undefined;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          config = { ...parsed };
-        }
-      } catch {
-        config = {};
-      }
-    }
-
-    if (!config["$schema"]) {
-      config["$schema"] = "https://opencode.ai/config.json";
-    }
-
-    const compaction =
-      typeof config.compaction === "object" && config.compaction && !Array.isArray(config.compaction)
-        ? { ...(config.compaction as Record<string, unknown>) }
-        : {};
-
-    compaction.auto = enabled;
-    config.compaction = compaction;
-    return `${JSON.stringify(config, null, 2)}\n`;
-  };
-
-  const getConfigSnapshot = (content: string | null) => {
-    if (!content?.trim()) return "";
-    try {
-      const parsed = parse(content) as Record<string, unknown>;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const copy = { ...parsed };
-        delete copy.model;
-        return JSON.stringify(copy);
-      }
-      return content;
-    } catch {
-      return content;
-    }
-  };
-
-  const ensureRecord = (value: unknown): Record<string, unknown> => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return value as Record<string, unknown>;
-  };
-
-  const readAutoCompactContextFromRecord = (value: unknown) => {
-    const compaction = ensureRecord(ensureRecord(value).compaction);
-    return typeof compaction.auto === "boolean" ? compaction.auto : null;
-  };
-
-  const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
-  const [modelPickerTarget, setModelPickerTarget] = createSignal<
-    "session" | "default"
-  >("session");
-  const [modelPickerQuery, setModelPickerQuery] = createSignal("");
-  const [modelPickerReturnFocusTarget, setModelPickerReturnFocusTarget] =
-    createSignal<PromptFocusReturnTarget>("none");
-
-  const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  const modelVariant = () => modelConfig.getVariantFor(selectedSessionModel(), selectedSessionId());
-  const toggleAutoCompactContext = () => {
-    if (autoCompactContextSaving()) return;
-    setAutoCompactContext((value) => !value);
-    setAutoCompactContextDirty(true);
-  };
-  const resolveCodexReasoningEffort = (modelID: string, variant: string | null) => {
-    if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
-    const normalized = normalizeModelBehaviorValue(variant);
-    if (!normalized || normalized === "none") return undefined;
-    if (normalized === "minimal") return "low";
-    if (normalized === "xhigh" || normalized === "max") return "high";
-    if (!["low", "medium", "high"].includes(normalized)) return undefined;
-    return normalized;
-  };
+  const {
+    defaultModel,
+    selectedSessionModel,
+    selectedSessionModelLabel,
+    defaultModelLabel,
+    defaultModelRef,
+    defaultModelVariantLabel,
+    modelVariant,
+    sessionModelVariantLabel,
+    sessionModelBehaviorOptions,
+    setSessionModelVariant,
+    sanitizeModelVariantForRef,
+    resolveCodexReasoningEffort,
+    modelPickerOpen,
+    modelPickerQuery,
+    setModelPickerQuery,
+    modelPickerTarget,
+    modelPickerCurrent,
+    modelOptions,
+    filteredModelOptions,
+    openSessionModelPicker,
+    openDefaultModelPicker,
+    closeModelPicker,
+    applyModelSelection,
+    setModelPickerBehavior,
+    autoCompactContext,
+    toggleAutoCompactContext,
+    autoCompactContextSaving,
+  } = modelConfig;
 
   workspaceStore = createWorkspaceStore({
     startupPreference,
@@ -1938,40 +1825,13 @@ export default function App() {
 
   const resetAppConfigDefaults = async () => {
     try {
-      if (typeof window !== "undefined") {
-        try {
-          const sessionOverridePrefix = `${SESSION_MODEL_PREF_KEY}.`;
-          const workspaceVariantPrefix = `${VARIANT_PREF_KEY}.`;
-          const keysToRemove: string[] = [];
-          for (let index = 0; index < window.localStorage.length; index += 1) {
-            const key = window.localStorage.key(index);
-            if (!key) continue;
-            if (key.startsWith(sessionOverridePrefix) || key.startsWith(workspaceVariantPrefix) || key === VARIANT_PREF_KEY) {
-              keysToRemove.push(key);
-            }
-          }
-          for (const key of keysToRemove) {
-            window.localStorage.removeItem(key);
-          }
-        } catch {
-          // ignore
-        }
-      }
-
       setThemeMode("system");
       setEngineSource(isTauriRuntime() ? "sidecar" : "path");
       setEngineCustomBinPath("");
       setEngineRuntime("openwork-orchestrator");
-      setDefaultModel(DEFAULT_MODEL);
-      setLegacyDefaultModel(DEFAULT_MODEL);
-      setDefaultModelExplicit(false);
-      setPendingDefaultModelByWorkspace({});
+      modelConfig.resetAppDefaults();
       resetSessionDisplayPreferences();
       setHideTitlebar(false);
-      setAutoCompactContext(false);
-      modelConfig.clearPendingSessionChoice();
-      modelConfig.setSessionChoiceOverrideById({});
-      modelConfig.setWorkspaceVariantMap({});
       setUpdateAutoCheck(true);
       setUpdateAutoDownload(false);
       setUpdateStatus({ state: "idle", lastCheckedAt: null });
@@ -2305,255 +2165,6 @@ export default function App() {
     void workspaceStore.onConnectClient();
   });
 
-  const selectedSessionModel = createMemo<ModelRef>(() => {
-    const id = selectedSessionId();
-    const pendingChoice = modelConfig.pendingSessionChoice();
-    if (!id) return pendingChoice?.model ?? defaultModel();
-
-    const override = modelConfig.sessionChoiceOverrideById()[id]?.model;
-    if (override) return override;
-
-    const known = modelConfig.sessionModelById()[id];
-    if (known) return known;
-
-    const fromMessages = lastUserModelFromMessages(messages());
-    if (fromMessages) return fromMessages;
-
-    return defaultModel();
-  });
-
-  const selectedSessionModelLabel = createMemo(() =>
-    formatModelLabel(selectedSessionModel(), providers())
-  );
-
-  const findProviderModel = (ref: ModelRef) => {
-    const provider = providers().find((entry) => entry.id === ref.providerID);
-    return provider?.models?.[ref.modelID] ?? null;
-  };
-
-  const sanitizeModelVariantForRef = (ref: ModelRef, value: string | null) => {
-    const modelInfo = findProviderModel(ref);
-    if (!modelInfo) return normalizeModelBehaviorValue(value);
-    return sanitizeModelBehaviorValue(ref.providerID, modelInfo, value);
-  };
-
-  const getModelBehaviorCopy = (ref: ModelRef, value: string | null) => {
-    const modelInfo = findProviderModel(ref);
-    if (!modelInfo) {
-      return {
-        title: "Model behavior",
-        label: formatGenericBehaviorLabel(value),
-        description: "Choose the model first to see provider-specific behavior controls.",
-        options: [],
-      };
-    }
-    return getModelBehaviorSummary(ref.providerID, modelInfo, value);
-  };
-
-  const modelPickerCurrent = createMemo(() =>
-    modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel()
-  );
-
-  const isHeroModel = (id: string) => {
-    const check = id.toLowerCase();
-    if (check.includes("gpt-5")) return true;
-    return false;
-  };
-
-  const modelOptions = createMemo<ModelOption[]>(() => {
-    const allProviders = providers();
-    const defaults = providerDefaults();
-    const currentDefault = defaultModel();
-
-    if (!allProviders.length) {
-      const behavior = getModelBehaviorCopy(DEFAULT_MODEL, modelConfig.getWorkspaceVariantFor(DEFAULT_MODEL));
-      return [
-        {
-          providerID: DEFAULT_MODEL.providerID,
-          modelID: DEFAULT_MODEL.modelID,
-          title: DEFAULT_MODEL.modelID,
-          description: DEFAULT_MODEL.providerID,
-          footer: t("settings.model_fallback", currentLocale()),
-          behaviorTitle: behavior.title,
-          behaviorLabel: behavior.label,
-          behaviorDescription: behavior.description,
-          behaviorValue: normalizeModelBehaviorValue(modelConfig.getWorkspaceVariantFor(DEFAULT_MODEL)),
-          behaviorOptions: behavior.options,
-          isFree: true,
-          isConnected: false,
-        },
-      ];
-    }
-
-    const sortedProviders = allProviders.slice().sort(compareProviders);
-
-    const next: ModelOption[] = [];
-
-    for (const provider of sortedProviders) {
-      const defaultModelID = defaults[provider.id];
-      const isConnected = providerConnectedIds().includes(provider.id);
-      const models = Object.values(provider.models ?? {}).filter(
-        (m) => m.status !== "deprecated"
-      );
-
-      models.sort((a, b) => {
-        const aFree = a.cost?.input === 0 && a.cost?.output === 0;
-        const bFree = b.cost?.input === 0 && b.cost?.output === 0;
-        if (aFree !== bFree) return aFree ? -1 : 1;
-        return (a.name ?? a.id).localeCompare(b.name ?? b.id);
-      });
-
-      for (const model of models) {
-        const isFree = model.cost?.input === 0 && model.cost?.output === 0;
-        const isDefault =
-          provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
-        const ref = { providerID: provider.id, modelID: model.id };
-        const activeVariant =
-          modelPickerTarget() === "session" && modelEquals(ref, selectedSessionModel())
-            ? modelVariant()
-            : modelConfig.getWorkspaceVariantFor(ref);
-        const behavior = getModelBehaviorSummary(provider.id, model, activeVariant);
-        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, activeVariant);
-        const footerBits: string[] = [];
-        if (defaultModelID === model.id || isDefault) {
-          footerBits.push(t("settings.model_default", currentLocale()));
-        }
-        if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
-
-        next.push({
-          providerID: provider.id,
-          modelID: model.id,
-          title: model.name ?? model.id,
-          description: provider.name,
-          footer: footerBits.length
-            ? footerBits.slice(0, 2).join(" · ")
-            : undefined,
-          behaviorTitle: behavior.title,
-          behaviorLabel: behavior.label,
-          behaviorDescription: behavior.description,
-          behaviorValue,
-          behaviorOptions: behavior.options,
-          disabled: !isConnected,
-          isFree,
-          isConnected,
-          isRecommended: isHeroModel(model.id),
-        });
-      }
-    }
-
-    next.sort((a, b) => {
-      if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
-      if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
-      const providerRankDiff =
-        providerPriorityRank(a.providerID) - providerPriorityRank(b.providerID);
-      if (providerRankDiff !== 0) return providerRankDiff;
-      return a.title.localeCompare(b.title);
-    });
-
-    return next;
-  });
-
-  const filteredModelOptions = createMemo(() => {
-    const q = modelPickerQuery().trim().toLowerCase();
-    const options = modelOptions();
-    if (!q) return options;
-
-    return options.filter((opt) => {
-      const haystack = [
-        opt.title,
-        opt.description ?? "",
-        opt.footer ?? "",
-        opt.behaviorTitle,
-        opt.behaviorLabel,
-        opt.behaviorDescription,
-        `${opt.providerID}/${opt.modelID}`,
-        opt.isConnected ? "connected" : "disconnected",
-        opt.isFree ? "free" : "paid",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  });
-
-  function closeModelPicker(options?: { restorePromptFocus?: boolean }) {
-    const shouldFocusPrompt =
-      options?.restorePromptFocus ??
-      modelPickerReturnFocusTarget() === "composer";
-    setModelPickerOpen(false);
-    setModelPickerReturnFocusTarget("none");
-    if (shouldFocusPrompt) {
-      focusSessionPromptSoon();
-    }
-  }
-
-  function openSessionModelPicker(options?: {
-    returnFocusTarget?: PromptFocusReturnTarget;
-  }) {
-    setModelPickerTarget("session");
-    setModelPickerQuery("");
-    setModelPickerReturnFocusTarget(options?.returnFocusTarget ?? "composer");
-    setModelPickerOpen(true);
-  }
-
-  function openDefaultModelPicker() {
-    setModelPickerTarget("default");
-    setModelPickerQuery("");
-    setModelPickerReturnFocusTarget("none");
-    setModelPickerOpen(true);
-  }
-
-  function setPendingDefaultModelForWorkspace(workspaceId: string, model: ModelRef | null) {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setPendingDefaultModelByWorkspace((current) => {
-      const next = { ...current };
-      if (model) {
-        next[id] = formatModelRef(model);
-      } else {
-        delete next[id];
-      }
-      return next;
-    });
-  }
-
-  function pendingDefaultModelForWorkspace(workspaceId: string) {
-    const id = workspaceId.trim();
-    if (!id) return null;
-    return pendingDefaultModelByWorkspace()[id] ?? null;
-  }
-
-  function applyDefaultModelChoice(next: ModelRef) {
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (workspaceId) {
-      setPendingDefaultModelForWorkspace(workspaceId, next);
-    }
-    setDefaultModelExplicit(true);
-    setDefaultModel(next);
-    setLegacyDefaultModel(next);
-  }
-
-  function applyModelSelection(next: ModelRef) {
-    const target = modelPickerTarget();
-    const restorePromptFocus = target === "session";
-
-    if (target === "default") {
-      applyDefaultModelChoice(next);
-      closeModelPicker({ restorePromptFocus: false });
-      return;
-    }
-
-    const id = selectedSessionId();
-    if (!id) {
-      modelConfig.setPendingSessionModel(next);
-      closeModelPicker({ restorePromptFocus });
-      return;
-    }
-
-    modelConfig.setSessionModelOverride(id, next);
-    closeModelPicker({ restorePromptFocus });
-  }
-
   function openSettingsFromModelPicker() {
     setSettingsTab("general");
     setView("settings");
@@ -2635,24 +2246,6 @@ export default function App() {
         );
         if (storedOpencodeEnableExa === "0" || storedOpencodeEnableExa === "1") {
           setOpencodeEnableExa(storedOpencodeEnableExa === "1");
-        }
-
-        const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
-        const parsedDefaultModel = parseModelRef(storedDefaultModel);
-        if (parsedDefaultModel) {
-          setDefaultModel(parsedDefaultModel);
-          setLegacyDefaultModel(parsedDefaultModel);
-        } else {
-          setDefaultModel(DEFAULT_MODEL);
-          setLegacyDefaultModel(DEFAULT_MODEL);
-          try {
-            window.localStorage.setItem(
-              MODEL_PREF_KEY,
-              formatModelRef(DEFAULT_MODEL)
-            );
-          } catch {
-            // ignore
-          }
         }
 
         const storedHideTitlebar = window.localStorage.getItem(HIDE_TITLEBAR_PREF_KEY);
@@ -2737,391 +2330,6 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) return;
-
-    modelConfig.setSessionModelOverridesReady(false);
-    const raw = window.localStorage.getItem(sessionModelOverridesKey(workspaceId));
-    modelConfig.setSessionChoiceOverrideById(parseSessionChoiceOverrides(raw));
-    modelConfig.setSessionModelOverridesReady(true);
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!modelConfig.sessionModelOverridesReady()) return;
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) return;
-
-    const payload = serializeSessionChoiceOverrides(modelConfig.sessionChoiceOverrideById());
-    try {
-      if (payload) {
-        window.localStorage.setItem(sessionModelOverridesKey(workspaceId), payload);
-      } else {
-        window.localStorage.removeItem(sessionModelOverridesKey(workspaceId));
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (!workspaceId) {
-      modelConfig.setWorkspaceVariantMap({});
-      return;
-    }
-
-    const scopedRaw = window.localStorage.getItem(workspaceModelVariantsKey(workspaceId));
-    const legacyRaw = scopedRaw == null ? window.localStorage.getItem(VARIANT_PREF_KEY) : null;
-    modelConfig.setWorkspaceVariantMap(
-      parseWorkspaceModelVariants(scopedRaw ?? legacyRaw, defaultModel()),
-    );
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (!workspaceId) return;
-
-    try {
-      const map = modelConfig.workspaceVariantMap();
-      const key = workspaceModelVariantsKey(workspaceId);
-      if (Object.keys(map).length > 0) {
-        window.localStorage.setItem(key, JSON.stringify(map));
-      } else {
-        window.localStorage.removeItem(key);
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) return;
-
-    setWorkspaceDefaultModelReady(false);
-    const workspaceType = workspaceStore.selectedWorkspaceDisplay().workspaceType;
-    const workspaceRoot = workspaceStore.selectedWorkspacePath().trim();
-    const activeClient = client();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
-
-    let cancelled = false;
-
-    const applyDefault = async () => {
-      let configDefault: ModelRef | null = null;
-      let configFileContent: string | null = null;
-
-      if (workspaceType === "local" && workspaceRoot) {
-        if (canUseOpenworkServer) {
-          try {
-            const config = await openworkClient.getConfig(openworkWorkspaceId);
-            const model = typeof config.opencode?.model === "string" ? config.opencode.model : null;
-            configDefault = parseModelRef(model);
-          } catch {
-            // ignore
-          }
-        } else if (isTauriRuntime()) {
-          try {
-            const configFile = await readOpencodeConfig("project", workspaceRoot);
-            configFileContent = configFile.content;
-            configDefault = parseDefaultModelFromConfig(configFile.content);
-          } catch {
-            // ignore
-          }
-        }
-      } else if (activeClient) {
-        try {
-          const config = unwrap(
-            await activeClient.config.get({ directory: workspaceRoot || undefined })
-          );
-          if (typeof config.model === "string") {
-            configDefault = parseModelRef(config.model);
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      const pendingModelRef = pendingDefaultModelForWorkspace(workspaceId);
-      const loadedModelRef = configDefault ? formatModelRef(configDefault) : null;
-
-      if (pendingModelRef && pendingModelRef !== loadedModelRef) {
-        if (workspaceType === "local" && workspaceRoot) {
-          setLastKnownConfigSnapshot(getConfigSnapshot(configFileContent));
-        }
-
-        if (!cancelled) {
-          setWorkspaceDefaultModelReady(true);
-        }
-        return;
-      }
-
-      if (pendingModelRef && loadedModelRef === pendingModelRef) {
-        setPendingDefaultModelForWorkspace(workspaceId, null);
-      }
-
-      setDefaultModelExplicit(Boolean(configDefault));
-      const nextDefault = configDefault ?? legacyDefaultModel();
-      const currentDefault = untrack(defaultModel);
-      if (nextDefault && !modelEquals(currentDefault, nextDefault)) {
-        setDefaultModel(nextDefault);
-      }
-      const currentLegacyDefault = untrack(legacyDefaultModel);
-      if (nextDefault && !modelEquals(currentLegacyDefault, nextDefault)) {
-        setLegacyDefaultModel(nextDefault);
-      }
-
-      if (workspaceType === "local" && workspaceRoot) {
-        setLastKnownConfigSnapshot(getConfigSnapshot(configFileContent));
-      }
-
-      if (!cancelled) {
-        setWorkspaceDefaultModelReady(true);
-      }
-    };
-
-    void applyDefault();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    if (!workspaceDefaultModelReady()) return;
-    if (!isTauriRuntime()) return;
-    if (!defaultModelExplicit()) return;
-
-    const workspace = workspaceStore.selectedWorkspaceDisplay();
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (workspace.workspaceType !== "local") return;
-
-    const root = workspaceStore.selectedWorkspacePath().trim();
-    if (!root) return;
-    const nextModel = defaultModel();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
-    let cancelled = false;
-
-    const writeConfig = async () => {
-      try {
-        if (canUseOpenworkServer) {
-          const config = await openworkClient.getConfig(openworkWorkspaceId);
-          const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
-          if (currentModel && modelEquals(currentModel, nextModel)) {
-            if (workspaceId) {
-              setPendingDefaultModelForWorkspace(workspaceId, null);
-            }
-            return;
-          }
-
-          await openworkClient.patchConfig(openworkWorkspaceId, {
-            opencode: { model: formatModelRef(nextModel) },
-          });
-          if (workspaceId) {
-            setPendingDefaultModelForWorkspace(workspaceId, null);
-          }
-          markOpencodeConfigReloadRequired();
-          return;
-        }
-
-        const configFile = await readOpencodeConfig("project", root);
-        const existingModel = parseDefaultModelFromConfig(configFile.content);
-        if (existingModel && modelEquals(existingModel, nextModel)) {
-          if (workspaceId) {
-            setPendingDefaultModelForWorkspace(workspaceId, null);
-          }
-          return;
-        }
-
-        const content = formatConfigWithDefaultModel(configFile.content, nextModel);
-        const result = await writeOpencodeConfig("project", root, content);
-        if (!result.ok) {
-          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-        }
-        setLastKnownConfigSnapshot(getConfigSnapshot(content));
-        if (workspaceId) {
-          setPendingDefaultModelForWorkspace(workspaceId, null);
-        }
-        markOpencodeConfigReloadRequired();
-      } catch (error) {
-        if (cancelled) return;
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-      }
-    };
-
-    void writeConfig();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    const workspaceId = workspaceStore.selectedWorkspaceId();
-    if (!workspaceId) {
-      setAutoCompactContext(true);
-      setAutoCompactContextApplied(true);
-      setAutoCompactContextDirty(false);
-      setAutoCompactContextReady(false);
-      setAutoCompactContextSaving(false);
-      return;
-    }
-
-    const workspace = workspaceStore.selectedWorkspaceDisplay();
-    const root = workspaceStore.selectedWorkspacePath().trim();
-    const activeClient = client();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
-
-    let cancelled = false;
-    setAutoCompactContextReady(false);
-    setAutoCompactContextDirty(false);
-
-    const loadAutoCompactContext = async () => {
-      let nextValue = true;
-
-      if (canUseOpenworkServer) {
-        try {
-          const config = await openworkClient.getConfig(openworkWorkspaceId);
-          nextValue = readAutoCompactContextFromRecord(config.opencode) ?? true;
-        } catch {
-          // ignore
-        }
-      } else if (workspace.workspaceType === "local" && root && isTauriRuntime()) {
-        try {
-          const configFile = await readOpencodeConfig("project", root);
-          nextValue = parseAutoCompactContextFromConfig(configFile.content) ?? true;
-        } catch {
-          // ignore
-        }
-      } else if (activeClient) {
-        try {
-          const config = unwrap(await activeClient.config.get({ directory: root || undefined }));
-          nextValue = readAutoCompactContextFromRecord(config) ?? true;
-        } catch {
-          // ignore
-        }
-      }
-
-      if (cancelled) return;
-      setAutoCompactContext(nextValue);
-      setAutoCompactContextApplied(nextValue);
-      setAutoCompactContextReady(true);
-    };
-
-    void loadAutoCompactContext();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
-    if (!autoCompactContextReady()) return;
-    if (!autoCompactContextDirty()) return;
-
-    const nextValue = autoCompactContext();
-    const appliedValue = autoCompactContextApplied();
-    const workspace = workspaceStore.selectedWorkspaceDisplay();
-    const root = workspaceStore.selectedWorkspacePath().trim();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = runtimeWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
-
-    let cancelled = false;
-    setAutoCompactContextSaving(true);
-
-    const persistAutoCompactContext = async () => {
-      try {
-        if (canUseOpenworkServer) {
-          const config = await openworkClient.getConfig(openworkWorkspaceId);
-          const currentValue = readAutoCompactContextFromRecord(config.opencode) ?? true;
-          if (currentValue !== nextValue) {
-            await openworkClient.patchConfig(openworkWorkspaceId, {
-              opencode: {
-                compaction: {
-                  auto: nextValue,
-                },
-              },
-            });
-            markOpencodeConfigReloadRequired();
-          }
-          if (cancelled) return;
-          setAutoCompactContextApplied(nextValue);
-          setAutoCompactContextDirty(false);
-          return;
-        }
-
-        if (workspace.workspaceType !== "local" || !root || !isTauriRuntime()) {
-          throw new Error(
-            "Auto context compaction can only be changed for a local workspace or a writable OpenWork server workspace.",
-          );
-        }
-
-        const configFile = await readOpencodeConfig("project", root);
-        const currentValue = parseAutoCompactContextFromConfig(configFile.content) ?? true;
-        if (currentValue !== nextValue) {
-          const content = formatConfigWithAutoCompactContext(configFile.content, nextValue);
-          const result = await writeOpencodeConfig("project", root, content);
-          if (!result.ok) {
-            throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-          }
-          setLastKnownConfigSnapshot(getConfigSnapshot(content));
-          markOpencodeConfigReloadRequired();
-        }
-
-        if (cancelled) return;
-        setAutoCompactContextApplied(nextValue);
-        setAutoCompactContextDirty(false);
-      } catch (error) {
-        if (cancelled) return;
-        setAutoCompactContext(appliedValue);
-        setAutoCompactContextDirty(false);
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        setError(addOpencodeCacheHint(message));
-      } finally {
-        setAutoCompactContextSaving(false);
-      }
-    };
-
-    void persistAutoCompactContext();
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  createEffect(() => {
     if (!isTauriRuntime()) return;
     if (onboardingStep() !== "local") return;
     void workspaceStore.refreshEngineDoctor();
@@ -3196,18 +2404,6 @@ export default function App() {
       window.localStorage.setItem(
         "openwork.opencodeEnableExa",
         opencodeEnableExa() ? "1" : "0"
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        MODEL_PREF_KEY,
-        formatModelRef(defaultModel())
       );
     } catch {
       // ignore
@@ -3349,26 +2545,17 @@ export default function App() {
   const modelControlsStore = createModelControlsStore({
     selectedSessionModelLabel,
     openSessionModelPicker,
-    sessionModelVariantLabel: createMemo(() => getModelBehaviorCopy(selectedSessionModel(), modelVariant()).label),
+    sessionModelVariantLabel,
     sessionModelVariant: modelVariant,
-    sessionModelBehaviorOptions: createMemo(() => getModelBehaviorCopy(selectedSessionModel(), modelVariant()).options),
-    setSessionModelVariant: (value: string | null) => {
-      const sessionId = selectedSessionId();
-      if (sessionId) {
-        modelConfig.setSessionVariantOverride(sessionId, sanitizeModelVariantForRef(selectedSessionModel(), value));
-        return;
-      }
-      modelConfig.setPendingSessionVariant(sanitizeModelVariantForRef(selectedSessionModel(), value));
-    },
-    defaultModelLabel: createMemo(() => formatModelLabel(defaultModel(), providers())),
-    defaultModelRef: createMemo(() => formatModelRef(defaultModel())),
+    sessionModelBehaviorOptions,
+    setSessionModelVariant,
+    defaultModelLabel,
+    defaultModelRef,
     openDefaultModelPicker,
     autoCompactContext,
     toggleAutoCompactContext,
     autoCompactContextBusy: autoCompactContextSaving,
-    defaultModelVariantLabel: createMemo(
-      () => getModelBehaviorCopy(defaultModel(), modelConfig.getWorkspaceVariantFor(defaultModel())).label,
-    ),
+    defaultModelVariantLabel,
     editDefaultModelVariant: openDefaultModelPicker,
   });
 
@@ -3819,21 +3006,7 @@ export default function App() {
         target={modelPickerTarget()}
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
-        onBehaviorChange={(model, value) => {
-          const nextValue = sanitizeModelVariantForRef(model, value);
-          if (modelPickerTarget() === "default") {
-            modelConfig.setWorkspaceVariant(model, nextValue);
-            return;
-          }
-
-          const sessionId = selectedSessionId();
-          if (sessionId) {
-            modelConfig.setSessionVariantOverride(sessionId, nextValue);
-            return;
-          }
-
-          modelConfig.setPendingSessionVariant(nextValue);
-        }}
+        onBehaviorChange={setModelPickerBehavior}
         onOpenSettings={openSettingsFromModelPicker}
         onClose={closeModelPicker}
       />
