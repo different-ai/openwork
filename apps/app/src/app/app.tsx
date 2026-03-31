@@ -30,7 +30,6 @@ import { ExtensionsProvider } from "./extensions/provider";
 import { AutomationsProvider } from "./automations/provider";
 import { SessionActionsProvider } from "./session/actions-provider";
 import { createSessionActionsStore } from "./session/actions-store";
-import BootShell from "./shell/boot-shell";
 import { createDeepLinksController } from "./shell/deep-links";
 import SettingsShell from "./shell/settings-shell";
 import TopRightNotifications from "./shell/top-right-notifications";
@@ -2331,9 +2330,6 @@ export default function App() {
               <AutomationsProvider store={automationsStore}>
                 <StatusToastsProvider store={statusToastsStore}>
             <Switch>
-              <Match when={booting()}>
-                <BootShell />
-              </Match>
               <Match when={currentView() === "session"}>
                 <SessionView {...sessionProps()} />
               </Match>

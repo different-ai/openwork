@@ -1225,11 +1225,73 @@ export default function SessionView(props: SessionViewProps) {
   const showCompactionIndicator = createMemo(
     () => props.sessionCompactionState?.running === true,
   );
+  const bootStatusCopy = createMemo(() => {
+    if (props.clientConnected) return null;
+    const detail = props.busyHint?.trim() ?? "";
+    if (!detail) return null;
+
+    const label =
+      props.busyLabel === "status.connecting"
+        ? "Connecting to OpenCode"
+        : props.busyLabel === "status.starting_engine"
+          ? "Starting OpenWork"
+          : "Preparing OpenWork";
+
+    return {
+      label,
+      detail,
+      dotClass: "bg-blue-9",
+      pingClass: "bg-blue-9/35 animate-ping",
+      pulse: true,
+    };
+  });
   const compactionStatusDetail = createMemo(() => {
     if (!showCompactionIndicator()) return "";
     return props.sessionCompactionState?.mode === "auto"
       ? "OpenCode is auto-compacting this session"
       : "OpenCode is compacting this session";
+  });
+  const statusBarCopy = createMemo(() => {
+    if (showCompactionIndicator()) {
+      return {
+        label: "Compacting Context",
+        detail: compactionStatusDetail(),
+        dotClass: "bg-blue-9",
+        pingClass: "bg-blue-9/35 animate-ping",
+        pulse: true,
+      };
+    }
+
+    if (showRunIndicator()) {
+      return {
+        label: "Session Active",
+        detail: undefined,
+        dotClass: "bg-green-9",
+        pingClass: "bg-green-9/45 animate-ping",
+        pulse: true,
+      };
+    }
+
+    const bootCopy = bootStatusCopy();
+    if (bootCopy) return bootCopy;
+
+    if (props.selectedSessionId) {
+      return {
+        label: "Session Ready",
+        detail: undefined,
+        dotClass: "bg-green-9",
+        pingClass: "bg-green-9/35",
+        pulse: false,
+      };
+    }
+
+    return {
+      label: "Ready",
+      detail: undefined,
+      dotClass: "bg-gray-8",
+      pingClass: "bg-green-9/35",
+      pulse: false,
+    };
   });
 
   createEffect(
@@ -3371,33 +3433,11 @@ export default function SessionView(props: SessionViewProps) {
             onOpenProviders={openProviderAuth}
             onOpenMcp={openMcp}
             providerConnectedIds={props.providerConnectedIds}
-            statusLabel={
-              showCompactionIndicator()
-                ? "Compacting Context"
-                : showRunIndicator()
-                ? "Session Active"
-                : props.selectedSessionId
-                  ? "Session Ready"
-                  : "Ready"
-            }
-            statusDetail={showCompactionIndicator() ? compactionStatusDetail() : undefined}
-            statusDotClass={
-              showCompactionIndicator()
-                ? "bg-blue-9"
-                : showRunIndicator()
-                ? "bg-green-9"
-                : props.selectedSessionId
-                  ? "bg-green-9"
-                  : "bg-gray-8"
-            }
-            statusPingClass={
-              showCompactionIndicator()
-                ? "bg-blue-9/35 animate-ping"
-                : showRunIndicator()
-                ? "bg-green-9/45 animate-ping"
-                : "bg-green-9/35"
-            }
-            statusPulse={showCompactionIndicator() || showRunIndicator()}
+            statusLabel={statusBarCopy().label}
+            statusDetail={statusBarCopy().detail}
+            statusDotClass={statusBarCopy().dotClass}
+            statusPingClass={statusBarCopy().pingClass}
+            statusPulse={statusBarCopy().pulse}
           />
         </main>
       </div>
