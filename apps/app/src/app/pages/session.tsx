@@ -123,6 +123,7 @@ export type SessionViewProps = {
   selectedWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
+  selectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   switchWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
@@ -2869,7 +2870,7 @@ export default function SessionView(props: SessionViewProps) {
               connectingWorkspaceId={props.connectingWorkspaceId}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
               newTaskDisabled={props.newTaskDisabled}
-              onSelectWorkspace={props.switchWorkspace}
+              onSelectWorkspace={props.selectWorkspace}
               onOpenSession={openSessionFromList}
               onCreateTaskInWorkspace={createTaskInWorkspace}
               onOpenRenameSession={openRenameModal}
