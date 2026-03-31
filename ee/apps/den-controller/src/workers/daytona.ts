@@ -2,7 +2,7 @@ import { Daytona, type Sandbox } from "@daytonaio/sdk"
 import { eq } from "../db/drizzle.js"
 import { db } from "../db/index.js"
 import { DaytonaSandboxTable } from "../db/schema.js"
-import { createDenTypeId } from "../db/typeid.js"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../env.js"
 
 type WorkerId = typeof DaytonaSandboxTable.$inferSelect.worker_id

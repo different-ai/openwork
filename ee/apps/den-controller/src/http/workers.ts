@@ -11,7 +11,7 @@ import { getRequestSession } from "./session.js"
 import { ensureUserOrgAccess, listUserOrgs, setSessionActiveOrganization } from "../orgs.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
 import { customDomainForWorker } from "../workers/vanity-domain.js"
-import { createDenTypeId, normalizeDenTypeId } from "../db/typeid.js"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 
 const createSchema = z.object({
   name: z.string().min(1),

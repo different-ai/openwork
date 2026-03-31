@@ -3,19 +3,29 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./typeid": "./dist/typeid.js"
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./typeid": {
+      "types": "./src/typeid.ts",
+      "development": "./src/typeid.ts",
+      "default": "./dist/typeid.js"
+    }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsup"
   },
   "dependencies": {
     "typeid-js": "^1.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
     "typescript": "^5.5.4"
   }
 }

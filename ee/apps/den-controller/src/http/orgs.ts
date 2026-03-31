@@ -10,7 +10,7 @@ import {
   OrganizationTable,
   TempTemplateSharingTable,
 } from "../db/schema.js"
-import { createDenTypeId, normalizeDenTypeId } from "../db/typeid.js"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { sendDenOrganizationInvitationEmail } from "../email.js"
 import { env } from "../env.js"
 import {

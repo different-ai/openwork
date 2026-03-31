@@ -1,7 +1,7 @@
 import { sql } from "./db/drizzle.js"
 import { db } from "./db/index.js"
 import { AdminAllowlistTable } from "./db/schema.js"
-import { createDenTypeId } from "./db/typeid.js"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 
 const ADMIN_ALLOWLIST_SEEDS = [
   {

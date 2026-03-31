@@ -3,8 +3,8 @@ import { drizzle } from "drizzle-orm/mysql2"
 import { drizzle as drizzlePlanetScale } from "drizzle-orm/planetscale-serverless"
 import type { FieldPacket, QueryOptions, QueryResult } from "mysql2"
 import mysql from "mysql2/promise"
-import { parseMySqlConnectionConfig } from "./mysql-config.js"
-import * as schema from "./schema.js"
+import { parseMySqlConnectionConfig } from "./mysql-config"
+import * as schema from "./schema"
 
 export type DenDbMode = "mysql" | "planetscale"
 type DenDb = ReturnType<typeof drizzlePlanetScale>

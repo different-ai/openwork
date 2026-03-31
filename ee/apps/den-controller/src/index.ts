@@ -12,7 +12,7 @@ import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { orgsRouter } from "./http/orgs.js"
 import { getRequestSession } from "./http/session.js"
 import { workersRouter } from "./http/workers.js"
-import { normalizeDenTypeId } from "./db/typeid.js"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { resolveUserOrganizationsForSession } from "./orgs.js"
 
 const app = express()

@@ -6,7 +6,7 @@ import { auth } from "../auth.js"
 import { getCloudWorkerAdminBillingStatus } from "../billing/polar.js"
 import { db } from "../db/index.js"
 import { AdminAllowlistTable, AuthAccountTable, AuthSessionTable, AuthUserTable, WorkerTable } from "../db/schema.js"
-import { normalizeDenTypeId } from "../db/typeid.js"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { asyncRoute } from "./errors.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id

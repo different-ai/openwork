@@ -10,7 +10,7 @@ import {
   TeamMemberTable,
   TeamTable,
 } from "./db/schema.js"
-import { createDenTypeId, normalizeDenTypeId } from "./db/typeid.js"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { denDefaultDynamicOrganizationRoles, denOrganizationStaticRoles } from "./organization-access.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id

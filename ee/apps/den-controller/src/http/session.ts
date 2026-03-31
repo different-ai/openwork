@@ -4,7 +4,7 @@ import { and, eq, gt } from "../db/drizzle.js"
 import { auth } from "../auth.js"
 import { db } from "../db/index.js"
 import { AuthSessionTable, AuthUserTable } from "../db/schema.js"
-import { normalizeDenTypeId } from "../db/typeid.js"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 
 type AuthSessionLike = Awaited<ReturnType<typeof auth.api.getSession>>
 

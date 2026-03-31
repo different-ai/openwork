@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npm run build:den-db && OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
-    "dev:local": "sh -lc 'pnpm run build:den-db && OPENWORK_DEV_MODE=1 PORT=${DEN_CONTROLLER_PORT:-8788} WORKER_PROXY_PORT=${DEN_WORKER_PROXY_PORT:-8789} tsx watch src/index.ts'",
+    "dev": "NODE_OPTIONS=--conditions=development OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
+    "dev:local": "sh -lc 'NODE_OPTIONS=--conditions=development OPENWORK_DEV_MODE=1 PORT=${DEN_CONTROLLER_PORT:-8788} WORKER_PROXY_PORT=${DEN_WORKER_PROXY_PORT:-8789} tsx watch src/index.ts'",
     "build": "npm run build:den-db && tsc -p tsconfig.json",
     "build:den-db": "pnpm --filter @openwork-ee/den-db build",
     "start": "node dist/index.js",

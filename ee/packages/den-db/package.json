@@ -3,15 +3,52 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./schema": "./dist/schema.js",
-    "./drizzle": "./dist/drizzle.js",
-    "./typeid": "./dist/typeid.js"
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./src/schema.ts",
+      "development": "./src/schema.ts",
+      "default": "./dist/schema.js"
+    },
+    "./schema/auth": {
+      "types": "./src/schema/auth.ts",
+      "development": "./src/schema/auth.ts",
+      "default": "./dist/schema/auth.js"
+    },
+    "./schema/org": {
+      "types": "./src/schema/org.ts",
+      "development": "./src/schema/org.ts",
+      "default": "./dist/schema/org.js"
+    },
+    "./schema/teams": {
+      "types": "./src/schema/teams.ts",
+      "development": "./src/schema/teams.ts",
+      "default": "./dist/schema/teams.js"
+    },
+    "./schema/workers": {
+      "types": "./src/schema/workers.ts",
+      "development": "./src/schema/workers.ts",
+      "default": "./dist/schema/workers.js"
+    },
+    "./schema/system": {
+      "types": "./src/schema/system.ts",
+      "development": "./src/schema/system.ts",
+      "default": "./dist/schema/system.js"
+    },
+    "./drizzle": {
+      "types": "./src/drizzle.ts",
+      "development": "./src/drizzle.ts",
+      "default": "./dist/drizzle.js"
+    }
   },
   "scripts": {
-    "build": "pnpm run build:utils && tsc -p tsconfig.json",
+    "build": "pnpm run build:utils && tsup",
     "build:utils": "pnpm --dir ../utils run build",
     "db:generate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts",
     "db:migrate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts",
@@ -26,6 +63,7 @@
   "devDependencies": {
     "@types/node": "^20.11.30",
     "drizzle-kit": "^0.31.9",
+    "tsup": "^8.5.0",
     "tsx": "^4.21.0",
     "typescript": "^5.5.4"
   }
