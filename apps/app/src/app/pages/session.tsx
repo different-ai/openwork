@@ -779,6 +779,36 @@ export default function SessionView(props: SessionViewProps) {
       props.hasEarlierMessages,
   );
 
+  const preserveScrollPosition = async (
+    run: () => void | Promise<void>,
+  ) => {
+    const container = chatContainerEl;
+    if (!container) {
+      await run();
+      return;
+    }
+
+    const top = container.scrollTop;
+    const height = container.scrollHeight;
+    await run();
+
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        const next = chatContainerEl;
+        if (!next) {
+          resolve();
+          return;
+        }
+
+        const delta = next.scrollHeight - height;
+        if (delta) {
+          next.scrollTop = top + delta;
+        }
+        resolve();
+      });
+    });
+  };
+
   const revealEarlierMessages = async () => {
     const hidden = hiddenMessageCount();
     if (hidden > 0) {
@@ -793,21 +823,26 @@ export default function SessionView(props: SessionViewProps) {
           nextStart,
         });
       }
-      setMessageWindowStart(nextStart);
-      if (nextStart === 0) {
-        setMessageWindowExpanded(true);
-      }
+      await preserveScrollPosition(() => {
+        setMessageWindowStart(nextStart);
+        if (nextStart === 0) {
+          setMessageWindowExpanded(true);
+        }
+      });
       return;
     }
 
     if (!hasServerEarlierMessages()) return;
-    if (!props.selectedSessionId) return;
-    setMessageWindowExpanded(true);
-    setMessageWindowStart(0);
-    await props.loadEarlierMessages(props.selectedSessionId);
+    const sessionId = props.selectedSessionId;
+    if (!sessionId) return;
+    await preserveScrollPosition(async () => {
+      setMessageWindowExpanded(true);
+      setMessageWindowStart(0);
+      await props.loadEarlierMessages(sessionId);
+    });
     if (props.developerMode) {
       recordPerfLog(true, "session.window", "load-earlier", {
-        sessionID: props.selectedSessionId,
+        sessionID: sessionId,
       });
     }
   };
