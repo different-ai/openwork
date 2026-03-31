@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 
 const FOLLOW_LATEST_BOTTOM_GAP_PX = 96;
+const SCROLL_GESTURE_WINDOW_MS = 250;
 
 type SessionScrollMode = "follow-latest" | "manual-browse";
 
@@ -31,6 +32,26 @@ export function createSessionScrollController(
   let programmaticScrollResetRafA: number | undefined;
   let programmaticScrollResetRafB: number | undefined;
   let observedContentHeight = 0;
+  let lastGestureAt = 0;
+
+  const hasScrollGesture = () => Date.now() - lastGestureAt < SCROLL_GESTURE_WINDOW_MS;
+
+  const updateOverflowAnchor = () => {
+    const container = options.containerRef();
+    if (!container) return;
+    container.style.overflowAnchor = mode() === "follow-latest" ? "none" : "auto";
+  };
+
+  const markScrollGesture = (target?: EventTarget | null) => {
+    const container = options.containerRef();
+    if (!container) return;
+
+    const el = target instanceof Element ? target : undefined;
+    const nested = el?.closest("[data-scrollable]");
+    if (nested && nested !== container) return;
+
+    lastGestureAt = Date.now();
+  };
 
   const clearProgrammaticScrollReset = () => {
     if (programmaticScrollResetRafA !== undefined) {
@@ -123,6 +144,12 @@ export function createSessionScrollController(
       return;
     }
 
+    if (!hasScrollGesture()) {
+      lastKnownScrollTop = container.scrollTop;
+      refreshTopClippedMessage();
+      return;
+    }
+
     const bottomGap =
       container.scrollHeight - (container.scrollTop + container.clientHeight);
     if (bottomGap <= FOLLOW_LATEST_BOTTOM_GAP_PX) {
@@ -152,6 +179,11 @@ export function createSessionScrollController(
     setMode("manual-browse");
     target.scrollIntoView({ behavior, block: "start" });
   };
+
+  createEffect(() => {
+    mode();
+    updateOverflowAnchor();
+  });
 
   createEffect(() => {
     const content = options.contentRef();
@@ -206,6 +238,7 @@ export function createSessionScrollController(
     isAtBottom,
     topClippedMessageId,
     handleScroll,
+    markScrollGesture,
     scrollToBottom,
     jumpToLatest,
     jumpToStartOfMessage,
