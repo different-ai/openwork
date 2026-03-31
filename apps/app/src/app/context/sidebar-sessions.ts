@@ -147,7 +147,7 @@ export function createSidebarSessionsStore(options: {
 
       const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
       const list = unwrap(
-        await client.session.list({ directory: queryDirectory, roots: false, limit: SIDEBAR_SESSION_LIMIT }),
+        await client.session.list({ directory: queryDirectory, roots: true, limit: SIDEBAR_SESSION_LIMIT }),
       );
       if (refreshSeqByWorkspaceId[id] !== seq) return;
 
