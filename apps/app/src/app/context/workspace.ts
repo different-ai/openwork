@@ -560,13 +560,17 @@ export function createWorkspaceStore(options: {
   async function switchWorkspace(workspaceId: string) {
     const id = workspaceId.trim();
     if (!id) return false;
+    // Capture the current project dir *before* applyWorkspaceSelection sets it
+    // to the new workspace path.  Without this, activateWorkspace always sees
+    // oldPath === newPath and skips the engine restart.
+    const prevProjectDir = projectDir();
     if (selectedWorkspaceId() !== id) {
       await applyWorkspaceSelection(id);
     }
     if (connectedWorkspaceId() === id && options.client()) {
       return true;
     }
-    return await activateWorkspace(id);
+    return await activateWorkspace(id, { prevProjectDir });
   }
 
   const updateWorkspaceConnectionState = (
@@ -1325,9 +1329,17 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function activateWorkspace(workspaceId: string) {
+  async function activateWorkspace(
+    workspaceId: string,
+    hint?: { prevProjectDir?: string },
+  ) {
     const id = workspaceId.trim();
     if (!id) return false;
+
+    // Snapshot the current project dir before anything can overwrite it.
+    // When called from switchWorkspace, applyWorkspaceSelection already ran
+    // and clobbered projectDir(), so use the caller-provided hint instead.
+    const capturedPrevDir = hint?.prevProjectDir ?? projectDir();
 
     const next = workspaces().find((w) => w.id === id) ?? null;
     if (!next) return false;
@@ -1342,7 +1354,8 @@ export function createWorkspaceStore(options: {
       type: next.workspaceType,
       remoteType: next.remoteType ?? null,
       prevActiveId: selectedWorkspaceId(),
-      prevProjectDir: projectDir(),
+      prevProjectDir: capturedPrevDir,
+      currentProjectDir: projectDir(),
       startupPref: options.startupPreference(),
       hasClient: Boolean(options.client()),
     });
@@ -1583,7 +1596,9 @@ export function createWorkspaceStore(options: {
     const wasLocalConnection = options.startupPreference() === "local" && options.client();
     options.setStartupPreference("local");
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
-    const oldWorkspacePath = projectDir();
+    // Use the pre-switch snapshot instead of projectDir() which may already
+    // point at the new workspace due to applySelectedWorkspacePresentation.
+    const oldWorkspacePath = capturedPrevDir;
     const workspaceChanged = oldWorkspacePath !== nextRoot;
 
     wsDebug("activate:local:prep", {
@@ -2905,12 +2920,15 @@ export function createWorkspaceStore(options: {
 
       const nextSelectedId = pickSelectedWorkspaceId(ws.workspaces, [selectedWorkspaceId()], ws);
       const selected = ws.workspaces.find((w) => w.id === nextSelectedId) ?? null;
+      // Snapshot projectDir before the optimistic setProjectDir so
+      // activateWorkspace can detect the workspace actually changed.
+      const prevProjectDir = projectDir();
       if (selected) {
         setProjectDir(selected.workspaceType === "remote" ? selected.directory?.trim() ?? "" : selected.path);
       }
 
       if (nextSelectedId && nextSelectedId !== previousActive) {
-        await activateWorkspace(nextSelectedId);
+        await activateWorkspace(nextSelectedId, { prevProjectDir });
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
