@@ -22,7 +22,7 @@ import {
   writeStartupPreference,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
-import { describeDirectoryScope, resolveScopedClientDirectory } from "../lib/session-scope";
+import { describeDirectoryScope, resolveScopedClientDirectory, toSessionTransportDirectory } from "../lib/session-scope";
 import { blueprintMaterializedSessions, blueprintSessions, defaultBlueprintSessionsForPreset } from "../lib/workspace-blueprints";
 import {
   buildOpenworkWorkspaceBaseUrl,
@@ -1910,7 +1910,7 @@ export function createWorkspaceStore(options: {
         if (context?.workspaceType === "remote" && !resolvedDirectory) {
           try {
             const pathInfo = unwrap(await nextClient.path.get());
-            const discovered = pathInfo.directory?.trim() ?? "";
+            const discovered = toSessionTransportDirectory(pathInfo.directory);
             if (discovered) {
               resolvedDirectory = discovered;
               console.log("[workspace] remote directory resolved", resolvedDirectory);

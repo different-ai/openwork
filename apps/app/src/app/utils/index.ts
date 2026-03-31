@@ -194,6 +194,18 @@ export function formatBytes(bytes: number) {
   return `${rounded} ${units[idx]}`;
 }
 
+/**
+ * Convert a directory path to a forward-slash normalised form for **local**
+ * comparison only (e.g. case-insensitive matching via {@link normalizeDirectoryPath}).
+ *
+ * **Do NOT use this when building a directory value that will be sent to the
+ * OpenCode server** (session.list, session.create, mcp.status, etc.).  The
+ * server compares directories with strict equality and on Windows it stores
+ * native backslash paths.  Use
+ * {@link import("../lib/session-scope").toSessionTransportDirectory toSessionTransportDirectory}
+ * instead — it returns a branded {@link import("../lib/session-scope").TransportDirectory TransportDirectory}
+ * that the compiler can enforce.
+ */
 export function normalizeDirectoryQueryPath(input?: string | null) {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "";

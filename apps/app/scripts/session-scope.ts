@@ -115,6 +115,101 @@ try {
     assert.equal(describeDirectoryScope(verbatimDriveRoot).normalized, "c:/users/test/openwork/starter");
   });
 
+  await step("round-trip invariant: every query path equals the create path (unix)", () => {
+    // Restore macOS navigator for this step.
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        platform: "MacIntel",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)",
+      },
+    });
+
+    const unixPaths = [
+      "/Users/test/OpenWork/starter",
+      "/Users/test/OpenWork/starter/",
+      "/home/user/projects/my-app",
+      "/tmp/sandbox",
+      "/private/tmp/sandbox",
+    ];
+
+    for (const raw of unixPaths) {
+      const createDir = toSessionTransportDirectory(raw);
+      const listDir = toSessionTransportDirectory(raw);
+      const resolvedDir = resolveScopedClientDirectory({ workspaceType: "local", targetRoot: raw });
+      assert.equal(createDir, listDir, `create vs list mismatch for: ${raw}`);
+      assert.equal(createDir, resolvedDir, `create vs resolved mismatch for: ${raw}`);
+    }
+  });
+
+  await step("round-trip invariant: every query path equals the create path (windows)", () => {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        platform: "Win32",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      },
+    });
+
+    // Use escaped strings — Bun's parser chokes on String.raw inside array literals.
+    const windowsPaths = [
+      "C:\\Users\\Test\\OpenWork\\starter",
+      "C:\\Users\\Test\\OpenWork\\starter\\",
+      "D:\\projects\\my-app",
+      "\\\\server\\share\\starter",
+      "\\\\?\\C:\\Users\\Test\\OpenWork\\starter",
+      "\\\\?\\UNC\\server\\share\\starter",
+    ];
+
+    for (const raw of windowsPaths) {
+      const createDir = toSessionTransportDirectory(raw);
+      const listDir = toSessionTransportDirectory(raw);
+      const resolvedDir = resolveScopedClientDirectory({ workspaceType: "local", targetRoot: raw });
+      assert.equal(createDir, listDir, `create vs list mismatch for: ${raw}`);
+      assert.equal(createDir, resolvedDir, `create vs resolved mismatch for: ${raw}`);
+    }
+  });
+
+  await step("idempotency: double-converting a transport directory is stable", () => {
+    // Restore macOS for Unix paths.
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        platform: "MacIntel",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)",
+      },
+    });
+
+    const samples = [
+      "/Users/test/OpenWork/starter",
+      "/home/user/projects/my-app",
+    ];
+    for (const raw of samples) {
+      const once = toSessionTransportDirectory(raw);
+      const twice = toSessionTransportDirectory(once);
+      assert.equal(once, twice, `not idempotent for unix path: ${raw}`);
+    }
+
+    // Switch to Windows.
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        platform: "Win32",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      },
+    });
+
+    const winSamples = [
+      "C:\\Users\\Test\\OpenWork\\starter",
+      "\\\\server\\share\\starter",
+    ];
+    for (const raw of winSamples) {
+      const once = toSessionTransportDirectory(raw);
+      const twice = toSessionTransportDirectory(once);
+      assert.equal(once, twice, `not idempotent for win path: ${raw}`);
+    }
+  });
+
   await step("route guard only redirects when the loaded scope matches", () => {
     assert.equal(
       shouldRedirectMissingSessionAfterScopedLoad({
