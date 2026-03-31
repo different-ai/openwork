@@ -206,8 +206,6 @@ export function createWorkspaceStore(options: {
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
   const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
   const LONG_BOOT_CONNECT_REASONS = new Set(["host-start", "bootstrap-local"]);
-  const DEFAULT_WORKSPACE_HOME_FOLDER_NAME = "OpenWork";
-  const FIRST_RUN_WELCOME_WORKSPACE_NAME = "Welcome";
   const preferredInitialSessionTitleForPreset = (preset: WorkspacePreset) => {
     const trimmed = defaultBlueprintSessionsForPreset(preset)
       .find((session) => session.openOnFirstLoad === true)?.title?.trim();
@@ -3124,11 +3122,6 @@ export function createWorkspaceStore(options: {
     return folderPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
   }
 
-  async function resolveFirstRunWelcomeFolder() {
-    const base = (await homeDir()).replace(/[\\/]+$/, "");
-    return joinNativePath(joinNativePath(base, DEFAULT_WORKSPACE_HOME_FOLDER_NAME), FIRST_RUN_WELCOME_WORKSPACE_NAME);
-  }
-
   async function createWorkspaceFromPickedFolder() {
     const folder = await pickWorkspaceFolder();
     if (!folder) return false;
@@ -3835,16 +3828,6 @@ export function createWorkspaceStore(options: {
 
     await refreshEngine();
     await refreshEngineDoctor();
-
-    if (isTauriRuntime() && workspaces().length === 0) {
-      options.setStartupPreference("local");
-      const welcomeFolder = await resolveFirstRunWelcomeFolder();
-      const ok = await createWorkspaceFlow("starter", welcomeFolder);
-      if (!ok) {
-        options.setOnboardingStep("local");
-      }
-      return;
-    }
 
     if (isTauriRuntime()) {
       const active = workspaces().find((w) => w.id === selectedWorkspaceId()) ?? null;
