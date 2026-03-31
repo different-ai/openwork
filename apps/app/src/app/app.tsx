@@ -2103,6 +2103,7 @@ export default function App() {
   };
 
   const sessionProps = () => ({
+    booting: booting(),
     providerAuthWorkerType: providerAuthWorkerType(),
     selectedSessionId: activeSessionId(),
     setView,

@@ -1057,6 +1057,7 @@ export default function SettingsShell(props: SettingsShellProps) {
         </div>
         <div class="flex min-h-0 flex-1">
           <WorkspaceSessionList
+            booting={false}
             workspaceSessionGroups={props.workspaceSessionGroups}
             selectedWorkspaceId={props.selectedWorkspaceId}
             developerMode={props.developerMode}

@@ -104,6 +104,7 @@ import {
 import { createShareWorkspaceState } from "../session/share-workspace";
 
 export type SessionViewProps = {
+  booting: boolean;
   selectedSessionId: string | null;
   setView: (view: View, sessionId?: string) => void;
   settingsTab: SettingsTab;
@@ -1226,9 +1227,10 @@ export default function SessionView(props: SessionViewProps) {
     () => props.sessionCompactionState?.running === true,
   );
   const bootStatusCopy = createMemo(() => {
-    if (props.clientConnected) return null;
-    const detail = props.busyHint?.trim() ?? "";
-    if (!detail) return null;
+    if (props.clientConnected || !props.booting) return null;
+    const detail =
+      props.busyHint?.trim() ||
+      "Loading your workspace and connecting to OpenCode.";
 
     const label =
       props.busyLabel === "status.connecting"
@@ -2031,6 +2033,9 @@ export default function SessionView(props: SessionViewProps) {
     if (!id) return "";
     return sessionTitleForId(id);
   });
+  const showBootShellLoadingState = createMemo(
+    () => props.booting && !props.selectedSessionId && props.messages.length === 0,
+  );
   const [pendingSessionTransition, setPendingSessionTransition] = createSignal<{
     workspaceId: string;
     sessionId: string;
@@ -2038,6 +2043,7 @@ export default function SessionView(props: SessionViewProps) {
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
   const showWorkspaceSetupEmptyState = createMemo(
     () =>
+      !props.booting &&
       !hasWorkspaceConfigured() &&
       !props.selectedSessionId &&
       props.messages.length === 0,
@@ -2066,6 +2072,10 @@ export default function SessionView(props: SessionViewProps) {
       return pendingSessionTransitionTitle() || "Loading session";
     }
     return selectedSessionTitle() || DEFAULT_SESSION_TITLE;
+  });
+  const workspaceHeaderLabel = createMemo(() => {
+    if (props.booting) return null;
+    return props.selectedWorkspaceDisplay.displayName || props.selectedWorkspaceDisplay.name || "Workspace";
   });
 
   createEffect(() => {
@@ -2818,6 +2828,7 @@ export default function SessionView(props: SessionViewProps) {
           </div>
           <div class="flex min-h-0 flex-1">
             <WorkspaceSessionList
+              booting={props.booting}
               workspaceSessionGroups={props.workspaceSessionGroups}
               selectedWorkspaceId={props.selectedWorkspaceId}
               developerMode={props.developerMode}
@@ -2892,9 +2903,13 @@ export default function SessionView(props: SessionViewProps) {
               <h1 class="truncate text-[15px] font-semibold text-dls-text">
                 {sessionHeaderTitle()}
               </h1>
-              <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                {props.selectedWorkspaceDisplay.displayName || props.selectedWorkspaceDisplay.name || "Workspace"}
-              </span>
+              <Show when={workspaceHeaderLabel()}>
+                {(label) => (
+                  <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
+                    {label()}
+                  </span>
+                )}
+              </Show>
               <Show when={props.developerMode}>
                 <span class="hidden text-[12px] text-dls-secondary lg:inline">
                   {props.headerStatus}
@@ -3084,6 +3099,28 @@ export default function SessionView(props: SessionViewProps) {
                     </div>
                   </Show>
 
+                  <Show when={showBootShellLoadingState() && !showDelayedSessionLoadingState()}>
+                    <div class="px-6 py-24">
+                      <div
+                        class="mx-auto flex max-w-sm flex-col items-center gap-4 rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface">
+                          <Loader2 size={20} class="animate-spin text-dls-secondary" />
+                        </div>
+                        <div class="space-y-1">
+                          <h3 class="text-base font-medium text-dls-text">
+                            {bootStatusCopy()?.label || "Starting OpenWork"}
+                          </h3>
+                          <p class="text-sm text-dls-secondary">
+                            {bootStatusCopy()?.detail || "Loading your workspace and connecting to OpenCode."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
+
                   <Show when={showWorkspaceSetupEmptyState()}>
                     <div class="mx-auto max-w-2xl rounded-[32px] border border-dls-border bg-dls-sidebar/95 p-5 shadow-[var(--dls-shell-shadow)] sm:p-8">
                       <div class="rounded-[28px] border border-dls-border bg-dls-surface p-6 sm:p-8">
@@ -3148,6 +3185,7 @@ export default function SessionView(props: SessionViewProps) {
                   <Show
                     when={
                       props.messages.length === 0 &&
+                      !props.booting &&
                       !showWorkspaceSetupEmptyState() &&
                       !showSessionLoadingState()
                     }

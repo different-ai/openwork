@@ -27,6 +27,7 @@ import {
 } from "../../utils";
 
 type Props = {
+  booting: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   selectedWorkspaceId: string;
   developerMode: boolean;
@@ -186,6 +187,8 @@ export default function WorkspaceSessionList(props: Props) {
   const revealLabel = isWindowsPlatform()
     ? "Reveal in Explorer"
     : "Reveal in Finder";
+  const showBootPlaceholder = () =>
+    props.booting && props.workspaceSessionGroups.length === 0;
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<
     Set<string>
   >(new Set());
@@ -464,6 +467,14 @@ export default function WorkspaceSessionList(props: Props) {
     <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <div class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pr-1">
         <div class="space-y-2 pb-3">
+        <Show
+          when={!showBootPlaceholder()}
+          fallback={
+            <div class="px-3 py-2.5 text-[11px] text-gray-10">
+              Loading workspaces...
+            </div>
+          }
+        >
         <For each={props.workspaceSessionGroups}>
           {(group) => {
             const tree = buildSessionTreeState(
@@ -560,10 +571,11 @@ export default function WorkspaceSessionList(props: Props) {
                          <Loader2 size={14} class="animate-spin text-gray-9" />
                        </Show>
 
-                      <div class="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex">
-                        <button
-                          type="button"
-                          class="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
+                       <Show when={!props.booting}>
+                       <div class="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex">
+                         <button
+                           type="button"
+                           class="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
                           onClick={(event) => {
                             event.stopPropagation();
                             props.onCreateTaskInWorkspace(workspace().id);
@@ -586,10 +598,11 @@ export default function WorkspaceSessionList(props: Props) {
                             );
                           }}
                           aria-label="Workspace options"
-                        >
-                          <MoreHorizontal size={14} />
-                        </button>
-                      </div>
+                         >
+                           <MoreHorizontal size={14} />
+                         </button>
+                       </div>
+                       </Show>
 
                       <button
                         type="button"
@@ -757,8 +770,8 @@ export default function WorkspaceSessionList(props: Props) {
                     >
                     <Show
                       when={
-                        group.status === "loading" &&
-                        group.sessions.length === 0
+                        group.sessions.length === 0 &&
+                        (group.status === "loading" || props.booting)
                       }
                       fallback={
                         <Show
@@ -798,7 +811,8 @@ export default function WorkspaceSessionList(props: Props) {
                           <Show
                             when={
                               group.sessions.length === 0 &&
-                              group.status === "ready"
+                              group.status === "ready" &&
+                              !props.booting
                             }
                           >
                             <button
@@ -854,10 +868,19 @@ export default function WorkspaceSessionList(props: Props) {
             );
           }}
         </For>
+        </Show>
         </div>
       </div>
 
       <div class="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3">
+        <Show
+          when={!props.booting}
+          fallback={
+            <div class="flex items-center justify-center rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] text-gray-10 shadow-[var(--dls-card-shadow)]">
+              Starting OpenWork...
+            </div>
+          }
+        >
         <button
           type="button"
           class="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"
@@ -866,6 +889,7 @@ export default function WorkspaceSessionList(props: Props) {
           <Plus size={14} />
           Add workspace
         </button>
+        </Show>
       </div>
     </div>
   );
