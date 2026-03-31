@@ -19,22 +19,23 @@
         "pages": [
           "get-started",
           {
-            "group": "Tutorials",
+            "group": "Desktop App",
             "pages": [
-              "sharing-ow-setup",
-              "how-to-connect-a-custom-provider",
+              "how-to-connect-chat-gpt",
               "how-to-connect-mcps",
-              "accessing-ow-from-slack",
-              "importing-a-skill",
               "computer-use",
-              "how-to-connect-chat-gpt"
+              "automating-tasks",
+              "sharing-ow-setup",
+              "accessing-ow-from-slack"
             ]
           },
           {
+            "group": "Tutorials",
+            "pages": ["how-to-connect-a-custom-provider", "importing-a-skill"]
+          },
+          {
             "group": "Improve this doc",
-            "pages": [
-              "missing-docs"
-            ]
+            "pages": ["missing-docs"]
           }
         ]
       }
