@@ -8,20 +8,23 @@ export type WorkspaceExportWarning = {
   detail: string;
 };
 
-const SENSITIVE_CONFIG_SECTIONS = [
-  {
-    key: "mcp",
+const CONFIG_SECTION_METADATA: Record<string, { warningId: string; label: string; intro: string }> = {
+  mcp: {
     warningId: "mcp-config",
     label: "MCP servers",
     intro: "Contains secret-like MCP config",
   },
-  {
-    key: "plugin",
+  plugin: {
     warningId: "plugin-config",
     label: "Plugin settings",
     intro: "Contains secret-like plugin config",
   },
-] as const;
+  provider: {
+    warningId: "provider-config",
+    label: "Provider settings",
+    intro: "Contains secret-like provider config",
+  },
+};
 
 const PORTABLE_FILE_PREFIXES = [".opencode/plugins/", ".opencode/tools/"] as const;
 
@@ -240,13 +243,19 @@ export function collectWorkspaceExportWarnings(input: {
   const warnings = new Map<string, WorkspaceExportWarning>();
   const opencode = input.opencode ?? {};
 
-  for (const section of SENSITIVE_CONFIG_SECTIONS) {
-    const signals = collectSignals(opencode[section.key]);
+  for (const [sectionKey, sectionValue] of Object.entries(opencode)) {
+    const signals = collectSignals(sectionValue);
     if (!signals.length) continue;
-    warnings.set(section.warningId, {
-      id: section.warningId,
-      label: section.label,
-      detail: describeSignals(section.intro, signals),
+    const metadata =
+      CONFIG_SECTION_METADATA[sectionKey] ?? {
+        warningId: `config-${sectionKey}`,
+        label: formatSectionLabel(sectionKey),
+        intro: `Contains secret-like ${sectionKey} config`,
+      };
+    warnings.set(metadata.warningId, {
+      id: metadata.warningId,
+      label: metadata.label,
+      detail: describeSignals(metadata.intro, signals),
     });
   }
 
@@ -278,22 +287,21 @@ export function stripSensitiveWorkspaceExportData(input: {
       : {},
   ) as Record<string, unknown>;
 
-  for (const section of SENSITIVE_CONFIG_SECTIONS) {
-    if (!(section.key in opencode)) continue;
-    const sanitized = sanitizeValue(opencode[section.key]);
+  for (const [sectionKey, sectionValue] of Object.entries(opencode)) {
+    const sanitized = sanitizeValue(sectionValue);
     if (sanitized === undefined) {
-      delete opencode[section.key];
+      delete opencode[sectionKey];
       continue;
     }
     if (sanitized && typeof sanitized === "object" && !Array.isArray(sanitized) && Object.keys(sanitized as Record<string, unknown>).length === 0) {
-      delete opencode[section.key];
+      delete opencode[sectionKey];
       continue;
     }
     if (Array.isArray(sanitized) && sanitized.length === 0) {
-      delete opencode[section.key];
+      delete opencode[sectionKey];
       continue;
     }
-    opencode[section.key] = sanitized;
+    opencode[sectionKey] = sanitized;
   }
 
   const files = input.files
@@ -305,4 +313,11 @@ export function stripSensitiveWorkspaceExportData(input: {
     .map((file) => ({ ...file }));
 
   return { opencode, files };
+}
+
+function formatSectionLabel(sectionKey: string): string {
+  return sectionKey
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .replace(/^./, (char) => char.toUpperCase());
 }

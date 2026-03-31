@@ -4820,12 +4820,13 @@ async function exportWorkspace(
   options?: { sensitiveMode?: WorkspaceExportSensitiveMode },
 ) {
   const sensitiveMode = options?.sensitiveMode ?? "auto";
-  let opencode = sanitizePortableOpencodeConfig(await readOpencodeConfig(workspace.path));
+  const rawOpencode = await readOpencodeConfig(workspace.path);
+  let opencode = sanitizePortableOpencodeConfig(rawOpencode);
   const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
   let files = await listPortableFiles(workspace.path);
-  const warnings = collectWorkspaceExportWarnings({ opencode, files });
+  const warnings = collectWorkspaceExportWarnings({ opencode: rawOpencode, files });
   if (warnings.length && sensitiveMode === "auto") {
     throw new ApiError(
       409,

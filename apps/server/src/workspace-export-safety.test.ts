@@ -58,6 +58,26 @@ describe("workspace export safety", () => {
     expect(warnings[3]?.detail).toContain("long URL");
   });
 
+  test("warns when a non-portable provider section still contains secrets", () => {
+    const warnings = collectWorkspaceExportWarnings({
+      opencode: {
+        provider: {
+          openai: {
+            options: {
+              apiKey: "sk_live_1234567890abcdef",
+            },
+          },
+        },
+        mcp: { jira: { type: "remote", url: "https://jira.example.com/mcp" } },
+      },
+      files: [],
+    });
+
+    expect(warnings.map((warning) => warning.id)).toEqual(["provider-config"]);
+    expect(warnings[0]?.label).toBe("Provider settings");
+    expect(warnings[0]?.detail).toContain("apiKey");
+  });
+
   test("exclude mode removes only flagged values and files", () => {
     const sanitized = stripSensitiveWorkspaceExportData({
       opencode: {
