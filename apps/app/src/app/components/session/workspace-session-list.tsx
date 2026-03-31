@@ -38,6 +38,7 @@ type Props = {
   newTaskDisabled: boolean;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
+  onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: () => void;
   onOpenDeleteSession?: () => void;
@@ -307,6 +308,29 @@ export default function WorkspaceSessionList(props: Props) {
   });
 
   createEffect(() => {
+    const workspaceId = props.selectedWorkspaceId.trim();
+    if (!workspaceId) return;
+
+    const group = props.workspaceSessionGroups.find(
+      (entry) => entry.workspace.id === workspaceId,
+    );
+    if (!group?.sessions.length) return;
+
+    const selectedId = props.selectedSessionId?.trim() ?? "";
+    const selectedIndex = selectedId
+      ? group.sessions.findIndex((session) => session.id === selectedId)
+      : -1;
+    const start = selectedIndex >= 0 ? Math.max(0, selectedIndex - 2) : 0;
+    const end = selectedIndex >= 0
+      ? Math.min(group.sessions.length, selectedIndex + 3)
+      : Math.min(group.sessions.length, 4);
+
+    group.sessions.slice(start, end).forEach((session) => {
+      props.onPrefetchSession?.(workspaceId, session.id);
+    });
+  });
+
+  createEffect(() => {
     if (!sessionMenuOpen()) return;
     const closeMenu = (event: PointerEvent) => {
       if (!sessionMenuRef) return;
@@ -349,6 +373,11 @@ export default function WorkspaceSessionList(props: Props) {
       props.onOpenSession(workspaceId, session().id);
     };
 
+    const prefetchSession = () => {
+      if (workspaceId !== props.selectedWorkspaceId) return;
+      props.onPrefetchSession?.(workspaceId, session().id);
+    };
+
     return (
       <div class="relative">
         <div
@@ -360,6 +389,8 @@ export default function WorkspaceSessionList(props: Props) {
               : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-11"
           }`}
           style={{ "margin-left": `${Math.min(depth(), 4) * 16}px` }}
+          onPointerEnter={prefetchSession}
+          onFocusIn={prefetchSession}
           onClick={openSession}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;

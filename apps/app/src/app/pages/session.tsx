@@ -2876,6 +2876,10 @@ export default function SessionView(props: SessionViewProps) {
               newTaskDisabled={props.newTaskDisabled}
               onSelectWorkspace={props.selectWorkspace}
               onOpenSession={openSessionFromList}
+              onPrefetchSession={(workspaceId, sessionId) => {
+                if (workspaceId !== props.selectedWorkspaceId) return;
+                void props.ensureSessionLoaded(sessionId);
+              }}
               onCreateTaskInWorkspace={createTaskInWorkspace}
               onOpenRenameSession={openRenameModal}
               onOpenDeleteSession={openDeleteSessionModal}
