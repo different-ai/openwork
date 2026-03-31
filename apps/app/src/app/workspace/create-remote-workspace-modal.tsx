@@ -24,6 +24,8 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
 
   const [openworkHostUrl, setOpenworkHostUrl] = createSignal("");
   const [openworkToken, setOpenworkToken] = createSignal("");
+  const [openworkConnectGrant, setOpenworkConnectGrant] = createSignal<string | null>(null);
+  const [denBaseUrl, setDenBaseUrl] = createSignal<string | null>(null);
   const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
   const [directory, setDirectory] = createSignal("");
   const [displayName, setDisplayName] = createSignal("");
@@ -51,6 +53,8 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
     const defaults = props.initialValues ?? {};
     setOpenworkHostUrl(defaults.openworkHostUrl?.trim() ?? "");
     setOpenworkToken(defaults.openworkToken?.trim() ?? "");
+    setOpenworkConnectGrant(defaults.openworkConnectGrant?.trim() ?? null);
+    setDenBaseUrl(defaults.denBaseUrl?.trim() ?? null);
     setOpenworkTokenVisible(false);
     setDirectory(defaults.directory?.trim() ?? "");
     setDisplayName(defaults.displayName?.trim() ?? "");
@@ -115,6 +119,8 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
               props.onConfirm({
                 openworkHostUrl: openworkHostUrl().trim(),
                 openworkToken: openworkToken().trim(),
+                openworkConnectGrant: openworkConnectGrant(),
+                denBaseUrl: denBaseUrl(),
                 directory: directory().trim() ? directory().trim() : null,
                 displayName: displayName().trim() ? displayName().trim() : null,
               })

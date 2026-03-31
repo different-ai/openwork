@@ -68,6 +68,9 @@ export type WorkerLaunch = {
   clientToken: string | null;
   ownerToken: string | null;
   hostToken: string | null;
+  connectGrant: string | null;
+  connectGrantExpiresAt: string | null;
+  connectGrantDenBaseUrl: string | null;
 };
 
 export type WorkerSummary = {
@@ -85,6 +88,9 @@ export type WorkerTokens = {
   hostToken: string | null;
   openworkUrl: string | null;
   workspaceId: string | null;
+  connectGrant: string | null;
+  connectGrantExpiresAt: string | null;
+  connectGrantDenBaseUrl: string | null;
 };
 
 export type WorkerListItem = {
@@ -422,7 +428,10 @@ export function getWorker(payload: unknown): WorkerLaunch | null {
       : tokens && typeof tokens.host === "string"
         ? tokens.host
         : null,
-    hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null
+    hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null,
+    connectGrant: null,
+    connectGrantExpiresAt: null,
+    connectGrantDenBaseUrl: null,
   };
 }
 
@@ -464,12 +473,24 @@ export function getWorkerTokens(payload: unknown): WorkerTokens | null {
   const hostToken = typeof tokens.host === "string" ? tokens.host : null;
   const openworkUrl = connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null;
   const workspaceId = connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null;
+  const connectGrant = connect && typeof connect.grant === "string" ? connect.grant : null;
+  const connectGrantExpiresAt = connect && typeof connect.expiresAt === "string" ? connect.expiresAt : null;
+  const connectGrantDenBaseUrl = connect && typeof connect.denBaseUrl === "string" ? connect.denBaseUrl : null;
 
   if (!clientToken && !ownerToken && !hostToken) {
     return null;
   }
 
-  return { clientToken, ownerToken, hostToken, openworkUrl, workspaceId };
+  return {
+    clientToken,
+    ownerToken,
+    hostToken,
+    openworkUrl,
+    workspaceId,
+    connectGrant,
+    connectGrantExpiresAt,
+    connectGrantDenBaseUrl,
+  };
 }
 
 export function getWorkerRuntimeSnapshot(payload: unknown): WorkerRuntimeSnapshot | null {
@@ -715,7 +736,10 @@ export function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     (typeof value.workspaceId === "string" || value.workspaceId === null || typeof value.workspaceId === "undefined") &&
     (typeof value.clientToken === "string" || value.clientToken === null) &&
     (typeof value.ownerToken === "string" || value.ownerToken === null || typeof value.ownerToken === "undefined") &&
-    (typeof value.hostToken === "string" || value.hostToken === null)
+    (typeof value.hostToken === "string" || value.hostToken === null) &&
+    (typeof value.connectGrant === "string" || value.connectGrant === null || typeof value.connectGrant === "undefined") &&
+    (typeof value.connectGrantExpiresAt === "string" || value.connectGrantExpiresAt === null || typeof value.connectGrantExpiresAt === "undefined") &&
+    (typeof value.connectGrantDenBaseUrl === "string" || value.connectGrantDenBaseUrl === null || typeof value.connectGrantDenBaseUrl === "undefined")
   );
 }
 
@@ -730,7 +754,10 @@ export function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | n
     workspaceId: current?.workerId === item.workerId ? current.workspaceId : null,
     clientToken: current?.workerId === item.workerId ? current.clientToken : null,
     ownerToken: current?.workerId === item.workerId ? current.ownerToken : null,
-    hostToken: current?.workerId === item.workerId ? current.hostToken : null
+    hostToken: current?.workerId === item.workerId ? current.hostToken : null,
+    connectGrant: current?.workerId === item.workerId ? current.connectGrant : null,
+    connectGrantExpiresAt: current?.workerId === item.workerId ? current.connectGrantExpiresAt : null,
+    connectGrantDenBaseUrl: current?.workerId === item.workerId ? current.connectGrantDenBaseUrl : null,
   };
 }
 
@@ -772,17 +799,19 @@ function buildWorkspaceUrl(instanceUrl: string, workspaceId: string): string {
 
 export function buildOpenworkDeepLink(
   openworkUrl: string | null,
-  accessToken: string | null,
+  connectGrant: string | null,
+  denBaseUrl: string | null,
   workerId: string | null,
   workerName: string | null
 ): string | null {
-  if (!openworkUrl || !accessToken) {
+  if (!openworkUrl || !connectGrant || !denBaseUrl) {
     return null;
   }
 
   const params = new URLSearchParams({
     openworkHostUrl: openworkUrl,
-    openworkToken: accessToken,
+    grant: connectGrant,
+    denBaseUrl,
     source: "openwork-web"
   });
 
@@ -800,12 +829,13 @@ export function buildOpenworkDeepLink(
 export function buildOpenworkAppConnectUrl(
   appConnectBaseUrl: string,
   openworkUrl: string | null,
-  accessToken: string | null,
+  connectGrant: string | null,
+  denBaseUrl: string | null,
   workerId: string | null,
   workerName: string | null,
   options?: { autoConnect?: boolean }
 ): string | null {
-  if (!appConnectBaseUrl || !openworkUrl || !accessToken) {
+  if (!appConnectBaseUrl || !openworkUrl || !connectGrant || !denBaseUrl) {
     return null;
   }
 
@@ -826,7 +856,8 @@ export function buildOpenworkAppConnectUrl(
   }
 
   connectUrl.searchParams.set("openworkHostUrl", openworkUrl);
-  connectUrl.searchParams.set("openworkToken", accessToken);
+  connectUrl.searchParams.set("grant", connectGrant);
+  connectUrl.searchParams.set("denBaseUrl", denBaseUrl);
   if (options?.autoConnect) {
     connectUrl.searchParams.set("autoConnect", "1");
   }

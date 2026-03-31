@@ -119,16 +119,19 @@ import {
   readStoredFontZoom,
 } from "./lib/font-zoom";
 import {
+  createOpenworkServerClient,
   parseOpenworkWorkspaceIdFromUrl,
   readOpenworkConnectInviteFromSearch,
   stripOpenworkConnectInviteFromUrl,
   hydrateOpenworkServerSettingsFromEnv,
+  normalizeOpenworkServerHostUrl,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
   writeOpenworkServerSettings,
   type OpenworkServerDiagnostics,
   type OpenworkServerSettings,
 } from "./lib/openwork-server";
+import { createDenClient } from "./lib/den";
 import {
   parseBundleDeepLink,
   stripBundleQuery,
@@ -251,13 +254,54 @@ export default function App() {
     const invite = readOpenworkConnectInviteFromSearch(window.location.search);
     const bundleInvite = parseBundleDeepLink(window.location.href);
 
-    if (!invite) {
-      setOpenworkServerSettings(stored);
-    } else {
+    if (bundleInvite?.bundleUrl) {
+      bundlesStore.queueBundleLink(window.location.href);
+    }
+
+    const cleanedConnect = stripOpenworkConnectInviteFromUrl(window.location.href);
+    const cleaned = stripBundleQuery(cleanedConnect) ?? cleanedConnect;
+    if (cleaned !== window.location.href) {
+      window.history.replaceState(window.history.state ?? null, "", cleaned);
+    }
+
+    void (async () => {
+      if (!invite) {
+        setOpenworkServerSettings(stored);
+        return;
+      }
+
+      let inviteUrl = invite.url;
+      let inviteToken = stored.token;
+
+      if (!invite.grant && /(?:^|[?&])ow_token=/.test(window.location.search)) {
+        setError("Legacy OpenWork invite links with embedded tokens are no longer supported. Create a new one-time connect link.");
+        setOpenworkServerSettings(stored);
+        return;
+      }
+
+      if (invite.grant) {
+        try {
+          const exchange = invite.denBaseUrl
+            ? await createDenClient({ baseUrl: invite.denBaseUrl }).exchangeWorkerConnectGrant(invite.grant)
+            : await createOpenworkServerClient({
+                baseUrl: normalizeOpenworkServerHostUrl(invite.url) ?? invite.url,
+              }).exchangeConnectGrant(invite.grant);
+          inviteUrl = exchange.openworkUrl?.trim() || inviteUrl;
+          inviteToken = exchange.token?.trim() || inviteToken;
+          if (!inviteToken) {
+            throw new Error("This OpenWork connect link did not return a usable token.");
+          }
+        } catch (error) {
+          setError(error instanceof Error ? error.message : "Failed to redeem the OpenWork connect link.");
+          setOpenworkServerSettings(stored);
+          return;
+        }
+      }
+
       const merged: OpenworkServerSettings = {
         ...stored,
-        urlOverride: invite.url,
-        token: invite.token ?? stored.token,
+        urlOverride: inviteUrl,
+        token: inviteToken,
       };
 
       const next = writeOpenworkServerSettings(merged);
@@ -267,27 +311,17 @@ export default function App() {
         setStartupPreference("server");
         setOnboardingStep("server");
       }
-    }
 
-    if (bundleInvite?.bundleUrl) {
-      bundlesStore.queueBundleLink(window.location.href);
-    }
-
-    if (invite?.autoConnect) {
-      deepLinks.queueRemoteConnectDefaults({
-        openworkHostUrl: invite.url,
-        openworkToken: invite.token ?? null,
-        directory: null,
-        displayName: null,
-        autoConnect: true,
-      });
-    }
-
-    const cleanedConnect = stripOpenworkConnectInviteFromUrl(window.location.href);
-    const cleaned = stripBundleQuery(cleanedConnect) ?? cleanedConnect;
-    if (cleaned !== window.location.href) {
-      window.history.replaceState(window.history.state ?? null, "", cleaned);
-    }
+      if (invite.autoConnect) {
+        deepLinks.queueRemoteConnectDefaults({
+          openworkHostUrl: inviteUrl,
+          openworkToken: inviteToken ?? null,
+          directory: null,
+          displayName: null,
+          autoConnect: true,
+        });
+      }
+    })();
   });
 
   createEffect(() => {

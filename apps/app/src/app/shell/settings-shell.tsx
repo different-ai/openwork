@@ -31,8 +31,10 @@ import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   OpenworkServerError,
+  normalizeOpenworkServerHostUrl,
   parseOpenworkWorkspaceIdFromUrl,
 } from "../lib/openwork-server";
+import { buildRemoteConnectDeepLink } from "../lib/openwork-links";
 import type {
   OpenworkAuditEntry,
   OpenworkServerClient,
@@ -509,6 +511,9 @@ export default function SettingsShell(props: SettingsShellProps) {
   const [shareWorkspaceProfileTeamBusy, setShareWorkspaceProfileTeamBusy] = createSignal(false);
   const [shareWorkspaceProfileTeamError, setShareWorkspaceProfileTeamError] = createSignal<string | null>(null);
   const [shareWorkspaceProfileTeamSuccess, setShareWorkspaceProfileTeamSuccess] = createSignal<string | null>(null);
+  const [shareAccessInviteBusy, setShareAccessInviteBusy] = createSignal(false);
+  const [shareAccessInviteUrl, setShareAccessInviteUrl] = createSignal<string | null>(null);
+  const [shareAccessInviteError, setShareAccessInviteError] = createSignal<string | null>(null);
   const [shareCloudSettingsVersion, setShareCloudSettingsVersion] = createSignal(0);
   const [shareSkillsSetBusy, setShareSkillsSetBusy] = createSignal(false);
   const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
@@ -524,6 +529,9 @@ export default function SettingsShell(props: SettingsShellProps) {
       setShareWorkspaceProfileTeamBusy(false);
       setShareWorkspaceProfileTeamError(null);
       setShareWorkspaceProfileTeamSuccess(null);
+      setShareAccessInviteBusy(false);
+      setShareAccessInviteUrl(null);
+      setShareAccessInviteError(null);
       setShareSkillsSetBusy(false);
       setShareSkillsSetUrl(null);
       setShareSkillsSetError(null);
@@ -593,7 +601,6 @@ export default function SettingsShell(props: SettingsShellProps) {
         : null;
       const url = mountedUrl || hostUrl;
       const ownerToken = props.openworkServerHostInfo?.ownerToken?.trim() || "";
-      const collaboratorToken = props.openworkServerHostInfo?.clientToken?.trim() || "";
       return [
         {
           label: "Worker URL",
@@ -613,15 +620,6 @@ export default function SettingsShell(props: SettingsShellProps) {
           hint: mountedUrl
             ? "Use on phones or laptops connecting to this worker."
             : "Use when the remote client must answer permission prompts.",
-        },
-        {
-          label: "Collaborator token",
-          value: collaboratorToken,
-          secret: true,
-          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
-          hint: mountedUrl
-            ? "Routine remote access when you do not need owner-only actions."
-            : "Routine remote access to this host without owner-only actions.",
         },
       ];
     }
@@ -695,6 +693,179 @@ export default function SettingsShell(props: SettingsShellProps) {
     }
     return null;
   });
+
+  const shareAccessInviteDisabledReason = createMemo(() => {
+    const ws = shareWorkspace();
+    if (!ws) return "Select a workspace first.";
+
+    if (ws.workspaceType !== "remote") {
+      if (props.openworkServerHostInfo?.remoteAccessEnabled !== true) {
+        return "Enable remote access and save before creating a connect link.";
+      }
+      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const hostUrl =
+        props.openworkServerHostInfo?.connectUrl?.trim() ||
+        props.openworkServerHostInfo?.lanUrl?.trim() ||
+        props.openworkServerHostInfo?.mdnsUrl?.trim() ||
+        "";
+      const hostToken = props.openworkServerHostInfo?.hostToken?.trim() ?? "";
+      if (!baseUrl || !hostToken) return "Local OpenWork host is not ready yet.";
+      if (!hostUrl) return "Network share URL is not ready yet.";
+      if (!shareLocalOpenworkWorkspaceId()?.trim()) return "Workspace URL is still resolving.";
+      return null;
+    }
+
+    if (ws.remoteType !== "openwork") {
+      return "One-time connect links are available for OpenWork workers.";
+    }
+
+    const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+    const hostAuth = ws.openworkHostToken?.trim() || ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+    if (!hostUrl) return "Missing OpenWork host URL.";
+    if (!hostAuth) return "Missing OpenWork owner access.";
+    return null;
+  });
+
+  const resolveShareAccessInviteContext = async (): Promise<{
+    client: OpenworkServerClient;
+    workspaceId: string;
+    workspace: WorkspaceInfo;
+    hostUrl: string;
+  }> => {
+    const ws = shareWorkspace();
+    if (!ws) {
+      throw new Error("Select a workspace first.");
+    }
+
+    if (ws.workspaceType !== "remote") {
+      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const hostUrl =
+        props.openworkServerHostInfo?.connectUrl?.trim() ||
+        props.openworkServerHostInfo?.lanUrl?.trim() ||
+        props.openworkServerHostInfo?.mdnsUrl?.trim() ||
+        "";
+      const hostToken = props.openworkServerHostInfo?.hostToken?.trim() ?? "";
+      const readToken =
+        props.openworkServerHostInfo?.ownerToken?.trim() ||
+        props.openworkServerHostInfo?.clientToken?.trim() ||
+        "";
+
+      if (!baseUrl || !hostToken) {
+        throw new Error("Local OpenWork host is not ready yet.");
+      }
+      if (!hostUrl) {
+        throw new Error("Network share URL is not ready yet.");
+      }
+
+      let workspaceId = shareLocalOpenworkWorkspaceId()?.trim() ?? "";
+      if (!workspaceId) {
+        if (!readToken) {
+          throw new Error("Workspace URL is still resolving.");
+        }
+        const readClient = createOpenworkServerClient({ baseUrl, token: readToken });
+        const response = await readClient.listWorkspaces();
+        const items = Array.isArray(response.items) ? response.items : [];
+        const targetPath = normalizeDirectoryPath(ws.path?.trim() ?? "");
+        const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+        workspaceId = (match?.id ?? "").trim();
+        setShareLocalOpenworkWorkspaceId(workspaceId || null);
+      }
+
+      if (!workspaceId) {
+        throw new Error("Could not resolve this workspace on the local OpenWork host.");
+      }
+
+      return {
+        client: createOpenworkServerClient({ baseUrl, hostToken }),
+        workspaceId,
+        workspace: ws,
+        hostUrl,
+      };
+    }
+
+    if (ws.remoteType !== "openwork") {
+      throw new Error("One-time connect links are available for OpenWork workers.");
+    }
+
+    const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+    if (!hostUrl) {
+      throw new Error("Missing OpenWork host URL.");
+    }
+
+    let workspaceId =
+      ws.openworkWorkspaceId?.trim() ||
+      parseOpenworkWorkspaceIdFromUrl(ws.openworkHostUrl ?? "") ||
+      parseOpenworkWorkspaceIdFromUrl(ws.baseUrl ?? "") ||
+      "";
+
+    const baseUrl = normalizeOpenworkServerHostUrl(hostUrl) ?? hostUrl;
+    const hostToken = ws.openworkHostToken?.trim() ?? "";
+    const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+    const client = createOpenworkServerClient({
+      baseUrl,
+      token: hostToken ? undefined : token || undefined,
+      hostToken: hostToken || undefined,
+    });
+
+    if (!workspaceId) {
+      if (!token && !hostToken) {
+        throw new Error("Missing OpenWork owner access.");
+      }
+      const readClient = createOpenworkServerClient({ baseUrl, token: token || undefined });
+      const response = await readClient.listWorkspaces();
+      const items = Array.isArray(response.items) ? response.items : [];
+      const directoryHint = normalizeDirectoryPath(ws.directory?.trim() ?? ws.path?.trim() ?? "");
+      const match = directoryHint
+        ? items.find((entry) => {
+            const entryPath = normalizeDirectoryPath((entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim());
+            return Boolean(entryPath && entryPath === directoryHint);
+          })
+        : (response.activeId ? items.find((entry) => entry.id === response.activeId) : null) ?? items[0];
+      workspaceId = (match?.id ?? "").trim();
+    }
+
+    if (!workspaceId) {
+      throw new Error("Could not resolve this workspace on the OpenWork host.");
+    }
+
+    return { client, workspaceId, workspace: ws, hostUrl };
+  };
+
+  const createShareAccessInviteLink = async () => {
+    if (shareAccessInviteBusy()) return;
+    setShareAccessInviteBusy(true);
+    setShareAccessInviteError(null);
+    setShareAccessInviteUrl(null);
+
+    try {
+      const { client, workspaceId, workspace, hostUrl } = await resolveShareAccessInviteContext();
+      const issued = await client.createConnectGrant(workspaceId, {
+        hostUrl,
+        label: workspaceLabel(workspace),
+      });
+      const inviteUrl = buildRemoteConnectDeepLink({
+        openworkHostUrl: issued.openworkUrl || hostUrl,
+        grant: issued.grant,
+        displayName: workspaceLabel(workspace),
+        workspaceId: issued.workspaceId ?? workspaceId,
+        autoConnect: true,
+      });
+      if (!inviteUrl) {
+        throw new Error("Failed to build the OpenWork connect link.");
+      }
+
+      setShareAccessInviteUrl(inviteUrl);
+      try {
+        await navigator.clipboard.writeText(inviteUrl);
+      } catch {
+        // ignore
+      }
+    } catch (error) {
+      setShareAccessInviteError(error instanceof Error ? error.message : "Failed to create connect link");
+    } finally {
+      setShareAccessInviteBusy(false);
+    }
+  };
 
   const shareCloudSettings = createMemo(() => {
     shareWorkspaceId();
@@ -1318,6 +1489,11 @@ export default function SettingsShell(props: SettingsShellProps) {
                 onSave: props.saveShareRemoteAccess,
               }
             : undefined}
+          inviteLink={shareAccessInviteUrl()}
+          inviteLinkBusy={shareAccessInviteBusy()}
+          inviteLinkError={shareAccessInviteError()}
+          inviteLinkDisabledReason={shareAccessInviteDisabledReason()}
+          onCreateInviteLink={createShareAccessInviteLink}
           note={shareNote()}
           onShareWorkspaceProfile={publishWorkspaceProfileLink}
           shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}

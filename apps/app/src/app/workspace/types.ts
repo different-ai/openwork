@@ -7,6 +7,8 @@ export type CreateWorkspaceScreen = "chooser" | "local" | "remote" | "shared";
 export type RemoteWorkspaceInput = {
   openworkHostUrl?: string | null;
   openworkToken?: string | null;
+  openworkConnectGrant?: string | null;
+  denBaseUrl?: string | null;
   openworkClientToken?: string | null;
   openworkHostToken?: string | null;
   directory?: string | null;
@@ -72,12 +74,16 @@ export type CreateRemoteWorkspaceModalProps = {
   onConfirm: (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
+    openworkConnectGrant?: string | null;
+    denBaseUrl?: string | null;
     directory?: string | null;
     displayName?: string | null;
   }) => void;
   initialValues?: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
+    openworkConnectGrant?: string | null;
+    denBaseUrl?: string | null;
     directory?: string | null;
     displayName?: string | null;
   };
@@ -118,6 +124,11 @@ export type ShareWorkspaceModalProps = {
     error?: string | null;
     onSave: (enabled: boolean) => void | Promise<void>;
   };
+  inviteLink?: string | null;
+  inviteLinkBusy?: boolean;
+  inviteLinkError?: string | null;
+  inviteLinkDisabledReason?: string | null;
+  onCreateInviteLink?: () => void | Promise<void>;
   note?: string | null;
   onShareWorkspaceProfile?: () => void;
   shareWorkspaceProfileBusy?: boolean;

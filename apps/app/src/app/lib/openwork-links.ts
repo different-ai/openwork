@@ -6,6 +6,8 @@ import type { BundleRequest } from "../bundles/types";
 export type RemoteWorkspaceDefaults = {
   openworkHostUrl?: string | null;
   openworkToken?: string | null;
+  openworkConnectGrant?: string | null;
+  denBaseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
   autoConnect?: boolean;
@@ -43,10 +45,11 @@ export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefau
   }
 
   const hostUrlRaw = url.searchParams.get("openworkHostUrl") ?? url.searchParams.get("openworkUrl") ?? "";
-  const tokenRaw = url.searchParams.get("openworkToken") ?? url.searchParams.get("accessToken") ?? "";
+  const grantRaw = url.searchParams.get("grant") ?? "";
+  const denBaseUrl = normalizeDenBaseUrl(url.searchParams.get("denBaseUrl")?.trim() ?? "");
   const normalizedHostUrl = normalizeOpenworkServerUrl(hostUrlRaw);
-  const token = tokenRaw.trim();
-  if (!normalizedHostUrl || !token) {
+  const grant = grantRaw.trim();
+  if (!normalizedHostUrl || !grant) {
     return null;
   }
 
@@ -62,11 +65,46 @@ export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefau
 
   return {
     openworkHostUrl: normalizedHostUrl,
-    openworkToken: token,
+    openworkToken: null,
+    openworkConnectGrant: grant,
+    denBaseUrl: denBaseUrl ?? null,
     directory: null,
     displayName: displayName || null,
     autoConnect,
   };
+}
+
+export function buildRemoteConnectDeepLink(input: {
+  openworkHostUrl: string;
+  grant: string;
+  denBaseUrl?: string | null;
+  displayName?: string | null;
+  workspaceId?: string | null;
+  autoConnect?: boolean;
+}) {
+  const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "");
+  const grant = input.grant.trim();
+  if (!hostUrl || !grant) return null;
+
+  const url = new URL("openwork://connect-remote");
+  url.searchParams.set("openworkHostUrl", hostUrl);
+  url.searchParams.set("grant", grant);
+  const denBaseUrl = normalizeDenBaseUrl(input.denBaseUrl ?? "");
+  if (denBaseUrl) {
+    url.searchParams.set("denBaseUrl", denBaseUrl);
+  }
+  if (input.autoConnect) {
+    url.searchParams.set("autoConnect", "1");
+  }
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  if (workspaceId) {
+    url.searchParams.set("workerId", workspaceId);
+  }
+  const displayName = input.displayName?.trim() ?? "";
+  if (displayName) {
+    url.searchParams.set("workerName", displayName);
+  }
+  return url.toString();
 }
 
 export function stripRemoteConnectQuery(rawUrl: string): string | null {
@@ -81,6 +119,8 @@ export function stripRemoteConnectQuery(rawUrl: string): string | null {
   for (const key of [
     "openworkHostUrl",
     "openworkUrl",
+    "grant",
+    "denBaseUrl",
     "openworkToken",
     "accessToken",
     "workerId",

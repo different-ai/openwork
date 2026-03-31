@@ -3562,6 +3562,11 @@ export default function SessionView(props: SessionViewProps) {
               onSave: props.saveShareRemoteAccess,
             }
           : undefined}
+        inviteLink={shareWorkspaceState.shareAccessInviteUrl()}
+        inviteLinkBusy={shareWorkspaceState.shareAccessInviteBusy()}
+        inviteLinkError={shareWorkspaceState.shareAccessInviteError()}
+        inviteLinkDisabledReason={shareWorkspaceState.shareAccessInviteDisabledReason()}
+        onCreateInviteLink={shareWorkspaceState.createShareAccessInviteLink}
         note={shareWorkspaceState.shareNote()}
         onShareWorkspaceProfile={shareWorkspaceState.publishWorkspaceProfileLink}
         shareWorkspaceProfileBusy={shareWorkspaceState.shareWorkspaceProfileBusy()}

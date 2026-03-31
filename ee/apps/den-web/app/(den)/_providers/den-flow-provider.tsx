@@ -250,18 +250,21 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         ? listItemToWorker(selectedWorker, worker)
         : worker;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
-  const preferredOpenworkToken = activeWorker?.clientToken ?? activeWorker?.ownerToken ?? null;
+  const preferredConnectGrant = activeWorker?.connectGrant ?? null;
+  const preferredConnectGrantDenBaseUrl = activeWorker?.connectGrantDenBaseUrl ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
   const openworkDeepLink = buildOpenworkDeepLink(
     openworkConnectUrl,
-    preferredOpenworkToken,
+    preferredConnectGrant,
+    preferredConnectGrantDenBaseUrl,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null
   );
   const openworkAppConnectUrl = buildOpenworkAppConnectUrl(
     OPENWORK_APP_CONNECT_BASE_URL,
     openworkConnectUrl,
-    preferredOpenworkToken,
+    preferredConnectGrant,
+    preferredConnectGrantDenBaseUrl,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
     { autoConnect: true }
@@ -553,7 +556,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const accessToken = candidate.clientToken?.trim() ?? candidate.ownerToken?.trim() ?? "";
+    const accessToken = candidate.ownerToken?.trim() ?? candidate.clientToken?.trim() ?? "";
     if (!accessToken) {
       const mountedWorkspaceId = parseWorkspaceIdFromUrl(instanceUrl);
       return {
@@ -1467,7 +1470,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
               workspaceId: null,
               clientToken: null,
               ownerToken: null,
-              hostToken: null
+              hostToken: null,
+              connectGrant: null,
+              connectGrantExpiresAt: null,
+              connectGrantDenBaseUrl: null,
             };
 
       const shouldUpdateActiveWorker = worker?.workerId === summary.workerId || (!background && workerLookupId === summary.workerId);
@@ -1552,7 +1558,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
               workspaceId: tokens.workspaceId ?? worker.workspaceId,
               clientToken: tokens.clientToken,
               ownerToken: tokens.ownerToken,
-              hostToken: tokens.hostToken
+              hostToken: tokens.hostToken,
+              connectGrant: tokens.connectGrant,
+              connectGrantExpiresAt: tokens.connectGrantExpiresAt,
+              connectGrantDenBaseUrl: tokens.connectGrantDenBaseUrl,
             }
           : {
               workerId: id,
@@ -1564,7 +1573,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
               workspaceId: tokens.workspaceId,
               clientToken: tokens.clientToken,
               ownerToken: tokens.ownerToken,
-              hostToken: tokens.hostToken
+              hostToken: tokens.hostToken,
+              connectGrant: tokens.connectGrant,
+              connectGrantExpiresAt: tokens.connectGrantExpiresAt,
+              connectGrantDenBaseUrl: tokens.connectGrantDenBaseUrl,
             };
 
       const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
@@ -1887,7 +1899,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         workspaceId: parsed.workspaceId ?? parseWorkspaceIdFromUrl(parsed.instanceUrl ?? ""),
         clientToken: null,
         ownerToken: null,
-        hostToken: null
+        hostToken: null,
+        connectGrant: null,
+        connectGrantExpiresAt: null,
+        connectGrantDenBaseUrl: null,
       };
 
       setWorker(restored);
@@ -1909,7 +1924,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       ...worker,
       clientToken: null,
       ownerToken: null,
-      hostToken: null
+      hostToken: null,
+      connectGrant: null,
+      connectGrantExpiresAt: null,
+      connectGrantDenBaseUrl: null,
     };
 
     window.localStorage.setItem(LAST_WORKER_STORAGE_KEY, JSON.stringify(serializable));

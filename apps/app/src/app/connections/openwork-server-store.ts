@@ -30,6 +30,8 @@ export type OpenworkServerStore = ReturnType<typeof createOpenworkServerStore>;
 type RemoteWorkspaceInput = {
   openworkHostUrl: string;
   openworkToken?: string | null;
+  openworkConnectGrant?: string | null;
+  denBaseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
 };

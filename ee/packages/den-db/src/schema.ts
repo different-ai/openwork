@@ -133,6 +133,22 @@ export const DesktopHandoffGrantTable = mysqlTable(
   ],
 )
 
+export const WorkerConnectGrantTable = mysqlTable(
+  "worker_connect_grant",
+  {
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
+    worker_id: denTypeIdColumn("worker", "worker_id").notNull(),
+    token_scope: mysqlEnum("token_scope", ["host", "client"]).notNull().default("host"),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    consumed_at: timestamp("consumed_at", { fsp: 3 }),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("worker_connect_grant_worker_id").on(table.worker_id),
+    index("worker_connect_grant_expires_at").on(table.expires_at),
+  ],
+)
+
 export const OrganizationTable = mysqlTable(
   "organization",
   {

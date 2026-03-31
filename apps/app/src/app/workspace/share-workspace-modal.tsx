@@ -222,6 +222,11 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
                 collaboratorExpanded={collaboratorExpanded()}
                 onToggleCollaboratorExpanded={() => setCollaboratorExpanded((value) => !value)}
                 remoteAccess={props.remoteAccess}
+                inviteLink={props.inviteLink}
+                inviteLinkBusy={props.inviteLinkBusy}
+                inviteLinkError={props.inviteLinkError}
+                inviteLinkDisabledReason={props.inviteLinkDisabledReason}
+                onCreateInviteLink={props.onCreateInviteLink}
                 remoteAccessEnabled={remoteAccessEnabled()}
                 onRemoteAccessEnabledChange={setRemoteAccessEnabled}
                 note={props.note}

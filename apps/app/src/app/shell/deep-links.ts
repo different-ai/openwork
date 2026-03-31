@@ -55,6 +55,8 @@ export function createDeepLinksController(options: {
     const input = {
       openworkHostUrl: pending.openworkHostUrl,
       openworkToken: pending.openworkToken,
+      openworkConnectGrant: pending.openworkConnectGrant,
+      denBaseUrl: pending.denBaseUrl,
       directory: pending.directory,
       displayName: pending.displayName,
     };

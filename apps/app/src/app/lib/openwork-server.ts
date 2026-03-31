@@ -1,6 +1,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./tauri";
+import { normalizeDenBaseUrl } from "./den";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -88,6 +89,21 @@ export type OpenworkServerSettings = {
   portOverride?: number;
   token?: string;
   remoteAccessEnabled?: boolean;
+};
+
+export type OpenworkConnectGrantIssueResult = {
+  grant: string;
+  expiresAt: string;
+  openworkUrl: string;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+};
+
+export type OpenworkConnectGrantExchangeResult = {
+  openworkUrl: string | null;
+  workspaceId: string | null;
+  token: string | null;
+  workspaceName?: string | null;
 };
 
 export type OpenworkWorkspaceInfo = WorkspaceInfo & {
@@ -476,6 +492,25 @@ export function normalizeOpenworkServerUrl(input: string) {
   return withProtocol.replace(/\/+$/, "");
 }
 
+export function normalizeOpenworkServerHostUrl(input: string) {
+  const normalized = normalizeOpenworkServerUrl(input);
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1] ?? "";
+    const prev = segments[segments.length - 2] ?? "";
+    if (prev === "w" && last) {
+      const baseSegments = segments.slice(0, -2);
+      url.pathname = baseSegments.length > 0 ? `/${baseSegments.join("/")}` : "/";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return normalized.replace(/\/w\/[^/?#]+$/, "");
+  }
+}
+
 export function parseOpenworkWorkspaceIdFromUrl(input: string) {
   const normalized = normalizeOpenworkServerUrl(input) ?? "";
   if (!normalized) return null;
@@ -527,12 +562,15 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
 
 const OPENWORK_INVITE_PARAM_URL = "ow_url";
 const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
+const OPENWORK_INVITE_PARAM_GRANT = "ow_grant";
+const OPENWORK_INVITE_PARAM_DEN_BASE_URL = "ow_den_url";
 const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
 const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
 
 export type OpenworkConnectInvite = {
   url: string;
-  token?: string;
+  grant?: string;
+  denBaseUrl?: string;
   startup?: "server";
   autoConnect?: boolean;
 };
@@ -547,14 +585,16 @@ export function readOpenworkConnectInviteFromSearch(input: string | URLSearchPar
   const url = normalizeOpenworkServerUrl(rawUrl);
   if (!url) return null;
 
-  const token = search.get(OPENWORK_INVITE_PARAM_TOKEN)?.trim() ?? "";
+  const grant = search.get(OPENWORK_INVITE_PARAM_GRANT)?.trim() ?? "";
+  const denBaseUrl = normalizeDenBaseUrl(search.get(OPENWORK_INVITE_PARAM_DEN_BASE_URL)?.trim() ?? "") ?? undefined;
   const startupRaw = search.get(OPENWORK_INVITE_PARAM_STARTUP)?.trim() ?? "";
   const startup = startupRaw === "server" ? "server" : undefined;
   const autoConnect = search.get(OPENWORK_INVITE_PARAM_AUTO_CONNECT)?.trim() === "1";
 
   return {
     url,
-    token: token || undefined,
+    grant: grant || undefined,
+    denBaseUrl,
     startup,
     autoConnect: autoConnect || undefined,
   } satisfies OpenworkConnectInvite;
@@ -565,6 +605,8 @@ export function stripOpenworkConnectInviteFromUrl(input: string) {
     const url = new URL(input);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
+    url.searchParams.delete(OPENWORK_INVITE_PARAM_GRANT);
+    url.searchParams.delete(OPENWORK_INVITE_PARAM_DEN_BASE_URL);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_AUTO_CONNECT);
     return url.toString();
@@ -1003,6 +1045,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspaces/${encodeURIComponent(workspaceId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
       ),
+    createConnectGrant: (workspaceId: string, payload: { hostUrl: string; label?: string | null }) =>
+      requestJson<OpenworkConnectGrantIssueResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/connect-grant`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+          timeoutMs: timeouts.activateWorkspace,
+        },
+      ),
+    exchangeConnectGrant: (grant: string) =>
+      requestJson<OpenworkConnectGrantExchangeResult>(baseUrl, "/connect-grant/exchange", {
+        method: "POST",
+        body: { grant },
+        timeoutMs: timeouts.activateWorkspace,
+      }),
     deleteSession: (workspaceId: string, sessionId: string) =>
       requestJson<{ ok: boolean }>(
         baseUrl,

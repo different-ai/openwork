@@ -59,6 +59,9 @@ export type DenWorkerTokens = {
   hostToken: string | null;
   openworkUrl: string | null;
   workspaceId: string | null;
+  connectGrant: string | null;
+  connectGrantExpiresAt: string | null;
+  connectGrantDenBaseUrl: string | null;
 };
 
 export type DenTemplateCreator = {
@@ -132,6 +135,14 @@ type DenAuthResult = {
 export type DenDesktopHandoffExchange = {
   user: DenUser | null;
   token: string | null;
+};
+
+export type DenWorkerConnectGrantExchange = {
+  openworkUrl: string | null;
+  workspaceId: string | null;
+  token: string | null;
+  workerId: string | null;
+  workerName: string | null;
 };
 
 type RawJsonResponse<T> = {
@@ -442,6 +453,9 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
     hostToken: typeof tokens.host === "string" ? tokens.host : null,
     openworkUrl: connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null,
     workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
+    connectGrant: connect && typeof connect.grant === "string" ? connect.grant : null,
+    connectGrantExpiresAt: connect && typeof connect.expiresAt === "string" ? connect.expiresAt : null,
+    connectGrantDenBaseUrl: connect && typeof connect.denBaseUrl === "string" ? connect.denBaseUrl : null,
   };
 }
 
@@ -721,6 +735,21 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         body: { grant },
       });
       return { user: getUser(payload), token: getToken(payload) };
+    },
+
+    async exchangeWorkerConnectGrant(grant: string): Promise<DenWorkerConnectGrantExchange> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/workers/connect-grant/exchange", {
+        method: "POST",
+        body: { grant },
+      });
+
+      return {
+        openworkUrl: isRecord(payload) && typeof payload.openworkUrl === "string" ? payload.openworkUrl : null,
+        workspaceId: isRecord(payload) && typeof payload.workspaceId === "string" ? payload.workspaceId : null,
+        token: getToken(payload),
+        workerId: isRecord(payload) && typeof payload.workerId === "string" ? payload.workerId : null,
+        workerName: isRecord(payload) && typeof payload.workerName === "string" ? payload.workerName : null,
+      };
     },
 
     async listOrgs(): Promise<{ orgs: DenOrgSummary[]; defaultOrgId: string | null }> {

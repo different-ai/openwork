@@ -348,14 +348,16 @@ export function BackgroundAgentsScreen() {
         openworkAppConnectUrl: buildOpenworkAppConnectUrl(
           OPENWORK_APP_CONNECT_BASE_URL,
           tokens.openworkUrl,
-          tokens.clientToken,
+          tokens.connectGrant,
+          tokens.connectGrantDenBaseUrl,
           workerId,
           workerName,
           { autoConnect: true },
         ),
         openworkDeepLink: buildOpenworkDeepLink(
           tokens.openworkUrl,
-          tokens.clientToken,
+          tokens.connectGrant,
+          tokens.connectGrantDenBaseUrl,
           workerId,
           workerName,
         ),

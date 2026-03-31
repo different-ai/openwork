@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
@@ -467,6 +467,26 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   target.pathname = trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
   target.search = search;
   return target.toString();
+}
+
+function buildOpenworkWorkspaceUrl(hostUrl: string, workspaceId: string) {
+  const normalized = hostUrl.trim().replace(/\/+$/, "");
+  if (!normalized) return "";
+
+  try {
+    const url = new URL(normalized);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1] ?? "";
+    const prev = segments[segments.length - 2] ?? "";
+    if (prev === "w" && last) {
+      return url.toString().replace(/\/+$/, "");
+    }
+    const basePath = url.pathname.replace(/\/+$/, "");
+    url.pathname = `${basePath}/w/${encodeURIComponent(workspaceId)}`;
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return `${normalized}/w/${encodeURIComponent(workspaceId)}`;
+  }
 }
 
 async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
@@ -1113,6 +1133,22 @@ function createRoutes(
 ): Route[] {
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
+  const connectGrants = new Map<string, {
+    workspaceId: string;
+    hostUrl: string;
+    scope: TokenScope;
+    expiresAt: number;
+    consumedAt: number | null;
+  }>();
+
+  const pruneConnectGrants = () => {
+    const now = Date.now();
+    for (const [id, grant] of connectGrants) {
+      if (grant.consumedAt !== null || grant.expiresAt <= now) {
+        connectGrants.delete(id);
+      }
+    }
+  };
 
   const serializeFileSession = (session: {
     id: string;
@@ -1287,6 +1323,62 @@ function createRoutes(
     const active = config.workspaces[0] ?? null;
     const items = config.workspaces.map(serializeWorkspace);
     return jsonResponse({ items, workspaces: items, activeId: active?.id ?? null });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/connect-grant", "host", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const hostUrl = typeof body.hostUrl === "string" ? body.hostUrl.trim() : "";
+    if (!hostUrl) {
+      throw new ApiError(400, "invalid_payload", "hostUrl is required");
+    }
+
+    pruneConnectGrants();
+    const grant = randomBytes(24).toString("base64url");
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+    connectGrants.set(grant, {
+      workspaceId: workspace.id,
+      hostUrl,
+      scope: "owner",
+      expiresAt,
+      consumedAt: null,
+    });
+
+    return jsonResponse({
+      grant,
+      expiresAt: new Date(expiresAt).toISOString(),
+      openworkUrl: buildOpenworkWorkspaceUrl(hostUrl, workspace.id),
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+    }, 201);
+  });
+
+  addRoute(routes, "POST", "/connect-grant/exchange", "none", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const grantId = typeof body.grant === "string" ? body.grant.trim() : "";
+    if (!grantId) {
+      throw new ApiError(400, "invalid_payload", "grant is required");
+    }
+
+    pruneConnectGrants();
+    const grant = connectGrants.get(grantId);
+    if (!grant || grant.consumedAt !== null || grant.expiresAt <= Date.now()) {
+      throw new ApiError(404, "grant_not_found", "This OpenWork connect link is missing, expired, or already used.");
+    }
+
+    const workspace = await resolveWorkspace(config, grant.workspaceId);
+    const issued = await tokens.create(grant.scope, {
+      label: `OpenWork connect link: ${workspace.name}`,
+    });
+    grant.consumedAt = Date.now();
+    connectGrants.set(grantId, grant);
+
+    return jsonResponse({
+      openworkUrl: buildOpenworkWorkspaceUrl(grant.hostUrl, workspace.id),
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      token: issued.token,
+    });
   });
 
   addRoute(routes, "GET", "/tokens", "host", async () => {

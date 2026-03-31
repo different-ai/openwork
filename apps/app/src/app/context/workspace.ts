@@ -27,12 +27,14 @@ import { blueprintMaterializedSessions, blueprintSessions, defaultBlueprintSessi
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
+  normalizeOpenworkServerHostUrl,
   normalizeOpenworkServerUrl,
   parseOpenworkWorkspaceIdFromUrl,
   OpenworkServerError,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../lib/openwork-server";
+import { createDenClient } from "../lib/den";
 import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
@@ -2468,6 +2470,8 @@ export function createWorkspaceStore(options: {
   async function createRemoteWorkspaceFlow(input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
+    openworkConnectGrant?: string | null;
+    denBaseUrl?: string | null;
     openworkClientToken?: string | null;
     openworkHostToken?: string | null;
     directory?: string | null;
@@ -2489,14 +2493,37 @@ export function createWorkspaceStore(options: {
     }
 
     const run = (async () => {
-    const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
-    const token = input.openworkToken?.trim() ?? "";
+    let hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
+    let token = input.openworkToken?.trim() ?? "";
+    const connectGrant = input.openworkConnectGrant?.trim() ?? "";
+    const denBaseUrl = input.denBaseUrl?.trim() ?? "";
     const directory = input.directory?.trim() ?? "";
     const displayName = input.displayName?.trim() || null;
 
     if (!hostUrl) {
       options.setError(t("app.error.remote_base_url_required", currentLocale()));
       return false;
+    }
+
+    if (connectGrant) {
+      try {
+        const exchange = denBaseUrl
+          ? await createDenClient({ baseUrl: denBaseUrl }).exchangeWorkerConnectGrant(connectGrant)
+          : await createOpenworkServerClient({
+              baseUrl: normalizeOpenworkServerHostUrl(hostUrl) ?? hostUrl,
+            }).exchangeConnectGrant(connectGrant);
+        hostUrl = normalizeOpenworkServerUrl(exchange.openworkUrl ?? hostUrl) ?? hostUrl;
+        token = exchange.token?.trim() ?? "";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        options.setError(addOpencodeCacheHint(message));
+        return false;
+      }
+
+      if (!token) {
+        options.setError("Remote connect link did not return a usable token.");
+        return false;
+      }
     }
 
     options.setError(null);

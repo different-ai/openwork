@@ -29,7 +29,7 @@ Frontend for `app.openworklabs.com`.
   - default: `https://den-control-plane-openwork.onrender.com`
 - `NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
   - Example: `https://openworklabs.com/app`
-  - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
+  - The web panel appends `/connect-remote` and injects a one-time connect grant plus the worker URL automatically.
 - `NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
   - default: `https://app.openworklabs.com`
   - this host must serve `/api/auth/*`; the included proxy route does that

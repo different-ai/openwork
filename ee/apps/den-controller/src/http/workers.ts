@@ -1,11 +1,12 @@
 import { randomBytes } from "crypto"
 import express from "express"
-import { and, asc, desc, eq, isNull } from "../db/drizzle.js"
+import { and, asc, desc, eq, gt, isNull } from "../db/drizzle.js"
 import { z } from "zod"
 import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSubscriptionCancellation } from "../billing/polar.js"
 import { db } from "../db/index.js"
-import { AuditEventTable, AuthUserTable, DaytonaSandboxTable, OrgMembershipTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
+import { AuditEventTable, AuthUserTable, DaytonaSandboxTable, OrgMembershipTable, WorkerBundleTable, WorkerConnectGrantTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
+import { resolveDesktopDenBaseUrl } from "./desktop-auth.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
 import { getRequestSession } from "./session.js"
 import { ensureUserOrgAccess, listUserOrgs, setSessionActiveOrganization } from "../orgs.js"
@@ -39,6 +40,10 @@ const activityHeartbeatSchema = z.object({
   isActiveRecently: z.boolean(),
   lastActivityAt: z.string().datetime().optional().nullable(),
   openSessionCount: z.number().int().min(0).optional(),
+})
+
+const exchangeConnectGrantSchema = z.object({
+  grant: z.string().trim().min(12).max(128),
 })
 
 const token = () => randomBytes(32).toString("hex")
@@ -93,9 +98,9 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
   }
 }
 
-async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string) {
+async function resolveConnectUrlFromWorker(instanceUrl: string, accessToken: string) {
   const baseUrl = normalizeUrl(instanceUrl)
-  if (!baseUrl || !clientToken.trim()) {
+  if (!baseUrl || !accessToken.trim()) {
     return null
   }
 
@@ -104,7 +109,7 @@ async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: str
       method: "GET",
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${clientToken.trim()}`,
+        Authorization: `Bearer ${accessToken.trim()}`,
       },
     })
 
@@ -183,15 +188,19 @@ function newerDate(current: Date | null | undefined, candidate: Date | null | un
   return candidate.getTime() > current.getTime() ? candidate : current
 }
 
-async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: string | null, clientToken: string) {
+async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: string | null, accessToken: string) {
   const candidates = getConnectUrlCandidates(workerId, instanceUrl)
   for (const candidate of candidates) {
-    const resolved = await resolveConnectUrlFromWorker(candidate, clientToken)
+    const resolved = await resolveConnectUrlFromWorker(candidate, accessToken)
     if (resolved) {
       return resolved
     }
   }
   return null
+}
+
+function createWorkerConnectGrant() {
+  return randomBytes(24).toString("base64url")
 }
 
 async function getWorkerRuntimeAccess(workerId: WorkerId) {
@@ -882,7 +891,17 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
   }
 
   const instance = await getLatestWorkerInstance(rows[0].id)
-  const connect = await resolveConnectUrlFromCandidates(rows[0].id, instance?.url ?? null, clientToken)
+  const connect = await resolveConnectUrlFromCandidates(rows[0].id, instance?.url ?? null, hostToken)
+  const grant = createWorkerConnectGrant()
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
+
+  await db.insert(WorkerConnectGrantTable).values({
+    id: grant,
+    worker_id: rows[0].id,
+    token_scope: "host",
+    expires_at: expiresAt,
+    consumed_at: null,
+  })
 
   res.json({
     tokens: {
@@ -890,7 +909,92 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
       host: hostToken,
       client: clientToken,
     },
-    connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
+    connect: {
+      ...(connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : {})),
+      grant,
+      expiresAt: expiresAt.toISOString(),
+      denBaseUrl: resolveDesktopDenBaseUrl(req),
+    },
+  })
+}))
+
+workersRouter.post("/connect-grant/exchange", asyncRoute(async (req, res) => {
+  const parsed = exchangeConnectGrantSchema.safeParse(req.body ?? {})
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+    return
+  }
+
+  const now = new Date()
+  const rows = await db
+    .select({
+      grant: WorkerConnectGrantTable,
+      worker: WorkerTable,
+    })
+    .from(WorkerConnectGrantTable)
+    .innerJoin(WorkerTable, eq(WorkerConnectGrantTable.worker_id, WorkerTable.id))
+    .where(
+      and(
+        eq(WorkerConnectGrantTable.id, parsed.data.grant),
+        isNull(WorkerConnectGrantTable.consumed_at),
+        eq(WorkerConnectGrantTable.token_scope, "host"),
+        gt(WorkerConnectGrantTable.expires_at, now),
+      ),
+    )
+    .limit(1)
+
+  const row = rows[0]
+  if (!row) {
+    res.status(404).json({
+      error: "grant_not_found",
+      message: "This worker connect link is missing, expired, or already used.",
+    })
+    return
+  }
+
+  await db
+    .update(WorkerConnectGrantTable)
+    .set({ consumed_at: now })
+    .where(
+      and(
+        eq(WorkerConnectGrantTable.id, parsed.data.grant),
+        isNull(WorkerConnectGrantTable.consumed_at),
+      ),
+    )
+
+  const tokenRows = await db
+    .select()
+    .from(WorkerTokenTable)
+    .where(and(eq(WorkerTokenTable.worker_id, row.worker.id), isNull(WorkerTokenTable.revoked_at)))
+    .orderBy(asc(WorkerTokenTable.created_at))
+
+  const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
+  if (!hostToken) {
+    res.status(409).json({
+      error: "worker_tokens_unavailable",
+      message: "Worker tokens are missing for this worker. Launch a new worker and try again.",
+    })
+    return
+  }
+
+  const instance = await getLatestWorkerInstance(row.worker.id)
+  const connect = await resolveConnectUrlFromCandidates(row.worker.id, instance?.url ?? null, hostToken)
+  const openworkUrl = connect?.openworkUrl ?? (instance?.url ? normalizeUrl(instance.url) : null)
+
+  if (!openworkUrl) {
+    res.status(409).json({
+      error: "worker_connect_unavailable",
+      message: "Worker is not ready to connect yet. Try again in a moment.",
+    })
+    return
+  }
+
+  res.json({
+    openworkUrl,
+    workspaceId: connect?.workspaceId ?? null,
+    token: hostToken,
+    workerId: row.worker.id,
+    workerName: row.worker.name,
   })
 }))
 

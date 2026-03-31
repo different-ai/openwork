@@ -44,7 +44,7 @@ function withDenProxyPath(origin: string): string {
   return url.toString().replace(/\/+$/, "")
 }
 
-function resolveDesktopDenBaseUrl(req: express.Request): string {
+export function resolveDesktopDenBaseUrl(req: express.Request): string {
   const originHeader = readSingleHeader(req.headers.origin)
   if (originHeader) {
     try {

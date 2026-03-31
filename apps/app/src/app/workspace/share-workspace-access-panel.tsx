@@ -40,6 +40,11 @@ export default function ShareWorkspaceAccessPanel(props: {
     error?: string | null;
     onSave: (enabled: boolean) => void | Promise<void>;
   };
+  inviteLink?: string | null;
+  inviteLinkBusy?: boolean;
+  inviteLinkError?: string | null;
+  inviteLinkDisabledReason?: string | null;
+  onCreateInviteLink?: () => void | Promise<void>;
   remoteAccessEnabled: boolean;
   onRemoteAccessEnabledChange: (value: boolean) => void;
   note?: string | null;
@@ -157,6 +162,53 @@ export default function ShareWorkspaceAccessPanel(props: {
           );
         }}
       </Show>
+
+      <div class={surfaceCardClass}>
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h3 class="text-[18px] font-semibold tracking-[-0.3px] text-dls-text">One-time connect link</h3>
+            <p class="mt-1 text-[14px] leading-relaxed text-dls-secondary">
+              Create a single-use link that redeems into live workspace access without exposing the token in the URL.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => props.onCreateInviteLink?.()}
+            disabled={!props.onCreateInviteLink || props.inviteLinkBusy || Boolean(props.inviteLinkDisabledReason)}
+            class={pillSecondaryClass}
+          >
+            {props.inviteLinkBusy ? "Creating…" : props.inviteLink ? "Refresh" : "Create link"}
+          </button>
+        </div>
+
+        <div class="mt-4 flex items-center gap-2">
+          <input
+            type="text"
+            readonly
+            value={props.inviteLink || ""}
+            placeholder="Create a one-time link for this workspace"
+            class={`${inputClass} font-mono text-[12px]`}
+          />
+          <button
+            type="button"
+            onClick={() => props.inviteLink && props.onCopy(props.inviteLink, "invite-link")}
+            disabled={!props.inviteLink}
+            class={pillSecondaryClass}
+            title="Copy"
+          >
+            <Show when={props.copiedKey === "invite-link"} fallback={<Copy size={14} />}>
+              <Check size={14} class="text-emerald-600" />
+            </Show>
+          </button>
+        </div>
+
+        <Show when={props.inviteLinkError?.trim()}>
+          <div class={`mt-4 ${errorBannerClass}`}>{props.inviteLinkError}</div>
+        </Show>
+        <Show when={props.inviteLinkDisabledReason?.trim() && !props.inviteLinkError?.trim()}>
+          <div class="mt-3 text-[12px] text-dls-secondary">{props.inviteLinkDisabledReason}</div>
+        </Show>
+      </div>
 
       <div class={surfaceCardClass}>
         <div class="flex items-center gap-2 min-w-0">
