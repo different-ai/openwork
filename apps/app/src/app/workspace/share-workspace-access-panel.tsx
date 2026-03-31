@@ -30,8 +30,8 @@ export default function ShareWorkspaceAccessPanel(props: {
   fields: ShareField[];
   copiedKey: string | null;
   onCopy: (value: string, key: string) => void;
-  revealedByIndex: Record<number, boolean>;
-  onToggleReveal: (index: number) => void;
+  revealedByKey: Record<string, boolean>;
+  onToggleReveal: (key: string) => void;
   collaboratorExpanded: boolean;
   onToggleCollaboratorExpanded: () => void;
   remoteAccess?: {
@@ -52,14 +52,14 @@ export default function ShareWorkspaceAccessPanel(props: {
   const renderCredentialField = (field: ShareField, index: number, keyPrefix: string) => {
     const key = `${keyPrefix}:${field.label}:${index}`;
     const isSecret = Boolean(field.secret);
-    const revealed = Boolean(props.revealedByIndex[index]);
+    const revealed = () => Boolean(props.revealedByKey[key]);
 
     return (
       <div>
         <label class="mb-1.5 block text-[13px] font-medium text-dls-text">{displayFieldLabel(field)}</label>
         <div class="relative flex items-center gap-2">
           <input
-            type={isSecret && !revealed ? "password" : "text"}
+            type={isSecret && !revealed() ? "password" : "text"}
             readonly
             value={field.value || field.placeholder || ""}
             class={`${inputClass} font-mono text-[12px]`}
@@ -67,12 +67,12 @@ export default function ShareWorkspaceAccessPanel(props: {
           <Show when={isSecret}>
             <button
               type="button"
-              onClick={() => props.onToggleReveal(index)}
+              onClick={() => props.onToggleReveal(key)}
               disabled={!field.value}
               class={pillSecondaryClass}
-              title={revealed ? "Hide password" : "Reveal password"}
+              title={revealed() ? "Hide password" : "Reveal password"}
             >
-              <Show when={revealed} fallback={<Eye size={14} />}>
+              <Show when={revealed()} fallback={<Eye size={14} />}>
                 <EyeOff size={14} />
               </Show>
             </button>
