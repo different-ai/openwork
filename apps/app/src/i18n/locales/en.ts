@@ -365,7 +365,7 @@ export default {
   "mcp.edit_config_description": "Apps are stored in your workspace config file.",
   "mcp.docs_link": "Learn more",
   "mcp.scope_project": "This workspace",
-  "mcp.scope_global": "All workers",
+  "mcp.scope_global": "All workspaces",
   "mcp.config_label": "Config",
   "mcp.config_file": "Config file",
   "mcp.config_not_loaded": "Not loaded yet",
