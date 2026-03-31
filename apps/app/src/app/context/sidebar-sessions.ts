@@ -7,7 +7,6 @@ import type { WorkspaceInfo, EngineInfo } from "../lib/tauri";
 import type { SidebarSessionItem, WorkspaceSessionGroup } from "../types";
 import {
   normalizeDirectoryPath,
-  normalizeDirectoryQueryPath,
   safeStringify,
 } from "../utils";
 import { toSessionTransportDirectory } from "../lib/session-scope";
@@ -145,7 +144,7 @@ export function createSidebarSessionsStore(options: {
         }
       }
 
-      const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
+      const queryDirectory = toSessionTransportDirectory(directory) || undefined;
       const list = unwrap(
         await client.session.list({ directory: queryDirectory, roots: false, limit: SIDEBAR_SESSION_LIMIT }),
       );
