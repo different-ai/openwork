@@ -2,6 +2,7 @@ import { createMemo, createSignal, type Accessor } from "solid-js";
 
 import type { ProviderAuthAuthorization, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
+import { t, currentLocale } from "../../../i18n";
 import { unwrap, waitForHealthy } from "../../lib/opencode";
 import type { Client, ProviderListItem, WorkspaceDisplay } from "../../types";
 import { safeStringify } from "../../utils";
@@ -69,7 +70,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
   const assertNoClientError = (result: unknown) => {
     const maybe = result as { error?: unknown } | null | undefined;
     if (!maybe || maybe.error === undefined) return;
-    throw new Error(describeProviderError(maybe.error, "Request failed"));
+    throw new Error(describeProviderError(maybe.error, t("app.error_request_failed", currentLocale())));
   };
 
   const describeProviderError = (error: unknown, fallback: string) => {
@@ -124,8 +125,8 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
     const generic = raw && /^unknown\s+error$/i.test(raw);
     const heading = (() => {
-      if (status === 401 || status === 403) return "Authentication failed";
-      if (status === 429) return "Rate limit exceeded";
+      if (status === 401 || status === 403) return t("app.error_auth_failed", currentLocale());
+      if (status === 429) return t("app.error_rate_limit", currentLocale());
       if (provider) return `Provider error (${provider})`;
       return fallback;
     })();
@@ -187,7 +188,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
   const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
     const c = options.client();
     if (!c) {
-      throw new Error("Not connected to a server");
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
     const methods = unwrap(await c.provider.auth());
     return buildProviderAuthMethods(
@@ -204,7 +205,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error("Not connected to a server");
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
     try {
       const cachedMethods = providerAuthMethods();
@@ -309,7 +310,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error("Not connected to a server");
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const resolved = providerId?.trim();
@@ -382,7 +383,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error("Not connected to a server");
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const trimmed = apiKey.trim();
@@ -408,7 +409,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error("Not connected to a server");
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const resolved = providerId.trim();

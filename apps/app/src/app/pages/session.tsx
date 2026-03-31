@@ -9,6 +9,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
+import { t, currentLocale } from "../../i18n";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   ComposerDraft,
@@ -1992,7 +1993,7 @@ export default function SessionView(props: SessionViewProps) {
   const compactSessionHistory = async () => {
     if (historyActionBusy()) return;
     if (!canCompactSession()) {
-      showStatusToast("Nothing to compact yet.", "warning");
+      showStatusToast(t("app.error_compact_empty", currentLocale()), "warning");
       return;
     }
 

@@ -1,4 +1,6 @@
 import { createContext, createEffect, useContext, type ParentProps } from "solid-js";
+
+import { t, currentLocale } from "../../i18n";
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store";
 
 import type {
@@ -94,7 +96,7 @@ export function GlobalSyncProvider(props: ParentProps) {
 
   const setError = (error: unknown) => {
     const message = error instanceof Error ? error.message : safeStringify(error);
-    setGlobalStore("error", message || "Unknown error");
+    setGlobalStore("error", message || t("app.unknown_error", currentLocale()));
   };
 
   const setProjectMeta = (projects: Project[]) => {

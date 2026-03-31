@@ -9,6 +9,7 @@ import type {
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
+import { t, currentLocale } from "../../i18n";
 import { unwrap } from "../lib/opencode";
 import {
   abortSession as abortSessionTyped,
@@ -231,8 +232,8 @@ export function createSessionActionsStore(options: {
 
     const generic = raw && /^unknown\s+error$/i.test(raw);
     const heading = (() => {
-      if (status === 401 || status === 403) return "Authentication failed";
-      if (status === 429) return "Rate limit exceeded";
+      if (status === 401 || status === 403) return t("app.error_auth_failed", currentLocale());
+      if (status === 429) return t("app.error_rate_limit", currentLocale());
       if (provider) return `Provider error (${provider})`;
       return fallback;
     })();
@@ -256,7 +257,7 @@ export function createSessionActionsStore(options: {
   const assertNoClientError = (result: unknown) => {
     const maybe = result as { error?: unknown } | null | undefined;
     if (!maybe || maybe.error === undefined) return;
-    throw new Error(describeProviderError(maybe.error, "Request failed"));
+    throw new Error(describeProviderError(maybe.error, t("app.error_request_failed", currentLocale())));
   };
 
   const selectedSessionAgent = createMemo(() => {
@@ -387,7 +388,7 @@ export function createSessionActionsStore(options: {
         error: e instanceof Error ? e.message : safeStringify(e),
         workspaceId: id,
       });
-      const message = e instanceof Error ? e.message : "Unknown error";
+      const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       options.setError(addOpencodeCacheHint(message));
       return undefined;
     } finally {
@@ -448,7 +449,7 @@ export function createSessionActionsStore(options: {
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !options.selectedSessionId()) {
-      options.setError("Select a session with messages before running /compact.");
+      options.setError(t("app.error_compact_no_session", currentLocale()));
       return;
     }
 
@@ -510,7 +511,7 @@ export function createSessionActionsStore(options: {
 
         const command = resolvedDraft.command;
         if (!command) {
-          throw new Error("Command was not resolved.");
+          throw new Error(t("app.error_command_not_resolved", currentLocale()));
         }
 
         const modelString = `${model.providerID}/${model.modelID}`;
@@ -590,17 +591,17 @@ export function createSessionActionsStore(options: {
   async function compactCurrentSession(sessionIdOverride?: string) {
     const c = options.client();
     if (!c) {
-      throw new Error("Not connected to a server");
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const sessionID = (sessionIdOverride ?? options.selectedSessionId() ?? "").trim();
     if (!sessionID) {
-      throw new Error("Select a session before compacting.");
+      throw new Error(t("app.error_compact_no_session_id", currentLocale()));
     }
 
     const visible = options.messages();
     if (!visible.length) {
-      throw new Error("Nothing to compact yet.");
+      throw new Error(t("app.error_compact_empty", currentLocale()));
     }
 
     const model = options.selectedSessionModel();
@@ -715,7 +716,7 @@ export function createSessionActionsStore(options: {
   async function renameSessionTitle(sessionID: string, title: string) {
     const trimmed = title.trim();
     if (!trimmed) {
-      throw new Error("Session name is required");
+      throw new Error(t("app.error_session_name_required", currentLocale()));
     }
 
     await options.renameSession(sessionID, trimmed);
@@ -727,7 +728,7 @@ export function createSessionActionsStore(options: {
     if (!trimmed) return;
     const c = options.client();
     if (!c) {
-      throw new Error("Not connected to a server");
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const root = options.selectedWorkspaceRoot().trim();
@@ -779,7 +780,7 @@ export function createSessionActionsStore(options: {
   const BUILTIN_COMPACT_COMMAND = {
     id: "builtin:compact",
     name: "compact",
-    description: "Summarize this session to reduce context size.",
+    description: t("app.compact_command_desc", currentLocale()),
     source: "command" as const,
   };
 

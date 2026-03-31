@@ -3511,10 +3511,10 @@ export function createWorkspaceStore(options: {
         closeWorkspaceConnectionSettings();
         return;
       }
-      setEditRemoteWorkspaceError("Connection failed. Check the URL and token.");
+      setEditRemoteWorkspaceError(t("app.error_connection_failed_url", currentLocale()));
       options.setError(null);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Connection failed";
+      const message = e instanceof Error ? e.message : t("app.error_connection_failed", currentLocale());
       setEditRemoteWorkspaceError(message);
       options.setError(null);
     }

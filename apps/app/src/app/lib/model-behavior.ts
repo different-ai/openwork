@@ -1,5 +1,6 @@
 import type { ProviderListItem } from "../types";
 import type { ModelBehaviorOption } from "../types";
+import { t, currentLocale } from "../../i18n";
 
 type ProviderModel = ProviderListItem["models"][string];
 
@@ -78,7 +79,7 @@ const getBehaviorTitle = (providerID: string, model: ProviderModel, variantKeys:
     ) {
       return "Reasoning effort";
     }
-    return "Model behavior";
+    return t("app.model_behavior_title", currentLocale());
   }
   if (model.reasoning) return "Built-in reasoning";
   return "Standard generation";
