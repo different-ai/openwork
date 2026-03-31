@@ -1079,6 +1079,14 @@ export default function SessionView(props: SessionViewProps) {
       clearTimeout(jumpControlsSuppressTimer);
       jumpControlsSuppressTimer = undefined;
     }
+    if (deferSessionRenderFrame !== undefined) {
+      window.cancelAnimationFrame(deferSessionRenderFrame);
+      deferSessionRenderFrame = undefined;
+    }
+    if (deferSessionRenderTimer !== undefined) {
+      window.clearTimeout(deferSessionRenderTimer);
+      deferSessionRenderTimer = undefined;
+    }
     if (streamRenderBatchTimer !== undefined) {
       window.clearTimeout(streamRenderBatchTimer);
       streamRenderBatchTimer = undefined;
@@ -2130,6 +2138,9 @@ export default function SessionView(props: SessionViewProps) {
     return props.sessionLoadingById(sessionId);
   });
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = createSignal(false);
+  const [deferSessionRender, setDeferSessionRender] = createSignal(false);
+  let deferSessionRenderFrame: number | undefined;
+  let deferSessionRenderTimer: number | undefined;
   const pendingSessionTransitionTitle = createMemo(() => {
     const pending = pendingSessionTransition();
     if (!pending) return "";
@@ -2162,6 +2173,35 @@ export default function SessionView(props: SessionViewProps) {
     }, 1000);
     onCleanup(() => window.clearTimeout(id));
   });
+
+  createEffect(
+    on(
+      () => props.selectedSessionId,
+      (sessionId, previousSessionId) => {
+        if (sessionId === previousSessionId) return;
+        if (!sessionId && !previousSessionId) return;
+
+        if (deferSessionRenderFrame !== undefined) {
+          window.cancelAnimationFrame(deferSessionRenderFrame);
+          deferSessionRenderFrame = undefined;
+        }
+        if (deferSessionRenderTimer !== undefined) {
+          window.clearTimeout(deferSessionRenderTimer);
+          deferSessionRenderTimer = undefined;
+        }
+
+        setDeferSessionRender(true);
+        deferSessionRenderFrame = window.requestAnimationFrame(() => {
+          deferSessionRenderFrame = undefined;
+          deferSessionRenderTimer = window.setTimeout(() => {
+            deferSessionRenderTimer = undefined;
+            setDeferSessionRender(false);
+          }, 0);
+        });
+      },
+      { defer: true },
+    ),
+  );
 
   const sessionScroll = createSessionScrollController({
     selectedSessionId: () => props.selectedSessionId,
@@ -3165,7 +3205,8 @@ export default function SessionView(props: SessionViewProps) {
                     when={
                       props.messages.length === 0 &&
                       !showWorkspaceSetupEmptyState() &&
-                      !showSessionLoadingState()
+                      !showSessionLoadingState() &&
+                      !deferSessionRender()
                     }
                   >
                     <div class="text-center py-16 px-6 space-y-6">
@@ -3205,7 +3246,9 @@ export default function SessionView(props: SessionViewProps) {
                     </div>
                   </Show>
 
-                  <Show when={!showDelayedSessionLoadingState()}>
+                  <Show
+                    when={!showDelayedSessionLoadingState() && !deferSessionRender()}
+                  >
                     <Show
                       when={
                         hiddenMessageCount() > 0 || hasServerEarlierMessages()
@@ -3288,7 +3331,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
 
-              <Show when={!showDelayedSessionLoadingState() && props.messages.length > 0 && !jumpControlsSuppressed() && (!sessionScroll.isAtBottom() || Boolean(sessionScroll.topClippedMessageId()))}>
+              <Show when={!showDelayedSessionLoadingState() && !deferSessionRender() && props.messages.length > 0 && !jumpControlsSuppressed() && (!sessionScroll.isAtBottom() || Boolean(sessionScroll.topClippedMessageId()))}>
                 <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
                   <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
                     <Show when={Boolean(sessionScroll.topClippedMessageId())}>
