@@ -3100,6 +3100,19 @@ export default function SessionView(props: SessionViewProps) {
               <div
                 class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-10" : "pt-10 pb-10"} bg-dls-surface`}
                 style={{ contain: "layout paint style" }}
+                onWheel={(event) => {
+                  sessionScroll.markScrollGesture(event.target);
+                }}
+                onTouchStart={(event) => {
+                  sessionScroll.markScrollGesture(event.target);
+                }}
+                onTouchMove={(event) => {
+                  sessionScroll.markScrollGesture(event.target);
+                }}
+                onPointerDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  sessionScroll.markScrollGesture(event.currentTarget);
+                }}
                 onScroll={sessionScroll.handleScroll}
                 ref={(el) => {
                   chatContainerEl = el;
