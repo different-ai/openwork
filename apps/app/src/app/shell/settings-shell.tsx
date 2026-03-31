@@ -196,8 +196,9 @@ export type SettingsShellProps = {
       path?: string;
       note?: string;
     }>;
-  }>;
+  }>; 
   addPlugin: (pluginNameOverride?: string) => void;
+  createSessionInWorkspace: (workspaceId: string, initialPrompt?: string) => Promise<string | undefined> | string | void;
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
   selectSession: (sessionId: string) => Promise<void> | void;
   hideTitlebar: boolean;
@@ -318,9 +319,7 @@ export default function SettingsShell(props: SettingsShellProps) {
     const id = workspaceId.trim();
     if (!id) return;
     void (async () => {
-      const ready = await Promise.resolve(props.switchWorkspace(id));
-      if (!ready) return;
-      props.createSessionAndOpen();
+      await Promise.resolve(props.createSessionInWorkspace(id));
     })();
   };
 

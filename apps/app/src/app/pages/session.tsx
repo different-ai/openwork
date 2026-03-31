@@ -2434,9 +2434,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!id) return;
     flushComposerDraft();
     void (async () => {
-      const ready = await Promise.resolve(props.switchWorkspace(id));
-      if (!ready) return;
-      sessionActions.createSessionAndOpen();
+      await Promise.resolve(sessionActions.createSessionInWorkspace(id));
     })();
   };
 

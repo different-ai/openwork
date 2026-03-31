@@ -67,6 +67,7 @@ export function createSessionActionsStore(options: {
   setCreatingSession: (value: boolean) => void;
   setError: (value: string | null) => void;
   workspaceProjectDir: () => string;
+  selectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
   ensureSelectedWorkspaceRuntime: () => Promise<boolean>;
@@ -264,6 +265,16 @@ export function createSessionActionsStore(options: {
   });
 
   const sessionRevertMessageId = createMemo(() => options.selectedSession()?.revert?.messageID ?? null);
+
+  async function createSessionInWorkspace(workspaceId: string, initialPrompt?: string) {
+    const id = workspaceId.trim();
+    if (!id) return undefined;
+    if (options.selectedWorkspaceId().trim() !== id) {
+      const selected = await Promise.resolve(options.selectWorkspace(id));
+      if (!selected) return undefined;
+    }
+    return await createSessionAndOpen(initialPrompt);
+  }
 
   async function createSessionAndOpen(initialPrompt?: string) {
     if (typeof window !== "undefined") {
@@ -809,6 +820,7 @@ export function createSessionActionsStore(options: {
     lastPromptSent,
     selectedSessionAgent,
     sessionRevertMessageId,
+    createSessionInWorkspace,
     createSessionAndOpen,
     sendPrompt,
     abortSession,
