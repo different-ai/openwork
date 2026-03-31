@@ -17,7 +17,7 @@ import type { ShareView, ShareWorkspaceModalProps } from "./types";
 
 export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   const [activeView, setActiveView] = createSignal<ShareView>("chooser");
-  const [revealedByIndex, setRevealedByIndex] = createSignal<Record<number, boolean>>({});
+  const [revealedByKey, setRevealedByKey] = createSignal<Record<string, boolean>>({});
   const [copiedKey, setCopiedKey] = createSignal<string | null>(null);
   const [collaboratorExpanded, setCollaboratorExpanded] = createSignal(false);
   const [remoteAccessEnabled, setRemoteAccessEnabled] = createSignal(false);
@@ -36,7 +36,7 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
       (open) => {
         if (!open) return;
         setActiveView("chooser");
-        setRevealedByIndex({});
+        setRevealedByKey({});
         setCopiedKey(null);
         setCollaboratorExpanded(false);
         setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
@@ -213,11 +213,11 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
                 fields={props.fields}
                 copiedKey={copiedKey()}
                 onCopy={(value, key) => void handleCopy(value, key)}
-                revealedByIndex={revealedByIndex()}
-                onToggleReveal={(index) =>
-                  setRevealedByIndex((prev) => ({
+                revealedByKey={revealedByKey()}
+                onToggleReveal={(key) =>
+                  setRevealedByKey((prev) => ({
                     ...prev,
-                    [index]: !prev[index],
+                    [key]: !prev[key],
                   }))
                 }
                 collaboratorExpanded={collaboratorExpanded()}
