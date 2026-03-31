@@ -3023,7 +3023,7 @@ export default function SessionView(props: SessionViewProps) {
           <div class="flex-1 flex overflow-hidden">
             <div class="relative min-w-0 flex-1 overflow-hidden bg-dls-surface">
               <div
-                class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-10" : "pt-10 pb-10"} scroll-smooth bg-dls-surface`}
+                class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-10" : "pt-10 pb-10"} bg-dls-surface`}
                 style={{ contain: "layout paint style" }}
                 onScroll={sessionScroll.handleScroll}
                 ref={(el) => {
