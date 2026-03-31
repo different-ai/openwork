@@ -1659,6 +1659,10 @@ export default {
   "identities.botfather_step1_open": "1. Open @BotFather in Telegram",
   "identities.botfather_step1_run": "and run /newbot",
   "identities.botfather_step3_choose": "3. Choose a name and username for your bot",
+  "identities.botfather_step3_public": "Public",
+  "identities.botfather_step3_or_private": "for open inbox or",
+  "identities.botfather_step3_private": "Private",
+  "identities.botfather_step3_to_require": "to require",
   "identities.botfather_step_public": "Public bots can be found by anyone.",
   "identities.botfather_step_or_private": "Or create a private bot:",
   "identities.botfather_step_private": "Private bots require an invite link to start.",
@@ -1672,6 +1676,7 @@ export default {
   "identities.agent_status_loaded": "loaded",
   "identities.agent_status_missing": "missing",
   "identities.agent_status_none": "none",
+  "identities.agent_none": "none",
   "identities.peer_id_placeholder_telegram": "e.g. telegram:123456789",
   "identities.peer_id_placeholder_slack": "e.g. slack:U12345678",
 
