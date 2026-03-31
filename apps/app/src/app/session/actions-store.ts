@@ -66,11 +66,12 @@ export function createSessionActionsStore(options: {
   setBusyStartedAt: (value: number | null) => void;
   setCreatingSession: (value: boolean) => void;
   setError: (value: string | null) => void;
-  workspaceProjectDir: () => string;
   selectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  workspaceRootForId: (workspaceId: string) => string;
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
-  ensureSelectedWorkspaceRuntime: () => Promise<boolean>;
+  runtimeWorkspaceRoot: () => string;
+  ensureWorkspaceRuntime: (workspaceId: string) => Promise<boolean>;
   selectSession: (id: string) => Promise<void>;
   refreshSidebarWorkspaceSessions: (workspaceId: string) => Promise<void>;
   abortRefreshes: () => void;
@@ -107,7 +108,7 @@ export function createSessionActionsStore(options: {
     const text = draft.resolvedText ?? draft.text;
     parts.push({ type: "text", text } as TextPartInput);
 
-    const root = options.workspaceProjectDir().trim();
+    const root = options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim();
     const toAbsolutePath = (path: string) => {
       const trimmed = path.trim();
       if (!trimmed) return "";
@@ -145,7 +146,7 @@ export function createSessionActionsStore(options: {
 
   const buildCommandFileParts = async (draft: ComposerDraft): Promise<FilePartInput[]> => {
     const parts: FilePartInput[] = [];
-    const root = options.workspaceProjectDir().trim();
+    const root = options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim();
 
     const toAbsolutePath = (path: string) => {
       const trimmed = path.trim();
@@ -266,30 +267,15 @@ export function createSessionActionsStore(options: {
 
   const sessionRevertMessageId = createMemo(() => options.selectedSession()?.revert?.messageID ?? null);
 
-  async function createSessionInWorkspace(workspaceId: string, initialPrompt?: string) {
+  async function createReadySession(workspaceId: string, initialPrompt?: string) {
     const id = workspaceId.trim();
     if (!id) return undefined;
-    if (options.selectedWorkspaceId().trim() !== id) {
-      const selected = await Promise.resolve(options.selectWorkspace(id));
-      if (!selected) return undefined;
-    }
-    return await createSessionAndOpen(initialPrompt);
-  }
-
-  async function createSessionAndOpen(initialPrompt?: string) {
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent(FLUSH_PROMPT_EVENT));
-    }
-
-    const ready = await options.ensureSelectedWorkspaceRuntime();
-    if (!ready) {
-      return;
-    }
-
     const c = options.client();
     if (!c) {
-      return;
+      return undefined;
     }
+
+    const workspaceRoot = options.workspaceRootForId(id).trim() || options.selectedWorkspaceRoot().trim();
 
     const perfEnabled = options.developerMode();
     const startedAt = perfNow();
@@ -311,7 +297,8 @@ export function createSessionActionsStore(options: {
 
     mark("start", {
       baseUrl: options.baseUrl(),
-      workspace: options.selectedWorkspaceRoot().trim() || null,
+      workspace: workspaceRoot || null,
+      workspaceId: id,
     });
 
     options.abortRefreshes();
@@ -351,7 +338,7 @@ export function createSessionActionsStore(options: {
 
       let rawResult: Awaited<ReturnType<typeof c.session.create>>;
       try {
-        const directory = toSessionTransportDirectory(options.selectedWorkspaceRoot().trim()) || undefined;
+        const directory = toSessionTransportDirectory(workspaceRoot) || undefined;
         mark("session:create:start");
         rawResult = await c.session.create({ directory });
         mark("session:create:ok");
@@ -363,16 +350,13 @@ export function createSessionActionsStore(options: {
       }
 
       const session = unwrap(rawResult);
-      const workspaceId = options.selectedWorkspaceId().trim();
-      if (workspaceId) {
-        if (initialPrompt) {
-          saveSessionDraft(workspaceId, session.id, {
-            text: initialPrompt,
-            mode: "prompt",
-          });
-        } else {
-          clearSessionDraft(workspaceId, session.id);
-        }
+      if (initialPrompt) {
+        saveSessionDraft(id, session.id, {
+          text: initialPrompt,
+          mode: "prompt",
+        });
+      } else {
+        clearSessionDraft(id, session.id);
       }
 
       options.setBusyLabel("status.loading_session");
@@ -387,22 +371,21 @@ export function createSessionActionsStore(options: {
         options.setSessions([session, ...currentStoreSessions]);
       }
 
-      const wsId = options.selectedWorkspaceId().trim();
-      if (wsId) {
-        await options.refreshSidebarWorkspaceSessions(wsId).catch(() => undefined);
-      }
+      await options.refreshSidebarWorkspaceSessions(id).catch(() => undefined);
 
       options.navigate(`/session/${session.id}`);
 
       finishPerf(perfEnabled, "session.create", "done", startedAt, {
         runId,
         sessionID: session.id,
+        workspaceId: id,
       });
       return session.id;
     } catch (e) {
       finishPerf(perfEnabled, "session.create", "error", startedAt, {
         runId,
         error: e instanceof Error ? e.message : safeStringify(e),
+        workspaceId: id,
       });
       const message = e instanceof Error ? e.message : "Unknown error";
       options.setError(addOpencodeCacheHint(message));
@@ -413,6 +396,31 @@ export function createSessionActionsStore(options: {
       options.setBusyLabel(null);
       options.setBusyStartedAt(null);
     }
+  }
+
+  async function createSessionInWorkspace(workspaceId: string, initialPrompt?: string) {
+    const id = workspaceId.trim();
+    if (!id) return undefined;
+    if (options.selectedWorkspaceId().trim() !== id) {
+      const selected = await Promise.resolve(options.selectWorkspace(id));
+      if (!selected) return undefined;
+    }
+    const ready = await options.ensureWorkspaceRuntime(id);
+    if (!ready) {
+      return undefined;
+    }
+    return await createReadySession(id, initialPrompt);
+  }
+
+  async function createSessionAndOpen(initialPrompt?: string) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(FLUSH_PROMPT_EVENT));
+    }
+    const workspaceId = options.selectedWorkspaceId().trim();
+    if (!workspaceId) {
+      return undefined;
+    }
+    return await createSessionInWorkspace(workspaceId, initialPrompt);
   }
 
   async function sendPrompt(draft?: ComposerDraft) {
@@ -427,7 +435,10 @@ export function createSessionActionsStore(options: {
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length) return;
 
-    const ready = await options.ensureSelectedWorkspaceRuntime();
+    const workspaceId = options.selectedWorkspaceId().trim();
+    if (!workspaceId) return;
+
+    const ready = await options.ensureWorkspaceRuntime(workspaceId);
     if (!ready) return;
 
     const c = options.client();
@@ -443,7 +454,7 @@ export function createSessionActionsStore(options: {
 
     let sessionID = options.selectedSessionId();
     if (!sessionID) {
-      await createSessionAndOpen();
+      await createSessionInWorkspace(workspaceId);
       sessionID = options.selectedSessionId();
     }
     if (!sessionID) return;
@@ -604,7 +615,7 @@ export function createSessionActionsStore(options: {
 
     try {
       await compactSessionTyped(c, sessionID, model, {
-        directory: options.workspaceProjectDir().trim() || undefined,
+        directory: options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim() || undefined,
       });
       finishPerf(options.developerMode(), "session.compact", "done", startedAt, {
         sessionID,
@@ -775,7 +786,8 @@ export function createSessionActionsStore(options: {
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
     const c = options.client();
     if (!c) return [];
-    const list = await listCommandsTyped(c, options.selectedWorkspaceRoot().trim() || undefined);
+    const directory = options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim() || undefined;
+    const list = await listCommandsTyped(c, directory);
     if (list.some((entry) => entry.name === "compact")) {
       return list;
     }
@@ -801,7 +813,7 @@ export function createSessionActionsStore(options: {
     const activeClient = options.client();
     if (!activeClient) return [];
     try {
-      const directory = options.workspaceProjectDir().trim();
+      const directory = options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim();
       const result = unwrap(
         await activeClient.find.files({
           query: trimmed,

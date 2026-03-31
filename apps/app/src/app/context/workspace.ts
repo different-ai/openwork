@@ -451,6 +451,12 @@ export function createWorkspaceStore(options: {
     if (engineRoot) return engineRoot;
     return projectDir().trim();
   };
+  const runtimeWorkspaceRoot = createMemo(() => resolveCurrentRuntimeRoot().trim());
+  const workspaceRootForId = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return "";
+    return resolveWorkspaceRuntimeRoot(workspaces().find((workspace) => workspace.id === id) ?? null);
+  };
   const runtimeWorkspaceConfig = createMemo(() => {
     const id = runtimeWorkspaceId()?.trim() ?? "";
     if (!id) return null;
@@ -4090,6 +4096,7 @@ export function createWorkspaceStore(options: {
     selectedWorkspaceDisplay,
     selectedWorkspacePath,
     selectedWorkspaceRoot,
+    runtimeWorkspaceRoot,
     setCreateWorkspaceOpen,
     setCreateRemoteWorkspaceOpen,
     setProjectDir,
@@ -4100,6 +4107,7 @@ export function createWorkspaceStore(options: {
     setWorkspaces,
     clearSelectedSessionSurface,
     syncSelectedWorkspaceId: syncSelectedWorkspaceId,
+    workspaceRootForId,
     selectWorkspace,
     switchWorkspace,
     refreshEngine,

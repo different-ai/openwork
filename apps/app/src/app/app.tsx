@@ -607,12 +607,12 @@ export default function App() {
     }
   });
 
-  const ensureSelectedWorkspaceRuntime = async () => {
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (!workspaceId) return false;
-    const ready = await workspaceStore.switchWorkspace(workspaceId);
+  const ensureWorkspaceRuntime = async (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return false;
+    const ready = await workspaceStore.activateWorkspace(id);
     if (ready) {
-      await refreshSidebarWorkspaceSessions(workspaceId).catch(() => undefined);
+      await refreshSidebarWorkspaceSessions(id).catch(() => undefined);
     }
     return ready;
   };
@@ -926,11 +926,12 @@ export default function App() {
     setBusyStartedAt,
     setCreatingSession,
     setError,
-    workspaceProjectDir: () => workspaceStore.projectDir(),
     selectWorkspace: workspaceStore.selectWorkspace,
+    workspaceRootForId: workspaceStore.workspaceRootForId,
     selectedWorkspaceId: () => workspaceStore.selectedWorkspaceId(),
     selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot(),
-    ensureSelectedWorkspaceRuntime,
+    runtimeWorkspaceRoot: () => workspaceStore.runtimeWorkspaceRoot(),
+    ensureWorkspaceRuntime,
     selectSession,
     refreshSidebarWorkspaceSessions,
     abortRefreshes,
