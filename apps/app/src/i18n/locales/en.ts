@@ -1083,6 +1083,7 @@ export default {
   "sidebar.edit_connection": "Edit connection",
   "sidebar.test_connection": "Test connection",
   "sidebar.stop_sandbox": "Stop sandbox",
+  "sidebar.remove_workspace": "Remove workspace",
   "sidebar.show_fewer": "Show fewer",
   "sidebar.show_more": "Show {count} more",
   "sidebar.add_workspace": "Add new workspace",
@@ -1091,8 +1092,11 @@ export default {
   "sidebar.import_config": "Import config",
   "sidebar.progress": "Progress",
   "sidebar.delete_session": "Delete session",
+  "sidebar.no_sessions_yet": "No sessions yet",
 
   // ==================== Workspace Session List ====================
+  "workspace_list.connecting": "Connecting...",
+  "workspace_list.workspace_fallback": "Workspace",
   "workspace_list.reveal_explorer": "Reveal in Explorer",
   "workspace_list.reveal_finder": "Reveal in Finder",
   "workspace_list.show_more": "Show {count} more",
