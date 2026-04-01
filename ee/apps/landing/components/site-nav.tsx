@@ -34,7 +34,7 @@ export function SiteNav(props: Props) {
   const navItems = [
     { href: "/docs", label: "Docs", key: "docs" },
     { href: "/download", label: "Desktop", key: "download" },
-    { href: "/den", label: "Cloud", key: "den" },
+    { href: "https://app.openworklabs.com", label: "Cloud", key: "den" },
     { href: "/enterprise", label: "Enterprise", key: "enterprise" }
   ] as const;
 
@@ -63,7 +63,7 @@ export function SiteNav(props: Props) {
               <Link
                 key={item.key}
                 href={item.href}
-                {...(item.key === "docs" ? { target: "_blank" } : {})}
+                {...(/^(?:https?:\/\/)/.test(item.href) ? { target: "_blank", rel: "noreferrer" } : {})}
                 className={navLink(props.active === item.key)}
               >
                 {item.label}
@@ -116,7 +116,7 @@ export function SiteNav(props: Props) {
                 <Link
                   key={item.key}
                   href={item.href}
-                  {...(item.key === "docs" ? { target: "_blank" } : {})}
+                  {...(/^(?:https?:\/\/)/.test(item.href) ? { target: "_blank", rel: "noreferrer" } : {})}
                   className={`rounded-2xl px-4 py-3 ${navLink(
                     props.active === item.key
                   )}`}
