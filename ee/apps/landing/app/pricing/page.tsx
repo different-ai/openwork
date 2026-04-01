@@ -37,7 +37,11 @@ export default async function PricingPage() {
             </h1>
           </section>
 
-          <PricingGrid windowsCheckoutUrl={windowsCheckoutUrl} callUrl={callUrl} />
+          <PricingGrid
+            windowsCheckoutUrl={windowsCheckoutUrl}
+            callUrl={callUrl}
+            showHeader={false}
+          />
 
           <SiteFooter />
         </main>
