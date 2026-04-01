@@ -9,18 +9,18 @@ COPY .npmrc /app/.npmrc
 COPY patches /app/patches
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
-COPY ee/apps/den-controller/package.json /app/ee/apps/den-controller/package.json
+COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
 
 RUN pnpm install --frozen-lockfile
 
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db
-COPY ee/apps/den-controller /app/ee/apps/den-controller
+COPY ee/apps/den-api /app/ee/apps/den-api
 
 RUN pnpm --dir /app/ee/packages/utils run build
 RUN pnpm --dir /app/ee/packages/den-db run build
-RUN pnpm --dir /app/ee/apps/den-controller run build
+RUN pnpm --dir /app/ee/apps/den-api run build
 
 EXPOSE 8788
 
-CMD ["sh", "-lc", "yes | pnpm --dir /app/ee/packages/den-db run db:push && node ee/apps/den-controller/dist/index.js"]
+CMD ["sh", "-lc", "yes | pnpm --dir /app/ee/packages/den-db run db:push && node ee/apps/den-api/dist/server.js"]
