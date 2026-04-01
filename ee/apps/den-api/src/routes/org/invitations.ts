@@ -1,0 +1,126 @@
+import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
+import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import type { Hono } from "hono"
+import { z } from "zod"
+import { db } from "../../db.js"
+import { sendDenOrganizationInvitationEmail } from "../../email.js"
+import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { listAssignableRoles } from "../../orgs.js"
+import type { OrgRouteVariables } from "./shared.js"
+import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName, orgIdParamSchema } from "./shared.js"
+
+const inviteMemberSchema = z.object({
+  email: z.string().email(),
+  role: z.string().trim().min(1).max(64),
+})
+
+type InvitationId = typeof InvitationTable.$inferSelect.id
+const orgInvitationParamsSchema = orgIdParamSchema.extend(idParamSchema("invitationId").shape)
+
+export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.post("/v1/orgs/:orgId/invitations", requireUserMiddleware, paramValidator(orgIdParamSchema), resolveOrganizationContextMiddleware, jsonValidator(inviteMemberSchema), async (c) => {
+    const permission = ensureInviteManager(c)
+    if (!permission.ok) {
+      return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
+    }
+
+    const payload = c.get("organizationContext")
+    const user = c.get("user")
+    const input = c.req.valid("json")
+
+    const email = input.email.trim().toLowerCase()
+    const availableRoles = await listAssignableRoles(payload.organization.id)
+    const role = normalizeRoleName(input.role)
+    if (!availableRoles.has(role)) {
+      return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
+    }
+
+    const existingMembers = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+      .where(and(eq(MemberTable.organizationId, payload.organization.id), eq(AuthUserTable.email, email)))
+      .limit(1)
+
+    if (existingMembers[0]) {
+      return c.json({
+        error: "member_exists",
+        message: "That email address is already a member of this organization.",
+      }, 409)
+    }
+
+    const existingInvitation = await db
+      .select()
+      .from(InvitationTable)
+      .where(
+        and(
+          eq(InvitationTable.organizationId, payload.organization.id),
+          eq(InvitationTable.email, email),
+          eq(InvitationTable.status, "pending"),
+          gt(InvitationTable.expiresAt, new Date()),
+        ),
+      )
+      .limit(1)
+
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7)
+    const invitationId = existingInvitation[0]?.id ?? createInvitationId()
+
+    if (existingInvitation[0]) {
+      await db
+        .update(InvitationTable)
+        .set({ role, inviterId: normalizeDenTypeId("user", user.id), expiresAt })
+        .where(eq(InvitationTable.id, existingInvitation[0].id))
+    } else {
+      await db.insert(InvitationTable).values({
+        id: invitationId,
+        organizationId: payload.organization.id,
+        email,
+        role,
+        status: "pending",
+        inviterId: normalizeDenTypeId("user", user.id),
+        expiresAt,
+      })
+    }
+
+    await sendDenOrganizationInvitationEmail({
+      email,
+      inviteLink: buildInvitationLink(invitationId),
+      invitedByName: user.name ?? user.email ?? "OpenWork",
+      invitedByEmail: user.email ?? "",
+      organizationName: payload.organization.name,
+      role,
+    })
+
+    return c.json({ invitationId, email, role, expiresAt }, existingInvitation[0] ? 200 : 201)
+  })
+
+  app.post("/v1/orgs/:orgId/invitations/:invitationId/cancel", requireUserMiddleware, paramValidator(orgInvitationParamsSchema), resolveOrganizationContextMiddleware, async (c) => {
+    const permission = ensureInviteManager(c)
+    if (!permission.ok) {
+      return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
+    }
+
+    const payload = c.get("organizationContext")
+    const params = c.req.valid("param")
+    let invitationId: InvitationId
+    try {
+      invitationId = normalizeDenTypeId("invitation", params.invitationId)
+    } catch {
+      return c.json({ error: "invitation_not_found" }, 404)
+    }
+
+    const invitationRows = await db
+      .select({ id: InvitationTable.id })
+      .from(InvitationTable)
+      .where(and(eq(InvitationTable.id, invitationId), eq(InvitationTable.organizationId, payload.organization.id)))
+      .limit(1)
+
+    if (!invitationRows[0]) {
+      return c.json({ error: "invitation_not_found" }, 404)
+    }
+
+    await db.update(InvitationTable).set({ status: "canceled" }).where(eq(InvitationTable.id, invitationId))
+    return c.json({ success: true })
+  })
+}

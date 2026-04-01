@@ -86,7 +86,7 @@ function asTemplateCard(value: unknown): TemplateCard | null {
   };
 }
 
-export function useOrgTemplates(orgSlug: string) {
+export function useOrgTemplates(orgId: string | null) {
   const [templates, setTemplates] = useState<TemplateCard[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,8 +95,14 @@ export function useOrgTemplates(orgSlug: string) {
     setBusy(true);
     setError(null);
     try {
+      if (!orgId) {
+        setTemplates([]);
+        setError("Organization not found.");
+        return;
+      }
+
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates`,
+        `/v1/orgs/${encodeURIComponent(orgId)}/templates`,
         { method: "GET" },
         12000,
       );
@@ -120,7 +126,7 @@ export function useOrgTemplates(orgSlug: string) {
 
   useEffect(() => {
     void loadTemplates();
-  }, [orgSlug]);
+  }, [orgId]);
 
   return {
     templates,

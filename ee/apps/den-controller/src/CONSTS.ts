@@ -1,1 +1,0 @@
-export const DEN_WORKER_POLL_INTERVAL_MS = 1000;

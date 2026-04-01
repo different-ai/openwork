@@ -164,7 +164,7 @@ These are all opencode primitives you can read the docs to find out exactly how 
 - `/apps/share/`: share-link publisher service for OpenWork bundle imports.
 - `/ee/apps/landing/`: OpenWork landing page surfaces.
 - `/ee/apps/den-web/`: Den web UI for sign-in, worker creation, and future user-management flows.
-- `/ee/apps/den-controller/`: Den controller API that provisions/spins up worker runtimes.
+- `/ee/apps/den-api/`: Den control plane API (formerly `/ee/apps/den-controller/`) that provisions/spins up worker runtimes.
 - `/ee/apps/den-worker-proxy/`: proxy layer that keeps Daytona API keys server-side, refreshes signed worker preview URLs, and forwards worker traffic so users do not manage provider keys directly.
 - `/ee/apps/den-worker-runtime/`: worker runtime packaging (including Docker/runtime artifacts) deployed to Daytona sandboxes.
 
@@ -229,7 +229,7 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 ### Mode B composition (Web/Cloud services)
 
 - `/ee/apps/den-web/` is the hosted web control surface (sign-in, worker create, upcoming user management).
-- `/ee/apps/den-controller/` is the cloud control plane API (auth/session + worker CRUD + provisioning orchestration).
+- `/ee/apps/den-api/` (formerly `/ee/apps/den-controller/`) is the cloud control plane API (auth/session + worker CRUD + provisioning orchestration).
 - `/ee/apps/den-worker-runtime/` defines the runtime packaging and boot path used inside cloud workers (including Docker/snapshot artifacts and `openwork serve` startup assumptions).
 - `/ee/apps/den-worker-proxy/` fronts Daytona worker preview URLs, refreshes signed links with provider credentials, and proxies traffic to the worker runtime.
 - The OpenWork app (desktop or mobile client) connects to worker OpenWork server surfaces via URL + token (`/w/ws_*` when available).
@@ -238,7 +238,7 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 /ee/apps/den-web
     |
     v
-/ee/apps/den-controller
+/ee/apps/den-api (formerly /ee/apps/den-controller)
     |
     +--> Daytona/Render provisioning
     |        |

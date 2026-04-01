@@ -24,6 +24,7 @@
     "test:events": "pnpm --filter @openwork/app test:events",
     "test:todos": "pnpm --filter @openwork/app test:todos",
     "test:permissions": "pnpm --filter @openwork/app test:permissions",
+    "test:session-error-recovery": "pnpm --filter @openwork/app test:session-error-recovery",
     "test:session-scope": "pnpm --filter @openwork/app test:session-scope",
     "test:session-switch": "pnpm --filter @openwork/app test:session-switch",
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
