@@ -31,7 +31,7 @@ import {
 import { unwrap } from "../lib/opencode";
 import { abortSessionSafe } from "../lib/opencode-session";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
-import { describeDirectoryScope, toSessionTransportDirectory } from "../lib/session-scope";
+import { describeDirectoryScope, shouldApplyScopedSessionLoad, toSessionTransportDirectory } from "../lib/session-scope";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 
 export type SessionModelState = {
@@ -961,17 +961,18 @@ export function createSessionStore(options: {
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
+    const requestedRoot = scopeRoot ?? "";
 
     // IMPORTANT: OpenCode's session.list() supports server-side filtering by directory.
     // Use it to avoid fetching every session across every workspace root.
     //
     // Note: Use the same transport path format we send for create/delete so the
     // server-side strict directory equality checks hit the same stored value.
-    const queryDirectory = toSessionTransportDirectory(scopeRoot) || undefined;
+    const queryDirectory = toSessionTransportDirectory(requestedRoot) || undefined;
 
     sessionDebug("sessions:load:request", {
-      scopeRoot: scopeRoot ?? null,
-      scopeScope: describeDirectoryScope(scopeRoot),
+      scopeRoot: requestedRoot || null,
+      scopeScope: describeDirectoryScope(requestedRoot),
       queryDirectory: queryDirectory ?? null,
       queryScope: describeDirectoryScope(queryDirectory),
       selectedWorkspaceRoot: options.selectedWorkspaceRoot?.() ?? null,
@@ -980,8 +981,8 @@ export function createSessionStore(options: {
 
     const start = Date.now();
     sessionDebug("sessions:load:start", {
-      scopeRoot: scopeRoot ?? null,
-      scopeScope: describeDirectoryScope(scopeRoot),
+      scopeRoot: requestedRoot || null,
+      scopeScope: describeDirectoryScope(requestedRoot),
       queryDirectory: queryDirectory ?? null,
       queryScope: describeDirectoryScope(queryDirectory),
     });
@@ -1000,7 +1001,7 @@ export function createSessionStore(options: {
 
     // Defensive client-side filter in case the server returns sessions spanning
     // multiple roots (e.g. older servers or proxies).
-    const root = normalizeDirectoryPath(scopeRoot);
+    const root = normalizeDirectoryPath(requestedRoot);
     const filtered = root
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
@@ -1015,6 +1016,22 @@ export function createSessionStore(options: {
       })),
     });
     sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
+
+    const activeWorkspaceRoot = options.selectedWorkspaceRoot?.() ?? "";
+    const shouldApply =
+      options.client() === c
+      && shouldApplyScopedSessionLoad({ loadedScopeRoot: requestedRoot, workspaceRoot: activeWorkspaceRoot });
+    if (!shouldApply) {
+      sessionDebug("sessions:load:stale", {
+        requestedRoot: requestedRoot || null,
+        requestedScope: describeDirectoryScope(requestedRoot),
+        activeWorkspaceRoot: activeWorkspaceRoot || null,
+        activeWorkspaceScope: describeDirectoryScope(activeWorkspaceRoot),
+        clientChanged: options.client() !== c,
+      });
+      return;
+    }
+
     setLoadedScopeRoot(root);
     rememberSessions(filtered);
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
