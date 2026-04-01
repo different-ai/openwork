@@ -5,6 +5,7 @@ export type DenOrgSummary = {
   logo: string | null;
   metadata: string | null;
   role: string;
+  orgMemberId: string;
   membershipId: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -203,8 +204,9 @@ export function parseOrgListPayload(payload: unknown): {
       const name = asString(entry.name);
       const slug = asString(entry.slug);
       const role = asString(entry.role);
+      const orgMemberId = asString(entry.orgMemberId);
       const membershipId = asString(entry.membershipId);
-      if (!id || !name || !slug || !role || !membershipId) {
+      if (!id || !name || !slug || !role || !orgMemberId || !membershipId) {
         return null;
       }
 
@@ -215,6 +217,7 @@ export function parseOrgListPayload(payload: unknown): {
         logo: asString(entry.logo),
         metadata: asString(entry.metadata),
         role,
+        orgMemberId,
         membershipId,
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),

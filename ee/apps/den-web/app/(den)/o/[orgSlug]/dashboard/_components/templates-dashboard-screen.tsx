@@ -41,9 +41,9 @@ function getTemplateAccent(seed: string) {
 }
 
 export function SharedSetupsScreen() {
-  const { orgSlug, activeOrg, orgContext } = useOrgDashboard();
+  const { orgSlug, orgId, activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
-  const { templates, busy, error, reloadTemplates } = useOrgTemplates(orgSlug);
+  const { templates, busy, error, reloadTemplates } = useOrgTemplates(orgId);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -92,8 +92,12 @@ export function SharedSetupsScreen() {
     setDeletingId(templateId);
     setDeleteError(null);
     try {
+      if (!orgId) {
+        throw new Error("Organization not found.");
+      }
+
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates/${encodeURIComponent(templateId)}`,
+        `/v1/orgs/${encodeURIComponent(orgId)}/templates/${encodeURIComponent(templateId)}`,
         { method: "DELETE" },
         12000,
       );

@@ -1,6 +1,7 @@
 import { fromString, getType, typeid } from "typeid-js"
 
 export const denTypeIdPrefixes = {
+  request: "req",
   user: "usr",
   session: "ses",
   account: "acc",
