@@ -1,6 +1,6 @@
 # Den API
 
-Hono-based Den control plane implementation.
+Hono-based Den control plane implementation (`den-api`, formerly `den-controller`).
 
 This package is the active Den control plane implementation.
 
@@ -36,7 +36,7 @@ Each major folder also has its own `README.md` so future agents can inspect one 
 
 ## Migration approach
 
-1. Keep `den-api` as the source of truth for Den control-plane behavior.
+1. Keep `den-api` (formerly `den-controller`) as the source of truth for Den control-plane behavior.
 2. Add endpoints in focused Hono route groups one surface at a time.
 3. Reuse shared middleware and Zod validators instead of duplicating request/session/org plumbing.
 4. Leave a short README in each route area when the structure changes so later agents can recover context fast.

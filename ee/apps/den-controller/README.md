@@ -1,6 +1,6 @@
 # Deprecated: `den-controller`
 
-`ee/apps/den-controller` has been replaced by `ee/apps/den-api`.
+`ee/apps/den-controller` has been replaced by `ee/apps/den-api` (`den-api`, formerly `den-controller`).
 
 Use `ee/apps/den-api` for:
 
