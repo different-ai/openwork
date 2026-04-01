@@ -15,6 +15,8 @@ export type RemoteWorkspaceInput = {
 };
 
 export type CreateWorkspaceProgress = {
+  backend?: "docker" | "microsandbox";
+  backendLabel?: string;
   runId: string;
   startedAt: number;
   stage: string;
@@ -34,6 +36,7 @@ export type CreateWorkspaceModalProps = {
   onConfirm: (preset: WorkspacePreset, folder: string | null) => void;
   onConfirmRemote?: (input: RemoteWorkspaceInput) => Promise<boolean> | boolean | void;
   onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
+  onConfirmExtraWorker?: (preset: WorkspacePreset, folder: string | null) => void;
   onConfirmTemplate?: (
     template: DenTemplate,
     preset: WorkspacePreset,
@@ -61,6 +64,8 @@ export type CreateWorkspaceModalProps = {
   onWorkerRetry?: () => void;
   workerDebugLines?: string[];
   workerSubmitting?: boolean;
+  extraWorkerLabel?: string;
+  extraWorkerSubmitting?: boolean;
   submittingProgress?: CreateWorkspaceProgress | null;
   localDisabled?: boolean;
   localDisabledReason?: string | null;

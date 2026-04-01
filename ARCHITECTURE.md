@@ -30,6 +30,23 @@ Auto-detection can exist as a convenience, but should be tiered and explainable:
 
 The readiness check should be a clear, single command (e.g. `docker info`) and the UI should show the exact error output when it fails.
 
+### Example: MicroSandbox-backed sandboxes (desktop)
+
+When enabling MicroSandbox-backed sandbox mode, prefer an explicit override for the `msb` binary:
+
+- `OPENWORK_MICROSANDBOX_BIN` (absolute path to `msb`)
+
+This keeps the desktop app predictable on systems where GUI PATH resolution differs from shell PATH.
+
+Default expectations:
+
+1. Honor `OPENWORK_MICROSANDBOX_BIN` if set.
+2. Try the process PATH.
+3. On macOS, try the login PATH from `/usr/libexec/path_helper`.
+4. Fall back to well-known locations like `~/.microsandbox/bin/msb`.
+
+The readiness check should be a clear, single command (for example `msb ls --format json`) and the UI should show the exact error output when it fails. On macOS, MicroSandbox should be treated as Apple Silicon-only. On Linux, it should be treated as requiring hardware virtualization (KVM).
+
 ## Minimal use of Tauri
 We move most of the functionality to the openwork server which interfaces mostly with FS and proxies to opencode.
 

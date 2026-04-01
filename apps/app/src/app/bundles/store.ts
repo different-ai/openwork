@@ -662,6 +662,7 @@ export function createBundlesStore(options: {
       const badge =
         workspace.workspaceType === "remote"
           ? workspace.sandboxBackend === "docker" ||
+            workspace.sandboxBackend === "microsandbox" ||
             Boolean(workspace.sandboxRunId?.trim()) ||
             Boolean(workspace.sandboxContainerName?.trim())
             ? "Sandbox"
@@ -805,9 +806,14 @@ export function createBundlesStore(options: {
     }
   };
 
-  const handleCreateSandboxConfirm = async (preset: WorkspacePreset, folder: string | null) => {
+  const handleCreateManagedSandboxConfirm = async (
+    backend: "docker" | "microsandbox",
+    preset: WorkspacePreset,
+    folder: string | null,
+  ) => {
     const request = createWorkspaceRequest();
     const ok = await options.workspaceStore.createSandboxFlow(
+      backend,
       preset,
       folder,
       request
@@ -843,6 +849,16 @@ export function createBundlesStore(options: {
     }
   };
 
+  const handleCreateSandboxConfirm = async (
+    preset: WorkspacePreset,
+    folder: string | null,
+  ) => handleCreateManagedSandboxConfirm("docker", preset, folder);
+
+  const handleCreateMicrosandboxConfirm = async (
+    preset: WorkspacePreset,
+    folder: string | null,
+  ) => handleCreateManagedSandboxConfirm("microsandbox", preset, folder);
+
   return {
     queueBundleLink,
     openDebugBundleRequest,
@@ -866,6 +882,7 @@ export function createBundlesStore(options: {
     openRemoteConnectFromSkillDestination,
     handleCreateWorkspaceConfirm,
     handleCreateSandboxConfirm,
+    handleCreateMicrosandboxConfirm,
     dismissUntrustedBundleWarning,
     confirmUntrustedBundleWarning,
     bundleImportChoice,

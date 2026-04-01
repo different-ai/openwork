@@ -336,7 +336,8 @@ const SANDBOX_NETWORK_HINTS = [
 export function isSandboxWorkspace(workspace: WorkspaceInfo) {
   return (
     workspace.workspaceType === "remote" &&
-    (workspace.sandboxBackend === "docker" ||
+    ((workspace.sandboxBackend === "docker" ||
+      workspace.sandboxBackend === "microsandbox") ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim()))
   );
@@ -369,7 +370,10 @@ export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error
     };
   }
 
-  const message = "Sandbox is offline. Start Docker Desktop, then test connection.";
+  const message =
+    workspace.sandboxBackend === "microsandbox"
+      ? "Sandbox is offline. Start MicroSandbox, then test connection."
+      : "Sandbox is offline. Start Docker Desktop, then test connection.";
   return {
     tone: "offline" as const,
     label: "Offline",

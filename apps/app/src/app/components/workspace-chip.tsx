@@ -24,7 +24,8 @@ export default function WorkspaceChip(props: {
       : props.workspace.path;
   const isSandboxWorkspace =
     props.workspace.workspaceType === "remote" &&
-    (props.workspace.sandboxBackend === "docker" ||
+    ((props.workspace.sandboxBackend === "docker" ||
+      props.workspace.sandboxBackend === "microsandbox") ||
       Boolean(props.workspace.sandboxRunId?.trim()) ||
       Boolean(props.workspace.sandboxContainerName?.trim()));
   const translate = (key: string) => t(key, currentLocale());

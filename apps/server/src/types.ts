@@ -6,7 +6,7 @@ export type ApprovalMode = "manual" | "auto";
 
 export type TokenScope = "owner" | "collaborator" | "viewer";
 
-export type SandboxBackend = "none" | "docker" | "container";
+export type SandboxBackend = "none" | "docker" | "container" | "microsandbox";
 
 export type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine" | "external";
 

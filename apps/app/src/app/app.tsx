@@ -2463,6 +2463,13 @@ export default function App() {
             ? bundlesStore.handleCreateSandboxConfirm
             : undefined
         }
+        onConfirmExtraWorker={
+          isTauriRuntime()
+            ? bundlesStore.handleCreateMicrosandboxConfirm
+            : undefined
+        }
+        workerLabel="Create Docker sandbox"
+        extraWorkerLabel="Create MicroSandbox"
         workerDisabled={(() => {
           if (!isTauriRuntime()) return true;
           if (workspaceStore.sandboxDoctorBusy?.()) return true;
@@ -2516,7 +2523,14 @@ export default function App() {
         onWorkerRetry={() => {
           void workspaceStore.refreshSandboxDoctor?.();
         }}
-        workerSubmitting={workspaceStore.sandboxPreflightBusy?.() ?? false}
+        workerSubmitting={
+          (workspaceStore.sandboxPreflightBusy?.() ?? false) &&
+          workspaceStore.sandboxActiveBackend?.() !== "microsandbox"
+        }
+        extraWorkerSubmitting={
+          (workspaceStore.sandboxPreflightBusy?.() ?? false) &&
+          workspaceStore.sandboxActiveBackend?.() === "microsandbox"
+        }
         localDisabled={!isTauriRuntime()}
         localDisabledReason={
           !isTauriRuntime()

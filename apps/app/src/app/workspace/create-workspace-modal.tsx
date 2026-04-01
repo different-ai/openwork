@@ -534,8 +534,11 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           confirmLabel={props.confirmLabel}
           workerLabel={props.workerLabel}
           onConfirmWorker={props.onConfirmWorker}
+          extraWorkerLabel={props.extraWorkerLabel}
+          onConfirmExtraWorker={props.onConfirmExtraWorker}
           preset={preset()}
           workerSubmitting={workerSubmitting()}
+          extraWorkerSubmitting={props.extraWorkerSubmitting ?? false}
           workerDisabled={workerDisabled()}
           workerDisabledReason={workerDisabledReason()}
           workerCtaLabel={props.workerCtaLabel}

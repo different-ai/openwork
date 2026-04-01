@@ -165,6 +165,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
     ? workspace.sandboxBackend === "docker" ||
+      workspace.sandboxBackend === "microsandbox" ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim())
       ? "Sandbox"

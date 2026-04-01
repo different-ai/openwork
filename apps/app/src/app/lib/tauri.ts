@@ -124,7 +124,7 @@ export type WorkspaceInfo = {
   openworkWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
+  sandboxBackend?: "docker" | "microsandbox" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 };
@@ -210,7 +210,7 @@ export async function workspaceCreateRemote(input: {
   openworkWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
+  sandboxBackend?: "docker" | "microsandbox" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
@@ -245,7 +245,7 @@ export async function workspaceUpdateRemote(input: {
   openworkWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
+  sandboxBackend?: "docker" | "microsandbox" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
@@ -441,14 +441,14 @@ export type OrchestratorDetachedHost = {
   ownerToken?: string | null;
   hostToken: string;
   port: number;
-  sandboxBackend?: "docker" | null;
+  sandboxBackend?: "docker" | "microsandbox" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 };
 
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
-  sandboxBackend?: "none" | "docker" | null;
+  sandboxBackend?: "none" | "docker" | "microsandbox" | null;
   runId?: string | null;
   openworkToken?: string | null;
   openworkHostToken?: string | null;
@@ -486,12 +486,22 @@ export type SandboxDoctorResult = {
   } | null;
 };
 
-export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
-  return invoke<SandboxDoctorResult>("sandbox_doctor");
+export async function sandboxDoctor(
+  sandboxBackend?: "docker" | "microsandbox" | null,
+): Promise<SandboxDoctorResult> {
+  return invoke<SandboxDoctorResult>("sandbox_doctor", {
+    sandboxBackend: sandboxBackend ?? null,
+  });
 }
 
-export async function sandboxStop(containerName: string): Promise<ExecResult> {
-  return invoke<ExecResult>("sandbox_stop", { containerName });
+export async function sandboxStop(
+  containerName: string,
+  sandboxBackend?: "docker" | "microsandbox" | null,
+): Promise<ExecResult> {
+  return invoke<ExecResult>("sandbox_stop", {
+    containerName,
+    sandboxBackend: sandboxBackend ?? null,
+  });
 }
 
 export type OpenworkDockerCleanupResult = {

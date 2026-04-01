@@ -83,14 +83,18 @@ export type WorkspaceDebugEvent = {
 
 export type SandboxCreateProgressStepStatus = "pending" | "active" | "done" | "error";
 
+export type LocalSandboxBackend = "docker" | "microsandbox";
+
 export type SandboxCreateProgressStep = {
-  key: "docker" | "workspace" | "sandbox" | "health" | "connect";
+  key: "runtime" | "workspace" | "sandbox" | "health" | "connect";
   label: string;
   status: SandboxCreateProgressStepStatus;
   detail?: string | null;
 };
 
 export type SandboxCreateProgressState = {
+  backend: LocalSandboxBackend;
+  backendLabel: string;
   runId: string;
   startedAt: number;
   stage: string;
@@ -269,6 +273,7 @@ export function createWorkspaceStore(options: {
   const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
   const [sandboxPreflightBusy, setSandboxPreflightBusy] = createSignal(false);
   const [sandboxCreatePhase, setSandboxCreatePhase] = createSignal<SandboxCreatePhase>("idle");
+  const [sandboxActiveBackend, setSandboxActiveBackend] = createSignal<LocalSandboxBackend | null>(null);
 
   const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
   const [lastSandboxCreateProgress, setLastSandboxCreateProgress] =
@@ -314,6 +319,17 @@ export function createWorkspaceStore(options: {
     const value = String(message ?? "").trim() || "Sandbox failed to start";
     setSandboxCreateProgress((prev) => (prev ? { ...prev, error: value } : prev));
   };
+
+  const sandboxBackendLabel = (backend: LocalSandboxBackend) =>
+    backend === "microsandbox" ? "MicroSandbox" : "Docker";
+
+  const sandboxReadinessLabel = (backend: LocalSandboxBackend) =>
+    `${sandboxBackendLabel(backend)} ready`;
+
+  const sandboxUnavailableMessage = (backend: LocalSandboxBackend) =>
+    backend === "microsandbox"
+      ? "MicroSandbox is required for this worker. Install it and try again."
+      : "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
 
   const makeRunId = () => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -1315,17 +1331,21 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function refreshSandboxDoctor() {
+  async function refreshManagedSandboxDoctor(backend: LocalSandboxBackend) {
     if (!isTauriRuntime()) {
-      setSandboxDoctorResult(null);
-      setSandboxDoctorCheckedAt(Date.now());
+      if (backend === "docker") {
+        setSandboxDoctorResult(null);
+        setSandboxDoctorCheckedAt(Date.now());
+      }
       return null;
     }
     if (sandboxDoctorBusy()) return sandboxDoctorResult();
     setSandboxDoctorBusy(true);
     try {
-      const result = await sandboxDoctor();
-      setSandboxDoctorResult(result);
+      const result = await sandboxDoctor(backend);
+      if (backend === "docker") {
+        setSandboxDoctorResult(result);
+      }
       return result;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -1336,12 +1356,20 @@ export function createWorkspaceStore(options: {
         ready: false,
         error: message,
       };
-      setSandboxDoctorResult(fallback);
+      if (backend === "docker") {
+        setSandboxDoctorResult(fallback);
+      }
       return fallback;
     } finally {
-      setSandboxDoctorCheckedAt(Date.now());
+      if (backend === "docker") {
+        setSandboxDoctorCheckedAt(Date.now());
+      }
       setSandboxDoctorBusy(false);
     }
+  }
+
+  async function refreshSandboxDoctor() {
+    return await refreshManagedSandboxDoctor("docker");
   }
 
   async function activateWorkspace(
@@ -2241,6 +2269,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function createSandboxFlow(
+    backend: LocalSandboxBackend,
     preset: WorkspacePreset,
     folder: string | null,
     input?: { onReady?: () => Promise<void> | void },
@@ -2257,22 +2286,26 @@ export function createWorkspaceStore(options: {
 
     const runId = makeRunId();
     const startedAt = Date.now();
+    const backendLabel = sandboxBackendLabel(backend);
+    setSandboxActiveBackend(backend);
     setSandboxCreatePhase("preflight");
     setSandboxPreflightBusy(true);
     options.setError(null);
     clearSandboxCreateProgress();
 
-    const doctor = await refreshSandboxDoctor();
+    const doctor = await refreshManagedSandboxDoctor(backend);
     setSandboxPreflightBusy(false);
     setSandboxCreatePhase("provisioning");
     setSandboxCreateProgress({
+      backend,
+      backendLabel,
       runId,
       startedAt,
-      stage: "Checking Docker...",
+      stage: `Checking ${backendLabel}...`,
       error: null,
       logs: [],
       steps: [
-        { key: "docker", label: "Docker ready", status: "active", detail: null },
+        { key: "runtime", label: sandboxReadinessLabel(backend), status: "active", detail: null },
         { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
         { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
         { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
@@ -2283,35 +2316,35 @@ export function createWorkspaceStore(options: {
     if (doctor?.debug) {
       const selectedBin = doctor.debug.selectedBin?.trim();
       if (selectedBin) {
-        pushSandboxCreateLog(`Docker binary: ${selectedBin}`);
+        pushSandboxCreateLog(`${backendLabel} binary: ${selectedBin}`);
       }
       const candidates = (doctor.debug.candidates ?? []).filter((item) => item?.trim());
       if (candidates.length) {
-        pushSandboxCreateLog(`Docker candidates: ${candidates.join(", ")}`);
+        pushSandboxCreateLog(`${backendLabel} candidates: ${candidates.join(", ")}`);
       }
       const versionDebug = doctor.debug.versionCommand;
       if (versionDebug) {
-        pushSandboxCreateLog(`docker --version exit=${versionDebug.status}`);
-        if (versionDebug.stderr?.trim()) pushSandboxCreateLog(`docker --version stderr: ${versionDebug.stderr.trim()}`);
+        const versionLabel = backend === "microsandbox" ? "msb --version" : "docker --version";
+        pushSandboxCreateLog(`${versionLabel} exit=${versionDebug.status}`);
+        if (versionDebug.stderr?.trim()) pushSandboxCreateLog(`${versionLabel} stderr: ${versionDebug.stderr.trim()}`);
       }
       const infoDebug = doctor.debug.infoCommand;
       if (infoDebug) {
-        pushSandboxCreateLog(`docker info exit=${infoDebug.status}`);
-        if (infoDebug.stderr?.trim()) pushSandboxCreateLog(`docker info stderr: ${infoDebug.stderr.trim()}`);
+        const infoLabel = backend === "microsandbox" ? "msb ls --format json" : "docker info";
+        pushSandboxCreateLog(`${infoLabel} exit=${infoDebug.status}`);
+        if (infoDebug.stderr?.trim()) pushSandboxCreateLog(`${infoLabel} stderr: ${infoDebug.stderr.trim()}`);
       }
     }
     if (!doctor?.ready) {
-      const detail =
-        doctor?.error?.trim() ||
-        "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
+      const detail = doctor?.error?.trim() || sandboxUnavailableMessage(backend);
       options.setError(detail);
-      setSandboxStep("docker", { status: "error", detail });
+      setSandboxStep("runtime", { status: "error", detail });
       setSandboxError(detail);
-      setSandboxStage("Docker not ready");
+      setSandboxStage(`${backendLabel} not ready`);
       setSandboxCreatePhase("idle");
       return false;
     }
-    setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
+    setSandboxStep("runtime", { status: "done", detail: doctor.serverVersion ?? doctor.clientVersion ?? null });
     setSandboxStage("Preparing worker...");
 
     try {
@@ -2391,20 +2424,40 @@ export function createWorkspaceStore(options: {
               }
             }
 
-            if (stage === "docker.config") {
-              const selected = String(payload.payload?.openworkDockerBin ?? "").trim();
+            if (stage === "docker.config" || stage === "microsandbox.config") {
+              const selected = String(
+                stage === "microsandbox.config"
+                  ? payload.payload?.openworkMicrosandboxBin
+                  : payload.payload?.openworkDockerBin ?? "",
+              ).trim();
               if (selected) {
-                pushSandboxCreateLog(`OPENWORK_DOCKER_BIN=${selected}`);
+                pushSandboxCreateLog(
+                  stage === "microsandbox.config"
+                    ? `OPENWORK_MICROSANDBOX_BIN=${selected}`
+                    : `OPENWORK_DOCKER_BIN=${selected}`,
+                );
               }
-              const resolved = String(payload.payload?.resolvedDockerBin ?? "").trim();
+              const resolved = String(
+                stage === "microsandbox.config"
+                  ? payload.payload?.resolvedMicrosandboxBin
+                  : payload.payload?.resolvedDockerBin ?? "",
+              ).trim();
               if (resolved) {
-                pushSandboxCreateLog(`Resolved docker: ${resolved}`);
+                pushSandboxCreateLog(
+                  stage === "microsandbox.config"
+                    ? `Resolved MicroSandbox: ${resolved}`
+                    : `Resolved docker: ${resolved}`,
+                );
               }
               const candidates = Array.isArray(payload.payload?.candidates)
                 ? payload.payload.candidates.filter((item: unknown) => String(item ?? "").trim())
                 : [];
               if (candidates.length) {
-                pushSandboxCreateLog(`Docker probe paths: ${candidates.join(", ")}`);
+                pushSandboxCreateLog(
+                  stage === "microsandbox.config"
+                    ? `MicroSandbox probe paths: ${candidates.join(", ")}`
+                    : `Docker probe paths: ${candidates.join(", ")}`,
+                );
               }
             }
 
@@ -2442,7 +2495,7 @@ export function createWorkspaceStore(options: {
 
         const host = await orchestratorStartDetached({
           workspacePath: resolvedFolder,
-          sandboxBackend: "docker",
+          sandboxBackend: backend,
           runId,
         });
         setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
@@ -2458,7 +2511,7 @@ export function createWorkspaceStore(options: {
           openworkHostToken: host.hostToken,
           directory: resolvedFolder,
           displayName: name,
-          sandboxBackend: host.sandboxBackend ?? "docker",
+          sandboxBackend: host.sandboxBackend ?? backend,
           sandboxRunId: host.sandboxRunId ?? runId,
           sandboxContainerName: host.sandboxContainerName ?? null,
           manageBusy: false,
@@ -2497,6 +2550,7 @@ export function createWorkspaceStore(options: {
     } finally {
       setSandboxPreflightBusy(false);
       setSandboxCreatePhase("idle");
+      setSandboxActiveBackend(null);
     }
   }
 
@@ -2511,7 +2565,7 @@ export function createWorkspaceStore(options: {
     closeModal?: boolean;
 
     // Sandbox lifecycle metadata (desktop-managed)
-    sandboxBackend?: "docker" | null;
+    sandboxBackend?: LocalSandboxBackend | null;
     sandboxRunId?: string | null;
     sandboxContainerName?: string | null;
   }) {
@@ -2567,7 +2621,7 @@ export function createWorkspaceStore(options: {
       } catch (error) {
         // Sandbox workers can report healthy before listWorkspaces is fully ready.
         // Fall back to host-level OpenCode URL so the worker can still be registered.
-        if (input.sandboxBackend !== "docker") {
+        if (!input.sandboxBackend) {
           throw error;
         }
         wsDebug("sandbox:openwork-resolve-fallback:error", {
@@ -2582,7 +2636,7 @@ export function createWorkspaceStore(options: {
         openworkWorkspace = resolved.workspace;
         resolvedHostUrl = resolved.hostUrl;
         resolvedAuth = resolved.auth;
-      } else if (input.sandboxBackend === "docker") {
+      } else if (input.sandboxBackend) {
         resolvedHostUrl = hostUrl;
         resolvedBaseUrl = `${hostUrl.replace(/\/+$/, "")}/opencode`;
         resolvedDirectory = directory || resolvedDirectory;
@@ -2982,7 +3036,9 @@ export function createWorkspaceStore(options: {
       }
 
       const isSandboxWorkspace =
-        workspace.sandboxBackend === "docker" || Boolean(workspace.sandboxContainerName?.trim());
+        workspace.sandboxBackend === "docker" ||
+        workspace.sandboxBackend === "microsandbox" ||
+        Boolean(workspace.sandboxContainerName?.trim());
 
       if (!isSandboxWorkspace) {
         return Boolean(await reconnect());
@@ -3005,17 +3061,18 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      const doctor = await refreshSandboxDoctor();
+      const backend = workspace.sandboxBackend ?? "docker";
+      const backendLabel = sandboxBackendLabel(backend);
+      const doctor = await refreshManagedSandboxDoctor(backend);
       if (!doctor?.ready) {
         const detail =
-          doctor?.error?.trim() ||
-          "Docker needs to be running before we can get this worker back online.";
+          doctor?.error?.trim() || `${backendLabel} needs to be running before we can get this worker back online.`;
         throw new Error(detail);
       }
 
       const host = await orchestratorStartDetached({
         workspacePath,
-        sandboxBackend: "docker",
+        sandboxBackend: backend,
         runId: workspace.sandboxRunId?.trim() || null,
         openworkToken:
           workspace.openworkClientToken?.trim() ||
@@ -3046,7 +3103,7 @@ export function createWorkspaceStore(options: {
         openworkHostToken: host.hostToken,
         openworkWorkspaceId: resolved.workspace.id,
         openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
-        sandboxBackend: host.sandboxBackend ?? "docker",
+        sandboxBackend: host.sandboxBackend ?? backend,
         sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
         sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
       });
@@ -3086,6 +3143,7 @@ export function createWorkspaceStore(options: {
 
     const workspace = workspaces().find((entry) => entry.id === id) ?? null;
     const containerName = workspace?.sandboxContainerName?.trim() ?? "";
+    const backend = workspace?.sandboxBackend === "microsandbox" ? "microsandbox" : "docker";
     if (!containerName) {
       options.setError("Sandbox container name missing.");
       return;
@@ -3097,7 +3155,7 @@ export function createWorkspaceStore(options: {
     options.setError(null);
 
     try {
-      const result = await sandboxStop(containerName);
+      const result = await sandboxStop(containerName, backend);
       if (!result.ok) {
         const details = [result.stderr?.trim(), result.stdout?.trim()]
           .filter(Boolean)
@@ -4067,6 +4125,7 @@ export function createWorkspaceStore(options: {
     sandboxDoctorBusy,
     sandboxPreflightBusy,
     sandboxCreatePhase,
+    sandboxActiveBackend,
     projectDir,
     workspaces,
     selectedWorkspaceId,

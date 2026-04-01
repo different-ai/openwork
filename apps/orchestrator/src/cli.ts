@@ -43,9 +43,14 @@ import type { TuiHandle } from "./tui/app.js";
 
 type ApprovalMode = "manual" | "auto";
 
-type SandboxMode = "none" | "auto" | "docker" | "container";
+type SandboxMode =
+  | "none"
+  | "auto"
+  | "docker"
+  | "container"
+  | "microsandbox";
 
-type ResolvedSandboxMode = "none" | "docker" | "container";
+type ResolvedSandboxMode = "none" | "docker" | "container" | "microsandbox";
 
 type LogFormat = "pretty" | "json";
 
@@ -575,12 +580,13 @@ function readSandboxMode(
     normalized === "none" ||
     normalized === "auto" ||
     normalized === "docker" ||
-    normalized === "container"
+    normalized === "container" ||
+    normalized === "microsandbox"
   ) {
     return normalized as SandboxMode;
   }
   throw new Error(
-    `Invalid ${key} value: ${raw}. Use none|auto|docker|container.`,
+    `Invalid ${key} value: ${raw}. Use none|auto|docker|container|microsandbox.`,
   );
 }
 
@@ -1100,6 +1106,88 @@ async function resolveDockerCandidates(): Promise<string[]> {
 async function resolveDockerCommand(): Promise<string> {
   const candidates = await resolveDockerCandidates();
   return candidates[0] ?? "docker";
+}
+
+function microsandboxPlatformError(): string | null {
+  if (process.platform === "win32") {
+    return "MicroSandbox is not available on Windows yet.";
+  }
+  if (process.platform === "darwin" && process.arch !== "arm64") {
+    return "MicroSandbox on macOS requires Apple Silicon (M-series).";
+  }
+  return null;
+}
+
+async function resolveMicrosandboxCandidates(): Promise<string[]> {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(trimmed);
+  };
+
+  for (const key of [
+    "OPENWORK_MICROSANDBOX_BIN",
+    "MICROSANDBOX_BIN",
+    "MSB_BIN",
+  ]) {
+    const value = process.env[key];
+    if (value) push(value);
+  }
+
+  const addFromPath = (value?: string | null) => {
+    if (!value) return;
+    for (const dir of value.split(delimiter)) {
+      if (!dir.trim()) continue;
+      push(join(dir, "msb"));
+    }
+  };
+
+  addFromPath(process.env.PATH ?? "");
+
+  if (process.platform === "darwin") {
+    const helperPaths = await readPathHelperPaths();
+    for (const dir of helperPaths) {
+      push(join(dir, "msb"));
+    }
+  }
+
+  for (const raw of [
+    "/opt/homebrew/bin/msb",
+    "/usr/local/bin/msb",
+    join(homedir(), ".microsandbox", "bin", "msb"),
+  ]) {
+    push(raw);
+  }
+
+  const valid: string[] = [];
+  for (const candidate of out) {
+    if (await isExecutable(candidate)) {
+      valid.push(candidate);
+    }
+  }
+  return valid;
+}
+
+async function resolveMicrosandboxCommand(): Promise<string> {
+  const candidates = await resolveMicrosandboxCandidates();
+  return candidates[0] ?? "msb";
+}
+
+async function ensureMicrosandboxSystemReady(
+  microsandboxCommand: string,
+): Promise<void> {
+  const platformError = microsandboxPlatformError();
+  if (platformError) {
+    throw new Error(platformError);
+  }
+  if (!(await probeCommand(microsandboxCommand, ["--version"]))) {
+    throw new Error(
+      "MicroSandbox CLI not found. Install it with `curl -fsSL https://install.microsandbox.dev | sh`, or set OPENWORK_MICROSANDBOX_BIN to the full msb path.",
+    );
+  }
 }
 
 async function ensureWorkspace(workspace: string): Promise<string> {
@@ -1713,7 +1801,7 @@ function resolveSandboxSidecarTarget(
   mode: ResolvedSandboxMode,
 ): SidecarTarget | null {
   if (mode === "none") return resolveSidecarTarget();
-  // Sandbox runs inside Linux (docker / container).
+  // Sandbox runs inside Linux (docker / container / microsandbox).
   if (process.arch === "arm64") return "linux-arm64";
   if (process.arch === "x64") return "linux-x64";
   return null;
@@ -1780,6 +1868,7 @@ async function resolveSandboxMode(
   if (mode === "none") return "none";
   if (mode === "docker") return "docker";
   if (mode === "container") return "container";
+  if (mode === "microsandbox") return "microsandbox";
 
   // auto
   if (process.platform === "darwin" && process.arch === "arm64") {
@@ -3637,7 +3726,7 @@ function printHelp(): void {
     "  --tui                     Force interactive dashboard (TTY only)",
     "  --no-tui                  Disable interactive dashboard",
     "  --detach                  Detach after start and keep services running",
-    "  --sandbox <mode>          none | auto | docker | container (default: none)",
+    "  --sandbox <mode>          none | auto | docker | container | microsandbox (default: none)",
     "  --sandbox-image <ref>     Container image for sandbox mode",
     "  --sandbox-persist-dir <p> Persist dir mounted into sandbox (default: per-workspace)",
     "  --sandbox-mount <specs>   Extra mounts (validated): hostPath:subpath[:ro|rw] (requires allowlist)",
@@ -4030,6 +4119,20 @@ async function stopAppleContainer(name: string): Promise<void> {
   });
 }
 
+async function stopMicrosandbox(
+  name: string,
+  microsandboxCommand: string,
+): Promise<void> {
+  if (!name.trim()) return;
+  await new Promise<void>((resolve) => {
+    const child = spawnProcess(microsandboxCommand, ["stop", name], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    child.on("error", () => resolve());
+    child.on("exit", () => resolve());
+  });
+}
+
 async function runQuiet(
   command: string,
   args: string[],
@@ -4147,7 +4250,8 @@ async function writeSandboxEntrypoint(options: {
   entrypointHostPath: string;
   rootInContainer: string;
   opencodeConfigDirInContainer: string;
-  backend: "docker" | "container";
+  backend: "docker" | "container" | "microsandbox";
+  secretEnvPathInContainer?: string | null;
   opencode: {
     corsOrigins: string[];
     username?: string;
@@ -4242,6 +4346,9 @@ async function writeSandboxEntrypoint(options: {
     `export OPENWORK_SANDBOX_ENABLED=1`,
     `export OPENWORK_SANDBOX_BACKEND=${shQuote(options.backend)}`,
     opencodeRouterEnv,
+    options.secretEnvPathInContainer
+      ? `if [ -f ${shQuote(options.secretEnvPathInContainer)} ]; then . ${shQuote(options.secretEnvPathInContainer)}; rm -f ${shQuote(options.secretEnvPathInContainer)} || true; fi`
+      : "",
     requiredSecretEnv,
     'opencode_pid=""',
     'opencodeRouter_pid=""',
@@ -4273,6 +4380,83 @@ async function writeSandboxEntrypoint(options: {
     .join("\n");
 
   await writeFile(options.entrypointHostPath, `${script}\n`, "utf8");
+}
+
+async function writeSandboxSecretEnvFile(
+  filePath: string,
+  values: Record<string, string | undefined>,
+): Promise<void> {
+  const lines = Object.entries(values)
+    .filter(([, value]) => typeof value === "string" && value.length > 0)
+    .map(([key, value]) => `export ${key}=${shQuote(value!)}`);
+  if (!lines.length) return;
+  await writeFile(filePath, `${lines.join("\n")}\n`, "utf8");
+  await chmod(filePath, 0o600);
+}
+
+async function stageMicrosandboxCopy(
+  sourcePath: string,
+  targetPath: string,
+): Promise<string> {
+  const sourceInfo = await stat(sourcePath);
+  await rm(targetPath, { recursive: true, force: true });
+  await mkdir(dirname(targetPath), { recursive: true });
+  await cp(sourcePath, targetPath, {
+    recursive: sourceInfo.isDirectory(),
+    force: true,
+  });
+  return targetPath;
+}
+
+async function prepareMicrosandboxHostMounts(options: {
+  baseDir: string;
+  extraMounts: SandboxMount[];
+}): Promise<Array<{ hostPath: string; guestPath: string }>> {
+  const mounts: Array<{ hostPath: string; guestPath: string }> = [];
+  const hostMountRoot = join(options.baseDir, "microsandbox-host");
+  await mkdir(hostMountRoot, { recursive: true });
+
+  const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
+  if (hostOpencodeConfig) {
+    const staged = await stageMicrosandboxCopy(
+      hostOpencodeConfig,
+      join(hostMountRoot, "opencode-config"),
+    );
+    mounts.push({
+      hostPath: staged,
+      guestPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
+    });
+  }
+
+  const hostOpencodeData = await resolveHostOpencodeGlobalDataDir();
+  if (hostOpencodeData) {
+    const staged = await stageMicrosandboxCopy(
+      hostOpencodeData,
+      join(hostMountRoot, "opencode-data"),
+    );
+    mounts.push({
+      hostPath: staged,
+      guestPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
+    });
+  }
+
+  for (const mount of options.extraMounts) {
+    const hostPath = mount.readonly
+      ? await stageMicrosandboxCopy(
+          mount.hostPath,
+          join(
+            hostMountRoot,
+            `readonly-${createHash("sha1")
+              .update(`${mount.containerPath}:${mount.hostPath}`)
+              .digest("hex")
+              .slice(0, 12)}`,
+          ),
+        )
+      : mount.hostPath;
+    mounts.push({ hostPath, guestPath: mount.containerPath });
+  }
+
+  return mounts;
 }
 
 async function startDockerSandbox(options: {
@@ -4323,6 +4507,7 @@ async function startDockerSandbox(options: {
     rootInContainer: staged.rootInContainer,
     opencodeConfigDirInContainer: "/opencode-config",
     backend: "docker",
+    secretEnvPathInContainer: null,
     opencode: options.opencode,
     openwork: {
       token: options.openwork.token,
@@ -4511,6 +4696,7 @@ async function startAppleContainerSandbox(options: {
     rootInContainer: staged.rootInContainer,
     opencodeConfigDirInContainer: "/opencode-config",
     backend: "container",
+    secretEnvPathInContainer: null,
     opencode: options.opencode,
     openwork: {
       token: options.openwork.token,
@@ -4629,6 +4815,153 @@ async function startAppleContainerSandbox(options: {
         ? { OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword }
         : {}),
     },
+  });
+  prefixStream(
+    child.stdout,
+    "sandbox",
+    "stdout",
+    options.logger,
+    child.pid ?? undefined,
+  );
+  prefixStream(
+    child.stderr,
+    "sandbox",
+    "stderr",
+    options.logger,
+    child.pid ?? undefined,
+  );
+
+  return { child, cleanup: staged.cleanup };
+}
+
+async function startMicrosandboxSandbox(options: {
+  image: string;
+  microsandboxCommand: string;
+  containerName: string;
+  workspace: string;
+  persistDir: string;
+  opencodeConfigDir: string;
+  extraMounts: SandboxMount[];
+  sidecars: {
+    opencode: string;
+    openworkServer: string;
+    opencodeRouter?: string | null;
+  };
+  ports: { openwork: number; opencodeRouterHealth?: number | null };
+  opencode: {
+    corsOrigins: string[];
+    username?: string;
+    password?: string;
+    hotReload: OpencodeHotReload;
+  };
+  openwork: {
+    token: string;
+    hostToken: string;
+    approvalMode: ApprovalMode;
+    approvalTimeoutMs: number;
+    readOnly: boolean;
+    corsOrigins: string[];
+    opencodeUsername?: string;
+    opencodePassword?: string;
+    logFormat: LogFormat;
+  };
+  runId: string;
+  logFormat: LogFormat;
+  detach: boolean;
+  logger: Logger;
+}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
+  await ensureMicrosandboxSystemReady(options.microsandboxCommand);
+
+  const staged = await stageSandboxRuntime({
+    persistDir: options.persistDir,
+    containerName: options.containerName,
+    sidecars: options.sidecars,
+    detach: options.detach,
+  });
+
+  const secretEnvHostPath = join(staged.baseDir, "sandbox-secrets.env");
+  const secretEnvPathInContainer = `${staged.rootInContainer}/sandbox-secrets.env`;
+  await writeSandboxSecretEnvFile(secretEnvHostPath, {
+    OPENWORK_TOKEN: options.openwork.token,
+    OPENWORK_HOST_TOKEN: options.openwork.hostToken,
+    OPENCODE_SERVER_USERNAME: options.opencode.username,
+    OPENCODE_SERVER_PASSWORD: options.opencode.password,
+    OPENWORK_OPENCODE_USERNAME: options.openwork.opencodeUsername,
+    OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword,
+  });
+
+  await writeSandboxEntrypoint({
+    entrypointHostPath: staged.entrypointHostPath,
+    rootInContainer: staged.rootInContainer,
+    opencodeConfigDirInContainer: "/opencode-config",
+    backend: "microsandbox",
+    secretEnvPathInContainer,
+    opencode: options.opencode,
+    openwork: {
+      token: options.openwork.token,
+      hostToken: options.openwork.hostToken,
+      approvalMode: options.openwork.approvalMode,
+      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
+      readOnly: options.openwork.readOnly,
+      corsOrigins: options.openwork.corsOrigins,
+      opencodeUsername: options.openwork.opencodeUsername,
+      opencodePassword: options.openwork.opencodePassword,
+      logFormat: options.openwork.logFormat,
+      opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
+    },
+    runId: options.runId,
+    logFormat: options.logFormat,
+  });
+
+  const preparedMounts = await prepareMicrosandboxHostMounts({
+    baseDir: staged.baseDir,
+    extraMounts: options.extraMounts,
+  });
+
+  const args: string[] = [
+    "run",
+    "--replace",
+    "--name",
+    options.containerName,
+    "-p",
+    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    "-v",
+    `${options.workspace}:/workspace`,
+    "-v",
+    `${options.persistDir}:/persist`,
+    "-v",
+    `${options.opencodeConfigDir}:/opencode-config`,
+  ];
+
+  if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
+    args.push(
+      "-p",
+      `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`,
+    );
+  }
+
+  for (const mount of preparedMounts) {
+    args.push("-v", `${mount.hostPath}:${mount.guestPath}`);
+  }
+
+  if (options.detach) {
+    args.push("-d");
+  }
+
+  const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
+  args.push(options.image, "--", "sh", scriptInContainer);
+
+  options.logger.debug("sandbox: microsandbox run", {
+    microsandboxCommand: options.microsandboxCommand,
+    args,
+    containerName: options.containerName,
+    workspace: options.workspace,
+    persistDir: options.persistDir,
+  });
+
+  const child = spawnProcess(options.microsandboxCommand, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env },
   });
   prefixStream(
     child.stdout,
@@ -7022,10 +7355,17 @@ async function runStart(args: ParsedArgs) {
   }
   const dockerCommand =
     sandboxMode === "docker" ? await resolveDockerCommand() : null;
+  const microsandboxCommand =
+    sandboxMode === "microsandbox"
+      ? await resolveMicrosandboxCommand()
+      : null;
   logVerbose(`cli version: ${cliVersion}`);
   logVerbose(`sandbox: ${sandboxMode}`);
   if (dockerCommand) {
     logVerbose(`docker bin: ${dockerCommand}`);
+  }
+  if (microsandboxCommand) {
+    logVerbose(`microsandbox bin: ${microsandboxCommand}`);
   }
   if (sandboxMode !== "none") {
     logVerbose(`sandbox image: ${sandboxImage}`);
@@ -7074,6 +7414,9 @@ async function runStart(args: ParsedArgs) {
           "Apple container CLI not found. Install https://github.com/apple/container",
         );
       }
+    }
+    if (sandboxMode === "microsandbox") {
+      await ensureMicrosandboxSystemReady(microsandboxCommand ?? "msb");
     }
   }
   const opencodeRouterMode = await resolveOpencodeRouterEnabled(
@@ -7870,10 +8213,17 @@ async function runStart(args: ParsedArgs) {
       sandboxStop =
         sandboxMode === "container"
           ? stopAppleContainer
+          : sandboxMode === "microsandbox"
+            ? (name: string) =>
+                stopMicrosandbox(name, microsandboxCommand ?? "msb")
           : (name: string) =>
               stopDockerContainer(name, dockerCommand ?? "docker");
       sandboxStopCommand =
-        sandboxMode === "container" ? "container stop" : "docker stop";
+        sandboxMode === "container"
+          ? "container stop"
+          : sandboxMode === "microsandbox"
+            ? `${microsandboxCommand ?? "msb"} stop`
+            : "docker stop";
       const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
 
       const sandboxChild =
@@ -7920,6 +8270,48 @@ async function runStart(args: ParsedArgs) {
               detach: detachRequested,
               logger,
             })
+          : sandboxMode === "microsandbox"
+            ? await startMicrosandboxSandbox({
+                image: sandboxImage,
+                microsandboxCommand: microsandboxCommand ?? "msb",
+                containerName,
+                workspace: resolvedWorkspace,
+                persistDir: sandboxPersistDir,
+                opencodeConfigDir,
+                extraMounts: sandboxExtraMounts,
+                sidecars: {
+                  opencode: opencodeBinary.bin,
+                  openworkServer: openworkServerBinary.bin,
+                  opencodeRouter: opencodeRouterEnabled
+                    ? (opencodeRouterBinary?.bin ?? null)
+                    : null,
+                },
+                ports: {
+                  openwork: openworkPort,
+                  opencodeRouterHealth: null,
+                },
+                opencode: {
+                  corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                  username: opencodeUsername,
+                  password: opencodePassword,
+                  hotReload: opencodeHotReload,
+                },
+                openwork: {
+                  token: openworkToken,
+                  hostToken: openworkHostToken,
+                  approvalMode: approvalMode === "auto" ? "auto" : "manual",
+                  approvalTimeoutMs,
+                  readOnly,
+                  corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                  opencodeUsername,
+                  opencodePassword,
+                  logFormat,
+                },
+                runId,
+                logFormat,
+                detach: detachRequested,
+                logger,
+              })
           : await startDockerSandbox({
               image: sandboxImage,
               dockerCommand: dockerCommand ?? "docker",
@@ -7991,7 +8383,7 @@ async function runStart(args: ParsedArgs) {
           handleSpawnError("sandbox", error),
         );
       } else {
-        // docker run -d exits quickly; the container continues to run.
+        // Detached sandbox launchers exit quickly; the sandbox continues to run.
         logger.info("Sandbox detached", { containerName }, "sandbox");
       }
 

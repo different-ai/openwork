@@ -738,6 +738,7 @@ function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
   const raw = (process.env.OPENWORK_SANDBOX_BACKEND ?? "").trim().toLowerCase();
   if (raw === "docker") return "docker";
   if (raw === "container") return "container";
+  if (raw === "microsandbox") return "microsandbox";
   return "none";
 }
 

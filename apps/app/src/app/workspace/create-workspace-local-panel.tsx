@@ -41,8 +41,11 @@ export default function CreateWorkspaceLocalPanel(props: {
   confirmLabel?: string;
   workerLabel?: string;
   onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
+  extraWorkerLabel?: string;
+  onConfirmExtraWorker?: (preset: WorkspacePreset, folder: string | null) => void;
   preset: WorkspacePreset;
   workerSubmitting: boolean;
+  extraWorkerSubmitting: boolean;
   workerDisabled: boolean;
   workerDisabledReason: string | null;
   workerCtaLabel?: string;
@@ -52,6 +55,8 @@ export default function CreateWorkspaceLocalPanel(props: {
   onWorkerRetry?: () => void;
   workerDebugLines: string[];
   progress: {
+    backend?: "docker" | "microsandbox";
+    backendLabel?: string;
     runId: string;
     startedAt: number;
     stage: string;
@@ -176,7 +181,7 @@ export default function CreateWorkspaceLocalPanel(props: {
                     <Show when={!progress().error} fallback={<XCircle size={14} class="text-red-11" />}>
                       <Loader2 size={14} class="animate-spin text-dls-accent" />
                     </Show>
-                    Sandbox setup
+                    {progress().backendLabel || "Sandbox"} setup
                   </div>
                   <div class="mt-1 truncate text-[14px] leading-snug text-dls-text">{progress().stage}</div>
                   <div class="mt-1 font-mono text-[10px] uppercase tracking-wider text-dls-secondary">{props.elapsedSeconds}s</div>
@@ -279,6 +284,22 @@ export default function CreateWorkspaceLocalPanel(props: {
                 <span class="inline-flex items-center gap-2">
                   <Loader2 size={16} class="animate-spin" />
                   {props.translate("dashboard.sandbox_checking_docker")}
+                </span>
+              </Show>
+            </button>
+          </Show>
+          <Show when={props.onConfirmExtraWorker}>
+            <button
+              type="button"
+              onClick={() => props.onConfirmExtraWorker?.(props.preset, props.selectedFolder)}
+              disabled={!props.selectedFolder || props.submitting || props.extraWorkerSubmitting}
+              title={!props.selectedFolder ? props.translate("dashboard.choose_folder_continue") : undefined}
+              class={pillSecondaryClass}
+            >
+              <Show when={props.extraWorkerSubmitting} fallback={props.extraWorkerLabel ?? "Create MicroSandbox"}>
+                <span class="inline-flex items-center gap-2">
+                  <Loader2 size={16} class="animate-spin" />
+                  Checking MicroSandbox…
                 </span>
               </Show>
             </button>

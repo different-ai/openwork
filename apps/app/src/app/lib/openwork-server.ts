@@ -15,7 +15,10 @@ export type OpenworkServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
-  sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
+  sandbox?: {
+    enabled: boolean;
+    backend: "none" | "docker" | "container" | "microsandbox";
+  };
   proxy?: { opencode: boolean; opencodeRouter: boolean };
   toolProviders?: {
     browser?: {

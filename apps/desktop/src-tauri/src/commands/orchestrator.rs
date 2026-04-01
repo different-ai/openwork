@@ -371,8 +371,91 @@ fn resolve_docker_candidates() -> Vec<PathBuf> {
         .collect()
 }
 
+fn microsandbox_platform_error() -> Option<String> {
+    if cfg!(target_os = "windows") {
+        return Some("MicroSandbox is not available on Windows yet.".to_string());
+    }
+    if cfg!(target_os = "macos") && !cfg!(target_arch = "aarch64") {
+        return Some("MicroSandbox on macOS requires Apple Silicon (M-series).".to_string());
+    }
+    None
+}
+
+fn resolve_microsandbox_candidates() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+
+    for key in ["OPENWORK_MICROSANDBOX_BIN", "MICROSANDBOX_BIN", "MSB_BIN"] {
+        if let Some(value) = env::var_os(key) {
+            let raw = value.to_string_lossy().trim().to_string();
+            if !raw.is_empty() {
+                let path = PathBuf::from(raw);
+                if seen.insert(path.clone()) {
+                    out.push(path);
+                }
+            }
+        }
+    }
+
+    if let Some(paths) = env::var_os("PATH") {
+        for dir in env::split_paths(&paths) {
+            let candidate = dir.join("msb");
+            if seen.insert(candidate.clone()) {
+                out.push(candidate);
+            }
+        }
+    }
+
+    if cfg!(target_os = "macos") {
+        if let Ok((status, stdout, _stderr)) =
+            run_local_command("/usr/libexec/path_helper", &["-s"])
+        {
+            if status == 0 {
+                if let Some(path_value) = parse_path_export_value(&stdout) {
+                    for dir in env::split_paths(&path_value) {
+                        let candidate = dir.join("msb");
+                        if seen.insert(candidate.clone()) {
+                            out.push(candidate);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for raw in [
+        "/opt/homebrew/bin/msb",
+        "/usr/local/bin/msb",
+        "~/.microsandbox/bin/msb",
+    ] {
+        let expanded = if let Some(stripped) = raw.strip_prefix("~/") {
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("~"))
+                .join(stripped)
+        } else {
+            PathBuf::from(raw)
+        };
+        if seen.insert(expanded.clone()) {
+            out.push(expanded);
+        }
+    }
+
+    out.into_iter()
+        .filter(|path| is_executable_file(path))
+        .collect()
+}
+
 fn run_docker_command(args: &[&str], timeout: Duration) -> Result<(i32, String, String), String> {
     let result = run_docker_command_detailed(args, timeout)?;
+    Ok((result.status, result.stdout, result.stderr))
+}
+
+fn run_microsandbox_command(
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(i32, String, String), String> {
+    let result = run_microsandbox_command_detailed(args, timeout)?;
     Ok((result.status, result.stdout, result.stderr))
 }
 
@@ -415,6 +498,44 @@ fn run_docker_command_detailed(
     ))
 }
 
+fn run_microsandbox_command_detailed(
+    args: &[&str],
+    timeout: Duration,
+) -> Result<DockerCommandResult, String> {
+    if let Some(platform_error) = microsandbox_platform_error() {
+        return Err(platform_error);
+    }
+
+    let candidates = resolve_microsandbox_candidates();
+    let mut tried: Vec<String> = candidates
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    tried.push("msb".to_string());
+
+    let mut errors: Vec<String> = Vec::new();
+    for program in tried {
+        match run_local_command_with_timeout(&program, args, timeout) {
+            Ok((status, stdout, stderr)) => {
+                return Ok(DockerCommandResult {
+                    status,
+                    stdout,
+                    stderr,
+                    program,
+                })
+            }
+            Err(err) => errors.push(err),
+        }
+    }
+
+    let hint = "Install MicroSandbox with `curl -fsSL https://install.microsandbox.dev | sh`, or set OPENWORK_MICROSANDBOX_BIN to your msb binary";
+    Err(format!(
+        "Failed to run MicroSandbox CLI: {} ({})",
+        errors.join("; "),
+        hint
+    ))
+}
+
 fn parse_docker_client_version(stdout: &str) -> Option<String> {
     // Example: "Docker version 26.1.1, build 4cf5afa"
     let line = stdout.lines().next().unwrap_or("").trim();
@@ -436,6 +557,14 @@ fn parse_docker_server_version(stdout: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn parse_microsandbox_version(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty())
+        .map(|line| line.to_string())
 }
 
 fn truncate_for_debug(input: &str) -> String {
@@ -817,20 +946,29 @@ pub fn orchestrator_start_detached(
         .trim()
         .to_lowercase();
     let wants_docker_sandbox = sandbox_backend == "docker";
+    let wants_microsandbox = sandbox_backend == "microsandbox";
+    let wants_managed_sandbox = wants_docker_sandbox || wants_microsandbox;
     let sandbox_run_id = run_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let sandbox_container_name = if wants_docker_sandbox {
+    let sandbox_container_name = if wants_managed_sandbox {
         Some(derive_orchestrator_container_name(&sandbox_run_id))
     } else {
         None
+    };
+    let sandbox_backend_label = if wants_docker_sandbox {
+        "docker"
+    } else if wants_microsandbox {
+        "microsandbox"
+    } else {
+        "none"
     };
     eprintln!(
         "[sandbox-create][at={start_ts}][runId={}][stage=entry] workspacePath={} sandboxBackend={} container={}",
         sandbox_run_id,
         workspace_path,
-        if wants_docker_sandbox { "docker" } else { "none" },
+        sandbox_backend_label,
         sandbox_container_name.as_deref().unwrap_or("<none>")
     );
 
@@ -854,7 +992,7 @@ pub fn orchestrator_start_detached(
             "workspacePath": workspace_path,
             "openworkUrl": openwork_url,
             "port": port,
-            "sandboxBackend": if wants_docker_sandbox { "docker" } else { "none" },
+            "sandboxBackend": sandbox_backend_label,
             "containerName": sandbox_container_name,
         }),
     );
@@ -872,10 +1010,34 @@ pub fn orchestrator_start_detached(
             "Inspecting Docker configuration...",
             json!({
                 "candidateCount": candidates.len(),
+                "candidates": candidates,
                 "resolvedDockerBin": resolved,
+                "openworkDockerBin": env::var("OPENWORK_DOCKER_BIN").ok(),
                 "hasOpenworkDockerBinOverride": env::var("OPENWORK_DOCKER_BIN").ok().is_some(),
                 "hasOpenwrkDockerBinOverride": env::var("OPENWRK_DOCKER_BIN").ok().is_some(),
                 "hasDockerBinOverride": env::var("DOCKER_BIN").ok().is_some(),
+            }),
+        );
+    }
+    if wants_microsandbox {
+        let candidates = resolve_microsandbox_candidates()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        let resolved = candidates.first().cloned();
+        emit_sandbox_progress(
+            &app,
+            &sandbox_run_id,
+            "microsandbox.config",
+            "Inspecting MicroSandbox configuration...",
+            json!({
+                "candidateCount": candidates.len(),
+                "candidates": candidates,
+                "resolvedMicrosandboxBin": resolved,
+                "openworkMicrosandboxBin": env::var("OPENWORK_MICROSANDBOX_BIN").ok(),
+                "hasOpenworkMicrosandboxBinOverride": env::var("OPENWORK_MICROSANDBOX_BIN").ok().is_some(),
+                "hasMicrosandboxBinOverride": env::var("MICROSANDBOX_BIN").ok().is_some(),
+                "hasMsbBinOverride": env::var("MSB_BIN").ok().is_some(),
             }),
         );
     }
@@ -903,9 +1065,9 @@ pub fn orchestrator_start_detached(
             sandbox_run_id.clone(),
         ];
 
-        if wants_docker_sandbox {
+        if wants_managed_sandbox {
             args.push("--sandbox".to_string());
-            args.push("docker".to_string());
+            args.push(sandbox_backend_label.to_string());
         }
 
         // Convert to &str for the shell command builder.
@@ -927,6 +1089,9 @@ pub fn orchestrator_start_detached(
                 "hasDockerOverrides": env::var("OPENWORK_DOCKER_BIN").ok().is_some()
                     || env::var("OPENWRK_DOCKER_BIN").ok().is_some()
                     || env::var("DOCKER_BIN").ok().is_some(),
+                "hasMicrosandboxOverrides": env::var("OPENWORK_MICROSANDBOX_BIN").ok().is_some()
+                    || env::var("MICROSANDBOX_BIN").ok().is_some()
+                    || env::var("MSB_BIN").ok().is_some(),
             }),
         );
 
@@ -965,7 +1130,13 @@ pub fn orchestrator_start_detached(
         }),
     );
 
-    let health_timeout_ms = if wants_docker_sandbox { 90_000 } else { 12_000 };
+    let health_timeout_ms = if wants_docker_sandbox {
+        90_000
+    } else if wants_microsandbox {
+        20_000
+    } else {
+        12_000
+    };
     let start = Instant::now();
     let mut last_tick = Instant::now() - Duration::from_secs(5);
     let mut last_container_check = Instant::now() - Duration::from_secs(10);
@@ -1115,12 +1286,12 @@ pub fn orchestrator_start_detached(
         owner_token,
         host_token,
         port,
-        sandbox_backend: if wants_docker_sandbox {
-            Some("docker".to_string())
+        sandbox_backend: if wants_managed_sandbox {
+            Some(sandbox_backend_label.to_string())
         } else {
             None
         },
-        sandbox_run_id: if wants_docker_sandbox {
+        sandbox_run_id: if wants_managed_sandbox {
             Some(sandbox_run_id)
         } else {
             None
@@ -1129,20 +1300,161 @@ pub fn orchestrator_start_detached(
     })
 }
 
-#[tauri::command]
-pub fn sandbox_doctor() -> SandboxDoctorResult {
+fn sandbox_doctor_for_backend(backend: &str) -> SandboxDoctorResult {
     let doctor_start = Instant::now();
-    eprintln!("[sandbox-doctor][at={}] start", now_ms());
-    let candidates = resolve_docker_candidates()
-        .into_iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
+    let normalized = backend.trim().to_ascii_lowercase();
+    let use_microsandbox = normalized == "microsandbox";
+    eprintln!(
+        "[sandbox-doctor][at={}] start backend={}",
+        now_ms(),
+        if use_microsandbox {
+            "microsandbox"
+        } else {
+            "docker"
+        }
+    );
+    let candidates = if use_microsandbox {
+        resolve_microsandbox_candidates()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    } else {
+        resolve_docker_candidates()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    };
     let mut debug = SandboxDoctorDebug {
         candidates,
         selected_bin: None,
         version_command: None,
         info_command: None,
     };
+
+    if use_microsandbox {
+        if let Some(platform_error) = microsandbox_platform_error() {
+            return SandboxDoctorResult {
+                installed: false,
+                daemon_running: false,
+                permission_ok: false,
+                ready: false,
+                client_version: None,
+                server_version: None,
+                error: Some(platform_error),
+                debug: Some(debug),
+            };
+        }
+
+        let version =
+            match run_microsandbox_command_detailed(&["--version"], Duration::from_secs(2)) {
+                Ok(result) => result,
+                Err(err) => {
+                    eprintln!(
+                        "[sandbox-doctor][at={}][elapsed={}ms] msb --version failed: {}",
+                        now_ms(),
+                        doctor_start.elapsed().as_millis(),
+                        err
+                    );
+                    return SandboxDoctorResult {
+                        installed: false,
+                        daemon_running: false,
+                        permission_ok: false,
+                        ready: false,
+                        client_version: None,
+                        server_version: None,
+                        error: Some(err),
+                        debug: Some(debug),
+                    };
+                }
+            };
+
+        debug.selected_bin = Some(version.program.clone());
+        debug.version_command = Some(SandboxDoctorCommandDebug {
+            status: version.status,
+            stdout: truncate_for_debug(&version.stdout),
+            stderr: truncate_for_debug(&version.stderr),
+        });
+
+        if version.status != 0 {
+            return SandboxDoctorResult {
+                installed: false,
+                daemon_running: false,
+                permission_ok: false,
+                ready: false,
+                client_version: None,
+                server_version: None,
+                error: Some(format!(
+                    "msb --version failed (status {}): {}",
+                    version.status,
+                    version.stderr.trim()
+                )),
+                debug: Some(debug),
+            };
+        }
+
+        let client_version = parse_microsandbox_version(&version.stdout);
+        let info = match run_microsandbox_command_detailed(
+            &["ls", "--format", "json"],
+            Duration::from_secs(8),
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                eprintln!(
+                    "[sandbox-doctor][at={}][elapsed={}ms] msb ls failed: {}",
+                    now_ms(),
+                    doctor_start.elapsed().as_millis(),
+                    err
+                );
+                return SandboxDoctorResult {
+                    installed: true,
+                    daemon_running: false,
+                    permission_ok: false,
+                    ready: false,
+                    client_version,
+                    server_version: None,
+                    error: Some(err),
+                    debug: Some(debug),
+                };
+            }
+        };
+
+        debug.info_command = Some(SandboxDoctorCommandDebug {
+            status: info.status,
+            stdout: truncate_for_debug(&info.stdout),
+            stderr: truncate_for_debug(&info.stderr),
+        });
+
+        if info.status == 0 {
+            return SandboxDoctorResult {
+                installed: true,
+                daemon_running: true,
+                permission_ok: true,
+                ready: true,
+                client_version,
+                server_version: None,
+                error: None,
+                debug: Some(debug),
+            };
+        }
+
+        let combined = format!("{}\n{}", info.stdout.trim(), info.stderr.trim())
+            .trim()
+            .to_string();
+        return SandboxDoctorResult {
+            installed: true,
+            daemon_running: false,
+            permission_ok: false,
+            ready: false,
+            client_version,
+            server_version: None,
+            error: Some(if combined.is_empty() {
+                format!("msb ls failed (status {})", info.status)
+            } else {
+                combined
+            }),
+            debug: Some(debug),
+        };
+    }
 
     let version = match run_docker_command_detailed(&["--version"], Duration::from_secs(2)) {
         Ok(result) => result,
@@ -1301,7 +1613,19 @@ pub fn sandbox_doctor() -> SandboxDoctorResult {
 }
 
 #[tauri::command]
-pub fn sandbox_stop(container_name: String) -> Result<ExecResult, String> {
+pub fn sandbox_doctor(sandbox_backend: Option<String>) -> SandboxDoctorResult {
+    let backend = sandbox_backend
+        .unwrap_or_else(|| "docker".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    sandbox_doctor_for_backend(&backend)
+}
+
+#[tauri::command]
+pub fn sandbox_stop(
+    container_name: String,
+    sandbox_backend: Option<String>,
+) -> Result<ExecResult, String> {
     let name = container_name.trim().to_string();
     if name.is_empty() {
         return Err("containerName is required".to_string());
@@ -1319,7 +1643,15 @@ pub fn sandbox_stop(container_name: String) -> Result<ExecResult, String> {
         return Err("containerName contains invalid characters".to_string());
     }
 
-    let (status, stdout, stderr) = run_docker_command(&["stop", &name], Duration::from_secs(15))?;
+    let backend = sandbox_backend
+        .unwrap_or_else(|| "docker".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    let (status, stdout, stderr) = if backend == "microsandbox" {
+        run_microsandbox_command(&["stop", &name], Duration::from_secs(15))?
+    } else {
+        run_docker_command(&["stop", &name], Duration::from_secs(15))?
+    };
     Ok(ExecResult {
         ok: status == 0,
         status,
@@ -1387,7 +1719,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
             run_id,
             workspace_path,
             ready: false,
-            doctor: sandbox_doctor(),
+            doctor: sandbox_doctor(None),
             detached_host: None,
             docker_inspect: None,
             docker_logs: None,
@@ -1402,7 +1734,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
         };
     }
 
-    let doctor = sandbox_doctor();
+    let doctor = sandbox_doctor(None);
     let mut detached_host: Option<OrchestratorDetachedHost> = None;
     let mut docker_inspect: Option<SandboxDoctorCommandDebug> = None;
     let mut docker_logs: Option<SandboxDoctorCommandDebug> = None;
@@ -1707,7 +2039,7 @@ exit 0
         let _docker_alt = EnvGuard::unset("OPENWRK_DOCKER_BIN");
         let _docker_bin = EnvGuard::unset("DOCKER_BIN");
 
-        let result = sandbox_doctor();
+        let result = sandbox_doctor(None);
         assert!(result.installed);
         assert!(result.ready);
         assert_eq!(result.server_version.as_deref(), Some("0.0.0"));
