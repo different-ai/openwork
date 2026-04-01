@@ -203,24 +203,20 @@ async function getInvitationById(invitationIdRaw: string) {
 }
 
 async function ensureDefaultDynamicRoles(orgId: OrgId) {
-  const existingRows = await db
-    .select({ role: OrganizationRoleTable.role })
-    .from(OrganizationRoleTable)
-    .where(eq(OrganizationRoleTable.organizationId, orgId))
-
-  const existing = new Set(existingRows.map((row) => row.role))
-
   for (const [role, permission] of Object.entries(denDefaultDynamicOrganizationRoles)) {
-    if (existing.has(role)) {
-      continue
-    }
-
-    await db.insert(OrganizationRoleTable).values({
-      id: createDenTypeId("organizationRole"),
-      organizationId: orgId,
-      role,
-      permission: serializePermissionRecord(permission),
-    })
+    await db
+      .insert(OrganizationRoleTable)
+      .values({
+        id: createDenTypeId("organizationRole"),
+        organizationId: orgId,
+        role,
+        permission: serializePermissionRecord(permission),
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          permission: serializePermissionRecord(permission),
+        },
+      })
   }
 }
 
