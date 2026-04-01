@@ -71,6 +71,7 @@ import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale } from "../../i18n";
 import { filterProviderList, mapConfigProvidersToList } from "../utils/providers";
 import { buildDefaultWorkspaceBlueprint, normalizeWorkspaceOpenworkConfig } from "../lib/workspace-blueprints";
+import { resolveCreatedLocalWorkspacePath } from "../lib/workspace-path";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -2185,6 +2186,11 @@ export function createWorkspaceStore(options: {
       }
 
       const nextSelectedId = createdWorkspaceId;
+      const createdWorkspacePath = resolveCreatedLocalWorkspacePath({
+        workspaceId: nextSelectedId,
+        workspaces: ws.workspaces,
+        fallbackPath: resolvedFolder,
+      });
       applyServerLocalWorkspaces(ws.workspaces, nextSelectedId);
       if (nextSelectedId) {
         const nextSelectedWorkspace = ws.workspaces.find((workspace) => workspace.id === nextSelectedId) ?? null;
@@ -2200,15 +2206,15 @@ export function createWorkspaceStore(options: {
 
       setCreateWorkspaceOpen(false);
 
-      const opened = await activateFreshLocalWorkspace(nextSelectedId || null, resolvedFolder);
+      const opened = await activateFreshLocalWorkspace(nextSelectedId || null, createdWorkspacePath);
       if (!opened) {
         options.setPendingInitialSessionSelection?.(null);
         return false;
       }
 
       if (preset === "starter") {
-        const materialized = await materializeStarterSessions(resolvedFolder, name, preset);
-        const sessionsReady = await waitForWorkspaceSessionsReady(resolvedFolder);
+        const materialized = await materializeStarterSessions(createdWorkspacePath, name, preset);
+        const sessionsReady = await waitForWorkspaceSessionsReady(createdWorkspacePath);
         if (!sessionsReady) {
           throw new Error("Starter sessions did not finish loading for the new workspace.");
         }
@@ -2225,7 +2231,7 @@ export function createWorkspaceStore(options: {
       }
 
       if (!nextSelectedId) {
-        await openEmptySession(resolvedFolder);
+        await openEmptySession(createdWorkspacePath);
       }
 
       return true;
@@ -3270,11 +3276,16 @@ export function createWorkspaceStore(options: {
 
       setWorkspaces(ws.workspaces);
       const nextSelectedId = pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws);
+      const createdWorkspacePath = resolveCreatedLocalWorkspacePath({
+        workspaceId: nextSelectedId,
+        workspaces: ws.workspaces,
+        fallbackPath: resolvedFolder,
+      });
       syncSelectedWorkspaceId(nextSelectedId);
       setCreateWorkspaceOpen(false);
       setCreateRemoteWorkspaceOpen(false);
 
-      const opened = await activateFreshLocalWorkspace(nextSelectedId || null, resolvedFolder);
+      const opened = await activateFreshLocalWorkspace(nextSelectedId || null, createdWorkspacePath);
       if (!opened) {
         return;
       }
