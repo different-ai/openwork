@@ -34,6 +34,25 @@ This makes workspace templates a good fit for sharing:
 - commands, agents, and skills that should travel together
 - example starter flows for a new workspace
 
+## Accessing a live workspace remotely
+
+The same `Share...` menu also includes `Access workspace remotely` for the running workspace itself.
+
+That flow is different from a template link:
+
+- a template creates a reusable copy someone can import into a new workspace
+- remote access reveals live connection details for the current running workspace
+
+Remote access is off by default. Turn it on only when you want this worker reachable from another machine, then click `Save` so OpenWork can restart the worker and reveal the current connection details.
+
+OpenWork can show:
+
+- the worker URL to paste into `Add a worker` -> `Connect remote`
+- an owner/access token for full control
+- an optional collaborator token for routine access without permission approvals
+
+Treat those credentials like passwords. Anyone who has them can connect to the live workspace.
+
 ## Sharing a template with your Cloud team
 
 OpenWork can also save a workspace template directly to your active OpenWork Cloud organization.
