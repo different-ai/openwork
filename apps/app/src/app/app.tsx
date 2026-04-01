@@ -545,6 +545,7 @@ export default function App() {
     messageIdFromInfo,
     selectedSession,
     selectedSessionStatus,
+    selectedSessionErrorTurns,
     selectedSessionCompactionState,
     messages,
     visibleMessages,
@@ -2208,6 +2209,7 @@ export default function App() {
     hasEarlierMessages: selectedSessionHasEarlierMessages(),
     loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
     loadEarlierMessages,
+    sessionErrorTurns: selectedSessionErrorTurns(),
     sessionStatus: selectedSessionStatus(),
     error: error(),
   });

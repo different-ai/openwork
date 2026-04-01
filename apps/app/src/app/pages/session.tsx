@@ -17,6 +17,7 @@ import type {
   PendingQuestion,
   PromptMode,
   ProviderListItem,
+  SessionErrorTurn,
   SessionCompactionState,
   SettingsTab,
   SkillCard,
@@ -104,6 +105,7 @@ import {
   type AppStatusToastTone,
 } from "../shell/status-toasts";
 import { createShareWorkspaceState } from "../session/share-workspace";
+import { latestSessionErrorTurnTime, shouldResetRunState } from "../session/run-state";
 import {
   getSessionDraft,
   saveSessionDraft,
@@ -241,6 +243,7 @@ export type SessionViewProps = {
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
+  sessionErrorTurns: SessionErrorTurn[];
 };
 
 type ResolvedEmptyStateStarter = {
@@ -1276,6 +1279,10 @@ export default function SessionView(props: SessionViewProps) {
     );
   });
 
+  const latestErrorTurnTime = createMemo(() =>
+    latestSessionErrorTurnTime(props.sessionErrorTurns),
+  );
+
   const runPhase = createMemo(() => {
     if (props.error && (runStartedAt() !== null || runHasBegun()))
       return "error";
@@ -1715,13 +1722,20 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
-    if (!runStartedAt()) return;
-    if (props.sessionStatus === "idle" && runHasBegun()) {
-      setRunStartedAt(null);
-      setRunHasBegun(false);
-      setRunLastProgressAt(null);
-      setRunBaseline({ assistantId: null, partCount: 0 });
-    }
+    if (
+      !shouldResetRunState({
+        hasError: Boolean(props.error),
+        sessionStatus: props.sessionStatus,
+        runHasBegun: runHasBegun(),
+        runStartedAt: runStartedAt(),
+        latestErrorTurnTime: latestErrorTurnTime(),
+      })
+    )
+      return;
+    setRunStartedAt(null);
+    setRunHasBegun(false);
+    setRunLastProgressAt(null);
+    setRunBaseline({ assistantId: null, partCount: 0 });
   });
 
   createEffect(() => {
