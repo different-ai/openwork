@@ -39,6 +39,7 @@ import {
   CreateWorkspaceModal,
 } from "./workspace";
 import SessionView from "./pages/session";
+import { clearDevLogs, recordDevLog } from "./lib/dev-log";
 import { unwrap } from "./lib/opencode";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
@@ -160,6 +161,7 @@ export default function App() {
   const wsDebug = (label: string, payload?: unknown) => {
     if (!wsDebugEnabled()) return;
     try {
+      recordDevLog(true, { level: "debug", source: "app", label, payload });
       if (payload === undefined) {
         console.log(`[WSDBG] ${label}`);
       } else {
@@ -387,6 +389,7 @@ export default function App() {
 
   createEffect(() => {
     if (developerMode()) return;
+    clearDevLogs();
     clearPerfLogs();
   });
 

@@ -31,6 +31,7 @@ import IdentitiesView from "./identities";
 import AutomationsView from "./automations";
 import SkillsView from "./skills";
 import { buildFeedbackUrl } from "../lib/feedback";
+import { clearDevLogs, formatDevLogText, readDevLogs } from "../lib/dev-log";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import {
   ArrowUpRight,
@@ -989,6 +990,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const [debugReportStatus, setDebugReportStatus] = createSignal<string | null>(
     null,
   );
+  const [devLogStatus, setDevLogStatus] = createSignal<string | null>(null);
   const [configActionStatus, setConfigActionStatus] = createSignal<
     string | null
   >(null);
@@ -1060,6 +1062,10 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const runtimeDebugReport = createMemo(() => ({
+    developerLogs: {
+      retainedEntries: props.developerMode ? readDevLogs(0).length : 0,
+      recent: props.developerMode ? readDevLogs(250) : [],
+    },
     generatedAt: new Date().toISOString(),
     app: {
       version: appVersionLabel(),
@@ -1175,6 +1181,61 @@ export default function SettingsView(props: SettingsViewProps) {
           : "Failed to export runtime report.",
       );
     }
+  };
+
+  const developerLogText = createMemo(() =>
+    props.developerMode ? formatDevLogText(250) : "",
+  );
+
+  const copyDeveloperLog = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setDevLogStatus("Clipboard is unavailable in this environment.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(developerLogText());
+      setDevLogStatus("Copied developer log output.");
+    } catch (error) {
+      setDevLogStatus(
+        error instanceof Error
+          ? error.message
+          : "Failed to copy developer log output.",
+      );
+    }
+  };
+
+  const exportDeveloperLog = () => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      setDevLogStatus("Export is unavailable in this environment.");
+      return;
+    }
+    try {
+      const stamp = new Date()
+        .toISOString()
+        .replace(/[:]/g, "-")
+        .replace(/\..+$/, "");
+      const blob = new Blob([developerLogText()], {
+        type: "text/plain",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `openwork-dev-log-${stamp}.log`;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      setDevLogStatus("Exported developer log output.");
+    } catch (error) {
+      setDevLogStatus(
+        error instanceof Error
+          ? error.message
+          : "Failed to export developer log output.",
+      );
+    }
+  };
+
+  const clearDeveloperLog = () => {
+    clearDevLogs();
+    setDevLogStatus("Cleared developer log output.");
   };
 
   const revealWorkspaceConfig = async () => {
@@ -2569,6 +2630,55 @@ export default function SettingsView(props: SettingsViewProps) {
                     {runtimeDebugReportJson()}
                   </pre>
                   <Show when={debugReportStatus()}>
+                    {(status) => (
+                      <div class="text-xs text-gray-10">{status()}</div>
+                    )}
+                  </Show>
+                </div>
+
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">
+                        Developer log stream
+                      </div>
+                      <div class="text-xs text-gray-10">
+                        Captures dev-mode app, workspace, session, and perf logs while Developer Mode is enabled.
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                      <Button
+                        variant="outline"
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={clearDeveloperLog}
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        variant="outline"
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={copyDeveloperLog}
+                      >
+                        <Copy size={13} class="mr-1.5" />
+                        Copy log
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={exportDeveloperLog}
+                      >
+                        <Download size={13} class="mr-1.5" />
+                        Export .log
+                      </Button>
+                    </div>
+                  </div>
+                  <div class="text-[11px] text-gray-8">
+                    Showing the latest {props.developerMode ? readDevLogs(0).length : 0} retained records.
+                  </div>
+                  <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1 border border-gray-6 rounded-lg p-3">
+                    {developerLogText() || "No developer logs captured yet."}
+                  </pre>
+                  <Show when={devLogStatus()}>
                     {(status) => (
                       <div class="text-xs text-gray-10">{status()}</div>
                     )}

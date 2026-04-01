@@ -22,6 +22,7 @@ import {
   writeStartupPreference,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import { recordDevLog } from "../lib/dev-log";
 import { describeDirectoryScope, resolveScopedClientDirectory, toSessionTransportDirectory } from "../lib/session-scope";
 import { blueprintMaterializedSessions, blueprintSessions, defaultBlueprintSessionsForPreset } from "../lib/workspace-blueprints";
 import {
@@ -190,6 +191,7 @@ export function createWorkspaceStore(options: {
   const wsDebug = (label: string, payload?: unknown) => {
     if (!wsDebugEnabled()) return;
     try {
+      recordDevLog(true, { level: "debug", source: "workspace", label, payload });
       if (payload === undefined) {
         console.log(`[WSDBG] ${label}`);
       } else {

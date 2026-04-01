@@ -29,6 +29,7 @@ import {
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import { recordDevLog } from "../lib/dev-log";
 import { abortSessionSafe } from "../lib/opencode-session";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { describeDirectoryScope, toSessionTransportDirectory } from "../lib/session-scope";
@@ -172,6 +173,7 @@ export function createSessionStore(options: {
   const sessionDebug = (label: string, payload?: unknown) => {
     if (!sessionDebugEnabled()) return;
     try {
+      recordDevLog(true, { level: "debug", source: "session", label, payload });
       if (payload === undefined) {
         console.log(`[WSDBG] ${label}`);
       } else {
@@ -185,6 +187,7 @@ export function createSessionStore(options: {
   const sessionWarn = (label: string, payload?: unknown) => {
     if (!sessionDebugEnabled()) return;
     try {
+      recordDevLog(true, { level: "warn", source: "session", label, payload });
       if (payload === undefined) {
         console.warn(`[WSWARN] ${label}`);
       } else {

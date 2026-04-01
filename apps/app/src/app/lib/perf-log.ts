@@ -1,3 +1,5 @@
+import { recordDevLog } from "./dev-log";
+
 export type PerfLogRecord = {
   id: number;
   at: string;
@@ -66,6 +68,12 @@ export const recordPerfLog = (
     logs.splice(0, logs.length - PERF_LOG_LIMIT);
   }
   root.__openworkPerfLogs = logs;
+  recordDevLog(enabled, {
+    level: "perf",
+    source: scope,
+    label: event,
+    payload,
+  });
 
   try {
     const key = `${scope}:${event}`;

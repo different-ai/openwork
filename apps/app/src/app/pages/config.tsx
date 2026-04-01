@@ -1,5 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
+import { readDevLogs } from "../lib/dev-log";
 import { isTauriRuntime } from "../utils";
 import { readPerfLogs } from "../lib/perf-log";
 
@@ -145,6 +146,7 @@ export default function ConfigView(props: ConfigViewProps) {
     const urlOverride = props.openworkServerSettings.urlOverride?.trim() ?? "";
     const token = props.openworkServerSettings.token?.trim() ?? "";
     const host = hostInfo();
+    const developerLogs = props.developerMode ? readDevLogs(80) : [];
     const perfLogs = props.developerMode ? readPerfLogs(80) : [];
     return {
       capturedAt: new Date().toISOString(),
@@ -188,6 +190,10 @@ export default function ConfigView(props: ConfigViewProps) {
       performance: {
         retainedEntries: perfLogs.length,
         recent: perfLogs,
+      },
+      developerLogs: {
+        retainedEntries: developerLogs.length,
+        recent: developerLogs,
       },
     };
   });
