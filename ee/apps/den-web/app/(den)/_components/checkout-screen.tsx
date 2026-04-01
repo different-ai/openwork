@@ -35,7 +35,6 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   const router = useRouter();
   const pathname = usePathname();
   const handledReturnRef = useRef(false);
-  const redirectingRef = useRef(false);
   const [resuming, setResuming] = useState(false);
   const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
   const {
@@ -49,7 +48,6 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     onboardingPending,
     refreshBilling,
     refreshCheckoutReturn,
-    resolveUserLandingRoute,
   } = useDenFlow();
 
   const mockMode = MOCK_BILLING && process.env.NODE_ENV !== "production";
@@ -127,27 +125,6 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     sessionHydrated,
     user,
   ]);
-
-  useEffect(() => {
-    if (!sessionHydrated || !user || resuming || onboardingPending || mockMode || redirectingRef.current) {
-      return;
-    }
-
-    redirectingRef.current = true;
-    void resolveUserLandingRoute()
-      .then((target) => {
-        if (target && !isSamePathname(pathname, target)) {
-          setRedirectMessage("Redirecting to your workspace...");
-          router.replace(target);
-          return;
-        }
-
-        setRedirectMessage(null);
-      })
-      .finally(() => {
-        redirectingRef.current = false;
-      });
-  }, [mockMode, onboardingPending, pathname, resolveUserLandingRoute, resuming, router, sessionHydrated, user]);
 
   if (!sessionHydrated || (!user && !mockMode)) {
     return (
