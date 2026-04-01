@@ -612,7 +612,9 @@ export default function App() {
     if (!id) return false;
     const ready = await workspaceStore.activateWorkspace(id);
     if (ready) {
-      await refreshSidebarWorkspaceSessions(id).catch(() => undefined);
+      // Keep workspace activation on the critical path for correctness, but do
+      // not block session creation or prompt send on a sidebar refresh.
+      void refreshSidebarWorkspaceSessions(id).catch(() => undefined);
     }
     return ready;
   };

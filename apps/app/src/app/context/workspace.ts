@@ -33,6 +33,7 @@ import {
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../lib/openwork-server";
+import { selectOpenworkWorkspace } from "../workspace/openwork-selection";
 import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
@@ -816,32 +817,15 @@ export function createWorkspaceStore(options: {
     }
 
     const response = await client.listWorkspaces();
-    const items = Array.isArray(response.items) ? response.items : [];
-    const hint = normalizeDirectoryPath(input.directoryHint ?? "");
-    const selectByHint = (entry: OpenworkWorkspaceInfo) => {
-      if (!hint) return false;
-      const entryPath = normalizeDirectoryPath(
-        (entry.opencode?.directory as string | undefined) ?? (entry.path as string | undefined) ?? "",
-      );
-      return Boolean(entryPath && entryPath === hint);
-    };
-    const selectById = (entry: OpenworkWorkspaceInfo) => Boolean(requestedWorkspaceId && entry?.id === requestedWorkspaceId);
-
-    const workspaceById = requestedWorkspaceId
-      ? (items.find((item) => item?.id && selectById(item as any)) as OpenworkWorkspaceInfo | undefined)
-      : undefined;
-    if (requestedWorkspaceId && !workspaceById) {
-      throw new Error("OpenWork worker not found on that host.");
+    const selected = selectOpenworkWorkspace({
+      items: Array.isArray(response.items) ? response.items : [],
+      workspaceId: requestedWorkspaceId,
+      directoryHint: input.directoryHint ?? null,
+    });
+    if (!selected.ok) {
+      throw new Error(selected.message);
     }
-
-    const workspaceByHint = hint
-      ? (items.find((item) => item?.id && selectByHint(item as any)) as OpenworkWorkspaceInfo | undefined)
-      : undefined;
-
-    const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as OpenworkWorkspaceInfo | undefined;
-    if (!workspace?.id) {
-      throw new Error("OpenWork server did not return a worker.");
-    }
+    const workspace = selected.workspace;
     const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
     if (!opencodeUpstreamBaseUrl) {
       throw new Error("OpenWork server did not provide an OpenCode URL.");
@@ -1201,7 +1185,7 @@ export function createWorkspaceStore(options: {
         const resolved = await resolveOpenworkHost({
           hostUrl,
           token,
-          workspaceId: workspace.openworkWorkspaceId ?? null,
+          workspaceId: resolveRuntimeWorkspaceLookup(workspace)?.workspaceId ?? null,
         });
         if (resolved.kind !== "openwork") {
           updateWorkspaceConnectionState(id, {
@@ -1509,7 +1493,7 @@ export function createWorkspaceStore(options: {
             const resolved = await resolveOpenworkHost({
               hostUrl,
               token,
-              workspaceId: next.openworkWorkspaceId ?? null,
+              workspaceId: resolveRuntimeWorkspaceLookup(next)?.workspaceId ?? null,
               directoryHint: next.directory ?? null,
             });
             if (resolved.kind !== "openwork") {
@@ -2792,7 +2776,7 @@ export function createWorkspaceStore(options: {
       const resolved = await resolveOpenworkHost({
         hostUrl,
         token,
-        workspaceId: workspace.openworkWorkspaceId ?? null,
+        workspaceId: resolveRuntimeWorkspaceLookup(workspace)?.workspaceId ?? null,
         directoryHint: directory || null,
       });
       if (resolved.kind !== "openwork") {
