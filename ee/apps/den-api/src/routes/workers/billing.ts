@@ -29,6 +29,8 @@ export function registerWorkerBillingRoutes<T extends { Variables: WorkerRouteVa
         ...billing,
         productId: env.polar.productId,
         benefitId: env.polar.benefitId,
+        workerProductId: env.polar.workerProductId,
+        workerBenefitId: env.polar.workerBenefitId,
       },
     })
   })
@@ -65,6 +67,8 @@ export function registerWorkerBillingRoutes<T extends { Variables: WorkerRouteVa
         ...billing,
         productId: env.polar.productId,
         benefitId: env.polar.benefitId,
+        workerProductId: env.polar.workerProductId,
+        workerBenefitId: env.polar.workerBenefitId,
       },
     })
   })

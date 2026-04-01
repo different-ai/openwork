@@ -111,9 +111,9 @@ export function LandingHome(props: Props) {
             <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-gray-500 md:text-[14px]">
               <span>Solo free forever</span>
               <span aria-hidden="true">•</span>
-              <span>Workers $50/month</span>
+              <span>Windows support $99/year</span>
               <span aria-hidden="true">•</span>
-              <span>Enterprise talk to us</span>
+              <span>Cloud $50/month for 5 seats</span>
             </div>
 
             <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
@@ -269,8 +269,8 @@ export function LandingHome(props: Props) {
               </div>
               <h2 className="mb-3 text-xl font-medium tracking-tight">Hosted sandboxed workers</h2>
               <p className="mb-6 flex-1 text-sm leading-relaxed text-gray-500">
-                Workers are disabled by default. Purchase one for $50/month when
-                you need hosted runtime.
+                Cloud starts at $50/month for 5 seats. Workers are disabled by
+                default and added separately for $50/month each.
               </p>
               <div>
                 <a href="/den" className="secondary-button">Learn more</a>

@@ -43,6 +43,10 @@ export type BillingSummary = {
   hasActivePlan: boolean;
   checkoutRequired: boolean;
   checkoutUrl: string | null;
+  activeWorkerSubscriptions: number;
+  workerCheckoutUrl: string | null;
+  workerCheckoutRequired: boolean;
+  workerPrice: BillingPrice | null;
   portalUrl: string | null;
   price: BillingPrice | null;
   subscription: BillingSubscription | null;
@@ -593,6 +597,10 @@ export function getBillingSummary(payload: unknown): BillingSummary | null {
     hasActivePlan,
     checkoutRequired,
     checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
+    activeWorkerSubscriptions: typeof billing.activeWorkerSubscriptions === "number" ? billing.activeWorkerSubscriptions : 0,
+    workerCheckoutUrl: typeof billing.workerCheckoutUrl === "string" ? billing.workerCheckoutUrl : null,
+    workerCheckoutRequired: billing.workerCheckoutRequired === true,
+    workerPrice: getBillingPrice(billing.workerPrice),
     portalUrl: typeof billing.portalUrl === "string" ? billing.portalUrl : null,
     price: getBillingPrice(billing.price),
     subscription: getBillingSubscription(billing.subscription),

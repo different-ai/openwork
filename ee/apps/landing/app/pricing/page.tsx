@@ -7,7 +7,7 @@ import { getGithubData } from "../../lib/github";
 export const metadata = {
   title: "OpenWork — Pricing",
   description:
-    "Free desktop app, cloud workers from $50/month, and enterprise licensing."
+    "Free solo desktop usage, annual Windows support, cloud teams starting at 5 seats, and worker add-ons billed separately."
 };
 
 export default async function PricingPage() {
@@ -35,6 +35,9 @@ export default async function PricingPage() {
             <h1 className="mb-6 text-4xl font-medium leading-[1.05] tracking-tight md:text-5xl lg:text-6xl">
               Pricing
             </h1>
+            <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
+              Start solo for free. Purchase Windows support when you need it. OpenWork Cloud starts at 5 seats, then add hosted workers separately when you want runtime. Talk to us for enterprise licensing.
+            </p>
           </section>
 
           <PricingGrid windowsCheckoutUrl={windowsCheckoutUrl} callUrl={callUrl} />

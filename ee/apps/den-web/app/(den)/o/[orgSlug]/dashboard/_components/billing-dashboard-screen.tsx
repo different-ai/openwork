@@ -49,6 +49,7 @@ export function BillingDashboardScreen() {
   }
 
   const billingPrice = billingSummary?.price ?? null;
+  const workerPrice = billingSummary?.workerPrice ?? null;
   const subscription = billingSummary?.subscription ?? null;
   const planAmountLabel = billingPrice
     ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)} · ${formatRecurringInterval(
@@ -60,7 +61,7 @@ export function BillingDashboardScreen() {
     ? formatSubscriptionStatus(subscription.status)
     : billingSummary?.hasActivePlan
       ? "Active"
-      : "Purchase required";
+      : "Plan required";
   const nextBillingDate = subscription?.currentPeriodEnd
     ? formatIsoDate(subscription.currentPeriodEnd)
     : "Not available";
@@ -92,7 +93,7 @@ export function BillingDashboardScreen() {
           <p className="text-[15px] text-gray-700">
             {billingSummary?.hasActivePlan
               ? `This workspace's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
-              : "Workers are $50/month each. Purchase a worker to enable hosted launches for your team."}
+              : "Start your OpenWork Cloud base plan when your team is ready to share templates and cloud workflows."}
           </p>
         </div>
 
@@ -105,6 +106,23 @@ export function BillingDashboardScreen() {
           <div>
             <h2 className="mb-2 text-[13px] font-medium text-gray-500">Plan cost</h2>
             <div className="text-[15px] font-medium text-gray-900">{planAmountLabel}</div>
+          </div>
+
+          <div>
+            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Included seats</h2>
+            <div className="text-[15px] font-medium text-gray-900">5 seats</div>
+          </div>
+
+          <div>
+            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Purchased workers</h2>
+            <div className="text-[15px] font-medium text-gray-900">{billingSummary?.activeWorkerSubscriptions ?? 0}</div>
+          </div>
+
+          <div>
+            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Worker add-on price</h2>
+            <div className="text-[15px] font-medium text-gray-900">
+              {workerPrice ? `${formatMoneyMinor(workerPrice.amount, workerPrice.currency)} · ${formatRecurringInterval(workerPrice.recurringInterval, workerPrice.recurringIntervalCount)}` : "$50.00 · month"}
+            </div>
           </div>
 
           <div>
@@ -144,7 +162,17 @@ export function BillingDashboardScreen() {
               rel="noreferrer"
               className="rounded-full bg-gray-900 px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-gray-800"
             >
-              Purchase worker
+              Purchase base plan
+            </a>
+          ) : null}
+
+          {billingSummary?.workerCheckoutUrl ? (
+            <a
+              href={billingSummary.workerCheckoutUrl}
+              rel="noreferrer"
+              className="rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              Purchase worker add-on
             </a>
           ) : null}
 
@@ -181,27 +209,6 @@ export function BillingDashboardScreen() {
                   : "Cancel plan"}
             </button>
           ) : null}
-        </div>
-      </div>
-
-      <div className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
-        <h2 className="mb-4 text-[15px] font-medium text-gray-900">Pricing</h2>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
-            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Solo</p>
-            <p className="text-[20px] font-semibold text-gray-900">$0</p>
-            <p className="mt-1 text-[13px] text-gray-500">Free forever · open source</p>
-          </div>
-          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
-            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Cloud worker</p>
-            <p className="text-[20px] font-semibold text-gray-900">$50<span className="text-[13px] font-medium text-gray-500">/month</span></p>
-            <p className="mt-1 text-[13px] text-gray-500">Per worker · 5 seats included</p>
-          </div>
-          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
-            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Enterprise</p>
-            <p className="text-[20px] font-semibold text-gray-900">Custom</p>
-            <p className="mt-1 text-[13px] text-gray-500">Windows included · talk to us</p>
-          </div>
         </div>
       </div>
 

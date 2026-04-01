@@ -12,7 +12,7 @@ const MOCK_BILLING = process.env.NEXT_PUBLIC_DEN_MOCK_BILLING === "1";
 const MOCK_CHECKOUT_URL = (process.env.NEXT_PUBLIC_DEN_MOCK_CHECKOUT_URL ?? "").trim() || null;
 
 function formatSubscriptionStatus(value: string | null | undefined) {
-  if (!value) return "Purchase required";
+  if (!value) return "Plan required";
   return value
     .split(/[_\s]+/)
     .filter(Boolean)
@@ -59,9 +59,13 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         featureGateEnabled: true,
         hasActivePlan: false,
         checkoutRequired: true,
-              checkoutUrl: MOCK_CHECKOUT_URL,
-              portalUrl: null,
-              price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
+        checkoutUrl: MOCK_CHECKOUT_URL,
+        activeWorkerSubscriptions: 0,
+        workerCheckoutUrl: MOCK_CHECKOUT_URL,
+        workerCheckoutRequired: true,
+        workerPrice: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
+        portalUrl: null,
+        price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
         subscription: null,
         invoices: [],
         productId: null,
@@ -174,16 +178,16 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[12ch]">Purchase worker access before launch.</h1>
+            <h1 className="den-title-xl max-w-[12ch]">Activate your team workspace.</h1>
             <p className="den-copy max-w-2xl">
-              Workers are disabled by default. Add one hosted OpenWork worker for $50/month, then launch it from your dashboard.
+              OpenWork Cloud starts at $50/month for up to 5 seats. Worker runtime is purchased separately after your team workspace is active.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             {checkoutHref ? (
               <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
-                Purchase worker — $50/month
+                Start team plan — $50/month
               </a>
             ) : (
               <button
@@ -192,7 +196,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
                 disabled={billingBusy || billingCheckoutBusy}
               >
-                Refresh purchase link
+                Refresh checkout link
               </button>
             )}
             <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
@@ -201,7 +205,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
-            <span>$50/month per worker</span>
+            <span>$50/month for 5 seats</span>
             <span aria-hidden="true">•</span>
             <span>{planAmountLabel} billed monthly</span>
             <span aria-hidden="true">•</span>
@@ -225,7 +229,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 <span className="den-kicker w-fit">OpenWork Cloud</span>
                 <h2 className="den-title-lg">Share your setup across your team.</h2>
                 <p className="den-copy">
-                  Manage your team&apos;s setup, invite teammates, and keep everything in sync.
+                  Manage your team&apos;s setup, invite up to 5 seats, and add hosted workers only when you need runtime.
                 </p>
               </div>
 
@@ -279,7 +283,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your worker billing is active." : "Purchase a worker to enable hosted launches."}
+                {billingSummary.hasActivePlan ? "Your base team plan is active. Workers are sold separately." : "Purchase the base team plan to unlock OpenWork Cloud."}
               </p>
             </div>
 
@@ -303,7 +307,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
             <div className="grid gap-3">
               {checkoutHref && !billingSummary.hasActivePlan ? (
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
-                  Purchase worker
+                  Purchase base plan
                 </a>
               ) : null}
               {billingSummary.portalUrl ? (

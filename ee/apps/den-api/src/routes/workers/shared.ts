@@ -12,7 +12,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSubscriptionCancellation } from "../../billing/polar.js"
+import { getCloudWorkerBillingStatus, requireAdditionalCloudWorkerAccess, requireCloudWorkerAccess, setCloudWorkerSubscriptionCancellation } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import type { UserOrganizationsContext } from "../../middleware/index.js"
@@ -286,7 +286,6 @@ export async function countUserCloudWorkers(userId: UserId) {
     .select({ id: WorkerTable.id })
     .from(WorkerTable)
     .where(and(eq(WorkerTable.created_by_user_id, userId), eq(WorkerTable.destination, "cloud")))
-    .limit(2)
 
   return rows.length
 }
@@ -383,6 +382,15 @@ export async function requireCloudAccessOrPayment(input: {
   name: string
 }) {
   return requireCloudWorkerAccess(input)
+}
+
+export async function requireAdditionalCloudCapacityOrPayment(input: {
+  userId: UserId
+  email: string
+  name: string
+  ownedWorkerCount: number
+}) {
+  return requireAdditionalCloudWorkerAccess(input)
 }
 
 export async function getWorkerBilling(input: {
