@@ -8,7 +8,7 @@ import type {
   WorkspacePreset,
 } from "../types";
 import { normalizeOpenworkServerUrl, parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
-import { t } from "../i18n";
+import { t } from "../../i18n";
 import { isTauriRuntime, safeStringify, addOpencodeCacheHint } from "../utils";
 import type { WorkspaceStore } from "../context/workspace";
 import type { StartupPreference } from "../types";
