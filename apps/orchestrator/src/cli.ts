@@ -41,6 +41,15 @@ import { once } from "node:events";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
 
+const microsandboxRequire = createRequire(import.meta.url);
+const {
+  Sandbox: MicroSandbox,
+  Mount: MicroSandboxMount,
+  NetworkPolicy: MicroSandboxNetworkPolicy,
+  install: installMicrosandboxRuntime,
+  isInstalled: isMicrosandboxRuntimeInstalled,
+} = microsandboxRequire("microsandbox") as typeof import("microsandbox");
+
 type ApprovalMode = "manual" | "auto";
 
 type SandboxMode =
@@ -1118,74 +1127,26 @@ function microsandboxPlatformError(): string | null {
   return null;
 }
 
-async function resolveMicrosandboxCandidates(): Promise<string[]> {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const push = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) return;
-    seen.add(trimmed);
-    out.push(trimmed);
-  };
+let microsandboxInstallPromise: Promise<void> | null = null;
 
-  for (const key of [
-    "OPENWORK_MICROSANDBOX_BIN",
-    "MICROSANDBOX_BIN",
-    "MSB_BIN",
-  ]) {
-    const value = process.env[key];
-    if (value) push(value);
-  }
-
-  const addFromPath = (value?: string | null) => {
-    if (!value) return;
-    for (const dir of value.split(delimiter)) {
-      if (!dir.trim()) continue;
-      push(join(dir, "msb"));
-    }
-  };
-
-  addFromPath(process.env.PATH ?? "");
-
-  if (process.platform === "darwin") {
-    const helperPaths = await readPathHelperPaths();
-    for (const dir of helperPaths) {
-      push(join(dir, "msb"));
-    }
-  }
-
-  for (const raw of [
-    "/opt/homebrew/bin/msb",
-    "/usr/local/bin/msb",
-    join(homedir(), ".microsandbox", "bin", "msb"),
-  ]) {
-    push(raw);
-  }
-
-  const valid: string[] = [];
-  for (const candidate of out) {
-    if (await isExecutable(candidate)) {
-      valid.push(candidate);
-    }
-  }
-  return valid;
-}
-
-async function resolveMicrosandboxCommand(): Promise<string> {
-  const candidates = await resolveMicrosandboxCandidates();
-  return candidates[0] ?? "msb";
-}
-
-async function ensureMicrosandboxSystemReady(
-  microsandboxCommand: string,
-): Promise<void> {
+async function ensureMicrosandboxSystemReady(logger?: Logger): Promise<void> {
   const platformError = microsandboxPlatformError();
   if (platformError) {
     throw new Error(platformError);
   }
-  if (!(await probeCommand(microsandboxCommand, ["--version"]))) {
+  if (isMicrosandboxRuntimeInstalled()) {
+    return;
+  }
+  if (!microsandboxInstallPromise) {
+    logger?.info("Installing MicroSandbox runtime", undefined, "sandbox");
+    microsandboxInstallPromise = installMicrosandboxRuntime().finally(() => {
+      microsandboxInstallPromise = null;
+    });
+  }
+  await microsandboxInstallPromise;
+  if (!isMicrosandboxRuntimeInstalled()) {
     throw new Error(
-      "MicroSandbox CLI not found. Install it with `curl -fsSL https://install.microsandbox.dev | sh`, or set OPENWORK_MICROSANDBOX_BIN to the full msb path.",
+      "MicroSandbox runtime is still unavailable after automatic installation.",
     );
   }
 }
@@ -4119,18 +4080,15 @@ async function stopAppleContainer(name: string): Promise<void> {
   });
 }
 
-async function stopMicrosandbox(
-  name: string,
-  microsandboxCommand: string,
-): Promise<void> {
+async function stopMicrosandbox(name: string): Promise<void> {
   if (!name.trim()) return;
-  await new Promise<void>((resolve) => {
-    const child = spawnProcess(microsandboxCommand, ["stop", name], {
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-    child.on("error", () => resolve());
-    child.on("exit", () => resolve());
-  });
+  try {
+    await ensureMicrosandboxSystemReady();
+    const handle = await MicroSandbox.get(name);
+    await handle.stop();
+  } catch {
+    // ignore stop failures to match docker/container behavior
+  }
 }
 
 async function runQuiet(
@@ -4382,18 +4340,6 @@ async function writeSandboxEntrypoint(options: {
   await writeFile(options.entrypointHostPath, `${script}\n`, "utf8");
 }
 
-async function writeSandboxSecretEnvFile(
-  filePath: string,
-  values: Record<string, string | undefined>,
-): Promise<void> {
-  const lines = Object.entries(values)
-    .filter(([, value]) => typeof value === "string" && value.length > 0)
-    .map(([key, value]) => `export ${key}=${shQuote(value!)}`);
-  if (!lines.length) return;
-  await writeFile(filePath, `${lines.join("\n")}\n`, "utf8");
-  await chmod(filePath, 0o600);
-}
-
 async function stageMicrosandboxCopy(
   sourcePath: string,
   targetPath: string,
@@ -4411,8 +4357,8 @@ async function stageMicrosandboxCopy(
 async function prepareMicrosandboxHostMounts(options: {
   baseDir: string;
   extraMounts: SandboxMount[];
-}): Promise<Array<{ hostPath: string; guestPath: string }>> {
-  const mounts: Array<{ hostPath: string; guestPath: string }> = [];
+}): Promise<Array<{ hostPath: string; guestPath: string; readonly: boolean }>> {
+  const mounts: Array<{ hostPath: string; guestPath: string; readonly: boolean }> = [];
   const hostMountRoot = join(options.baseDir, "microsandbox-host");
   await mkdir(hostMountRoot, { recursive: true });
 
@@ -4425,6 +4371,7 @@ async function prepareMicrosandboxHostMounts(options: {
     mounts.push({
       hostPath: staged,
       guestPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
+      readonly: true,
     });
   }
 
@@ -4437,6 +4384,7 @@ async function prepareMicrosandboxHostMounts(options: {
     mounts.push({
       hostPath: staged,
       guestPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
+      readonly: true,
     });
   }
 
@@ -4453,7 +4401,11 @@ async function prepareMicrosandboxHostMounts(options: {
           ),
         )
       : mount.hostPath;
-    mounts.push({ hostPath, guestPath: mount.containerPath });
+    mounts.push({
+      hostPath,
+      guestPath: mount.containerPath,
+      readonly: mount.readonly,
+    });
   }
 
   return mounts;
@@ -4836,7 +4788,6 @@ async function startAppleContainerSandbox(options: {
 
 async function startMicrosandboxSandbox(options: {
   image: string;
-  microsandboxCommand: string;
   containerName: string;
   workspace: string;
   persistDir: string;
@@ -4869,8 +4820,13 @@ async function startMicrosandboxSandbox(options: {
   logFormat: LogFormat;
   detach: boolean;
   logger: Logger;
-}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
-  await ensureMicrosandboxSystemReady(options.microsandboxCommand);
+}): Promise<{ child?: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
+  if (!options.detach) {
+    throw new Error(
+      "MicroSandbox-backed OpenWork workers currently require detached startup.",
+    );
+  }
+  await ensureMicrosandboxSystemReady(options.logger);
 
   const staged = await stageSandboxRuntime({
     persistDir: options.persistDir,
@@ -4879,23 +4835,12 @@ async function startMicrosandboxSandbox(options: {
     detach: options.detach,
   });
 
-  const secretEnvHostPath = join(staged.baseDir, "sandbox-secrets.env");
-  const secretEnvPathInContainer = `${staged.rootInContainer}/sandbox-secrets.env`;
-  await writeSandboxSecretEnvFile(secretEnvHostPath, {
-    OPENWORK_TOKEN: options.openwork.token,
-    OPENWORK_HOST_TOKEN: options.openwork.hostToken,
-    OPENCODE_SERVER_USERNAME: options.opencode.username,
-    OPENCODE_SERVER_PASSWORD: options.opencode.password,
-    OPENWORK_OPENCODE_USERNAME: options.openwork.opencodeUsername,
-    OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword,
-  });
-
   await writeSandboxEntrypoint({
     entrypointHostPath: staged.entrypointHostPath,
     rootInContainer: staged.rootInContainer,
     opencodeConfigDirInContainer: "/opencode-config",
     backend: "microsandbox",
-    secretEnvPathInContainer,
+    secretEnvPathInContainer: null,
     opencode: options.opencode,
     openwork: {
       token: options.openwork.token,
@@ -4918,67 +4863,65 @@ async function startMicrosandboxSandbox(options: {
     extraMounts: options.extraMounts,
   });
 
-  const args: string[] = [
-    "run",
-    "--replace",
-    "--name",
-    options.containerName,
-    "-p",
-    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
-    "-v",
-    `${options.workspace}:/workspace`,
-    "-v",
-    `${options.persistDir}:/persist`,
-    "-v",
-    `${options.opencodeConfigDir}:/opencode-config`,
-  ];
-
-  if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
-    args.push(
-      "-p",
-      `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`,
-    );
-  }
-
-  for (const mount of preparedMounts) {
-    args.push("-v", `${mount.hostPath}:${mount.guestPath}`);
-  }
-
-  if (options.detach) {
-    args.push("-d");
-  }
-
   const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
-  args.push(options.image, "--", "sh", scriptInContainer);
+  const volumes: Record<string, import("microsandbox").MountConfig> = {
+    "/workspace": MicroSandboxMount.bind(options.workspace),
+    "/persist": MicroSandboxMount.bind(options.persistDir),
+    "/opencode-config": MicroSandboxMount.bind(options.opencodeConfigDir),
+  };
+  for (const mount of preparedMounts) {
+    volumes[mount.guestPath] = MicroSandboxMount.bind(mount.hostPath, {
+      readonly: mount.readonly,
+    });
+  }
 
-  options.logger.debug("sandbox: microsandbox run", {
-    microsandboxCommand: options.microsandboxCommand,
-    args,
+  const ports: Record<string, number> = {
+    [String(options.ports.openwork)]: SANDBOX_INTERNAL_OPENWORK_PORT,
+  };
+  if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
+    ports[String(options.ports.opencodeRouterHealth)] =
+      SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT;
+  }
+
+  options.logger.debug("sandbox: microsandbox createDetached", {
     containerName: options.containerName,
     workspace: options.workspace,
     persistDir: options.persistDir,
+    ports,
+    volumeCount: Object.keys(volumes).length,
   });
 
-  const child = spawnProcess(options.microsandboxCommand, args, {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env },
+  await MicroSandbox.createDetached({
+    name: options.containerName,
+    image: options.image,
+    replace: true,
+    cpus: 2,
+    memoryMib: 2048,
+    shell: "/bin/sh",
+    cmd: ["sh", scriptInContainer],
+    env: {
+      OPENWORK_TOKEN: options.openwork.token,
+      OPENWORK_HOST_TOKEN: options.openwork.hostToken,
+      ...(options.opencode.username
+        ? { OPENCODE_SERVER_USERNAME: options.opencode.username }
+        : {}),
+      ...(options.opencode.password
+        ? { OPENCODE_SERVER_PASSWORD: options.opencode.password }
+        : {}),
+      ...(options.openwork.opencodeUsername
+        ? { OPENWORK_OPENCODE_USERNAME: options.openwork.opencodeUsername }
+        : {}),
+      ...(options.openwork.opencodePassword
+        ? { OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword }
+        : {}),
+    },
+    volumes,
+    ports,
+    network: MicroSandboxNetworkPolicy.allowAll(),
+    quietLogs: false,
   });
-  prefixStream(
-    child.stdout,
-    "sandbox",
-    "stdout",
-    options.logger,
-    child.pid ?? undefined,
-  );
-  prefixStream(
-    child.stderr,
-    "sandbox",
-    "stderr",
-    options.logger,
-    child.pid ?? undefined,
-  );
 
-  return { child, cleanup: staged.cleanup };
+  return { cleanup: staged.cleanup };
 }
 
 async function verifyOpenCodeRouterVersion(
@@ -7355,17 +7298,13 @@ async function runStart(args: ParsedArgs) {
   }
   const dockerCommand =
     sandboxMode === "docker" ? await resolveDockerCommand() : null;
-  const microsandboxCommand =
-    sandboxMode === "microsandbox"
-      ? await resolveMicrosandboxCommand()
-      : null;
   logVerbose(`cli version: ${cliVersion}`);
   logVerbose(`sandbox: ${sandboxMode}`);
   if (dockerCommand) {
     logVerbose(`docker bin: ${dockerCommand}`);
   }
-  if (microsandboxCommand) {
-    logVerbose(`microsandbox bin: ${microsandboxCommand}`);
+  if (sandboxMode === "microsandbox") {
+    logVerbose(`microsandbox runtime: sdk`);
   }
   if (sandboxMode !== "none") {
     logVerbose(`sandbox image: ${sandboxImage}`);
@@ -7416,7 +7355,7 @@ async function runStart(args: ParsedArgs) {
       }
     }
     if (sandboxMode === "microsandbox") {
-      await ensureMicrosandboxSystemReady(microsandboxCommand ?? "msb");
+      await ensureMicrosandboxSystemReady(logger);
     }
   }
   const opencodeRouterMode = await resolveOpencodeRouterEnabled(
@@ -8214,15 +8153,14 @@ async function runStart(args: ParsedArgs) {
         sandboxMode === "container"
           ? stopAppleContainer
           : sandboxMode === "microsandbox"
-            ? (name: string) =>
-                stopMicrosandbox(name, microsandboxCommand ?? "msb")
+            ? stopMicrosandbox
           : (name: string) =>
               stopDockerContainer(name, dockerCommand ?? "docker");
       sandboxStopCommand =
         sandboxMode === "container"
           ? "container stop"
           : sandboxMode === "microsandbox"
-            ? `${microsandboxCommand ?? "msb"} stop`
+            ? "microsandbox sdk stop"
             : "docker stop";
       const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
 
@@ -8273,7 +8211,6 @@ async function runStart(args: ParsedArgs) {
           : sandboxMode === "microsandbox"
             ? await startMicrosandboxSandbox({
                 image: sandboxImage,
-                microsandboxCommand: microsandboxCommand ?? "msb",
                 containerName,
                 workspace: resolvedWorkspace,
                 persistDir: sandboxPersistDir,
@@ -8369,7 +8306,7 @@ async function runStart(args: ParsedArgs) {
         tui?.updateService("router", { status: "running", port: undefined });
       }
 
-      if (!detachRequested) {
+      if (!detachRequested && sandboxChild.child) {
         children.push({ name: "sandbox", child: sandboxChild.child });
         logger.info(
           "Process spawned",

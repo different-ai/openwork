@@ -156,6 +156,9 @@ importers:
       '@opentui/solid':
         specifier: 0.1.77
         version: 0.1.77(solid-js@1.9.9)(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+      microsandbox:
+        specifier: 0.3.7
+        version: 0.3.7
       opencode-router:
         specifier: 0.11.198
         version: link:../opencode-router
@@ -2589,6 +2592,24 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
+  '@superradcompany/microsandbox-darwin-arm64@0.3.7':
+    resolution: {integrity: sha512-huSPzAqxxUavBmsHAR6cCI8ZIqTvSXF0c58yleEEqND0URtNp7Boc1GvvNAsKER4xZKUhJcpBRokXKV1QP1wCQ==}
+    engines: {node: '>= 18'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.3.7':
+    resolution: {integrity: sha512-cdWrhrTK3euIrVHkVVZr1zy0jQ23QmkCWM08vxnt3x3dIyndB62NKks1XrLySHDSnob06yh7v4+kyi8Y6nGiCw==}
+    engines: {node: '>= 18'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.3.7':
+    resolution: {integrity: sha512-6rJaNvZyuZOGSx5Ut25R9Of/1oNZ8dlMHW7KqxtY0gjWqwWgdGW7uI2TjRzTa8EORNdLJDDXSuoHTyoVUQxHmA==}
+    engines: {node: '>= 18'}
+    cpu: [x64]
+    os: [linux]
+
   '@swc/counter@0.1.3':
     resolution: {integrity: sha512-e2BR4lsJkkRlKZ/qCHPw9ZaSxc0MVUd7gtbtaB7aMvHeJVYe8sOB8DBZkP2DtISHGSku9sCK6T6cnY0CtXrOCQ==}
 
@@ -3981,6 +4002,10 @@ packages:
   micromatch@4.0.8:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
+
+  microsandbox@0.3.7:
+    resolution: {integrity: sha512-o53QxSak1zaJnjynTwIK/zNa3/lh0H6HYXSx9GECvBsSVZRiZbhl9yLPn4ztRhLGLb8DNjtejOIUNG3sih2GQA==}
+    engines: {node: '>= 18'}
 
   mime-db@1.52.0:
     resolution: {integrity: sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==}
@@ -7362,6 +7387,15 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
+  '@superradcompany/microsandbox-darwin-arm64@0.3.7':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.3.7':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.3.7':
+    optional: true
+
   '@swc/counter@0.1.3': {}
 
   '@swc/helpers@0.5.15':
@@ -8639,6 +8673,12 @@ snapshots:
     dependencies:
       braces: 3.0.3
       picomatch: 2.3.1
+
+  microsandbox@0.3.7:
+    optionalDependencies:
+      '@superradcompany/microsandbox-darwin-arm64': 0.3.7
+      '@superradcompany/microsandbox-linux-arm64-gnu': 0.3.7
+      '@superradcompany/microsandbox-linux-x64-gnu': 0.3.7
 
   mime-db@1.52.0: {}
 

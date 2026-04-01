@@ -299,7 +299,7 @@ export default function CreateWorkspaceLocalPanel(props: {
               <Show when={props.extraWorkerSubmitting} fallback={props.extraWorkerLabel ?? "Create MicroSandbox"}>
                 <span class="inline-flex items-center gap-2">
                   <Loader2 size={16} class="animate-spin" />
-                  Checking MicroSandbox…
+                  Starting MicroSandbox…
                 </span>
               </Show>
             </button>

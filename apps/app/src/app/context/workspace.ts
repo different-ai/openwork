@@ -2287,13 +2287,16 @@ export function createWorkspaceStore(options: {
     const runId = makeRunId();
     const startedAt = Date.now();
     const backendLabel = sandboxBackendLabel(backend);
+    const usesRuntimeDoctor = backend === "docker";
     setSandboxActiveBackend(backend);
-    setSandboxCreatePhase("preflight");
-    setSandboxPreflightBusy(true);
+    setSandboxCreatePhase(usesRuntimeDoctor ? "preflight" : "provisioning");
+    setSandboxPreflightBusy(usesRuntimeDoctor);
     options.setError(null);
     clearSandboxCreateProgress();
 
-    const doctor = await refreshManagedSandboxDoctor(backend);
+    const doctor = usesRuntimeDoctor
+      ? await refreshManagedSandboxDoctor(backend)
+      : null;
     setSandboxPreflightBusy(false);
     setSandboxCreatePhase("provisioning");
     setSandboxCreateProgress({
@@ -2301,7 +2304,9 @@ export function createWorkspaceStore(options: {
       backendLabel,
       runId,
       startedAt,
-      stage: `Checking ${backendLabel}...`,
+      stage: usesRuntimeDoctor
+        ? `Checking ${backendLabel}...`
+        : `Preparing ${backendLabel} runtime...`,
       error: null,
       logs: [],
       steps: [
@@ -2335,7 +2340,7 @@ export function createWorkspaceStore(options: {
         if (infoDebug.stderr?.trim()) pushSandboxCreateLog(`${infoLabel} stderr: ${infoDebug.stderr.trim()}`);
       }
     }
-    if (!doctor?.ready) {
+    if (usesRuntimeDoctor && !doctor?.ready) {
       const detail = doctor?.error?.trim() || sandboxUnavailableMessage(backend);
       options.setError(detail);
       setSandboxStep("runtime", { status: "error", detail });
@@ -2344,8 +2349,15 @@ export function createWorkspaceStore(options: {
       setSandboxCreatePhase("idle");
       return false;
     }
-    setSandboxStep("runtime", { status: "done", detail: doctor.serverVersion ?? doctor.clientVersion ?? null });
-    setSandboxStage("Preparing worker...");
+    if (usesRuntimeDoctor) {
+      setSandboxStep("runtime", {
+        status: "done",
+        detail: doctor?.serverVersion ?? doctor?.clientVersion ?? null,
+      });
+      setSandboxStage("Preparing worker...");
+    } else {
+      pushSandboxCreateLog("MicroSandbox runtime is managed by OpenWork.");
+    }
 
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
@@ -2498,6 +2510,9 @@ export function createWorkspaceStore(options: {
           sandboxBackend: backend,
           runId,
         });
+        if (!usesRuntimeDoctor) {
+          setSandboxStep("runtime", { status: "done", detail: "Managed by OpenWork" });
+        }
         setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
         setSandboxStep("health", { status: "done" });
         setSandboxStage("Connecting to sandbox...");
@@ -2544,6 +2559,9 @@ export function createWorkspaceStore(options: {
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+      if (!usesRuntimeDoctor) {
+        setSandboxStep("runtime", { status: "error", detail: message });
+      }
       setSandboxError(message);
       setSandboxStage("Sandbox failed");
       return false;
@@ -3062,12 +3080,14 @@ export function createWorkspaceStore(options: {
       }
 
       const backend = workspace.sandboxBackend ?? "docker";
-      const backendLabel = sandboxBackendLabel(backend);
-      const doctor = await refreshManagedSandboxDoctor(backend);
-      if (!doctor?.ready) {
-        const detail =
-          doctor?.error?.trim() || `${backendLabel} needs to be running before we can get this worker back online.`;
-        throw new Error(detail);
+      if (backend === "docker") {
+        const backendLabel = sandboxBackendLabel(backend);
+        const doctor = await refreshManagedSandboxDoctor(backend);
+        if (!doctor?.ready) {
+          const detail =
+            doctor?.error?.trim() || `${backendLabel} needs to be running before we can get this worker back online.`;
+          throw new Error(detail);
+        }
       }
 
       const host = await orchestratorStartDetached({

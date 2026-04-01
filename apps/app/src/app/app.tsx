@@ -2528,7 +2528,8 @@ export default function App() {
           workspaceStore.sandboxActiveBackend?.() !== "microsandbox"
         }
         extraWorkerSubmitting={
-          (workspaceStore.sandboxPreflightBusy?.() ?? false) &&
+          ((workspaceStore.sandboxPreflightBusy?.() ?? false) ||
+            (workspaceStore.sandboxCreatePhase?.() ?? "idle") !== "idle") &&
           workspaceStore.sandboxActiveBackend?.() === "microsandbox"
         }
         localDisabled={!isTauriRuntime()}
