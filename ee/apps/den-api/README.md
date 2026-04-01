@@ -1,10 +1,10 @@
 # Den API
 
-Hono-based successor to `ee/apps/den-controller`.
+Hono-based Den control plane implementation.
 
-This package is the Hono-based successor to `ee/apps/den-controller`.
+This package is the active Den control plane implementation.
 
-It now carries the full migrated Den API route surface in a foldered Hono structure so agents can navigate one area at a time without scanning the whole service.
+It carries the full migrated Den API route surface in a foldered Hono structure so agents can navigate one area at a time without scanning the whole service.
 
 ## Quick start
 
@@ -36,7 +36,7 @@ Each major folder also has its own `README.md` so future agents can inspect one 
 
 ## Migration approach
 
-1. Keep `den-controller` as the source of truth while the migration is still in flight.
-2. Port endpoints to focused Hono route groups one surface at a time.
+1. Keep `den-api` as the source of truth for Den control-plane behavior.
+2. Add endpoints in focused Hono route groups one surface at a time.
 3. Reuse shared middleware and Zod validators instead of duplicating request/session/org plumbing.
 4. Leave a short README in each route area when the structure changes so later agents can recover context fast.
