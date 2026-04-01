@@ -151,6 +151,11 @@ export type WorkspaceExportSummary = {
   excluded: string[];
 };
 
+export type DesktopFileAssociation = {
+  name: string;
+  path?: string | null;
+};
+
 export async function engineStart(
   projectDir: string,
   options?: {
@@ -429,6 +434,14 @@ export type AppBuildInfo = {
 
 export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
+}
+
+export async function desktopGetDefaultAppForFile(
+  path: string,
+): Promise<DesktopFileAssociation | null> {
+  return invoke<DesktopFileAssociation | null>("desktop_default_app_for_file", {
+    path,
+  });
 }
 
 export async function nukeOpenworkAndOpencodeConfigAndExit(): Promise<void> {

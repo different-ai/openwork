@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::engine::doctor::resolve_engine_path;
 use crate::engine::manager::EngineManager;
@@ -46,6 +47,13 @@ pub struct AppBuildInfo {
     pub git_sha: Option<String>,
     pub build_epoch: Option<String>,
     pub openwork_dev_mode: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopFileAssociation {
+    pub name: String,
+    pub path: Option<String>,
 }
 
 fn env_truthy(key: &str) -> bool {
@@ -226,6 +234,67 @@ fn validate_server_name(name: &str) -> Result<String, String> {
     }
 
     Ok(trimmed.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn default_app_for_file(path: &Path) -> Result<Option<DesktopFileAssociation>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let display_target = path.to_string_lossy().replace('"', "\\\"");
+    let path_script = format!(
+        "set fileInfo to info for POSIX file \"{}\"\nPOSIX path of (default application of fileInfo)",
+        display_target
+    );
+    let path_output = Command::new("osascript")
+        .arg("-e")
+        .arg(path_script)
+        .output()
+        .map_err(|error| format!("Failed to read default app path: {error}"))?;
+
+    if !path_output.status.success() {
+        return Ok(None);
+    }
+
+    let app_path = String::from_utf8_lossy(&path_output.stdout)
+        .trim()
+        .to_string();
+    if app_path.is_empty() {
+        return Ok(None);
+    }
+
+    let app_target = app_path.replace('"', "\\\"");
+    let name_script = format!(
+        "name of (info for POSIX file \"{}\")",
+        app_target.trim_end_matches('/')
+    );
+    let name_output = Command::new("osascript")
+        .arg("-e")
+        .arg(name_script)
+        .output()
+        .map_err(|error| format!("Failed to read default app name: {error}"))?;
+
+    if !name_output.status.success() {
+        return Ok(None);
+    }
+
+    let name = String::from_utf8_lossy(&name_output.stdout)
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(DesktopFileAssociation {
+        name,
+        path: Some(app_path),
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_app_for_file(_path: &Path) -> Result<Option<DesktopFileAssociation>, String> {
+    Ok(None)
 }
 
 fn read_workspace_openwork_config(
@@ -434,6 +503,18 @@ pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
         build_epoch,
         openwork_dev_mode: env_truthy("OPENWORK_DEV_MODE"),
     }
+}
+
+#[tauri::command]
+pub fn desktop_default_app_for_file(
+    path: String,
+) -> Result<Option<DesktopFileAssociation>, String> {
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    default_app_for_file(&path)
 }
 
 #[tauri::command]

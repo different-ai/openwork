@@ -1021,6 +1021,91 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   return { title: "Step", toolCategory: "tool" };
 }
 
+function collectArtifactsFromParts(results: Map<string, ArtifactItem>, parts: Part[], messageId?: string) {
+  parts.forEach((part) => {
+    if (part.type !== "tool") return;
+    const record = part as any;
+    const state = record.state ?? {};
+    const input = state.input && typeof state.input === "object"
+      ? (state.input as Record<string, unknown>)
+      : {};
+    const matches = new Set<string>();
+
+    const explicit = [
+      state.path,
+      state.file,
+      ...(Array.isArray(state.files) ? state.files : []),
+      input.filePath,
+      input.path,
+      input.file,
+      ...(Array.isArray(input.files) ? input.files : []),
+    ];
+
+    explicit.forEach((f) => {
+      if (typeof f === "string") {
+        const trimmed = f.trim();
+        if (
+          trimmed.length > 0 &&
+          trimmed.length <= 500 &&
+          trimmed.includes(".") &&
+          !/^\.{2,}$/.test(trimmed)
+        ) {
+          matches.add(trimmed);
+        }
+      }
+    });
+
+    const toolName =
+      typeof record.tool === "string" && record.tool.trim()
+        ? record.tool.trim().toLowerCase()
+        : "";
+    const titleText = typeof state.title === "string" ? state.title : "";
+    const outputText =
+      typeof state.output === "string" && !ARTIFACT_OUTPUT_SKIP_TOOLS.has(toolName)
+        ? state.output.slice(0, ARTIFACT_OUTPUT_SCAN_LIMIT)
+        : "";
+
+    const text = [titleText, outputText]
+      .filter((v): v is string => Boolean(v))
+      .join(" ");
+
+    if (text) {
+      ARTIFACT_PATH_PATTERN.lastIndex = 0;
+      Array.from(text.matchAll(ARTIFACT_PATH_PATTERN))
+        .map((m) => m[1])
+        .filter((f) => f && f.length <= 500)
+        .forEach((f) => matches.add(f));
+    }
+
+    if (matches.size === 0) return;
+
+    matches.forEach((match) => {
+      const cleanedPath = cleanArtifactPath(match);
+      if (!cleanedPath) return;
+
+      const key = cleanedPath.toLowerCase();
+      const name = cleanedPath.split("/").pop() ?? cleanedPath;
+      const id = `artifact-${encodeURIComponent(cleanedPath)}`;
+
+      if (results.has(key)) results.delete(key);
+      results.set(key, {
+        id,
+        name,
+        path: cleanedPath,
+        kind: "file" as const,
+        size: state.size ? String(state.size) : undefined,
+        messageId: messageId || undefined,
+      });
+    });
+  });
+}
+
+export function deriveArtifactsFromParts(parts: Part[], messageId?: string): ArtifactItem[] {
+  const results = new Map<string, ArtifactItem>();
+  collectArtifactsFromParts(results, parts, messageId);
+  return Array.from(results.values());
+}
+
 export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifactsOptions = {}): ArtifactItem[] {
   const results = new Map<string, ArtifactItem>();
   const maxMessages =
@@ -1031,77 +1116,7 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
 
   source.forEach((message) => {
     const messageId = String((message.info as any)?.id ?? "");
-
-    message.parts.forEach((part) => {
-      if (part.type !== "tool") return;
-      const record = part as any;
-      const state = record.state ?? {};
-      const matches = new Set<string>();
-
-      const explicit = [
-        state.path,
-        state.file,
-        ...(Array.isArray(state.files) ? state.files : []),
-      ];
-
-      explicit.forEach((f) => {
-        if (typeof f === "string") {
-          const trimmed = f.trim();
-          if (
-            trimmed.length > 0 &&
-            trimmed.length <= 500 &&
-            trimmed.includes(".") &&
-            !/^\.{2,}$/.test(trimmed)
-          ) {
-            matches.add(trimmed);
-          }
-        }
-      });
-
-      const toolName =
-        typeof record.tool === "string" && record.tool.trim()
-          ? record.tool.trim().toLowerCase()
-          : "";
-      const titleText = typeof state.title === "string" ? state.title : "";
-      const outputText =
-        typeof state.output === "string" && !ARTIFACT_OUTPUT_SKIP_TOOLS.has(toolName)
-          ? state.output.slice(0, ARTIFACT_OUTPUT_SCAN_LIMIT)
-          : "";
-
-      const text = [titleText, outputText]
-        .filter((v): v is string => Boolean(v))
-        .join(" ");
-
-      if (text) {
-        ARTIFACT_PATH_PATTERN.lastIndex = 0;
-        Array.from(text.matchAll(ARTIFACT_PATH_PATTERN))
-          .map((m) => m[1])
-          .filter((f) => f && f.length <= 500)
-          .forEach((f) => matches.add(f));
-      }
-
-      if (matches.size === 0) return;
-
-      matches.forEach((match) => {
-        const cleanedPath = cleanArtifactPath(match);
-        if (!cleanedPath) return;
-
-        const key = cleanedPath.toLowerCase();
-        const name = cleanedPath.split("/").pop() ?? cleanedPath;
-        const id = `artifact-${encodeURIComponent(cleanedPath)}`;
-
-        // Delete and re-add to move to end (most recent)
-        if (results.has(key)) results.delete(key);
-        results.set(key, {
-          id,
-          name,
-          path: cleanedPath,
-          kind: "file" as const,
-          size: state.size ? String(state.size) : undefined,
-          messageId: messageId || undefined,
-        });
-      });
-    });
+    collectArtifactsFromParts(results, message.parts, messageId || undefined);
   });
 
   return Array.from(results.values());

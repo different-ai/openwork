@@ -24,8 +24,8 @@ use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
 use commands::misc::{
-    app_build_info, nuke_openwork_and_opencode_config_and_exit, opencode_mcp_auth,
-    reset_opencode_cache, reset_openwork_state,
+    app_build_info, desktop_default_app_for_file, nuke_openwork_and_opencode_config_and_exit,
+    opencode_mcp_auth, reset_opencode_cache, reset_openwork_state,
 };
 use commands::opencode_router::{
     opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status,
@@ -213,6 +213,7 @@ pub fn run() {
             write_opencode_config,
             updater_environment,
             app_build_info,
+            desktop_default_app_for_file,
             nuke_openwork_and_opencode_config_and_exit,
             reset_openwork_state,
             reset_opencode_cache,

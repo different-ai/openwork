@@ -75,7 +75,6 @@ import type {
   OpenworkServerSettings,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
-import { join } from "@tauri-apps/api/path";
 import {
   isUserVisiblePart,
   isTauriRuntime,
@@ -83,13 +82,16 @@ import {
   normalizeDirectoryPath,
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
-import { normalizeLocalFilePath } from "../lib/local-file-path";
 import {
   defaultBlueprintCopyForPreset,
   defaultBlueprintStartersForPreset,
 } from "../lib/workspace-blueprints";
 import { DEFAULT_SESSION_TITLE, getDisplaySessionTitle } from "../lib/session-title";
 import { useSessionDisplayPreferences } from "../app-settings/session-display-preferences";
+import {
+  runLocalFileAction as runLocalFileActionAcrossWorkspace,
+  type LocalFileActionResult,
+} from "../session/file-actions";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
@@ -256,7 +258,6 @@ const INITIAL_MESSAGE_WINDOW = 140;
 const MESSAGE_WINDOW_LOAD_CHUNK = 120;
 const MAX_SEARCH_MESSAGE_CHARS = 4_000;
 const MAX_SEARCH_HITS = 2_000;
-const STREAM_RENDER_BATCH_MS = 48;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
 
@@ -320,6 +321,13 @@ export default function SessionView(props: SessionViewProps) {
   let streamRenderBatchTimer: number | undefined;
   let streamRenderBatchQueuedAt = 0;
   let streamRenderBatchReschedules = 0;
+  let pendingRenderedMessageBatch:
+    | {
+        messages: MessageWithParts[];
+        sourceMessageCount: number;
+        sourcePartCount: number;
+      }
+    | null = null;
 
   const [composerNotice, setComposerNotice] = createSignal<ComposerNotice | null>(
     null,
@@ -655,9 +663,10 @@ export default function SessionView(props: SessionViewProps) {
     const sourcePartCount = totalPartCount();
     if (props.sessionStatus === "idle") {
       if (streamRenderBatchTimer !== undefined) {
-        window.clearTimeout(streamRenderBatchTimer);
+        window.cancelAnimationFrame(streamRenderBatchTimer);
         streamRenderBatchTimer = undefined;
       }
+      pendingRenderedMessageBatch = null;
       setBatchedRenderedMessages(next);
       streamRenderBatchQueuedAt = 0;
       streamRenderBatchReschedules = 0;
@@ -670,14 +679,25 @@ export default function SessionView(props: SessionViewProps) {
       streamRenderBatchReschedules += 1;
     }
 
+    pendingRenderedMessageBatch = {
+      messages: next,
+      sourceMessageCount,
+      sourcePartCount,
+    };
+
     if (streamRenderBatchTimer !== undefined) {
-      window.clearTimeout(streamRenderBatchTimer);
-      streamRenderBatchTimer = undefined;
+      return;
     }
 
-    streamRenderBatchTimer = window.setTimeout(() => {
+    streamRenderBatchTimer = window.requestAnimationFrame(() => {
       const applyStartedAt = perfNow();
-      setBatchedRenderedMessages(next);
+      const batch = pendingRenderedMessageBatch ?? {
+        messages: next,
+        sourceMessageCount,
+        sourcePartCount,
+      };
+      pendingRenderedMessageBatch = null;
+      setBatchedRenderedMessages(batch.messages);
       streamRenderBatchTimer = undefined;
       const applyMs = Math.round((perfNow() - applyStartedAt) * 100) / 100;
       const queuedMs =
@@ -704,14 +724,14 @@ export default function SessionView(props: SessionViewProps) {
               reschedules,
               sessionID: props.selectedSessionId,
               status: props.sessionStatus,
-              sourceMessageCount,
-              sourcePartCount,
-              renderedMessageCount: next.length,
+              sourceMessageCount: batch.sourceMessageCount,
+              sourcePartCount: batch.sourcePartCount,
+              renderedMessageCount: batch.messages.length,
             });
           }
         });
       }
-    }, STREAM_RENDER_BATCH_MS);
+    });
   });
 
   createEffect(() => {
@@ -850,139 +870,52 @@ export default function SessionView(props: SessionViewProps) {
   const canCompactSession = createMemo(
     () => Boolean(props.selectedSessionId) && hasUserMessages(),
   );
-
-  const resolveLocalFileCandidates = async (file: string) => {
-    const trimmed = normalizeLocalFilePath(file).trim();
-    if (!trimmed) return [];
-    if (isAbsolutePath(trimmed)) return [trimmed];
-
-    const root = props.selectedWorkspaceRoot.trim();
-    if (!root) return [];
-
-    const normalized = trimmed
-      .replace(/[\\/]+/g, "/")
-      .replace(/^\.\/+/, "")
-      .replace(/\/+$/, "");
-    const candidates: string[] = [];
-    const seen = new Set<string>();
-
-    const pushCandidate = (value: string) => {
-      const key = value
-        .trim()
-        .replace(/[\\/]+/g, "/")
-        .toLowerCase();
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      candidates.push(value);
-    };
-
-    pushCandidate(await join(root, normalized));
-
-    if (normalized.startsWith(".opencode/openwork/outbox/")) {
-      return candidates;
-    }
-
-    if (normalized.startsWith("openwork/outbox/")) {
-      const suffix = normalized.slice("openwork/outbox/".length);
-      if (suffix) {
-        pushCandidate(
-          await join(root, ".opencode", "openwork", "outbox", suffix),
-        );
-      }
-      return candidates;
-    }
-
-    if (normalized.startsWith("outbox/")) {
-      const suffix = normalized.slice("outbox/".length);
-      if (suffix) {
-        pushCandidate(
-          await join(root, ".opencode", "openwork", "outbox", suffix),
-        );
-      }
-      return candidates;
-    }
-
-    if (!normalized.startsWith(".opencode/")) {
-      pushCandidate(
-        await join(root, ".opencode", "openwork", "outbox", normalized),
-      );
-    }
-
-    return candidates;
-  };
-
   const runLocalFileAction = async (
     file: string,
     mode: "open" | "reveal",
     action: (candidate: string) => Promise<void>,
-  ) => {
-    const candidates = await resolveLocalFileCandidates(file);
-    if (!candidates.length) {
-      return { ok: false as const, reason: "missing-root" as const };
-    }
-
-    let lastError: unknown = null;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = candidates[index];
-      const startedAt = perfNow();
-      try {
+  ): Promise<LocalFileActionResult> => {
+    let lastAttemptedCandidate: string | null = null;
+    const result = await runLocalFileActionAcrossWorkspace({
+      file,
+      workspaceRoot: props.selectedWorkspaceRoot,
+      action: async (candidate) => {
+        lastAttemptedCandidate = candidate;
+        const startedAt = perfNow();
         recordPerfLog(props.developerMode, "session.file-open", "attempt", {
           mode,
           input: file,
           target: candidate,
-          candidateIndex: index,
-          candidateCount: candidates.length,
         });
-        await action(candidate);
-        finishPerf(
-          props.developerMode,
-          "session.file-open",
-          "success",
-          startedAt,
-          {
+        try {
+          await action(candidate);
+          finishPerf(props.developerMode, "session.file-open", "success", startedAt, {
             mode,
             input: file,
             target: candidate,
-            candidateIndex: index,
-            candidateCount: candidates.length,
-          },
-        );
-        return { ok: true as const, path: candidate };
-      } catch (error) {
-        lastError = error;
-        console.warn("[session.file-open] candidate failed", {
-          mode,
-          input: file,
-          target: candidate,
-          candidateIndex: index,
-          candidateCount: candidates.length,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        finishPerf(
-          props.developerMode,
-          "session.file-open",
-          "candidate-failed",
-          startedAt,
-          {
+          });
+        } catch (error) {
+          finishPerf(props.developerMode, "session.file-open", "candidate-failed", startedAt, {
             mode,
             input: file,
             target: candidate,
-            candidateIndex: index,
-            candidateCount: candidates.length,
             error: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
+          });
+          throw error;
+        }
+      },
+    });
+
+    if (!result.ok && result.reason !== "missing-root") {
+      console.warn("[session.file-open] failed", {
+        mode,
+        input: file,
+        target: lastAttemptedCandidate,
+        error: result.reason,
+      });
     }
 
-    const suffix =
-      candidates.length > 1
-        ? ` (tried ${candidates.length} paths: workspace root and outbox fallbacks)`
-        : "";
-    return {
-      ok: false as const,
-      reason: `${lastError instanceof Error ? lastError.message : "File open failed"}${suffix}`,
-    };
+    return result;
   };
 
   const revealWorkspaceInFinder = async (workspaceId: string) => {
@@ -1045,9 +978,10 @@ export default function SessionView(props: SessionViewProps) {
       jumpControlsSuppressTimer = undefined;
     }
     if (streamRenderBatchTimer !== undefined) {
-      window.clearTimeout(streamRenderBatchTimer);
+      window.cancelAnimationFrame(streamRenderBatchTimer);
       streamRenderBatchTimer = undefined;
     }
+    pendingRenderedMessageBatch = null;
     streamRenderBatchQueuedAt = 0;
     streamRenderBatchReschedules = 0;
   });
@@ -1095,9 +1029,6 @@ export default function SessionView(props: SessionViewProps) {
     if (start <= count) return;
     setMessageWindowStart(count);
   });
-
-  const isAbsolutePath = (value: string) =>
-    /^(?:[a-zA-Z]:[\\/]|\\\\|\/|~\/)/.test(value.trim());
 
   const handleWorkingFileClick = async (file: string) => {
     const trimmed = file.trim();
