@@ -4,7 +4,7 @@ import {
   AuditEventTable,
   AuthUserTable,
   DaytonaSandboxTable,
-  OrgMembershipTable,
+  MemberTable,
   WorkerBundleTable,
   WorkerInstanceTable,
   WorkerTable,
@@ -63,7 +63,7 @@ export type WorkerRouteVariables = AuthContextVariables & Partial<UserOrganizati
 type WorkerRow = typeof WorkerTable.$inferSelect
 type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
 export type WorkerId = WorkerRow["id"]
-type OrgId = typeof OrgMembershipTable.$inferSelect.organizationId
+type OrgId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthUserTable.$inferSelect.id
 
 export const token = () => randomBytes(32).toString("hex")

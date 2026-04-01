@@ -147,6 +147,3 @@ export const member = MemberTable
 export const invitation = InvitationTable
 export const organizationRole = OrganizationRoleTable
 export const tempTemplateSharing = TempTemplateSharingTable
-
-export const OrgTable = OrganizationTable
-export const OrgMembershipTable = MemberTable
