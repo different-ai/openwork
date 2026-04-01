@@ -249,7 +249,7 @@ export default {
   "skills.search_placeholder": "Buscar pacotes ou listas (ex: claude, registry, community)",
   "skills.no_matches": "Nenhuma correspondência. Tente uma busca diferente.",
   "skills.install_package": "Instalar",
-  "skills.registry_notice": "Publicar no registro OpenPackage (`opkg push`) requer autenticação. Uma busca no registro e sincronização de lista está planejada.",
+  "skills.registry_notice": "Publicar no registro OpenPackage requer autenticação. Uma busca no registro e sincronização de lista está planejada.",
   "skills.installed": "Skills instaladas",
   "skills.no_skills": "Nenhuma skill detectada em `.opencode/skills`, `.claude/skills` ou `~/.agents/skills`.",
   "skills.desktop_required": "O gerenciamento de skills requer o app desktop.",

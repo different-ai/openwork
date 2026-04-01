@@ -4,7 +4,6 @@ pub mod engine;
 pub mod misc;
 pub mod opencode_router;
 pub mod openwork_server;
-pub mod opkg;
 pub mod orchestrator;
 pub mod scheduler;
 pub mod skills;

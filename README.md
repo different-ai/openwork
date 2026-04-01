@@ -46,7 +46,6 @@ OpenWork is designed to be:
 - **Templates**: save and re-run common workflows (stored locally).
 - **Skills manager**:
   - list installed `.opencode/skills` folders
-  - install from OpenPackage (`opkg install ...`)
   - import a local skill folder into `.opencode/skills/<skill-name>`
 
 ## Skill Manager
@@ -143,14 +142,6 @@ The folder picker uses the Tauri dialog plugin.
 Capability permissions are defined in:
 
 - `apps/desktop/src-tauri/capabilities/default.json`
-
-## OpenPackage Notes
-
-If `opkg` is not installed globally, OpenWork falls back to:
-
-```bash
-pnpm dlx opkg install <package>
-```
 
 ## OpenCode Plugins
 

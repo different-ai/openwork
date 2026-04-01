@@ -67,7 +67,6 @@ OpenWork 的设计目标是：
 - **模板**：保存并重新运行常见工作流程（本地存储）
 - **技能管理器**：
   - 列出已安装的 `.opencode/skills` 文件夹
-  - 从 OpenPackage 安装（`opkg install ...`）
   - 将本地技能文件夹导入到 `.opencode/skills/<skill-name>`
  
 
@@ -137,14 +136,6 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 文件夹选择器使用 Tauri 对话框插件。
 功能权限在以下文件中定义：
 - `packages/desktop/src-tauri/capabilities/default.json`
-
-## OpenPackage 说明
-
-如果 `opkg` 未全局安装，OpenWork 会回退到：
-
-```bash
-pnpm dlx opkg install <package>
-```
 
 ## OpenCode 插件
 
