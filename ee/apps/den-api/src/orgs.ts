@@ -17,6 +17,7 @@ type UserId = typeof AuthUserTable.$inferSelect.id
 type SessionId = typeof AuthSessionTable.$inferSelect.id
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberRow = typeof MemberTable.$inferSelect
+type MemberId = MemberRow["id"]
 type InvitationRow = typeof InvitationTable.$inferSelect
 
 export type InvitationStatus = "pending" | "accepted" | "canceled" | "expired"
@@ -61,14 +62,14 @@ export type OrganizationContext = {
     updatedAt: Date
   }
   currentMember: {
-    id: string
+    id: MemberId
     userId: UserId
     role: string
     createdAt: Date
     isOwner: boolean
   }
   members: Array<{
-    id: string
+    id: MemberId
     userId: UserId
     role: string
     createdAt: Date
@@ -295,14 +296,14 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
       const existingTeamMember = await db
         .select({ id: TeamMemberTable.id })
         .from(TeamMemberTable)
-        .where(and(eq(TeamMemberTable.teamId, invitation.teamId), eq(TeamMemberTable.userId, userId)))
+        .where(and(eq(TeamMemberTable.teamId, invitation.teamId), eq(TeamMemberTable.orgMembershipId, member.id)))
         .limit(1)
 
       if (!existingTeamMember[0]) {
         await db.insert(TeamMemberTable).values({
           id: createDenTypeId("teamMember"),
           teamId: invitation.teamId,
-          userId,
+          orgMembershipId: member.id,
         })
       }
     }
@@ -659,7 +660,7 @@ export async function getOrganizationContextForUser(input: {
 
 export async function listTeamsForMember(input: {
   organizationId: OrgId
-  userId: UserId
+  memberId: MemberRow["id"]
 }) {
   return db
     .select({
@@ -671,7 +672,7 @@ export async function listTeamsForMember(input: {
     })
     .from(TeamMemberTable)
     .innerJoin(TeamTable, eq(TeamMemberTable.teamId, TeamTable.id))
-    .where(and(eq(TeamTable.organizationId, input.organizationId), eq(TeamMemberTable.userId, input.userId)))
+    .where(and(eq(TeamTable.organizationId, input.organizationId), eq(TeamMemberTable.orgMembershipId, input.memberId)))
     .orderBy(asc(TeamTable.createdAt))
 }
 
@@ -699,7 +700,7 @@ export async function removeOrganizationMember(input: {
     for (const team of teams) {
       await tx
         .delete(TeamMemberTable)
-        .where(and(eq(TeamMemberTable.teamId, team.id), eq(TeamMemberTable.userId, member.userId)))
+        .where(and(eq(TeamMemberTable.teamId, team.id), eq(TeamMemberTable.orgMembershipId, member.id)))
     }
 
     await tx.delete(MemberTable).where(eq(MemberTable.id, member.id))

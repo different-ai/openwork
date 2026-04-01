@@ -17,7 +17,7 @@ export const resolveMemberTeamsMiddleware: MiddlewareHandler<{
 
   const memberTeams = await listTeamsForMember({
     organizationId: context.organization.id,
-    userId: context.currentMember.userId,
+    memberId: context.currentMember.id,
   })
 
   c.set("memberTeams", memberTeams)
