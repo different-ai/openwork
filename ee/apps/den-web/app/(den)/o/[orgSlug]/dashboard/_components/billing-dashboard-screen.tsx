@@ -92,7 +92,7 @@ export function BillingDashboardScreen() {
         <div className="mb-8 border-b border-gray-100 pb-6">
           <p className="text-[15px] text-gray-700">
             {billingSummary?.hasActivePlan
-              ? `This workspace's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
+              ? `This organization's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
               : "Start your OpenWork Cloud base plan when your team is ready to share templates and cloud workflows."}
           </p>
         </div>

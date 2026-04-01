@@ -561,8 +561,8 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                     {billingSummary?.featureGateEnabled
                       ? billingSummary.hasActivePlan
                         ? workerAllowance > 0
-                          ? `${workerAllowance} worker subscription${workerAllowance === 1 ? "" : "s"} active. ${workerCapacityRemaining} remaining.`
-                          : "Your team plan is active, but no workers are included by default."
+                          ? `${workerAllowance} worker subscription${workerAllowance === 1 ? "" : "s"} active for this org. ${workerCapacityRemaining} remaining.`
+                          : "Your team plan is active, but no workers are included for this org by default."
                         : "Activate the base team plan before purchasing workers."
                       : "Billing gates are disabled in this environment."}
                   </p>
@@ -701,7 +701,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
               <div className="mt-2 text-xs text-[var(--dls-text-secondary)]">
                 {billingSummary?.featureGateEnabled && !billingSummary.hasActivePlan
                   ? "Base plan required before the next launch."
-                  : `${ownedWorkerCount} worker${ownedWorkerCount === 1 ? "" : "s"} in your account · ${workerAllowance} purchased.`}
+                  : `${ownedWorkerCount} worker${ownedWorkerCount === 1 ? "" : "s"} in this org · ${workerAllowance} purchased.`}
             </div>
           </div>
         </div>

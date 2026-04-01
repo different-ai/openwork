@@ -281,11 +281,11 @@ export async function fetchWorkerRuntimeJson(input: {
   return { ok: false as const, status: lastStatus, payload: lastPayload }
 }
 
-export async function countUserCloudWorkers(userId: UserId) {
+export async function countOrgCloudWorkers(orgId: OrgId) {
   const rows = await db
     .select({ id: WorkerTable.id })
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.created_by_user_id, userId), eq(WorkerTable.destination, "cloud")))
+    .where(and(eq(WorkerTable.org_id, orgId), eq(WorkerTable.destination, "cloud")))
 
   return rows.length
 }
@@ -378,6 +378,7 @@ export async function continueCloudProvisioning(input: {
 
 export async function requireCloudAccessOrPayment(input: {
   userId: UserId
+  orgId: OrgId
   email: string
   name: string
 }) {
@@ -386,6 +387,7 @@ export async function requireCloudAccessOrPayment(input: {
 
 export async function requireAdditionalCloudCapacityOrPayment(input: {
   userId: UserId
+  orgId: OrgId
   email: string
   name: string
   ownedWorkerCount: number
@@ -395,6 +397,7 @@ export async function requireAdditionalCloudCapacityOrPayment(input: {
 
 export async function getWorkerBilling(input: {
   userId: UserId
+  orgId: OrgId
   email: string
   name: string
   includeCheckoutUrl: boolean
@@ -404,6 +407,7 @@ export async function getWorkerBilling(input: {
   return getCloudWorkerBillingStatus(
     {
       userId: input.userId,
+      orgId: input.orgId,
       email: input.email,
       name: input.name,
     },
@@ -417,6 +421,7 @@ export async function getWorkerBilling(input: {
 
 export async function setWorkerBillingSubscription(input: {
   userId: UserId
+  orgId: OrgId
   email: string
   name: string
   cancelAtPeriodEnd: boolean
@@ -424,6 +429,7 @@ export async function setWorkerBillingSubscription(input: {
   return setCloudWorkerSubscriptionCancellation(
     {
       userId: input.userId,
+      orgId: input.orgId,
       email: input.email,
       name: input.name,
     },

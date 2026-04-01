@@ -267,7 +267,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     activeWorker?.workerName ?? null,
     { autoConnect: true }
   );
-  const ownedWorkerCount = workers.filter((item) => item.isMine).length;
+  const ownedWorkerCount = workers.length;
   const workerAllowance = billingSummary?.activeWorkerSubscriptions ?? 0;
   const additionalWorkerNeedsPlan = Boolean(
     user &&

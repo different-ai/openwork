@@ -9,7 +9,7 @@ import { getRequiredUserEmail } from "../../user.js"
 import type { WorkerRouteVariables } from "./shared.js"
 import {
   continueCloudProvisioning,
-  countUserCloudWorkers,
+  countOrgCloudWorkers,
   createWorkerSchema,
   deleteWorkerCascade,
   getLatestWorkerInstance,
@@ -77,6 +77,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
 
       const baseAccess = await requireCloudAccessOrPayment({
         userId: user.id,
+        orgId,
         email,
         name: user.name ?? user.email ?? "OpenWork User",
       })
@@ -92,9 +93,10 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         }, 402)
       }
 
-      const ownedWorkerCount = await countUserCloudWorkers(user.id)
+      const ownedWorkerCount = await countOrgCloudWorkers(orgId)
       const workerAccess = await requireAdditionalCloudCapacityOrPayment({
         userId: user.id,
+        orgId,
         email,
         name: user.name ?? user.email ?? "OpenWork User",
         ownedWorkerCount,
