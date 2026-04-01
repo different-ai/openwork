@@ -227,7 +227,7 @@ export default {
   "skills.search_placeholder": "Tìm kiếm gói hoặc danh sách (ví dụ: claude, registry, community)",
   "skills.no_matches": "Không có kết quả phù hợp. Thử tìm kiếm khác.",
   "skills.install_package": "Cài đặt",
-  "skills.registry_notice": "Đăng tải lên OpenPackage registry (`opkg push`) hiện yêu cầu xác thực. Chức năng tìm kiếm registry và đồng bộ danh sách tuyển chọn đang được lên kế hoạch.",
+  "skills.registry_notice": "Đăng tải lên OpenPackage registry hiện yêu cầu xác thực. Chức năng tìm kiếm registry và đồng bộ danh sách tuyển chọn đang được lên kế hoạch.",
   "skills.installed": "Skills đã cài",
   "skills.no_skills": "Không phát hiện skills trong `.opencode/skills`, `.claude/skills`, hoặc `~/.agents/skills`.",
   "skills.desktop_required": "Quản lý skills yêu cầu ứng dụng desktop.",

@@ -249,7 +249,7 @@ export default {
   "skills.search_placeholder": "Search packages or lists (e.g. claude, registry, community)",
   "skills.no_matches": "No curated matches. Try a different search.",
   "skills.install_package": "Install",
-  "skills.registry_notice": "Publishing to the OpenPackage registry (`opkg push`) requires authentication today. A registry search + curated list sync is planned.",
+  "skills.registry_notice": "Publishing to the OpenPackage registry requires authentication today. A registry search + curated list sync is planned.",
   "skills.installed": "Installed skills",
   "skills.no_skills": "No skills detected in `.opencode/skills`, `.claude/skills`, or `~/.agents/skills`.",
   "skills.desktop_required": "Skill management requires the desktop app.",

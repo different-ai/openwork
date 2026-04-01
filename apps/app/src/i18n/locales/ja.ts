@@ -248,7 +248,7 @@ export default {
   "skills.search_placeholder": "パッケージやリストを検索（例: claude, registry, community）",
   "skills.no_matches": "一致する厳選パッケージがありません。別の検索語を試してください。",
   "skills.install_package": "インストール",
-  "skills.registry_notice": "OpenPackageレジストリへの公開（`opkg push`）には現在認証が必要です。レジストリ検索と厳選リスト同期は今後対応予定です。",
+  "skills.registry_notice": "OpenPackageレジストリへの公開には現在認証が必要です。レジストリ検索と厳選リスト同期は今後対応予定です。",
   "skills.installed": "インストール済みスキル",
   "skills.no_skills": "`.opencode/skills`、`.claude/skills`、`~/.agents/skills`にスキルが検出されませんでした。",
   "skills.desktop_required": "スキル管理にはデスクトップアプリが必要です。",

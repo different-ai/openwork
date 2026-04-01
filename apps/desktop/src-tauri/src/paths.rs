@@ -1,6 +1,5 @@
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[cfg(target_os = "macos")]
 const MACOS_APP_SUPPORT_DIR: &str = "Library/Application Support";
@@ -233,16 +232,6 @@ fn common_tool_paths_for_home(home: Option<&Path>) -> Vec<PathBuf> {
     }
 
     paths
-}
-
-pub fn augmented_path_env() -> Option<std::ffi::OsString> {
-    prepended_path_env(&[])
-}
-
-pub fn apply_augmented_path(command: &mut Command) {
-    if let Some(path_env) = augmented_path_env() {
-        command.env("PATH", path_env);
-    }
 }
 
 pub fn prepended_path_env(prefixes: &[PathBuf]) -> Option<std::ffi::OsString> {

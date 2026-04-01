@@ -575,9 +575,9 @@ OpenWork's settings pages use:
 
 OpenWork exposes two extension surfaces:
 
-1. **Skills (OpenPackage)**
+1. **Skills**
    - Installed into `.opencode/skills/*`.
-   - OpenWork can run `opkg install` to pull packages from the registry or GitHub.
+   - Skills can be imported from local directories or installed from curated lists.
 
 2. **Plugins (OpenCode)**
    - Plugins are configured via `opencode.json` in the workspace.
@@ -591,14 +591,13 @@ OpenWork exposes two extension surfaces:
 - Use after skills/plugins/MCP/config edits; reloads can interrupt active sessions.
 - Reload requests follow OpenWork server approval rules.
 
-### OpenPackage Registry (Current + Future)
+### Skill Registry (Current + Future)
 
 - Today, OpenWork only supports **curated lists + manual sources**.
-- Publishing to the official registry currently requires authentication (`opkg push` + `opkg configure`).
 - Future goals:
   - in-app registry search
   - curated list sync (e.g. Awesome Claude Skills)
-  - frictionless publishing without signup (pending registry changes)
+  - frictionless publishing without signup
 
 ## Projects + Path
 
