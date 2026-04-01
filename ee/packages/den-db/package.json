@@ -31,6 +31,11 @@
       "development": "./src/schema/teams.ts",
       "default": "./dist/schema/teams.js"
     },
+    "./schema/sharables/skills": {
+      "types": "./src/schema/sharables/skills.ts",
+      "development": "./src/schema/sharables/skills.ts",
+      "default": "./dist/schema/sharables/skills.js"
+    },
     "./schema/workers": {
       "types": "./src/schema/workers.ts",
       "development": "./src/schema/workers.ts",

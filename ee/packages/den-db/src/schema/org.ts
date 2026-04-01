@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm"
+import { relations, sql } from "drizzle-orm"
 import { index, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
 
@@ -109,6 +109,38 @@ export const TempTemplateSharingTable = mysqlTable(
     index("temp_template_sharing_creator_user_id").on(table.creatorUserId),
   ],
 )
+
+export const organizationRelations = relations(OrganizationTable, ({ many }) => ({
+  members: many(MemberTable),
+  roles: many(OrganizationRoleTable),
+  tempTemplateSharings: many(TempTemplateSharingTable),
+}))
+
+export const memberRelations = relations(MemberTable, ({ many, one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [MemberTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  createdTempTemplateSharings: many(TempTemplateSharingTable),
+}))
+
+export const organizationRoleRelations = relations(OrganizationRoleTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [OrganizationRoleTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+}))
+
+export const tempTemplateSharingRelations = relations(TempTemplateSharingTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [TempTemplateSharingTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+  creatorMember: one(MemberTable, {
+    fields: [TempTemplateSharingTable.creatorMemberId],
+    references: [MemberTable.id],
+  }),
+}))
 
 export const organization = OrganizationTable
 export const member = MemberTable

@@ -6,6 +6,7 @@ export default defineConfig({
     schema: "src/schema.ts",
     "schema/auth": "src/schema/auth.ts",
     "schema/org": "src/schema/org.ts",
+    "schema/sharables/skills": "src/schema/sharables/skills.ts",
     "schema/teams": "src/schema/teams.ts",
     "schema/workers": "src/schema/workers.ts",
     "schema/system": "src/schema/system.ts",
