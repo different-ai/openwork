@@ -4,6 +4,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
 } from "solid-js";
 import type { JSX } from "solid-js";
@@ -35,6 +36,7 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
+  sessionId?: string | null;
   isStreaming?: boolean;
   developerMode: boolean;
   showThinking: boolean;
@@ -98,6 +100,9 @@ type MessageBlockItem = MessageBlock | StepClusterBlock;
 
 const VIRTUALIZATION_THRESHOLD = 500;
 const VIRTUAL_OVERSCAN = 4;
+const STAGING_THRESHOLD = 24;
+const STAGING_INIT = 12;
+const STAGING_BATCH = 8;
 
 function mergeArtifacts(
   ...lists: Array<
@@ -329,10 +334,16 @@ function toolHeadline(part: Part) {
 
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
+  const [stagedCount, setStagedCount] = createSignal(0);
   let previousMessagePartCountById = new Map<string, number>();
   let previousMessageBlockById = new Map<string, MessageBlock>();
   let previousBlockRenderKey = "";
   let copyTimeout: number | undefined;
+  let stageFrame: number | undefined;
+  let stageKey = "";
+  let stageTarget = 0;
+  let staging = false;
+  const isNestedVariant = () => props.variant === "nested";
   const isAttachmentPart = (part: Part) => {
     if (part.type !== "file") return false;
     const url = (part as { url?: string }).url;
@@ -356,6 +367,7 @@ export default function MessageList(props: MessageListProps) {
       .filter((attachment) => !!attachment.url);
   const isImageAttachment = (mime: string) => mime.startsWith("image/");
   onCleanup(() => {
+    stopStaging();
     if (copyTimeout !== undefined) {
       window.clearTimeout(copyTimeout);
     }
@@ -596,6 +608,104 @@ export default function MessageList(props: MessageListProps) {
     return blocks;
   });
 
+  const stopStaging = () => {
+    if (stageFrame !== undefined) {
+      window.cancelAnimationFrame(stageFrame);
+      stageFrame = undefined;
+    }
+    staging = false;
+  };
+
+  const searchActive = createMemo(
+    () =>
+      Boolean(props.activeSearchMessageId) ||
+      Boolean(props.searchMatchMessageIds && props.searchMatchMessageIds.size > 0),
+  );
+
+  const shouldStage = createMemo(
+    () =>
+      !isNestedVariant() &&
+      !(Boolean(props.scrollElement?.()) && messageBlocks().length >= VIRTUALIZATION_THRESHOLD) &&
+      !Boolean(props.isStreaming) &&
+      !searchActive() &&
+      messageBlocks().length > STAGING_THRESHOLD,
+  );
+
+  const startStaging = (total: number) => {
+    stopStaging();
+    stageTarget = total;
+    if (total <= STAGING_THRESHOLD) {
+      setStagedCount(total);
+      return;
+    }
+
+    staging = true;
+    setStagedCount(Math.min(total, STAGING_INIT));
+
+    const step = () => {
+      stageFrame = undefined;
+      setStagedCount((current) => {
+        const next = Math.min(stageTarget, current + STAGING_BATCH);
+        if (next >= stageTarget) {
+          staging = false;
+          return next;
+        }
+
+        stageFrame = window.requestAnimationFrame(step);
+        return next;
+      });
+    };
+
+    stageFrame = window.requestAnimationFrame(step);
+  };
+
+  createEffect(
+    on(
+      () => props.sessionId,
+      () => {
+        stageKey = "";
+      },
+      { defer: true },
+    ),
+  );
+
+  createEffect(() => {
+    const total = messageBlocks().length;
+    const key = props.sessionId?.trim() ?? "";
+
+    if (!total) {
+      stopStaging();
+      stageKey = "";
+      setStagedCount(0);
+      return;
+    }
+
+    if (!shouldStage()) {
+      stopStaging();
+      stageKey = key;
+      setStagedCount(total);
+      return;
+    }
+
+    stageTarget = total;
+    if (stageKey !== key) {
+      stageKey = key;
+      startStaging(total);
+      return;
+    }
+
+    if (staging) return;
+    setStagedCount(total);
+  });
+
+  const visibleBlocks = createMemo(() => {
+    const blocks = messageBlocks();
+    if (!shouldStage()) return blocks;
+    const count = stagedCount();
+    if (count >= blocks.length) return blocks;
+    return blocks.slice(Math.max(0, blocks.length - count));
+  });
+
   const latestAssistantMessageId = createMemo(() => {
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
       const message = props.messages[index];
@@ -724,8 +834,6 @@ export default function MessageList(props: MessageListProps) {
   onCleanup(() => {
     props.setScrollToMessageById?.(null);
   });
-
-  const isNestedVariant = () => props.variant === "nested";
 
   const sessionStreamState = (messages: MessageWithParts[]) => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -1244,7 +1352,7 @@ export default function MessageList(props: MessageListProps) {
         when={shouldVirtualize()}
         fallback={
           <div class={isNestedVariant() ? "space-y-3" : "space-y-4"}>
-            <For each={messageBlocks()}>
+            <For each={visibleBlocks()}>
               {(block, blockIndex) => renderBlock(block, blockIndex())}
             </For>
           </div>
@@ -1254,7 +1362,7 @@ export default function MessageList(props: MessageListProps) {
           when={virtualRows().length > 0}
           fallback={
             <div class={isNestedVariant() ? "space-y-3" : "space-y-4"}>
-              <For each={messageBlocks()}>
+              <For each={visibleBlocks()}>
                 {(block, blockIndex) => renderBlock(block, blockIndex())}
               </For>
             </div>
