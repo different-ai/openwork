@@ -3171,7 +3171,7 @@ export default function SessionView(props: SessionViewProps) {
           <div class="flex-1 flex overflow-hidden">
             <div class="relative min-w-0 flex-1 overflow-hidden bg-dls-surface">
               <div
-                class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-10" : "pt-10 pb-10"} bg-dls-surface`}
+                class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20" : "pt-10"} bg-dls-surface`}
                 style={{ contain: "layout paint style" }}
                 onWheel={(event) => {
                   sessionScroll.markScrollGesture(event.target);
@@ -3226,7 +3226,7 @@ export default function SessionView(props: SessionViewProps) {
                       !deferSessionRender()
                     }
                   >
-                    <div class="text-center py-16 px-6 space-y-6">
+                    <div class="text-center px-6 space-y-6">
                       <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
                         <Zap class="text-dls-secondary" />
                       </div>
@@ -3289,7 +3289,7 @@ export default function SessionView(props: SessionViewProps) {
                       </div>
                     </Show>
 
-                    <div>
+                    <Show when={batchedRenderedMessages().length > 0}>
                       <MessageList
                         messages={batchedRenderedMessages()}
                         isStreaming={showRunIndicator()}
@@ -3343,7 +3343,7 @@ export default function SessionView(props: SessionViewProps) {
                           ) : undefined
                         }
                       />
-                    </div>
+                    </Show>
                   </Show>
                 </div>
               </div>
