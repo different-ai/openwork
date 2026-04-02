@@ -344,6 +344,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  function shouldRouteToCheckout(summary: BillingSummary | null | undefined) {
+    if (!summary) {
+      return false;
+    }
+
+    return summary.featureGateEnabled && summary.checkoutRequired && !summary.hasActivePlan;
+  }
+
   function setAuthMode(mode: AuthMode) {
     setAuthModeState(mode);
     setVerificationRequired(false);
@@ -1057,11 +1065,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     persistOnboardingIntent(intent);
     const summary = await refreshBilling({ includeCheckout: true, quiet: true });
-    if (!summary) {
-      return "checkout" as const;
-    }
 
-    return !summary.featureGateEnabled || summary.hasActivePlan ? ("dashboard" as const) : ("checkout" as const);
+    return shouldRouteToCheckout(summary) ? ("checkout" as const) : ("dashboard" as const);
   }
 
   async function resolveUserLandingRoute() {
@@ -1084,11 +1089,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       billingSummary ??
       (billingBusy || billingCheckoutBusy ? null : await refreshBilling({ includeCheckout: true, quiet: true }));
 
-    if (!summary) {
-      return "/checkout";
-    }
-
-    return !summary.featureGateEnabled || summary.hasActivePlan ? (dashboardRoute ?? "/") : "/checkout";
+    return shouldRouteToCheckout(summary) ? "/checkout" : (dashboardRoute ?? "/");
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -1744,15 +1745,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     const summary = await refreshBilling({ includeCheckout: false, quiet: true });
-    if (!summary) {
-      return "/checkout" as const;
-    }
 
-    if (!summary.featureGateEnabled || summary.hasActivePlan) {
-      return (await resolveDashboardRoute()) ?? "/";
-    }
-
-    return "/checkout" as const;
+    return shouldRouteToCheckout(summary)
+      ? ("/checkout" as const)
+      : ((await resolveDashboardRoute()) ?? "/");
   }
 
   function selectWorker(item: WorkerListItem) {
