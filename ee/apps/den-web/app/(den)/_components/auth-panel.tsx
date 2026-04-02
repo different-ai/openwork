@@ -7,6 +7,14 @@ import { isSamePathname } from "../_lib/client-route";
 import type { AuthMode } from "../_lib/den-flow";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
+type PanelContent = {
+  title: string;
+  copy: string;
+  submitLabel: string;
+  togglePrompt?: string;
+  toggleActionLabel?: string;
+};
+
 function getDesktopGrant(url: string | null) {
   if (!url) return null;
   try {
@@ -52,7 +60,7 @@ function SocialButton({
   return (
     <button
       type="button"
-      className="flex w-full items-center justify-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+      className="den-button-secondary den-social-button"
       onClick={onClick}
       disabled={disabled}
     >
@@ -62,8 +70,6 @@ function SocialButton({
 }
 
 export function AuthPanel({
-  panelTitle,
-  panelCopy,
   prefilledEmail,
   prefillKey,
   initialMode = "sign-up",
@@ -71,9 +77,10 @@ export function AuthPanel({
   hideSocialAuth = false,
   hideEmailField = false,
   eyebrow = "Account",
+  signUpContent,
+  signInContent,
+  verificationContent,
 }: {
-  panelTitle?: string;
-  panelCopy?: string;
   prefilledEmail?: string;
   prefillKey?: string;
   initialMode?: AuthMode;
@@ -81,6 +88,9 @@ export function AuthPanel({
   hideSocialAuth?: boolean;
   hideEmailField?: boolean;
   eyebrow?: string;
+  signUpContent?: Partial<PanelContent>;
+  signInContent?: Partial<PanelContent>;
+  verificationContent?: Partial<PanelContent>;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -111,17 +121,37 @@ export function AuthPanel({
     resolveUserLandingRoute,
   } = useDenFlow();
 
+  const resolvedSignUpContent: PanelContent = {
+    title: "Get started.",
+    copy: "Free to try. Team plans from $50/mo.",
+    submitLabel: "Create account",
+    togglePrompt: "Have an account?",
+    toggleActionLabel: "Sign in",
+    ...signUpContent,
+  };
+
+  const resolvedSignInContent: PanelContent = {
+    title: "Welcome back.",
+    copy: "Sign in to open your team workspace.",
+    submitLabel: "Sign in",
+    togglePrompt: "Need an account?",
+    toggleActionLabel: "Create one",
+    ...signInContent,
+  };
+
+  const resolvedVerificationContent: PanelContent = {
+    title: "Verify your email.",
+    copy: "Enter the six-digit code from your inbox.",
+    submitLabel: "Verify email",
+    ...verificationContent,
+  };
+
   const desktopGrant = getDesktopGrant(desktopRedirectUrl);
-  const resolvedPanelTitle = verificationRequired
-    ? "Verify your email."
-    : panelTitle ?? (authMode === "sign-up" ? "Create your Cloud account." : "Sign in to Cloud.");
-  const resolvedPanelCopy = verificationRequired
-    ? "Enter the six-digit code from your inbox to finish setup."
-    : panelCopy ?? (
-      authMode === "sign-up"
-        ? "Start with email, GitHub, or Google."
-        : "Welcome back. Keep your team setup in sync across Cloud and desktop."
-    );
+  const activeContent = verificationRequired
+    ? resolvedVerificationContent
+    : authMode === "sign-in"
+      ? resolvedSignInContent
+      : resolvedSignUpContent;
   const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField);
 
   useEffect(() => {
@@ -147,31 +177,31 @@ export function AuthPanel({
   };
 
   return (
-    <div className="rounded-[28px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-7">
-      <div className="grid gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
-          {eyebrow}
-        </p>
-        <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-gray-900">{resolvedPanelTitle}</h2>
-        <p className="text-[14px] leading-relaxed text-gray-500">{resolvedPanelCopy}</p>
+    <div className="den-frame grid gap-5 p-6 md:p-7">
+      <div className="grid gap-3">
+        <p className="den-eyebrow">{eyebrow}</p>
+        <div className="grid gap-2">
+          <h2 className="den-title-lg">{activeContent.title}</h2>
+          <p className="den-copy">{activeContent.copy}</p>
+        </div>
       </div>
 
       {desktopAuthRequested ? (
-        <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-[13px] text-sky-900">
-          Finish auth here and we&apos;ll send you back into the OpenWork desktop app.
+        <div className="den-notice is-info grid gap-3 text-[13px]">
+          <p className="m-0">Finish sign-in here, then jump back into the OpenWork desktop app.</p>
           {desktopRedirectUrl ? (
-            <div className="mt-4 grid gap-2">
-              <div className="flex flex-wrap gap-2">
+            <div className="grid gap-3">
+              <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
-                  className="rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100"
+                  className="den-button-secondary w-full sm:w-auto"
                   onClick={() => window.location.assign(desktopRedirectUrl)}
                 >
                   Open OpenWork
                 </button>
                 <button
                   type="button"
-                  className="rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100"
+                  className="den-button-secondary w-full sm:w-auto"
                   onClick={() => void copyDesktopValue("link", desktopRedirectUrl)}
                 >
                   {copiedDesktopField === "link" ? "Copied link" : "Copy sign-in link"}
@@ -179,14 +209,14 @@ export function AuthPanel({
                 {desktopGrant ? (
                   <button
                     type="button"
-                    className="rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-medium text-sky-900 transition-colors hover:bg-sky-100"
+                    className="den-button-secondary w-full sm:w-auto"
                     onClick={() => void copyDesktopValue("code", desktopGrant)}
                   >
                     {copiedDesktopField === "code" ? "Copied code" : "Copy one-time code"}
                   </button>
                 ) : null}
               </div>
-              <p className="text-xs leading-5 text-sky-800/80">
+              <p className="m-0 text-xs leading-5 text-sky-800/80">
                 If OpenWork does not open automatically, copy the sign-in link or one-time code and paste it into the OpenWork desktop app.
               </p>
             </div>
@@ -195,7 +225,7 @@ export function AuthPanel({
       ) : null}
 
       <form
-        className="mt-5 grid gap-3"
+        className="grid gap-4"
         onSubmit={async (event) => {
           const next = verificationRequired
             ? await submitVerificationCode(event)
@@ -228,33 +258,24 @@ export function AuthPanel({
               <span>Continue with Google</span>
             </SocialButton>
 
-            <div
-              className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400"
-              aria-hidden="true"
-            >
-              <span className="h-px flex-1 bg-gray-200" />
+            <div className="den-divider" aria-hidden="true">
               <span>or</span>
-              <span className="h-px flex-1 bg-gray-200" />
             </div>
           </>
         ) : null}
 
         {showLockedEmailSummary ? (
-          <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Invited email
-            </p>
-            <p className="mt-1 text-[14px] font-medium text-gray-900">{prefilledEmail}</p>
+          <div className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3">
+            <p className="den-label">Invited email</p>
+            <p className="m-0 text-sm font-medium text-[var(--dls-text-primary)]">{prefilledEmail}</p>
           </div>
         ) : null}
 
         {!hideEmailField ? (
           <label className="grid gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Email
-            </span>
+            <span className="den-label">Email</span>
             <input
-              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-[14px] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
+              className="den-input disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -268,11 +289,9 @@ export function AuthPanel({
 
         {!verificationRequired ? (
           <label className="grid gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Password
-            </span>
+            <span className="den-label">Password</span>
             <input
-              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-[14px] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="den-input"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -282,11 +301,9 @@ export function AuthPanel({
           </label>
         ) : (
           <label className="grid gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Verification code
-            </span>
+            <span className="den-label">Verification code</span>
             <input
-              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-center text-[18px] font-semibold tracking-[0.35em] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="den-input text-center text-[18px] font-semibold tracking-[0.35em]"
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
@@ -302,16 +319,10 @@ export function AuthPanel({
 
         <button
           type="submit"
-          className="flex w-full items-center justify-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-[14px] font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+          className="den-button-primary w-full"
           disabled={authBusy || desktopRedirectBusy}
         >
-          {authBusy || desktopRedirectBusy
-            ? "Working..."
-            : verificationRequired
-              ? "Verify email"
-              : authMode === "sign-in"
-                ? "Sign in to Cloud"
-                : "Create Cloud account"}
+          {authBusy || desktopRedirectBusy ? "Working..." : activeContent.submitLabel}
           {!authBusy && !desktopRedirectBusy ? <ArrowRight className="h-4 w-4" /> : null}
         </button>
 
@@ -319,7 +330,7 @@ export function AuthPanel({
           <div className="flex flex-col gap-3 sm:flex-row">
             <button
               type="button"
-              className="w-full rounded-full border border-gray-200 bg-white px-4 py-3 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="den-button-secondary w-full"
               onClick={() => void resendVerificationCode()}
               disabled={authBusy || desktopRedirectBusy}
             >
@@ -327,7 +338,7 @@ export function AuthPanel({
             </button>
             <button
               type="button"
-              className="w-full rounded-full border border-gray-200 bg-white px-4 py-3 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="den-button-secondary w-full"
               onClick={() => cancelVerification()}
               disabled={authBusy || desktopRedirectBusy}
             >
@@ -338,21 +349,27 @@ export function AuthPanel({
       </form>
 
       {!verificationRequired ? (
-        <div className="mt-4 flex items-center justify-between gap-3 border-t border-gray-200 pt-4 text-sm text-gray-500">
-          <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)]">
+          <p className="m-0">
+            {authMode === "sign-in"
+              ? resolvedSignInContent.togglePrompt
+              : resolvedSignUpContent.togglePrompt}
+          </p>
           <button
             type="button"
-            className="font-medium text-gray-900 transition hover:opacity-70"
+            className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
             onClick={() => setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in")}
           >
-            {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
+            {authMode === "sign-in"
+              ? resolvedSignInContent.toggleActionLabel
+              : resolvedSignUpContent.toggleActionLabel}
           </button>
         </div>
       ) : null}
 
       {showAuthFeedback ? (
         <div
-          className="mt-4 grid gap-1 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-center text-[13px] text-gray-500"
+          className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]"
           aria-live="polite"
         >
           <p>{authInfo}</p>

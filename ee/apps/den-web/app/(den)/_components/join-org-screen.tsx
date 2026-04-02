@@ -17,14 +17,16 @@ import { AuthPanel } from "./auth-panel";
 
 function LoadingCard({ title, body }: { title: string; body: string }) {
   return (
-    <section className="mx-auto grid w-full max-w-[40rem] gap-4 rounded-[32px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-8">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-      <div className="grid gap-2">
-        <h1 className="text-[2rem] font-semibold tracking-[-0.05em] text-gray-900">{title}</h1>
-        <p className="text-[14px] leading-relaxed text-gray-500">{body}</p>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-        <div className="h-full w-1/3 animate-pulse rounded-full bg-gray-900/80" />
+    <section className="den-page py-4 lg:py-6">
+      <div className="den-frame grid max-w-[44rem] gap-4 p-6 md:p-7">
+        <p className="den-eyebrow">OpenWork Cloud</p>
+        <div className="grid gap-2">
+          <h1 className="den-title-lg">{title}</h1>
+          <p className="den-copy">{body}</p>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-[var(--dls-hover)]">
+          <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--dls-accent)]" />
+        </div>
       </div>
     </section>
   );
@@ -33,13 +35,13 @@ function LoadingCard({ title, body }: { title: string; body: string }) {
 function statusMessage(preview: DenInvitationPreview | null) {
   switch (preview?.invitation.status) {
     case "accepted":
-      return "This invitation has already been accepted.";
+      return "This invite has already been used.";
     case "canceled":
-      return "This invitation has been canceled.";
+      return "This invite was canceled.";
     case "expired":
-      return "This invitation has expired.";
+      return "This invite expired.";
     default:
-      return "This invitation is no longer available.";
+      return "This invite is no longer available.";
   }
 }
 
@@ -55,6 +57,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const invitedEmailMatches = preview && user
     ? preview.invitation.email.trim().toLowerCase() === user.email.trim().toLowerCase()
     : false;
+  const roleLabel = preview ? formatRoleLabel(preview.invitation.role) : "";
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +90,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
           }
 
           setPreview(null);
-          setPreviewError(getErrorMessage(payload, response.status === 404 ? "This invitation is no longer available." : `Could not load the invitation (${response.status}).`));
+          setPreviewError(getErrorMessage(payload, response.status === 404 ? "This invite is no longer available." : `Could not load the invite (${response.status}).`));
           return;
         }
 
@@ -102,7 +105,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
       } catch (error) {
         if (!cancelled) {
           setPreview(null);
-          setPreviewError(error instanceof Error ? error.message : "Could not load the invitation.");
+          setPreviewError(error instanceof Error ? error.message : "Could not load the invite.");
         }
       } finally {
         if (!cancelled) {
@@ -138,7 +141,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
       );
 
       if (!response.ok) {
-        setJoinError(getErrorMessage(payload, response.status === 404 ? "This invitation could not be accepted." : `Could not join the organization (${response.status}).`));
+        setJoinError(getErrorMessage(payload, response.status === 404 ? "This invite could not be accepted." : `Could not join the organization (${response.status}).`));
         return;
       }
 
@@ -165,21 +168,23 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   }
 
   if (!sessionHydrated || previewBusy) {
-    return <LoadingCard title="Loading invitation." body="Checking the invitation details and your account state..." />;
+    return <LoadingCard title="Loading invite." body="Checking the invite details and your account state..." />;
   }
 
   if (!preview) {
     return (
-      <section className="mx-auto grid w-full max-w-[40rem] gap-6 rounded-[32px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-8">
-        <div className="grid gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-          <h1 className="text-[2rem] font-semibold tracking-[-0.05em] text-gray-900">Invitation unavailable.</h1>
-          <p className="text-[14px] leading-relaxed text-gray-500">{previewError ?? "This invitation could not be loaded."}</p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <Link href="/" className="inline-flex items-center rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800">
-            Back to OpenWork Cloud
-          </Link>
+      <section className="den-page py-4 lg:py-6">
+        <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
+          <div className="grid gap-2">
+            <p className="den-eyebrow">OpenWork Cloud</p>
+            <h1 className="den-title-lg">This invite can't be opened.</h1>
+            <p className="den-copy">{previewError ?? "This invite could not be loaded."}</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Link href="/" className="den-button-primary w-full sm:w-auto">
+              Back to OpenWork Cloud
+            </Link>
+          </div>
         </div>
       </section>
     );
@@ -187,38 +192,55 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
   if (preview.invitation.status === "pending" && !user) {
     return (
-      <section className="mx-auto grid w-full max-w-[64rem] gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
-        <div className="grid gap-6 rounded-[32px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-8">
+      <section className="den-page grid gap-6 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] lg:py-6">
+        <div className="den-frame grid gap-6 p-6 md:p-8">
           <div className="grid gap-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
+            <p className="den-eyebrow">OpenWork Cloud</p>
             <div className="grid gap-2">
-              <p className="text-[15px] font-medium text-gray-500">You&apos;ve been invited to</p>
-              <h1 className="text-[2.5rem] font-semibold tracking-[-0.06em] text-gray-900">{preview.organization.name}</h1>
+              <p className="den-copy">You've been invited to</p>
+              <h1 className="den-title-xl max-w-[12ch]">{preview.organization.name}</h1>
             </div>
-            <p className="text-[14px] leading-relaxed text-gray-500">Role: {formatRoleLabel(preview.invitation.role)}</p>
           </div>
 
-          <div className="grid gap-4 rounded-3xl border border-gray-100 bg-gray-50 p-5">
-            <div className="grid gap-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Invited email</p>
-              <p className="text-[16px] font-medium text-gray-900">{preview.invitation.email}</p>
-            </div>
-            <p className="text-[14px] leading-relaxed text-gray-600">
-              Set a password for this invited email to create your OpenWork Cloud account, or switch to sign in if you already use it.
+          <div className="den-meta-row">
+            <span className="den-kicker">Role · {roleLabel}</span>
+          </div>
+
+          <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5">
+            <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">
+              Your team is already set up and waiting.
             </p>
+            <p className="den-copy">Member access is ready as soon as you join.</p>
           </div>
         </div>
 
         <AuthPanel
           eyebrow="Invite"
-          panelTitle={`Join ${preview.organization.name}.`}
-          panelCopy="We prefilled your invited email so you can finish account setup without going through the generic signup flow first."
           prefilledEmail={preview.invitation.email}
           prefillKey={preview.invitation.id}
           initialMode="sign-up"
           lockEmail
           hideSocialAuth
           hideEmailField
+          signUpContent={{
+            title: `Join ${preview.organization.name}.`,
+            copy: "Pick a password and you're in.",
+            submitLabel: `Join ${preview.organization.name}`,
+            togglePrompt: "Already on Cloud?",
+            toggleActionLabel: "Sign in",
+          }}
+          signInContent={{
+            title: `Join ${preview.organization.name}.`,
+            copy: `Sign in as ${preview.invitation.email} to accept this invite.`,
+            submitLabel: "Sign in to join",
+            togglePrompt: "Need a new account?",
+            toggleActionLabel: "Create one",
+          }}
+          verificationContent={{
+            title: "Check your inbox.",
+            copy: `Enter the six-digit code sent to ${preview.invitation.email}.`,
+            submitLabel: "Verify and join",
+          }}
         />
       </section>
     );
@@ -227,68 +249,75 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const showAcceptAction = preview.invitation.status === "pending" && Boolean(user) && invitedEmailMatches;
 
   return (
-    <section className="mx-auto grid w-full max-w-[40rem] gap-6 rounded-[32px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-8">
-      <div className="grid gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-        <div className="grid gap-2">
-          <p className="text-[15px] font-medium text-gray-500">You've been invited to</p>
-          <h1 className="text-[2.5rem] font-semibold tracking-[-0.06em] text-gray-900">{preview.organization.name}</h1>
+    <section className="den-page py-4 lg:py-6">
+      <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
+        <div className="grid gap-3">
+          <p className="den-eyebrow">OpenWork Cloud</p>
+          <div className="grid gap-2">
+            <p className="den-copy">You've been invited to</p>
+            <h1 className="den-title-xl max-w-[12ch]">{preview.organization.name}</h1>
+          </div>
         </div>
-        <p className="text-[14px] leading-relaxed text-gray-500">Role: {formatRoleLabel(preview.invitation.role)}</p>
+
+        <div className="den-meta-row">
+          <span className="den-kicker">Role · {roleLabel}</span>
+          {user ? <span>{user.email}</span> : null}
+        </div>
+
+        {user ? (
+          <div className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3">
+            <p className="den-label">Signed in as</p>
+            <p className="m-0 text-sm font-medium text-[var(--dls-text-primary)]">{user.email}</p>
+          </div>
+        ) : null}
+
+        {preview.invitation.status !== "pending" ? (
+          <div className="grid gap-4">
+            <p className="den-copy">{statusMessage(preview)}</p>
+            <div className="flex flex-wrap gap-3">
+              <Link
+                href={user && invitedEmailMatches ? getOrgDashboardRoute(preview.organization.slug) : "/"}
+                className="den-button-primary w-full sm:w-auto"
+              >
+                {user && invitedEmailMatches ? "Open team" : "Back to OpenWork Cloud"}
+              </Link>
+            </div>
+          </div>
+        ) : !invitedEmailMatches ? (
+          <div className="grid gap-4">
+            <p className="den-copy">
+              This invite is for <span className="font-medium text-[var(--dls-text-primary)]">{preview.invitation.email}</span>. Switch accounts to continue.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="den-button-primary w-full sm:w-auto"
+                onClick={() => void handleSwitchAccount()}
+                disabled={joinBusy}
+              >
+                Use a different account
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            <p className="den-copy">You're one click away from the team workspace.</p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="den-button-primary w-full sm:w-auto"
+                onClick={() => void handleAcceptInvitation()}
+                disabled={!showAcceptAction || joinBusy}
+              >
+                {joinBusy ? "Joining..." : `Join ${preview.organization.name}`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {joinError ? <div className="den-notice is-error">{joinError}</div> : null}
+        {previewError ? <div className="den-notice is-error">{previewError}</div> : null}
       </div>
-
-      {user ? (
-        <div className="rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-[13px] text-gray-700">
-          Signed in as <span className="font-medium text-gray-900">{user.email}</span>
-        </div>
-      ) : null}
-
-      {preview.invitation.status !== "pending" ? (
-        <div className="grid gap-4">
-          <p className="text-[15px] leading-relaxed text-gray-600">{statusMessage(preview)}</p>
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href={user && invitedEmailMatches ? getOrgDashboardRoute(preview.organization.slug) : "/"}
-              className="inline-flex items-center rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800"
-            >
-              {user && invitedEmailMatches ? "Open organization" : "Back to OpenWork Cloud"}
-            </Link>
-          </div>
-        </div>
-      ) : !invitedEmailMatches ? (
-        <div className="grid gap-4">
-          <p className="text-[15px] leading-relaxed text-gray-600">
-            This invite was sent to <span className="font-medium text-gray-900">{preview.invitation.email}</span>. Sign in with that email to join the organization.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              className="inline-flex items-center rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => void handleSwitchAccount()}
-              disabled={joinBusy}
-            >
-              Use a different account
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          <p className="text-[15px] leading-relaxed text-gray-600">Click to join</p>
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              className="inline-flex items-center rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => void handleAcceptInvitation()}
-              disabled={!showAcceptAction || joinBusy}
-            >
-              {joinBusy ? "Joining..." : "Join org"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {joinError ? <p className="text-[13px] text-rose-600">{joinError}</p> : null}
-      {previewError ? <p className="text-[13px] text-rose-600">{previewError}</p> : null}
     </section>
   );
 }
