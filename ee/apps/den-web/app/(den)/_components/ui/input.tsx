@@ -27,7 +27,7 @@ export type DenInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "disable
  * Consistent text input for all dashboard pages, based on the
  * Shared Workspaces compact search field.
  *
- * Defaults: rounded-lg · py-2.5 · px-4 · text-[14px]
+ * Defaults: rounded-lg · h-[42px] · px-4 · text-[14px]/leading-5
  * Icon: auto-positions and adjusts left padding.
  * No className needed at the call site — override only when necessary.
  */
@@ -56,7 +56,7 @@ export function DenInput({
       className={[
         // base visual style
         "w-full rounded-lg border border-gray-200 bg-white",
-        "py-2.5 px-4 text-[14px] text-gray-900",
+        "h-[42px] px-4 text-[14px] leading-5 text-gray-900",
         "outline-none transition-all placeholder:text-gray-400",
         "focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5",
         // disabled state
