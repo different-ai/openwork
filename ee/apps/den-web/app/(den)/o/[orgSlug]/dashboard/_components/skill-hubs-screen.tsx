@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { BookOpen, FileText, Pencil, Plus, Search } from "lucide-react";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
+import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
   getNewSkillHubRoute,
   getNewSkillRoute,
@@ -92,9 +93,9 @@ export function SkillHubsScreen() {
 
         <Link
           href={activeView === "hubs" ? getNewSkillHubRoute(orgSlug) : getNewSkillRoute(orgSlug)}
-          className="inline-flex h-14 items-center justify-center gap-2 rounded-full bg-[#0f172a] px-6 text-[15px] font-medium text-white transition hover:bg-[#111c33]"
+          className={buttonVariants({ variant: "primary" })}
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-4 w-4" aria-hidden="true" />
           {activeView === "hubs" ? "Create Hub" : "Add Skill"}
         </Link>
       </div>
@@ -121,13 +122,13 @@ export function SkillHubsScreen() {
                 : "Try a different search term, or switch to All Skills to browse the individual skills already available in this org."}
             </p>
             {skillHubs.length === 0 && skills.length > 0 ? (
-              <button
-                type="button"
+              <DenButton
+                variant="secondary"
+                className="mt-6"
                 onClick={() => setActiveView("skills")}
-                className="mt-6 inline-flex h-12 items-center justify-center rounded-full border border-gray-200 bg-white px-5 text-[14px] font-medium text-gray-800 transition hover:border-gray-300 hover:text-gray-950"
               >
                 Browse all skills
-              </button>
+              </DenButton>
             ) : null}
           </div>
         ) : (

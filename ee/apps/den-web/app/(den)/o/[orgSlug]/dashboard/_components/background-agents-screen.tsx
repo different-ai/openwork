@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
+import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
   OPENWORK_APP_CONNECT_BASE_URL,
   buildOpenworkAppConnectUrl,
@@ -401,18 +402,16 @@ export function BackgroundAgentsScreen() {
       colors={["#E9FFE0", "#3E9A1D", "#B3F750", "#51F0A3"]}
     >
       <div className="mb-10 flex items-center gap-3">
-        <button
-          type="button"
+        <DenButton
+          icon={Plus}
+          loading={launchBusy}
           onClick={() => void handleAddWorkspace()}
-          disabled={launchBusy}
-          className="flex items-center gap-2 rounded-full bg-gray-900 px-5 py-2.5 text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Plus size={15} />
-          {launchBusy ? "Adding workspace..." : "Add workspace"}
-        </button>
+          Add workspace
+        </DenButton>
         <Link
           href={getSharedSetupsRoute(orgSlug)}
-          className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[13px] font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+          className={buttonVariants({ variant: "secondary" })}
         >
           Open shared setups
         </Link>

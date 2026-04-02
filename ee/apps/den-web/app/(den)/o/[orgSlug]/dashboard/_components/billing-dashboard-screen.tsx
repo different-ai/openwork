@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { CreditCard } from "lucide-react";
+import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
   formatIsoDate,
   formatMoneyMinor,
@@ -44,7 +45,6 @@ export function BillingDashboardScreen() {
     return (
       <DashboardPageTemplate
         icon={CreditCard}
-        badgeLabel="Plan"
         title="Billing"
         description="Manage your plan, view usage, and update payment details."
         colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
@@ -81,7 +81,6 @@ export function BillingDashboardScreen() {
   return (
     <DashboardPageTemplate
       icon={CreditCard}
-      badgeLabel="Plan"
       title="Billing"
       description="Manage your plan, view usage, and update payment details."
       colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
@@ -144,47 +143,25 @@ export function BillingDashboardScreen() {
 
         <div className="flex flex-wrap items-center gap-3">
           {effectiveCheckoutUrl && !billingSummary?.hasActivePlan ? (
-            <a
-              href={effectiveCheckoutUrl}
-              rel="noreferrer"
-              className="rounded-full bg-gray-900 px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-gray-800"
-            >
+            <a href={effectiveCheckoutUrl} rel="noreferrer" className={buttonVariants({ variant: "primary" })}>
               Purchase worker
             </a>
           ) : null}
 
           {billingSummary?.portalUrl ? (
-            <a
-              href={billingSummary.portalUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-            >
+            <a href={billingSummary.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
               Open billing portal
             </a>
           ) : null}
 
           {billingSummary?.hasActivePlan ? (
-            <button
-              type="button"
-              onClick={() =>
-                void handleSubscriptionCancellation(
-                  !Boolean(subscription?.cancelAtPeriodEnd),
-                )
-              }
-              disabled={billingSubscriptionBusy}
-              className={`rounded-full px-5 py-2.5 text-[14px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                subscription?.cancelAtPeriodEnd
-                  ? "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-                  : "border border-red-200 bg-white text-red-600 hover:bg-red-50"
-              }`}
+            <DenButton
+              variant={subscription?.cancelAtPeriodEnd ? "secondary" : "destructive"}
+              loading={billingSubscriptionBusy}
+              onClick={() => void handleSubscriptionCancellation(!Boolean(subscription?.cancelAtPeriodEnd))}
             >
-              {billingSubscriptionBusy
-                ? "Updating..."
-                : subscription?.cancelAtPeriodEnd
-                  ? "Resume plan"
-                  : "Cancel plan"}
-            </button>
+              {subscription?.cancelAtPeriodEnd ? "Resume plan" : "Cancel plan"}
+            </DenButton>
           ) : null}
         </div>
       </div>
@@ -219,23 +196,18 @@ export function BillingDashboardScreen() {
         </div>
 
         {billingSummary?.portalUrl ? (
-          <a
-            href={billingSummary.portalUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-          >
+          <a href={billingSummary.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
             View invoices
           </a>
         ) : (
-          <button
-            type="button"
+          <DenButton
+            variant="secondary"
+            size="sm"
+            loading={billingBusy || billingCheckoutBusy}
             onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
-            disabled={billingBusy || billingCheckoutBusy}
-            className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {billingBusy || billingCheckoutBusy ? "Refreshing..." : "Refresh billing"}
-          </button>
+            Refresh billing
+          </DenButton>
         )}
       </div>
     </DashboardPageTemplate>

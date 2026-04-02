@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Search, Share2, Trash2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
+import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import { requestJson, getErrorMessage } from "../../../../_lib/den-flow";
 import { getMembersRoute } from "../../../../_lib/den-org";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
@@ -120,24 +121,15 @@ export function SharedSetupsScreen() {
   return (
     <DashboardPageTemplate
       icon={Share2}
-      badgeLabel="Templates"
       title="Team Templates"
       description="Browse the shared setups your team has already published from the desktop app."
       colors={["#FFFBEB", "#78350F", "#F59E0B", "#FDE68A"]}
     >
       <div className="mb-4 flex flex-wrap justify-end gap-3">
-        <a
-          href={OPENWORK_DOCS_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-        >
+        <a href={OPENWORK_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
           Learn how
         </a>
-        <a
-          href="https://openworklabs.com/download"
-          className="rounded-full bg-gray-900 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-gray-800"
-        >
+        <a href="https://openworklabs.com/download" className={buttonVariants({ variant: "primary", size: "sm" })}>
           Use desktop app
         </a>
       </div>
@@ -226,15 +218,17 @@ export function SharedSetupsScreen() {
                     {activeOrg?.name ?? "Workspace"}
                   </span>
                   {canDelete ? (
-                    <button
-                      type="button"
+                    <DenButton
+                      variant="destructive"
+                      size="sm"
+                      icon={Trash2}
+                      loading={deletingId === template.id}
+                      disabled={deletingId !== null}
                       onClick={() => void deleteTemplate(template.id)}
-                      disabled={deletingId === template.id}
-                      className="ml-auto inline-flex items-center gap-1 rounded-full border border-red-200 px-3 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ml-auto"
                     >
-                      <Trash2 className="h-3 w-3" />
-                      {deletingId === template.id ? "Deleting..." : "Delete"}
-                    </button>
+                      Delete
+                    </DenButton>
                   ) : null}
                 </div>
               </article>

@@ -23,6 +23,7 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
+import { DenButton } from "../../../../_components/ui/button";
 
 type MembersTab = "members" | "teams" | "roles" | "invitations";
 
@@ -66,18 +67,14 @@ function ActionButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <DenButton
+      variant={tone === "danger" ? "destructive" : "secondary"}
+      size="sm"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[13px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
-        tone === "danger"
-          ? "border-red-200 text-red-600 hover:bg-red-50"
-          : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-900"
-      }`}
     >
       {children}
-    </button>
+    </DenButton>
   );
 }
 
@@ -297,13 +294,9 @@ export function ManageMembersScreen() {
           </label>
           <div className="flex gap-2 lg:justify-end">
             <ActionButton onClick={resetInviteForm}>Cancel</ActionButton>
-            <button
-              type="submit"
-              disabled={mutationBusy === "invite-member"}
-              className="inline-flex h-12 items-center justify-center rounded-full bg-[#0f172a] px-5 text-[14px] font-medium text-white transition hover:bg-[#111c33] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {mutationBusy === "invite-member" ? "Sending..." : "Send invite"}
-            </button>
+            <DenButton type="submit" loading={mutationBusy === "invite-member"}>
+              Send invite
+            </DenButton>
           </div>
         </form>
       </div>
@@ -345,15 +338,9 @@ export function ManageMembersScreen() {
           </label>
           <div className="flex gap-2 lg:justify-end">
             <ActionButton onClick={resetMemberEditor}>Cancel</ActionButton>
-            <button
-              type="submit"
-              disabled={mutationBusy === "update-member-role"}
-              className="inline-flex h-12 items-center justify-center rounded-full bg-[#0f172a] px-5 text-[14px] font-medium text-white transition hover:bg-[#111c33] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {mutationBusy === "update-member-role"
-                ? "Saving..."
-                : "Save member"}
-            </button>
+            <DenButton type="submit" loading={mutationBusy === "update-member-role"}>
+              Save member
+            </DenButton>
           </div>
         </form>
       </div>
@@ -454,19 +441,12 @@ export function ManageMembersScreen() {
 
           <div className="flex flex-wrap gap-2">
             <ActionButton onClick={resetTeamEditor}>Cancel</ActionButton>
-            <button
+            <DenButton
               type="submit"
-              disabled={
-                mutationBusy === "create-team" || mutationBusy === "update-team"
-              }
-              className="inline-flex h-12 items-center justify-center rounded-full bg-[#0f172a] px-5 text-[14px] font-medium text-white transition hover:bg-[#111c33] disabled:cursor-not-allowed disabled:opacity-60"
+              loading={mutationBusy === "create-team" || mutationBusy === "update-team"}
             >
-              {mutationBusy === "create-team" || mutationBusy === "update-team"
-                ? "Saving..."
-                : editingTeamId
-                  ? "Save team"
-                  : "Create team"}
-            </button>
+              {editingTeamId ? "Save team" : "Create team"}
+            </DenButton>
           </div>
         </form>
       </div>
@@ -560,19 +540,12 @@ export function ManageMembersScreen() {
 
           <div className="flex flex-wrap gap-2">
             <ActionButton onClick={resetRoleEditor}>Cancel</ActionButton>
-            <button
+            <DenButton
               type="submit"
-              disabled={
-                mutationBusy === "create-role" || mutationBusy === "update-role"
-              }
-              className="inline-flex h-12 items-center justify-center rounded-full bg-[#0f172a] px-5 text-[14px] font-medium text-white transition hover:bg-[#111c33] disabled:cursor-not-allowed disabled:opacity-60"
+              loading={mutationBusy === "create-role" || mutationBusy === "update-role"}
             >
-              {mutationBusy === "create-role" || mutationBusy === "update-role"
-                ? "Saving..."
-                : editingRoleId
-                  ? "Save role"
-                  : "Create role"}
-            </button>
+              {editingRoleId ? "Save role" : "Create role"}
+            </DenButton>
           </div>
         </form>
       </div>
@@ -623,21 +596,15 @@ export function ManageMembersScreen() {
   return (
     <DashboardPageTemplate
       icon={Users}
-      badgeLabel="Team"
       title="Members"
       description="Invite teammates, adjust roles, and keep access clean."
       colors={["#F3EEFF", "#4A1D96", "#7C3AED", "#C4B5FD"]}
     >
       {toolbarAction ? (
         <div className="mb-6 flex justify-end">
-          <button
-            type="button"
-            onClick={toolbarAction.onClick}
-            className="inline-flex h-14 items-center justify-center gap-2 rounded-full bg-[#0f172a] px-6 text-[15px] font-medium text-white transition hover:bg-[#111c33]"
-          >
-            <Plus className="h-4 w-4" />
+          <DenButton icon={Plus} onClick={toolbarAction.onClick}>
             {toolbarAction.label}
-          </button>
+          </DenButton>
         </div>
       ) : null}
 

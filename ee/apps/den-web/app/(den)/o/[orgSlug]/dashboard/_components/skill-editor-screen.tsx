@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Upload } from "lucide-react";
+import { DenButton } from "../../../../_components/ui/button";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import {
   getSkillDetailRoute,
@@ -208,14 +209,9 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
           Back
         </Link>
 
-        <button
-          type="button"
-          onClick={() => void saveSkill()}
-          disabled={saving}
-          className="inline-flex h-14 items-center justify-center rounded-full bg-[#0f172a] px-8 text-[15px] font-medium text-white transition hover:bg-[#111c33] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {saving ? "Saving..." : skillId ? "Save Skill" : "Create Skill"}
-        </button>
+        <DenButton loading={saving} onClick={() => void saveSkill()}>
+          {skillId ? "Save Skill" : "Create Skill"}
+        </DenButton>
       </div>
 
       {saveError ? (
@@ -248,14 +244,15 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
             <p className="mt-2 text-[14px] text-gray-500">
               We will keep the markdown source and also prefill the editor fields for review.
             </p>
-            <button
-              type="button"
+            <DenButton
+              variant="secondary"
+              size="sm"
+              icon={Upload}
+              className="mt-5"
               onClick={() => fileInputRef.current?.click()}
-              className="mt-5 inline-flex h-12 items-center justify-center gap-2 rounded-full border border-gray-200 bg-white px-5 text-[14px] font-medium text-gray-800 transition hover:border-gray-300 hover:text-gray-950"
             >
-              <Upload className="h-4 w-4" />
               {uploadedFileName ? `Replace ${uploadedFileName}` : "Choose file"}
-            </button>
+            </DenButton>
             <input ref={fileInputRef} type="file" accept=".md,text/markdown" className="hidden" onChange={(event) => void handleFileSelection(event)} />
           </div>
         ) : null}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, BookOpen, CheckCircle2, Circle, Search } from "lucide-react";
+import { DenButton } from "../../../../_components/ui/button";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import {
   getOrgAccessFlags,
@@ -268,14 +269,9 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
         </Link>
 
         {canManage ? (
-          <button
-            type="button"
-            onClick={() => void saveHub()}
-            disabled={saving}
-            className="inline-flex h-14 items-center justify-center rounded-full bg-[#0f172a] px-8 text-[15px] font-medium text-white transition hover:bg-[#111c33] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {saving ? "Saving..." : skillHubId ? "Save Hub" : "Create Hub"}
-          </button>
+          <DenButton loading={saving} onClick={() => void saveHub()}>
+            {skillHubId ? "Save Hub" : "Create Hub"}
+          </DenButton>
         ) : (
           <span className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-gray-500">
             Read only

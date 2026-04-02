@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { ArrowLeft, Pencil } from "lucide-react";
+import { buttonVariants } from "../../../../_components/ui/button";
 import {
   getEditSkillRoute,
   getSkillHubsRoute,
@@ -64,11 +65,8 @@ export function SkillDetailScreen({ skillId }: { skillId: string }) {
         </Link>
 
         {skill.canManage ? (
-          <Link
-            href={getEditSkillRoute(orgSlug, skill.id)}
-            className="inline-flex h-14 items-center justify-center gap-2 rounded-full border border-gray-200 bg-white px-6 text-[15px] font-medium text-gray-800 transition hover:border-gray-300 hover:text-gray-950"
-          >
-            <Pencil className="h-4 w-4" />
+          <Link href={getEditSkillRoute(orgSlug, skill.id)} className={buttonVariants({ variant: "secondary" })}>
+            <Pencil className="h-4 w-4" aria-hidden="true" />
             Edit Skill
           </Link>
         ) : null}
