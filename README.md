@@ -22,7 +22,11 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
 
 ## Quick start
 
-Download the correct version in [here](https://openworklabs.com/download), in the latest [releases](https://github.com/different-ai/openwork/releases) or install from source below.
+Download the desktop app from [openworklabs.com/download](https://openworklabs.com/download), grab the latest [GitHub release](https://github.com/different-ai/openwork/releases), or install from source below.
+
+- macOS and Linux downloads are available directly.
+- Windows access is currently handled through the paid support plan on [openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support).
+- Hosted OpenWork Cloud workers are launched from the web app after checkout, then connected from the desktop app via `Add a worker` -> `Connect remote`.
 
 ## Why
 
@@ -44,6 +48,7 @@ OpenWork is designed to be:
 - **Execution plan**: render OpenCode todos as a timeline.
 - **Permissions**: surface permission requests and reply (allow once / always / deny).
 - **Templates**: save and re-run common workflows (stored locally).
+- **Debug exports**: copy or export the runtime debug report and developer log stream from Settings -> Debug when you need to file a bug.
 - **Skills manager**:
   - list installed `.opencode/skills` folders
   - import a local skill folder into `.opencode/skills/<skill-name>`
@@ -172,6 +177,8 @@ pnpm test:e2e
 ```
 
 ## Troubleshooting
+
+If you need to report a desktop or session bug, open Settings -> Debug and export both the runtime debug report and developer logs before filing an issue.
 
 ### Linux / Wayland (Hyprland)
 
