@@ -1,0 +1,343 @@
+:root {
+  color-scheme: light;
+  font-family: "IBM Plex Sans", "Inter", system-ui, sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(57, 181, 74, 0.16), transparent 28%),
+    radial-gradient(circle at top right, rgba(39, 98, 255, 0.14), transparent 30%),
+    linear-gradient(180deg, #f6f1e8 0%, #efe7d7 100%);
+  color: #1f2c2b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+code,
+pre,
+.sample-chip,
+.seed-input {
+  font-family: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
+}
+
+.app-shell {
+  position: relative;
+  min-height: 100vh;
+  padding: 32px;
+  overflow: hidden;
+}
+
+.ambient {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(70px);
+  opacity: 0.45;
+}
+
+.ambient-a {
+  top: -120px;
+  left: -80px;
+  width: 320px;
+  height: 320px;
+  background: rgba(76, 175, 80, 0.22);
+}
+
+.ambient-b {
+  right: -80px;
+  bottom: 80px;
+  width: 280px;
+  height: 280px;
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.panel {
+  position: relative;
+  border: 1px solid rgba(24, 30, 28, 0.08);
+  background: rgba(255, 251, 245, 0.82);
+  backdrop-filter: blur(18px);
+  border-radius: 28px;
+  box-shadow: 0 24px 80px -48px rgba(29, 24, 17, 0.45);
+}
+
+.hero-card {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.8fr);
+  padding: 32px;
+}
+
+.hero-copy h1 {
+  margin: 10px 0 0;
+  font-size: clamp(2.4rem, 6vw, 4.5rem);
+  line-height: 0.92;
+  letter-spacing: -0.08em;
+}
+
+.hero-copy p,
+.rule-card p,
+.support-copy,
+.surface-copy p {
+  margin: 0;
+  color: #516160;
+  line-height: 1.7;
+}
+
+.hero-copy p {
+  margin-top: 18px;
+  max-width: 62ch;
+}
+
+.rule-card {
+  align-self: end;
+  padding: 20px;
+  border-radius: 24px;
+  background: #16201f;
+  color: #f0f7f3;
+}
+
+.rule-card p {
+  margin-top: 8px;
+  color: rgba(240, 247, 243, 0.74);
+}
+
+.eyebrow {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.muted {
+  color: #6d7a79;
+}
+
+.on-dark {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.controls-grid,
+.footer-grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+  margin-top: 24px;
+}
+
+.input-panel,
+.seed-meta-grid,
+.code-panel {
+  padding: 24px;
+}
+
+.seed-input {
+  width: 100%;
+  margin-top: 10px;
+  padding: 15px 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(22, 32, 31, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: #182321;
+  font-size: 0.92rem;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.seed-input:focus {
+  border-color: #287d75;
+  box-shadow: 0 0 0 5px rgba(40, 125, 117, 0.12);
+}
+
+.sample-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.sample-chip {
+  border: 1px solid rgba(22, 32, 31, 0.1);
+  background: rgba(255, 255, 255, 0.75);
+  color: #425251;
+  border-radius: 999px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+
+.sample-chip.active {
+  background: #1f6978;
+  color: white;
+  border-color: #1f6978;
+}
+
+.seed-meta-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  background: #16201f;
+}
+
+.seed-meta-card {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.seed-meta-card code {
+  display: block;
+  margin-top: 8px;
+  color: #f4fbf7;
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+.preview-grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 24px;
+}
+
+.preview-card {
+  overflow: hidden;
+}
+
+.gradient-surface {
+  position: relative;
+  min-height: 340px;
+  background: #101818;
+}
+
+.gradient-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.surface-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(10, 18, 18, 0.08), rgba(10, 18, 18, 0.34));
+}
+
+.surface-copy {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  padding: 24px;
+  color: white;
+}
+
+.surface-copy h2 {
+  margin: 10px 0 0;
+  font-size: 2rem;
+  letter-spacing: -0.05em;
+}
+
+.surface-copy p {
+  margin-top: 10px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.details-stack {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+}
+
+.swatch-list,
+.pill-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.swatch-pill,
+.import-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 32, 31, 0.08);
+  background: rgba(248, 243, 235, 0.9);
+  padding: 10px 14px;
+}
+
+.swatch-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+pre {
+  overflow-x: auto;
+  margin: 14px 0 0;
+  border-radius: 22px;
+  background: #16201f;
+  color: #dcebe4;
+  padding: 18px;
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.mini-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.mini-surface {
+  position: relative;
+  min-height: 180px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 22px;
+  background: #111918;
+}
+
+.support-copy {
+  margin-top: 16px;
+}
+
+@media (max-width: 980px) {
+  .hero-card,
+  .controls-grid,
+  .preview-grid,
+  .footer-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 18px;
+  }
+
+  .hero-card,
+  .input-panel,
+  .seed-meta-grid,
+  .code-panel,
+  .details-stack {
+    padding: 18px;
+  }
+
+  .seed-meta-grid,
+  .mini-grid {
+    grid-template-columns: 1fr;
+  }
+}

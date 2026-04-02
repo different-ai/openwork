@@ -1,0 +1,24 @@
+{
+  "name": "@openwork/ui-demo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --dir ../../packages/ui build && vite --host 0.0.0.0 --port 3333 --strictPort",
+    "build": "pnpm --dir ../../packages/ui build && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3333 --strictPort",
+    "typecheck": "pnpm --dir ../../packages/ui build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openwork/ui": "workspace:*",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}

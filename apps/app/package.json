@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 vite",
     "dev:windows": "vite",
+    "prebuild": "pnpm --dir ../../packages/ui build",
     "build": "vite build",
     "dev:web": "OPENWORK_DEV_MODE=1 vite",
+    "prebuild:web": "pnpm --dir ../../packages/ui build",
     "build:web": "vite build",
     "preview": "vite preview",
+    "pretypecheck": "pnpm --dir ../../packages/ui build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:health": "node scripts/health.mjs",
     "test:mention-send": "node scripts/mention-send.mjs",
@@ -32,6 +35,7 @@
     "bump:set": "node scripts/bump-version.mjs --set"
   },
   "dependencies": {
+    "@openwork/ui": "workspace:*",
     "@codemirror/commands": "^6.8.0",
     "@codemirror/lang-markdown": "^6.3.3",
     "@codemirror/language": "^6.11.0",
