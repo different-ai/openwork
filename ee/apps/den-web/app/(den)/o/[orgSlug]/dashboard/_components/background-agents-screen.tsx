@@ -16,7 +16,9 @@ import {
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Search,
 } from "lucide-react";
+import { DenInput } from "../../../../_components/ui/input";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
@@ -433,30 +435,14 @@ export function BackgroundAgentsScreen() {
           <h2 className="text-[15px] font-medium tracking-[-0.2px] text-gray-900">
             Current workspaces
           </h2>
-          <div className="relative w-full max-w-[240px]">
-            <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="text-gray-400"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-            </div>
-            <input
+          <div className="w-full max-w-[240px]">
+            <DenInput
               type="text"
+              icon={Search}
               value={workerQuery}
               onChange={(event) => setWorkerQuery(event.target.value)}
               placeholder="Search workspaces..."
-              className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-4 text-[13px] text-gray-900 outline-none transition-all placeholder:text-gray-400 focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5"
+              className="rounded-lg py-2 pr-4 text-[13px]"
             />
           </div>
         </div>

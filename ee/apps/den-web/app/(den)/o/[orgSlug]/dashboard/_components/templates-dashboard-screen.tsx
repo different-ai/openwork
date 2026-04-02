@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Search, Share2, Trash2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
+import { DenInput } from "../../../../_components/ui/input";
 import { requestJson, getErrorMessage } from "../../../../_lib/den-flow";
 import { getMembersRoute } from "../../../../_lib/den-org";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
@@ -126,24 +127,22 @@ export function SharedSetupsScreen() {
       colors={["#FFFBEB", "#78350F", "#F59E0B", "#FDE68A"]}
     >
       <div className="mb-4 flex flex-wrap justify-end gap-3">
-        <a href={OPENWORK_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+        <a href={OPENWORK_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
           Learn how
         </a>
-        <a href="https://openworklabs.com/download" className={buttonVariants({ variant: "primary", size: "sm" })}>
+        <a href="https://openworklabs.com/download" className={buttonVariants({ variant: "primary" })}>
           Use desktop app
         </a>
       </div>
 
-      <div className="relative mb-6">
-        <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-          <Search className="h-4 w-4 text-gray-400" />
-        </div>
-        <input
+      <div className="mb-6">
+        <DenInput
           type="text"
+          icon={Search}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search templates"
-          className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-4 text-[14px] text-gray-900 outline-none transition-all placeholder:text-gray-400 focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5"
+          className="rounded-xl py-2.5 pr-4 text-[14px]"
         />
       </div>
 

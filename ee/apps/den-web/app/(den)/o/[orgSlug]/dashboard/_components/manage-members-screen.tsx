@@ -24,6 +24,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../../../_components/ui/button";
+import { DenInput } from "../../../../_components/ui/input";
 
 type MembersTab = "members" | "teams" | "roles" | "invitations";
 
@@ -269,13 +270,13 @@ export function ManageMembersScreen() {
         >
           <label className="grid gap-3">
             <span className="text-[14px] font-medium text-gray-700">Email</span>
-            <input
+            <DenInput
               type="email"
               value={inviteEmail}
               onChange={(event) => setInviteEmail(event.target.value)}
               placeholder="teammate@example.com"
               required
-              className="h-14 rounded-[20px] border border-gray-200 bg-[#f8fafc] px-4 text-[15px] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="h-14 rounded-[20px] bg-[#f8fafc] px-4 text-[15px]"
             />
           </label>
           <label className="grid gap-3">
@@ -378,13 +379,13 @@ export function ManageMembersScreen() {
             <span className="text-[14px] font-medium text-gray-700">
               Team name
             </span>
-            <input
+            <DenInput
               type="text"
               value={teamNameDraft}
               onChange={(event) => setTeamNameDraft(event.target.value)}
               placeholder="Core Engineering"
               required
-              className="h-14 rounded-[20px] border border-gray-200 bg-[#f8fafc] px-4 text-[15px] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="h-14 rounded-[20px] bg-[#f8fafc] px-4 text-[15px]"
             />
           </label>
 
@@ -484,13 +485,13 @@ export function ManageMembersScreen() {
             <span className="text-[14px] font-medium text-gray-700">
               Role name
             </span>
-            <input
+            <DenInput
               type="text"
               value={roleNameDraft}
               onChange={(event) => setRoleNameDraft(event.target.value)}
               placeholder="qa-reviewer"
               required
-              className="h-14 rounded-[20px] border border-gray-200 bg-[#f8fafc] px-4 text-[15px] text-gray-900 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="h-14 rounded-[20px] bg-[#f8fafc] px-4 text-[15px]"
             />
           </label>
 
@@ -600,14 +601,6 @@ export function ManageMembersScreen() {
       description="Invite teammates, adjust roles, and keep access clean."
       colors={["#F3EEFF", "#4A1D96", "#7C3AED", "#C4B5FD"]}
     >
-      {toolbarAction ? (
-        <div className="mb-6 flex justify-end">
-          <DenButton icon={Plus} onClick={toolbarAction.onClick}>
-            {toolbarAction.label}
-          </DenButton>
-        </div>
-      ) : null}
-
       {pageError ? (
         <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
           {pageError}
@@ -615,7 +608,7 @@ export function ManageMembersScreen() {
       ) : null}
 
       <UnderlineTabs
-        className="mb-8"
+        className="mb-6"
         activeTab={activeTab}
         onChange={setActiveTab}
         tabs={[
@@ -634,11 +627,18 @@ export function ManageMembersScreen() {
 
       {activeTab === "members" ? (
         <div>
-          <p className="mb-6 text-[15px] text-gray-400">
-            {access.canInviteMembers
-              ? "Invite people, update their role, or remove them from the organization."
-              : "View who is in the organization and what role they currently hold."}
-          </p>
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <p className="text-[15px] text-gray-400">
+              {access.canInviteMembers
+                ? "Invite people, update their role, or remove them from the organization."
+                : "View who is in the organization and what role they currently hold."}
+            </p>
+            {toolbarAction ? (
+              <DenButton icon={Plus} onClick={toolbarAction.onClick}>
+                {toolbarAction.label}
+              </DenButton>
+            ) : null}
+          </div>
 
           <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
             <div className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">
@@ -734,9 +734,14 @@ export function ManageMembersScreen() {
 
       {activeTab === "teams" ? (
         <div>
-          <p className="mb-6 text-[15px] text-gray-400">
-            Manage teams and their members.
-          </p>
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <p className="text-[15px] text-gray-400">Manage teams and their members.</p>
+            {toolbarAction ? (
+              <DenButton icon={Plus} onClick={toolbarAction.onClick}>
+                {toolbarAction.label}
+              </DenButton>
+            ) : null}
+          </div>
 
           <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
             <div className="grid grid-cols-[minmax(0,1fr)_220px_220px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">
@@ -821,11 +826,18 @@ export function ManageMembersScreen() {
 
       {activeTab === "roles" ? (
         <div>
-          <p className="mb-6 text-[15px] text-gray-400">
-            {access.canManageRoles
-              ? "Default roles stay available, and owners can add, edit, or remove custom roles here."
-              : "Role definitions are visible here, but only owners can change them."}
-          </p>
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <p className="text-[15px] text-gray-400">
+              {access.canManageRoles
+                ? "Default roles stay available, and owners can add, edit, or remove custom roles here."
+                : "Role definitions are visible here, but only owners can change them."}
+            </p>
+            {toolbarAction ? (
+              <DenButton icon={Plus} onClick={toolbarAction.onClick}>
+                {toolbarAction.label}
+              </DenButton>
+            ) : null}
+          </div>
 
           <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
             <div className="grid grid-cols-[minmax(0,1fr)_140px_220px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">
@@ -901,10 +913,16 @@ export function ManageMembersScreen() {
 
       {activeTab === "invitations" ? (
         <div>
-          <p className="mb-6 text-[15px] text-gray-400">
-            Admins and owners can revoke pending invites before they are
-            accepted.
-          </p>
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <p className="text-[15px] text-gray-400">
+              Admins and owners can revoke pending invites before they are accepted.
+            </p>
+            {toolbarAction ? (
+              <DenButton icon={Plus} onClick={toolbarAction.onClick}>
+                {toolbarAction.label}
+              </DenButton>
+            ) : null}
+          </div>
 
           <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
             <div className="grid grid-cols-[minmax(0,1fr)_150px_150px_140px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">

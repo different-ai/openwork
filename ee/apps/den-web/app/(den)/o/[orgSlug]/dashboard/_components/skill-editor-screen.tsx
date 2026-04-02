@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Upload } from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
+import { DenInput } from "../../../../_components/ui/input";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import {
   getSkillDetailRoute,
@@ -261,11 +262,11 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
           <div className="grid gap-8">
           <label className="grid gap-3">
             <span className="text-[14px] font-medium text-gray-700">Skill Name</span>
-            <input
+            <DenInput
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              className="h-16 rounded-[22px] border border-gray-200 bg-[#f8fafc] px-5 text-[16px] text-gray-950 outline-none transition focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="h-16 rounded-[22px] bg-[#f8fafc] px-5 text-[16px] text-gray-950"
             />
           </label>
 

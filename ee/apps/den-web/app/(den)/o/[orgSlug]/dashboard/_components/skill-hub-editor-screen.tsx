@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, BookOpen, CheckCircle2, Circle, Search } from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
+import { DenInput } from "../../../../_components/ui/input";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import {
   getOrgAccessFlags,
@@ -290,12 +291,12 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
         <div className="grid gap-6">
           <label className="grid gap-3">
             <span className="text-[14px] font-medium text-gray-700">Hub Name</span>
-            <input
+            <DenInput
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
               disabled={!canManage}
-              className="h-16 rounded-[22px] border border-gray-200 bg-[#f8fafc] px-5 text-[16px] text-gray-950 outline-none transition placeholder:text-gray-400 focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5 disabled:cursor-not-allowed disabled:bg-gray-50"
+              className="h-16 rounded-[22px] bg-[#f8fafc] px-5 text-[16px] text-gray-950"
             />
           </label>
           <label className="grid gap-3">
@@ -370,18 +371,17 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
             <p className="mt-2 text-[15px] text-gray-500">Select the skills to include in this hub.</p>
           </div>
 
-          <label className="relative block w-full max-w-[360px]">
-            <span className="pointer-events-none absolute inset-y-0 left-5 flex items-center text-gray-400">
-              <Search className="h-5 w-5" />
-            </span>
-            <input
+          <div className="w-full max-w-[360px]">
+            <DenInput
               type="search"
+              icon={Search}
+              iconSize={20}
               value={skillQuery}
               onChange={(event) => setSkillQuery(event.target.value)}
               placeholder="Search skills..."
-              className="h-14 w-full rounded-full border border-gray-200 bg-white pl-14 pr-5 text-[15px] text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="h-14 rounded-full pr-5 text-[15px]"
             />
-          </label>
+          </div>
         </div>
 
         <div className="max-h-[560px] overflow-y-auto border-t border-gray-100 pt-6">

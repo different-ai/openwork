@@ -6,6 +6,7 @@ import { BookOpen, FileText, Pencil, Plus, Search } from "lucide-react";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
+import { DenInput } from "../../../../_components/ui/input";
 import {
   getNewSkillHubRoute,
   getNewSkillRoute,
@@ -77,18 +78,17 @@ export function SkillHubsScreen() {
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-4">
           <UnderlineTabs tabs={SKILL_LIBRARY_TABS} activeTab={activeView} onChange={setActiveView} />
-          <label className="relative block max-w-[640px]">
-            <span className="pointer-events-none absolute inset-y-0 left-5 flex items-center text-gray-400">
-              <Search className="h-5 w-5" />
-            </span>
-            <input
+          <div className="max-w-[640px]">
+            <DenInput
               type="search"
+              icon={Search}
+              iconSize={20}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={activeView === "hubs" ? "Search hubs..." : "Search skills..."}
-              className="h-16 w-full rounded-full border border-gray-200 bg-white pl-14 pr-5 text-[15px] text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5"
+              className="h-16 rounded-full pr-5 text-[15px]"
             />
-          </label>
+          </div>
         </div>
 
         <Link
