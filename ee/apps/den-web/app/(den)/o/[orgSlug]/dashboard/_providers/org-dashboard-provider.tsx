@@ -34,6 +34,9 @@ type OrgDashboardContextValue = {
   cancelInvitation: (invitationId: string) => Promise<void>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
+  updateTeam: (teamId: string, input: { name?: string; memberIds?: string[] }) => Promise<void>;
+  deleteTeam: (teamId: string) => Promise<void>;
   createRole: (input: { roleName: string; permission: Record<string, string[]> }) => Promise<void>;
   updateRole: (roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) => Promise<void>;
   deleteRole: (roleId: string) => Promise<void>;
@@ -257,6 +260,54 @@ export function OrgDashboardProvider({
     });
   }
 
+  async function createTeam(input: { name: string; memberIds: string[] }) {
+    await runMutation("create-team", async () => {
+      const { response, payload } = await requestJson(
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/teams`,
+        {
+          method: "POST",
+          body: JSON.stringify(input),
+        },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to create team (${response.status}).`));
+      }
+    });
+  }
+
+  async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[] }) {
+    await runMutation("update-team", async () => {
+      const { response, payload } = await requestJson(
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/teams/${encodeURIComponent(teamId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(input),
+        },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to update team (${response.status}).`));
+      }
+    });
+  }
+
+  async function deleteTeam(teamId: string) {
+    await runMutation("delete-team", async () => {
+      const { response, payload } = await requestJson(
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/teams/${encodeURIComponent(teamId)}`,
+        { method: "DELETE" },
+        12000,
+      );
+
+      if (response.status !== 204 && !response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to delete team (${response.status}).`));
+      }
+    });
+  }
+
   async function updateRole(roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) {
     await runMutation("update-role", async () => {
       const { response, payload } = await requestJson(
@@ -318,6 +369,9 @@ export function OrgDashboardProvider({
     cancelInvitation,
     updateMemberRole,
     removeMember,
+    createTeam,
+    updateTeam,
+    deleteTeam,
     createRole,
     updateRole,
     deleteRole,

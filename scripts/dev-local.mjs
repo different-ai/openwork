@@ -10,7 +10,7 @@ const rootDir = path.resolve(__dirname, "..")
 const composeFile = path.join(rootDir, "packaging", "docker", "docker-compose.web-local.yml")
 const composeProject = "openwork-den-local"
 
-const controllerPort = process.env.DEN_CONTROLLER_PORT?.trim() || "8788"
+const apiPort = process.env.DEN_API_PORT?.trim() || process.env.DEN_CONTROLLER_PORT?.trim() || "8788"
 const workerProxyPort = process.env.DEN_WORKER_PROXY_PORT?.trim() || "8789"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
 const databaseUrl = process.env.DATABASE_URL?.trim() || "mysql://root:password@127.0.0.1:3306/openwork_den"
@@ -143,7 +143,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 async function main() {
-  for (const [name, port] of [["den-web", webPort], ["den-controller", controllerPort], ["den-worker-proxy", workerProxyPort]]) {
+  for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["den-worker-proxy", workerProxyPort]]) {
     const available = await canListenOnPort(Number(port))
     if (!available) {
       throw new Error(`${name} local port ${port} is already in use. Stop the existing process or rerun with a different port env override.`)
@@ -184,9 +184,9 @@ async function main() {
       "run",
       "dev:local",
       "--output-logs=full",
-      "--filter=@openwork-ee/den-controller",
-      "--filter=@openwork-ee/den-worker-proxy",
-      "--filter=@openwork-ee/den-web",
+        "--filter=@openwork-ee/den-api",
+        "--filter=@openwork-ee/den-worker-proxy",
+        "--filter=@openwork-ee/den-web",
     ],
     {
       cwd: rootDir,
@@ -200,12 +200,13 @@ async function main() {
         BETTER_AUTH_URL: process.env.BETTER_AUTH_URL?.trim() || `http://localhost:${webPort}`,
         DEN_BETTER_AUTH_TRUSTED_ORIGINS: process.env.DEN_BETTER_AUTH_TRUSTED_ORIGINS?.trim() || webOrigins,
         CORS_ORIGINS: process.env.CORS_ORIGINS?.trim() || webOrigins,
-        DEN_CONTROLLER_PORT: controllerPort,
+        DEN_API_PORT: apiPort,
+        DEN_CONTROLLER_PORT: apiPort,
         DEN_WORKER_PROXY_PORT: workerProxyPort,
         DEN_WEB_PORT: webPort,
-        DEN_API_BASE: process.env.DEN_API_BASE?.trim() || `http://127.0.0.1:${controllerPort}`,
+        DEN_API_BASE: process.env.DEN_API_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
         DEN_AUTH_ORIGIN: process.env.DEN_AUTH_ORIGIN?.trim() || `http://localhost:${webPort}`,
-        DEN_AUTH_FALLBACK_BASE: process.env.DEN_AUTH_FALLBACK_BASE?.trim() || `http://127.0.0.1:${controllerPort}`,
+        DEN_AUTH_FALLBACK_BASE: process.env.DEN_AUTH_FALLBACK_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
         PROVISIONER_MODE: process.env.PROVISIONER_MODE?.trim() || "stub",
       },
     },

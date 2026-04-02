@@ -1,4 +1,4 @@
-import { and, asc, eq } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -97,6 +97,13 @@ export type OrganizationContext = {
     protected: boolean
     createdAt: Date | null
     updatedAt: Date | null
+  }>
+  teams: Array<{
+    id: typeof TeamTable.$inferSelect.id
+    name: string
+    createdAt: Date
+    updatedAt: Date
+    memberIds: MemberId[]
   }>
 }
 
@@ -611,6 +618,8 @@ export async function getOrganizationContextForUser(input: {
     .where(eq(OrganizationRoleTable.organizationId, organization.id))
     .orderBy(asc(OrganizationRoleTable.createdAt))
 
+  const teams = await listOrganizationTeams(organization.id)
+
   const builtInDynamicRoleNames = new Set(Object.keys(denDefaultDynamicOrganizationRoles))
 
   return {
@@ -655,7 +664,45 @@ export async function getOrganizationContextForUser(input: {
         updatedAt: role.updatedAt,
       })),
     ],
+    teams,
   } satisfies OrganizationContext
+}
+
+async function listOrganizationTeams(organizationId: OrgId) {
+  const teams = await db
+    .select({
+      id: TeamTable.id,
+      name: TeamTable.name,
+      createdAt: TeamTable.createdAt,
+      updatedAt: TeamTable.updatedAt,
+    })
+    .from(TeamTable)
+    .where(eq(TeamTable.organizationId, organizationId))
+    .orderBy(asc(TeamTable.createdAt))
+
+  if (teams.length === 0) {
+    return []
+  }
+
+  const memberships = await db
+    .select({
+      teamId: TeamMemberTable.teamId,
+      orgMembershipId: TeamMemberTable.orgMembershipId,
+    })
+    .from(TeamMemberTable)
+    .where(inArray(TeamMemberTable.teamId, teams.map((team) => team.id)))
+
+  const memberIdsByTeamId = new Map<typeof TeamTable.$inferSelect.id, MemberId[]>()
+  for (const membership of memberships) {
+    const existing = memberIdsByTeamId.get(membership.teamId) ?? []
+    existing.push(membership.orgMembershipId)
+    memberIdsByTeamId.set(membership.teamId, existing)
+  }
+
+  return teams.map((team) => ({
+    ...team,
+    memberIds: memberIdsByTeamId.get(team.id) ?? [],
+  }))
 }
 
 export async function listTeamsForMember(input: {

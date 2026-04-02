@@ -35,6 +35,22 @@ export type DenOrgInvitation = {
   createdAt: string | null;
 };
 
+export type DenOrgTeam = {
+  id: string;
+  name: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  memberIds: string[];
+};
+
+export type DenCurrentMemberTeam = {
+  id: string;
+  name: string;
+  organizationId: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type DenInvitationPreview = {
   invitation: {
     id: string;
@@ -81,6 +97,8 @@ export type DenOrgContext = {
   members: DenOrgMember[];
   invitations: DenOrgInvitation[];
   roles: DenOrgRole[];
+  teams: DenOrgTeam[];
+  currentMemberTeams: DenCurrentMemberTeam[];
 };
 
 export const DEN_ROLE_PERMISSION_OPTIONS = {
@@ -142,6 +160,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean) {
     canCancelInvitations: isAdmin,
     canManageMembers: isOwner,
     canManageRoles: isOwner,
+    canManageTeams: isAdmin,
   };
 }
 
@@ -183,6 +202,34 @@ export function getCustomLlmProvidersRoute(orgSlug: string): string {
 
 export function getBillingRoute(orgSlug: string): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
+}
+
+export function getSkillHubsRoute(orgSlug: string): string {
+  return `${getOrgDashboardRoute(orgSlug)}/skill-hubs`;
+}
+
+export function getSkillHubRoute(orgSlug: string, skillHubId: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/${encodeURIComponent(skillHubId)}`;
+}
+
+export function getEditSkillHubRoute(orgSlug: string, skillHubId: string): string {
+  return `${getSkillHubRoute(orgSlug, skillHubId)}/edit`;
+}
+
+export function getNewSkillHubRoute(orgSlug: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/new`;
+}
+
+export function getSkillDetailRoute(orgSlug: string, skillId: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/skills/${encodeURIComponent(skillId)}`;
+}
+
+export function getEditSkillRoute(orgSlug: string, skillId: string): string {
+  return `${getSkillDetailRoute(orgSlug, skillId)}/edit`;
+}
+
+export function getNewSkillRoute(orgSlug: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/skills/new`;
 }
 
 export function parseOrgListPayload(payload: unknown): {
@@ -339,6 +386,53 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
         .filter((entry): entry is DenOrgRole => entry !== null)
     : [];
 
+  const teams = Array.isArray(payload.teams)
+    ? payload.teams
+        .map((entry) => {
+          if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") {
+            return null;
+          }
+
+          const memberIds = Array.isArray(entry.memberIds)
+            ? entry.memberIds.filter((value): value is string => typeof value === "string")
+            : [];
+
+          return {
+            id: entry.id,
+            name: entry.name,
+            createdAt: asIsoString(entry.createdAt),
+            updatedAt: asIsoString(entry.updatedAt),
+            memberIds,
+          } satisfies DenOrgTeam;
+        })
+        .filter((entry): entry is DenOrgTeam => entry !== null)
+    : [];
+
+  const currentMemberTeams = Array.isArray(payload.currentMemberTeams)
+    ? payload.currentMemberTeams
+        .map((entry) => {
+          if (!isRecord(entry)) {
+            return null;
+          }
+
+          const id = asString(entry.id);
+          const name = asString(entry.name);
+          const organizationId = asString(entry.organizationId);
+          if (!id || !name || !organizationId) {
+            return null;
+          }
+
+          return {
+            id,
+            name,
+            organizationId,
+            createdAt: asIsoString(entry.createdAt),
+            updatedAt: asIsoString(entry.updatedAt),
+          } satisfies DenCurrentMemberTeam;
+        })
+        .filter((entry): entry is DenCurrentMemberTeam => entry !== null)
+    : [];
+
   return {
     organization: {
       id: organizationId,
@@ -359,6 +453,8 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     members,
     invitations,
     roles,
+    teams,
+    currentMemberTeams,
   };
 }
 

@@ -28,6 +28,19 @@ const createSkillSchema = z.object({
   shared: z.enum(["org", "public"]).nullable().optional(),
 })
 
+const updateSkillSchema = z.object({
+  skillText: z.string().trim().min(1).optional(),
+  shared: z.enum(["org", "public"]).nullable().optional(),
+}).superRefine((value, ctx) => {
+  if (value.skillText === undefined && value.shared === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["skillText"],
+      message: "Provide at least one field to update.",
+    })
+  }
+})
+
 const createSkillHubSchema = z.object({
   name: z.string().trim().min(1).max(255),
   description: z.string().trim().max(65535).nullish().transform((value) => value || null),
@@ -307,6 +320,68 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       })
 
       return c.body(null, 204)
+    },
+  )
+
+  app.patch(
+    "/v1/orgs/:orgId/skills/:skillId",
+    requireUserMiddleware,
+    paramValidator(orgSkillParamsSchema),
+    resolveOrganizationContextMiddleware,
+    jsonValidator(updateSkillSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const params = c.req.valid("param")
+      const input = c.req.valid("json")
+
+      let skillId: SkillId
+      try {
+        skillId = parseSkillId(params.skillId)
+      } catch {
+        return c.json({ error: "skill_not_found" }, 404)
+      }
+
+      const skillRows = await db
+        .select()
+        .from(SkillTable)
+        .where(and(eq(SkillTable.id, skillId), eq(SkillTable.organizationId, payload.organization.id)))
+        .limit(1)
+
+      const skill = skillRows[0]
+      if (!skill) {
+        return c.json({ error: "skill_not_found" }, 404)
+      }
+
+      if (!canManageSkill(payload, skill)) {
+        return c.json({ error: "forbidden", message: "Only the skill creator or an org admin can update skills." }, 403)
+      }
+
+      const nextSkillText = input.skillText ?? skill.skillText
+      const metadata = parseSkillMetadata(nextSkillText)
+      const updatedAt = new Date()
+      const nextShared = input.shared === undefined ? skill.shared : input.shared
+
+      await db
+        .update(SkillTable)
+        .set({
+          title: metadata.title,
+          description: metadata.description,
+          skillText: nextSkillText,
+          shared: nextShared,
+          updatedAt,
+        })
+        .where(eq(SkillTable.id, skill.id))
+
+      return c.json({
+        skill: {
+          ...skill,
+          title: metadata.title,
+          description: metadata.description,
+          skillText: nextSkillText,
+          shared: nextShared,
+          updatedAt,
+        },
+      })
     },
   )
 
