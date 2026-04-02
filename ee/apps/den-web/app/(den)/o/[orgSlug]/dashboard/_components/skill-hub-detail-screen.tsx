@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { ArrowLeft, BookOpen, Pencil } from "lucide-react";
+import { PaperMeshGradient } from "@openwork/ui/react";
 import { buttonVariants } from "../../../../_components/ui/button";
 import {
   getEditSkillHubRoute,
@@ -12,7 +13,6 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   formatSkillTimestamp,
-  getHubAccent,
   getSkillVisibilityLabel,
   parseSkillCategory,
   useOrgSkillLibrary,
@@ -21,12 +21,15 @@ import {
 export function SkillHubDetailScreen({ skillHubId }: { skillHubId: string }) {
   const { orgId, orgSlug } = useOrgDashboard();
   const { skillHubs, busy, error } = useOrgSkillLibrary(orgId);
-  const skillHub = useMemo(() => skillHubs.find((entry) => entry.id === skillHubId) ?? null, [skillHubId, skillHubs]);
+  const skillHub = useMemo(
+    () => skillHubs.find((entry) => entry.id === skillHubId) ?? null,
+    [skillHubId, skillHubs],
+  );
 
   if (busy && !skillHub) {
     return (
-      <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+      <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
+        <div className="rounded-xl border border-gray-100 bg-white px-5 py-8 text-[13px] text-gray-400">
           Loading hub details...
         </div>
       </div>
@@ -35,131 +38,149 @@ export function SkillHubDetailScreen({ skillHubId }: { skillHubId: string }) {
 
   if (!skillHub) {
     return (
-      <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-        <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[15px] text-red-700">
+      <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
+        <div className="rounded-xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
           {error ?? "That hub could not be found."}
         </div>
       </div>
     );
   }
 
-  const accent = getHubAccent(skillHub.name);
-
   return (
-    <div className="mx-auto max-w-[1180px] px-6 py-8 md:px-8">
-      <div className="mb-8 flex items-center justify-between gap-4">
+    <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
+
+      {/* Nav */}
+      <div className="mb-6 flex items-center justify-between gap-4">
         <Link
           href={getSkillHubsRoute(orgSlug)}
-          className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900"
+          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
         >
-          <ArrowLeft className="h-5 w-5" />
+          <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
 
         {skillHub.canManage ? (
-          <Link href={getEditSkillHubRoute(orgSlug, skillHub.id)} className={buttonVariants({ variant: "secondary" })}>
-            <Pencil className="h-4 w-4" aria-hidden="true" />
+          <Link
+            href={getEditSkillHubRoute(orgSlug, skillHub.id)}
+            className={buttonVariants({ variant: "secondary", size: "sm" })}
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
             Edit Hub
           </Link>
         ) : null}
       </div>
 
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <section className="overflow-hidden rounded-[36px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-          <div className="relative h-56 border-b border-gray-100" style={{ backgroundImage: `${accent.grain}, ${accent.gradient}` }}>
-            <div className="absolute bottom-[-32px] left-8 flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/70 bg-white shadow-[0_20px_35px_-24px_rgba(15,23,42,0.45)]">
-              <BookOpen className="h-9 w-9 text-gray-800" />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px]">
+
+        {/* ── Main card ── */}
+        <section className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+
+          {/* Gradient header — seeded by hub id, matches list card */}
+          <div className="relative h-40 overflow-hidden border-b border-gray-100">
+            <div className="absolute inset-0">
+              <PaperMeshGradient seed={skillHub.id} speed={0} />
+            </div>
+            <div className="absolute bottom-[-20px] left-6 flex h-14 w-14 items-center justify-center rounded-[18px] border border-white/60 bg-white shadow-[0_12px_24px_-12px_rgba(15,23,42,0.3)]">
+              <BookOpen className="h-6 w-6 text-gray-700" />
             </div>
           </div>
 
-          <div className="px-8 pb-8 pt-14">
-            <div className="mb-8 flex flex-wrap items-center gap-3">
-              <span className="rounded-full bg-gray-100 px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                {skillHub.skills.length} {skillHub.skills.length === 1 ? "Skill" : "Skills"}
-              </span>
-              <span className="rounded-full bg-gray-100 px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                {skillHub.access.teams.length} {skillHub.access.teams.length === 1 ? "Team" : "Teams"}
-              </span>
-              <span className="rounded-full bg-gray-100 px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                {skillHub.access.members.length} direct member{skillHub.access.members.length === 1 ? "" : "s"}
-              </span>
-            </div>
-
-            <h1 className="text-[48px] font-semibold tracking-[-0.08em] text-gray-950">{skillHub.name}</h1>
-            <p className="mt-5 max-w-[20ch] text-[28px] leading-[1.35] tracking-[-0.05em] text-gray-500">
-              {skillHub.description || "A curated library of reusable skills for your team."}
+          <div className="px-6 pb-6 pt-10">
+            {/* Title + description + last updated */}
+            <h1 className="text-[18px] font-semibold text-gray-900">{skillHub.name}</h1>
+            {skillHub.description ? (
+              <p className="mt-1.5 text-[13px] leading-relaxed text-gray-400">
+                {skillHub.description}
+              </p>
+            ) : null}
+            <p className="mt-2 text-[12px] text-gray-300">
+              Updated {formatSkillTimestamp(skillHub.updatedAt)}
             </p>
 
-            <div className="mt-8 border-t border-gray-100 pt-8">
-              <p className="mb-5 text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">Included Skills</p>
-              <div className="grid gap-4">
-                {skillHub.skills.length === 0 ? (
-                  <div className="rounded-[28px] border border-dashed border-gray-200 bg-[#f8fafc] px-6 py-8 text-[15px] text-gray-500">
-                    This hub does not include any skills yet.
-                  </div>
-                ) : (
-                  skillHub.skills.map((skill) => (
+            {/* Included skills */}
+            <div className="mt-6 border-t border-gray-100 pt-5">
+              <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                {skillHub.skills.length === 0
+                  ? "No skills yet"
+                  : `${skillHub.skills.length} ${skillHub.skills.length === 1 ? "Skill" : "Skills"}`}
+              </p>
+
+              {skillHub.skills.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-100 px-5 py-6 text-[13px] text-gray-400">
+                  This hub does not include any skills yet.
+                </div>
+              ) : (
+                <div className="grid gap-1.5">
+                  {skillHub.skills.map((skill) => (
                     <Link
                       key={skill.id}
                       href={getSkillDetailRoute(orgSlug, skill.id)}
-                      className="rounded-[28px] border border-gray-200 bg-[#f8fafc] px-6 py-5 transition hover:border-gray-300 hover:bg-white"
+                      className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 px-4 py-3 transition hover:border-gray-200 hover:bg-gray-50/60"
                     >
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="text-[19px] font-semibold tracking-[-0.04em] text-gray-950">{skill.title}</span>
-                        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                          {parseSkillCategory(skill.skillText) ?? getSkillVisibilityLabel(skill.shared)}
-                        </span>
-                        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                          {getSkillVisibilityLabel(skill.shared)}
-                        </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-medium text-gray-900">
+                          {skill.title}
+                        </p>
+                        {skill.description ? (
+                          <p className="mt-0.5 truncate text-[12px] text-gray-400">
+                            {skill.description}
+                          </p>
+                        ) : null}
                       </div>
-                      <p className="mt-3 text-[15px] leading-8 text-gray-500">
-                        {skill.description || "Open this skill to inspect the full instructions."}
-                      </p>
+                      <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-400">
+                        {parseSkillCategory(skill.skillText) ?? getSkillVisibilityLabel(skill.shared)}
+                      </span>
                     </Link>
-                  ))
-                )}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </section>
 
-        <aside className="grid gap-4 self-start">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.18)]">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">Assigned Teams</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {skillHub.access.teams.length === 0 ? (
-                <span className="text-[15px] leading-7 text-gray-500">No teams assigned yet.</span>
-              ) : (
-                skillHub.access.teams.map((team) => (
-                  <span key={team.teamId} className="rounded-full bg-gray-100 px-4 py-2 text-[13px] font-medium text-gray-600">
+        {/* ── Sidebar ── */}
+        <aside className="grid gap-3 self-start">
+
+          {/* Teams */}
+          <div className="rounded-xl border border-gray-100 bg-white p-4">
+            <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+              Teams
+            </p>
+            {skillHub.access.teams.length === 0 ? (
+              <span className="text-[13px] text-gray-400">No teams assigned.</span>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {skillHub.access.teams.map((team) => (
+                  <span
+                    key={team.teamId}
+                    className="rounded-full bg-gray-100 px-3 py-1 text-[12px] text-gray-500"
+                  >
                     {team.name}
                   </span>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.18)]">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">Direct Access</p>
-            <div className="mt-4 grid gap-3">
-              {skillHub.access.members.length === 0 ? (
-                <span className="text-[15px] leading-7 text-gray-500">No direct member grants.</span>
-              ) : (
-                skillHub.access.members.map((member) => (
-                  <div key={member.id} className="rounded-[20px] bg-[#f8fafc] px-4 py-3">
-                    <p className="text-[15px] font-medium tracking-[-0.03em] text-gray-950">{member.user.name}</p>
-                    <p className="mt-1 text-[13px] text-gray-400">{member.user.email}</p>
+          {/* Direct access — only show when populated */}
+          {skillHub.access.members.length > 0 ? (
+            <div className="rounded-xl border border-gray-100 bg-white p-4">
+              <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                Direct Access
+              </p>
+              <div className="divide-y divide-gray-100">
+                {skillHub.access.members.map((member) => (
+                  <div key={member.id} className="py-2.5 first:pt-0 last:pb-0">
+                    <p className="text-[13px] font-medium text-gray-900">
+                      {member.user.name}
+                    </p>
+                    <p className="text-[12px] text-gray-400">{member.user.email}</p>
                   </div>
-                ))
-              )}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
 
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.18)]">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">Last Updated</p>
-            <p className="mt-3 text-[22px] font-semibold tracking-[-0.05em] text-gray-950">{formatSkillTimestamp(skillHub.updatedAt)}</p>
-          </div>
         </aside>
       </div>
     </div>

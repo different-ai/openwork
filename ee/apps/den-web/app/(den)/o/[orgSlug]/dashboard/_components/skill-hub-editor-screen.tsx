@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, BookOpen, CheckCircle2, Circle, Search } from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
 import { DenInput } from "../../../../_components/ui/input";
+import { DenTextarea } from "../../../../_components/ui/textarea";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import {
   getOrgAccessFlags,
@@ -296,17 +297,15 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
               value={name}
               onChange={(event) => setName(event.target.value)}
               disabled={!canManage}
-              className="h-16 rounded-[22px] bg-[#f8fafc] px-5 text-[16px] text-gray-950"
             />
           </label>
           <label className="grid gap-3">
             <span className="text-[14px] font-medium text-gray-700">Description</span>
-            <textarea
+            <DenTextarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               disabled={!canManage}
               rows={4}
-              className="min-h-[148px] rounded-[22px] border border-gray-200 bg-[#f8fafc] px-5 py-4 text-[16px] leading-7 text-gray-950 outline-none transition placeholder:text-gray-400 focus:border-gray-300 focus:ring-4 focus:ring-gray-900/5 disabled:cursor-not-allowed disabled:bg-gray-50"
             />
           </label>
         </div>
@@ -371,15 +370,13 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
             <p className="mt-2 text-[15px] text-gray-500">Select the skills to include in this hub.</p>
           </div>
 
-          <div className="w-full max-w-[360px]">
+          <div>
             <DenInput
               type="search"
               icon={Search}
-              iconSize={20}
               value={skillQuery}
               onChange={(event) => setSkillQuery(event.target.value)}
               placeholder="Search skills..."
-              className="h-14 rounded-full pr-5 text-[15px]"
             />
           </div>
         </div>

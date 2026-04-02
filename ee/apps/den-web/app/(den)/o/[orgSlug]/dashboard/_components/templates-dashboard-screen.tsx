@@ -142,7 +142,6 @@ export function SharedSetupsScreen() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search templates"
-          className="rounded-xl py-2.5 pr-4 text-[14px]"
         />
       </div>
 

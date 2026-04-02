@@ -20,9 +20,13 @@ import { Dithering } from "@paper-design/shaders-react";
 
 export type DashboardPageTemplateProps = {
   /** Lucide (or any) icon component rendered inside the frosted glass icon box */
-  icon: ElementType<{ size?: number; className?: string; strokeWidth?: number }>;
-  /** Short label rendered as a frosted pill badge, e.g. "New", "Alpha", "Coming soon" */
-  badgeLabel: string;
+  icon: ElementType<{
+    size?: number;
+    className?: string;
+    strokeWidth?: number;
+  }>;
+  /** Short label rendered as a frosted pill badge above the title. Omit to hide. */
+  badgeLabel?: string;
   /** Page heading rendered large inside the card */
   title: string;
   /** One-liner rendered in gray below the card, above children */
@@ -58,10 +62,14 @@ export function DashboardPageTemplate({
             frame={41112.4}
             colorBack="#00000000"
             colorFront="#FEFEFE"
-            style={{ backgroundColor: "#0f172a", width: "100%", height: "100%" }}
+            style={{
+              backgroundColor: "#0f172a",
+              width: "100%",
+              height: "100%",
+            }}
           >
             <PaperMeshGradient
-              speed={0}
+              speed={0.1}
               distortion={0.8}
               swirl={0.1}
               grainMixer={0}
@@ -73,19 +81,21 @@ export function DashboardPageTemplate({
           </Dithering>
         </div>
 
-        {/* Foreground: icon + badge + title */}
-        <div className="relative z-10 flex flex-col items-start gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/30 bg-white/20 backdrop-blur-md">
-            <Icon size={24} className="text-white" strokeWidth={1.5} />
-          </div>
-          <div>
-            <span className="mb-2 inline-block rounded-full border border-white/20 bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md">
+        {/* Icon — top right */}
+        <div className="absolute right-8 top-8 z-10 flex h-12 w-12 items-center justify-center rounded-xl border border-white/30 bg-white/20 backdrop-blur-md">
+          <Icon size={24} className="text-white" strokeWidth={1.5} />
+        </div>
+
+        {/* Badge (optional) + Title — bottom left */}
+        <div className="absolute bottom-8 left-10 z-10 flex flex-col items-start gap-2">
+          {badgeLabel ? (
+            <span className="rounded-full border border-white/20 bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md">
               {badgeLabel}
             </span>
-            <h1 className="text-[28px] font-medium tracking-[-0.5px] text-white">
-              {title}
-            </h1>
-          </div>
+          ) : null}
+          <h1 className="text-[28px] font-medium tracking-[-0.5px] text-white">
+            {title}
+          </h1>
         </div>
       </div>
 

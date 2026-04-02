@@ -442,7 +442,6 @@ export function BackgroundAgentsScreen() {
               value={workerQuery}
               onChange={(event) => setWorkerQuery(event.target.value)}
               placeholder="Search workspaces..."
-              className="rounded-lg py-2 pr-4 text-[13px]"
             />
           </div>
         </div>

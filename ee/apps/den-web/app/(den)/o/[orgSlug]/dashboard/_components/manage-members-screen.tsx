@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ElementType, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -59,11 +59,13 @@ function toggleAction(
 function ActionButton({
   children,
   tone = "default",
+  icon,
   onClick,
   disabled,
 }: {
   children: React.ReactNode;
   tone?: "default" | "danger";
+  icon?: ElementType<{ size?: number; className?: string }>;
   onClick?: () => void;
   disabled?: boolean;
 }) {
@@ -71,6 +73,7 @@ function ActionButton({
     <DenButton
       variant={tone === "danger" ? "destructive" : "secondary"}
       size="sm"
+      icon={icon}
       onClick={onClick}
       disabled={disabled}
     >
@@ -276,7 +279,6 @@ export function ManageMembersScreen() {
               onChange={(event) => setInviteEmail(event.target.value)}
               placeholder="teammate@example.com"
               required
-              className="h-14 rounded-[20px] bg-[#f8fafc] px-4 text-[15px]"
             />
           </label>
           <label className="grid gap-3">
@@ -385,7 +387,6 @@ export function ManageMembersScreen() {
               onChange={(event) => setTeamNameDraft(event.target.value)}
               placeholder="Core Engineering"
               required
-              className="h-14 rounded-[20px] bg-[#f8fafc] px-4 text-[15px]"
             />
           </label>
 
@@ -491,7 +492,6 @@ export function ManageMembersScreen() {
               onChange={(event) => setRoleNameDraft(event.target.value)}
               placeholder="qa-reviewer"
               required
-              className="h-14 rounded-[20px] bg-[#f8fafc] px-4 text-[15px]"
             />
           </label>
 
@@ -640,8 +640,8 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
 
-          <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
-            <div className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">
+          <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
               <span>Member</span>
               <span>Role</span>
               <span>Joined</span>
@@ -651,10 +651,10 @@ export function ManageMembersScreen() {
             {orgContext.members.map((member) => (
               <div
                 key={member.id}
-                className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 px-6 py-6 transition hover:bg-[#fbfcfe] last:border-b-0"
+                className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
               >
-                <div className="flex min-w-0 items-center gap-4">
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#0f172a] text-[18px] font-medium uppercase text-white">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0f172a] text-[11px] font-semibold uppercase text-white">
                     {member.user.name
                       .split(" ")
                       .map((part) => part[0])
@@ -662,26 +662,26 @@ export function ManageMembersScreen() {
                       .slice(0, 2)}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-[16px] font-medium tracking-[-0.03em] text-gray-950">
+                    <p className="truncate text-[13px] font-medium text-gray-900">
                       {member.user.name}
                     </p>
-                    <p className="truncate text-[14px] text-gray-400">
+                    <p className="truncate text-[12px] text-gray-400">
                       {member.user.email}
                     </p>
                   </div>
                 </div>
-                <span className="text-[15px] text-gray-600">
+                <span className="text-[13px] text-gray-500">
                   {splitRoleString(member.role).map(formatRoleLabel).join(", ")}
                 </span>
-                <span className="text-[15px] text-gray-500">
+                <span className="text-[13px] text-gray-400">
                   {member.createdAt
                     ? new Date(member.createdAt).toLocaleDateString()
                     : "-"}
                 </span>
-                <div className="flex items-center justify-end gap-3">
+                <div className="flex items-center justify-end gap-2">
                   {member.isOwner ? (
-                    <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-4 py-2 text-[13px] text-gray-500">
-                      <Lock className="h-3.5 w-3.5" />
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-[12px] text-gray-400">
+                      <Lock className="h-3 w-3" />
                       Locked
                     </span>
                   ) : access.canManageMembers ? (
@@ -743,28 +743,28 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
 
-          <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
-            <div className="grid grid-cols-[minmax(0,1fr)_220px_220px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">
+          <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_160px_200px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
               <span>Team</span>
               <span>Members</span>
               <span />
             </div>
 
             {orgContext.teams.length === 0 ? (
-              <div className="px-6 py-10 text-center text-[15px] text-gray-400">
+              <div className="px-6 py-8 text-center text-[13px] text-gray-400">
                 No teams yet.
               </div>
             ) : (
               orgContext.teams.map((team) => (
                 <div
                   key={team.id}
-                  className="grid grid-cols-[minmax(0,1fr)_220px_220px] gap-4 border-b border-gray-100 px-6 py-6 transition hover:bg-[#fbfcfe] last:border-b-0"
+                  className="grid grid-cols-[minmax(0,1fr)_160px_200px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
                 >
                   <div>
-                    <span className="text-[16px] font-medium tracking-[-0.03em] text-gray-950">
+                    <span className="text-[13px] font-medium text-gray-900">
                       {team.name}
                     </span>
-                    <p className="mt-2 text-[13px] text-gray-400">
+                    <p className="mt-0.5 text-[12px] text-gray-400">
                       {teamMemberNames.get(team.id)?.slice(0, 3).join(", ") ||
                         "No members assigned yet"}
                       {(teamMemberNames.get(team.id)?.length ?? 0) > 3
@@ -772,11 +772,12 @@ export function ManageMembersScreen() {
                         : ""}
                     </p>
                   </div>
-                  <span className="text-[15px] text-gray-500">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
+                  <span className="text-[13px] text-gray-400">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
                   <div className="flex items-center justify-end gap-3">
                     {access.canManageTeams ? (
                       <>
                         <ActionButton
+                          icon={Pencil}
                           onClick={() => {
                             setShowTeamForm(false);
                             setEditingTeamId(team.id);
@@ -784,10 +785,11 @@ export function ManageMembersScreen() {
                             setTeamMemberDraft(team.memberIds);
                           }}
                         >
-                          <Pencil className="h-3.5 w-3.5" /> Edit
+                          Edit
                         </ActionButton>
                         <ActionButton
                           tone="danger"
+                          icon={Trash2}
                           disabled={mutationBusy === "delete-team"}
                           onClick={async () => {
                             setPageError(null);
@@ -805,10 +807,7 @@ export function ManageMembersScreen() {
                             }
                           }}
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          {mutationBusy === "delete-team"
-                            ? "Deleting..."
-                            : "Delete"}
+                          {mutationBusy === "delete-team" ? "Deleting..." : "Delete"}
                         </ActionButton>
                       </>
                     ) : (
@@ -839,8 +838,8 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
 
-          <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
-            <div className="grid grid-cols-[minmax(0,1fr)_140px_220px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">
+          <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_120px_200px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
               <span>Role</span>
               <span>Type</span>
               <span />
@@ -849,12 +848,12 @@ export function ManageMembersScreen() {
             {orgContext.roles.map((role) => (
               <div
                 key={role.id}
-                className="grid grid-cols-[minmax(0,1fr)_140px_220px] gap-4 border-b border-gray-100 px-6 py-6 transition hover:bg-[#fbfcfe] last:border-b-0"
+                className="grid grid-cols-[minmax(0,1fr)_120px_200px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
               >
-                <span className="text-[16px] font-medium tracking-[-0.03em] text-gray-950">
+                <span className="text-[13px] font-medium text-gray-900">
                   {formatRoleLabel(role.role)}
                 </span>
-                <span className="text-[15px] text-gray-500">
+                <span className="text-[13px] text-gray-400">
                   {role.protected
                     ? "System"
                     : role.builtIn
@@ -865,6 +864,7 @@ export function ManageMembersScreen() {
                   {access.canManageRoles && !role.protected ? (
                     <>
                       <ActionButton
+                        icon={Pencil}
                         onClick={() => {
                           setShowRoleForm(false);
                           setEditingRoleId(role.id);
@@ -874,10 +874,11 @@ export function ManageMembersScreen() {
                           );
                         }}
                       >
-                        <Pencil className="h-3.5 w-3.5" /> Edit
+                        Edit
                       </ActionButton>
                       <ActionButton
                         tone="danger"
+                        icon={Trash2}
                         disabled={mutationBusy === "delete-role"}
                         onClick={async () => {
                           setPageError(null);
@@ -895,10 +896,7 @@ export function ManageMembersScreen() {
                           }
                         }}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        {mutationBusy === "delete-role"
-                          ? "Deleting..."
-                          : "Delete"}
+                        {mutationBusy === "delete-role" ? "Deleting..." : "Delete"}
                       </ActionButton>
                     </>
                   ) : (
@@ -924,8 +922,8 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
 
-          <div className="overflow-hidden rounded-[30px] border border-gray-200 bg-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.2)]">
-            <div className="grid grid-cols-[minmax(0,1fr)_150px_150px_140px] gap-4 border-b border-gray-100 bg-[#fbfcfe] px-6 py-4 text-[14px] text-gray-400">
+          <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_140px_140px_120px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
               <span>Email</span>
               <span>Role</span>
               <span>Expires</span>
@@ -933,22 +931,22 @@ export function ManageMembersScreen() {
             </div>
 
             {pendingInvitations.length === 0 ? (
-              <div className="px-6 py-10 text-center text-[15px] text-gray-400">
+              <div className="px-6 py-8 text-center text-[13px] text-gray-400">
                 You have no pending workspace invites.
               </div>
             ) : (
               pendingInvitations.map((invitation) => (
                 <div
                   key={invitation.id}
-                  className="grid grid-cols-[minmax(0,1fr)_150px_150px_140px] gap-4 border-b border-gray-100 px-6 py-6 transition hover:bg-[#fbfcfe] last:border-b-0"
+                  className="grid grid-cols-[minmax(0,1fr)_140px_140px_120px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
                 >
-                  <span className="truncate text-[15px] text-gray-900">
+                  <span className="truncate text-[13px] text-gray-900">
                     {invitation.email}
                   </span>
-                  <span className="text-[15px] text-gray-500">
+                  <span className="text-[13px] text-gray-500">
                     {formatRoleLabel(invitation.role)}
                   </span>
-                  <span className="text-[15px] text-gray-500">
+                  <span className="text-[13px] text-gray-400">
                     {invitation.expiresAt
                       ? new Date(invitation.expiresAt).toLocaleDateString()
                       : "-"}
