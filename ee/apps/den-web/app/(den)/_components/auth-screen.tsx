@@ -10,25 +10,23 @@ import { AuthPanel } from "./auth-panel";
 
 function FeatureCard({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-5">
-      <p className="mb-2 text-[14px] font-medium text-gray-900">{title}</p>
-      <p className="text-[13px] leading-[1.6] text-gray-500">{body}</p>
+    <div className="den-stat-card grid gap-2">
+      <p className="m-0 text-[14px] font-medium text-[var(--dls-text-primary)]">{title}</p>
+      <p className="m-0 text-[13px] leading-[1.6] text-[var(--dls-text-secondary)]">{body}</p>
     </div>
   );
 }
 
 function LoadingPanel({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-[28px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-7">
+    <div className="den-frame grid gap-3 p-6 md:p-7">
       <div className="grid gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
-          OpenWork Cloud
-        </p>
-        <h2 className="text-[28px] font-semibold tracking-[-0.04em] text-gray-900">{title}</h2>
-        <p className="text-[14px] leading-relaxed text-gray-500">{body}</p>
+        <p className="den-eyebrow">OpenWork Cloud</p>
+        <h2 className="den-title-lg">{title}</h2>
+        <p className="den-copy">{body}</p>
       </div>
-      <div className="mt-6 h-2 overflow-hidden rounded-full bg-gray-100">
-        <div className="h-full w-1/3 animate-pulse rounded-full bg-gray-900/80" />
+      <div className="h-2 overflow-hidden rounded-full bg-[var(--dls-hover)]">
+        <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--dls-accent)]" />
       </div>
     </div>
   );
@@ -70,7 +68,7 @@ export function AuthScreen() {
     <section className="den-page flex w-full items-center py-4 lg:min-h-[calc(100vh-2.5rem)]">
       <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
         <div className="order-2 flex flex-col gap-6 lg:order-1">
-          <div className="relative min-h-[300px] overflow-hidden rounded-[32px] border border-gray-100 px-7 py-8 md:px-10 md:py-10">
+          <div className="den-frame relative min-h-[300px] overflow-hidden px-7 py-8 md:px-10 md:py-10">
             <div className="absolute inset-0 z-0">
               <Dithering
                 speed={0}
@@ -104,13 +102,13 @@ export function AuthScreen() {
 
               <div className="grid gap-4">
                 <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
-                  Shared setups
+                  OpenWork Cloud
                 </span>
                 <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white md:text-[3rem]">
-                  Share your OpenWork setup with your team.
+                  One setup, every seat.
                 </h1>
                 <p className="max-w-[34rem] text-[15px] leading-7 text-white/80">
-                  Provision shared setups, invite your org, and keep background workspaces available across Cloud and desktop.
+                  Configure once. Your whole team gets the same tools, agents, and providers.
                 </p>
               </div>
             </div>
@@ -118,16 +116,16 @@ export function AuthScreen() {
 
           <div className="grid gap-4 md:grid-cols-3">
             <FeatureCard
-              title="Team sharing"
-              body="Package skills, MCPs, plugins, and config once so the whole org can use the same setup."
+              title="Shared config"
+              body="Set it up once, then push it to the org."
             />
             <FeatureCard
-              title="Cloud Hosted Agents"
-              body="Keep selected workflows running in the cloud without asking each teammate to run them locally."
+              title="Cloud agents"
+              body="Workflows that keep running while your team is away."
             />
             <FeatureCard
-              title="Custom LLM Providers"
-              body="Whether you want to use LiteLLM, Azure, or any other provider, you can use OpenWork to provision your team."
+              title="Your models"
+              body="Bring your own provider when the team is ready."
             />
           </div>
         </div>
