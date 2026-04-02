@@ -51,6 +51,17 @@ export function BillingDashboardScreen() {
   const billingPrice = billingSummary?.price ?? null;
   const workerPrice = billingSummary?.workerPrice ?? null;
   const subscription = billingSummary?.subscription ?? null;
+  const basePlanAmount = subscription?.amount ?? billingPrice?.amount ?? null;
+  const workerSubscriptionCount = billingSummary?.activeWorkerSubscriptions ?? 0;
+  const workerRecurringTotal =
+    workerPrice?.amount !== null && workerPrice?.amount !== undefined
+      ? workerPrice.amount * workerSubscriptionCount
+      : null;
+  const estimatedMonthlyTotal =
+    basePlanAmount !== null || workerRecurringTotal !== null
+      ? (basePlanAmount ?? 0) + (workerRecurringTotal ?? 0)
+      : null;
+  const totalCurrency = subscription?.currency ?? billingPrice?.currency ?? workerPrice?.currency ?? null;
   const planAmountLabel = billingPrice
     ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)} · ${formatRecurringInterval(
         billingPrice.recurringInterval,
@@ -65,10 +76,9 @@ export function BillingDashboardScreen() {
   const nextBillingDate = subscription?.currentPeriodEnd
     ? formatIsoDate(subscription.currentPeriodEnd)
     : "Not available";
-  const nextPaymentAmount = subscription?.amount
-    ? formatMoneyMinor(subscription.amount, subscription.currency)
-    : billingPrice
-      ? formatMoneyMinor(billingPrice.amount, billingPrice.currency)
+  const nextPaymentAmount =
+    estimatedMonthlyTotal !== null
+      ? formatMoneyMinor(estimatedMonthlyTotal, totalCurrency)
       : "Not available";
 
   return (
@@ -104,7 +114,7 @@ export function BillingDashboardScreen() {
           </div>
 
           <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Plan cost</h2>
+            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Base plan cost</h2>
             <div className="text-[15px] font-medium text-gray-900">{planAmountLabel}</div>
           </div>
 
@@ -115,7 +125,7 @@ export function BillingDashboardScreen() {
 
           <div>
             <h2 className="mb-2 text-[13px] font-medium text-gray-500">Purchased workers</h2>
-            <div className="text-[15px] font-medium text-gray-900">{billingSummary?.activeWorkerSubscriptions ?? 0}</div>
+            <div className="text-[15px] font-medium text-gray-900">{workerSubscriptionCount}</div>
           </div>
 
           <div>
@@ -126,12 +136,12 @@ export function BillingDashboardScreen() {
           </div>
 
           <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Next billing date</h2>
+            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Base plan renews</h2>
             <div className="text-[15px] font-medium text-gray-900">{nextBillingDate}</div>
           </div>
 
           <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Next payment amount</h2>
+            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Estimated monthly total</h2>
             <div className="text-[15px] font-medium text-gray-900">{nextPaymentAmount}</div>
           </div>
 
@@ -166,7 +176,7 @@ export function BillingDashboardScreen() {
             </a>
           ) : null}
 
-          {billingSummary?.workerCheckoutUrl ? (
+          {billingSummary?.hasActivePlan && billingSummary?.workerCheckoutUrl ? (
             <a
               href={billingSummary.workerCheckoutUrl}
               rel="noreferrer"

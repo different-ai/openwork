@@ -101,9 +101,19 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
-    (c) => {
+    async (c) => {
+      const session = c.get("session")
+      const organizationContext = c.get("organizationContext")
+
+      if (session?.id) {
+        await setSessionActiveOrganization(
+          normalizeDenTypeId("session", session.id),
+          organizationContext.organization.id,
+        )
+      }
+
       return c.json({
-        ...c.get("organizationContext"),
+        ...organizationContext,
         currentMemberTeams: c.get("memberTeams") ?? [],
       })
     },

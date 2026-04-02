@@ -45,7 +45,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     billingCheckoutBusy,
     billingError,
     effectiveCheckoutUrl,
-    onboardingPending,
+    effectiveWorkerCheckoutUrl,
     refreshBilling,
     refreshCheckoutReturn,
   } = useDenFlow();
@@ -112,7 +112,11 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
       return;
     }
 
-    if (!billingSummary?.hasActivePlan && !effectiveCheckoutUrl && !billingBusy && !billingCheckoutBusy) {
+    const needsCheckoutUrl = billingSummary?.hasActivePlan
+      ? !effectiveWorkerCheckoutUrl
+      : !effectiveCheckoutUrl;
+
+    if (needsCheckoutUrl && !billingBusy && !billingCheckoutBusy) {
       void refreshBilling({ includeCheckout: true, quiet: true });
     }
   }, [
@@ -120,6 +124,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     billingCheckoutBusy,
     billingSummary?.hasActivePlan,
     effectiveCheckoutUrl,
+    effectiveWorkerCheckoutUrl,
     refreshBilling,
     resuming,
     sessionHydrated,
@@ -140,11 +145,19 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   }
 
   const billingPrice = billingSummary?.price ?? null;
+  const workerBillingPrice = billingSummary?.workerPrice ?? null;
   const showLoading = resuming || (billingBusy && !billingSummary && !MOCK_BILLING);
-  const checkoutHref = effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null;
+  const isWorkerCheckout = billingSummary?.hasActivePlan === true;
+  const checkoutHref = isWorkerCheckout
+    ? effectiveWorkerCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null
+    : effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null;
   const planAmountLabel =
     billingPrice && billingPrice.amount !== null
       ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)}/${billingPrice.recurringInterval}`
+      : "$50.00/month";
+  const workerAmountLabel =
+    workerBillingPrice && workerBillingPrice.amount !== null
+      ? `${formatMoneyMinor(workerBillingPrice.amount, workerBillingPrice.currency)}/${workerBillingPrice.recurringInterval}`
       : "$50.00/month";
   const subscription = billingSummary?.subscription ?? null;
   const subscriptionStatus = formatSubscriptionStatus(subscription?.status);
@@ -155,16 +168,20 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[12ch]">Activate your team workspace.</h1>
+            <h1 className="den-title-xl max-w-[12ch]">
+              {isWorkerCheckout ? "Add worker capacity to your org." : "Activate your team workspace."}
+            </h1>
             <p className="den-copy max-w-2xl">
-              OpenWork Cloud starts at $50/month for up to 5 seats. Worker runtime is purchased separately after your team workspace is active.
+              {isWorkerCheckout
+                ? "Your base team plan is active. Purchase worker runtime separately whenever your org needs more hosted capacity."
+                : "OpenWork Cloud starts at $50/month for up to 5 seats. Worker runtime is purchased separately after your team workspace is active."}
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             {checkoutHref ? (
               <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
-                Start team plan — $50/month
+                {isWorkerCheckout ? "Purchase worker add-on — $50/month" : "Start team plan — $50/month"}
               </a>
             ) : (
               <button
@@ -173,7 +190,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
                 disabled={billingBusy || billingCheckoutBusy}
               >
-                Refresh checkout link
+                {isWorkerCheckout ? "Refresh worker checkout link" : "Refresh checkout link"}
               </button>
             )}
             <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
@@ -182,9 +199,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
-            <span>$50/month for 5 seats</span>
+            <span>{isWorkerCheckout ? "$50/month per worker" : "$50/month for 5 seats"}</span>
             <span aria-hidden="true">•</span>
-            <span>{planAmountLabel} billed monthly</span>
+            <span>{isWorkerCheckout ? workerAmountLabel : planAmountLabel} billed monthly</span>
             <span aria-hidden="true">•</span>
             <span>{user?.email ?? "Signed in"}</span>
           </div>
@@ -260,7 +277,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your base team plan is active. Workers are sold separately." : "Purchase the base team plan to unlock OpenWork Cloud."}
+                {billingSummary.hasActivePlan
+                  ? "Your base team plan is active. Add worker capacity whenever you need more hosted runtime."
+                  : "Purchase the base team plan to unlock OpenWork Cloud."}
               </p>
             </div>
 
@@ -285,6 +304,11 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               {checkoutHref && !billingSummary.hasActivePlan ? (
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
                   Purchase base plan
+                </a>
+              ) : null}
+              {checkoutHref && billingSummary.hasActivePlan ? (
+                <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
+                  Purchase worker add-on
                 </a>
               ) : null}
               {billingSummary.portalUrl ? (

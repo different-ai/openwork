@@ -15,12 +15,6 @@ type PolarCustomerSession = {
   customer_portal_url?: string
 }
 
-type PolarCustomer = {
-  id?: string
-  email?: string
-  external_id?: string | null
-}
-
 type PolarListResource<T> = {
   items?: T[]
 }
@@ -225,61 +219,6 @@ async function getCustomerStateByExternalId(externalCustomerId: string): Promise
   return payload
 }
 
-async function getCustomerStateById(customerId: string): Promise<PolarCustomerState | null> {
-  const encodedCustomerId = encodeURIComponent(customerId)
-  const { response, payload, text } = await polarFetchJson<PolarCustomerState>(`/v1/customers/${encodedCustomerId}/state`, {
-    method: "GET",
-  })
-
-  if (response.status === 404) {
-    return null
-  }
-
-  if (!response.ok) {
-    throw new Error(`Polar customer state lookup by ID failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  return payload
-}
-
-async function getCustomerByEmail(email: string): Promise<PolarCustomer | null> {
-  const normalizedEmail = email.trim().toLowerCase()
-  if (!normalizedEmail) {
-    return null
-  }
-
-  const encodedEmail = encodeURIComponent(normalizedEmail)
-  const { response, payload, text } = await polarFetchJson<PolarListResource<PolarCustomer>>(`/v1/customers/?email=${encodedEmail}`, {
-    method: "GET",
-  })
-
-  if (!response.ok) {
-    throw new Error(`Polar customer lookup by email failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  const customers = payload?.items ?? []
-  const exact = customers.find((customer) => customer.email?.trim().toLowerCase() === normalizedEmail)
-  return exact ?? customers[0] ?? null
-}
-
-async function linkCustomerExternalId(customer: PolarCustomer, externalCustomerId: string): Promise<void> {
-  if (!customer.id) {
-    return
-  }
-
-  if (typeof customer.external_id === "string" && customer.external_id.length > 0) {
-    return
-  }
-
-  const encodedCustomerId = encodeURIComponent(customer.id)
-  await polarFetch(`/v1/customers/${encodedCustomerId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      external_id: externalCustomerId,
-    }),
-  })
-}
-
 function hasBenefit(state: PolarCustomerState | null, benefitId: string | undefined) {
   if (!state?.granted_benefits || !benefitId) {
     return false
@@ -342,19 +281,6 @@ async function evaluateCloudWorkerAccess(
       featureGateEnabled: true,
       hasActivePlan: true,
       checkoutUrl: null,
-    }
-  }
-
-  const customer = await getCustomerByEmail(input.email)
-  if (customer?.id) {
-    const emailState = await getCustomerStateById(customer.id)
-    if (hasBenefit(emailState, env.polar.benefitId)) {
-      await linkCustomerExternalId(customer, externalCustomerId).catch(() => undefined)
-      return {
-        featureGateEnabled: true,
-        hasActivePlan: true,
-        checkoutUrl: null,
-      }
     }
   }
 
@@ -512,9 +438,6 @@ async function getPrimarySubscriptionForCustomer(externalCustomerId: string): Pr
 async function listRecentOrdersByExternalCustomer(externalCustomerId: string, limit = 6): Promise<PolarOrder[]> {
   const params = new URLSearchParams()
   params.set("external_customer_id", externalCustomerId)
-  if (env.polar.productId) {
-    params.set("product_id", env.polar.productId)
-  }
   params.set("limit", String(limit))
   params.set("sorting", "-created_at")
 
@@ -745,7 +668,9 @@ export async function getCloudWorkerBillingStatus(
 
   const [activeWorkerSubscriptions, workerCheckoutUrl, workerPrice] = await Promise.all([
     getActiveWorkerSubscriptionCount(input).catch(() => 0),
-    options.includeCheckoutUrl ? createWorkerCheckoutSession(input).catch(() => null) : Promise.resolve<string | null>(null),
+    evaluation.hasActivePlan && options.includeCheckoutUrl
+      ? createWorkerCheckoutSession(input).catch(() => null)
+      : Promise.resolve<string | null>(null),
     env.polar.workerProductId ? getProductBillingPrice(env.polar.workerProductId).catch(() => null) : Promise.resolve<CloudWorkerBillingPrice | null>(null),
   ])
 
@@ -768,7 +693,7 @@ export async function getCloudWorkerBillingStatus(
     checkoutUrl: evaluation.checkoutUrl,
     activeWorkerSubscriptions,
     workerCheckoutUrl,
-    workerCheckoutRequired: activeWorkerSubscriptions <= 0,
+    workerCheckoutRequired: evaluation.hasActivePlan && activeWorkerSubscriptions <= 0,
     workerPrice,
     portalUrl,
     price: productPrice ?? toBillingPriceFromSubscription(subscription),
@@ -814,16 +739,6 @@ export async function getCloudWorkerAdminBillingStatus(
       if (hasBenefit(externalState, env.polar.benefitId)) {
         paidByBenefit = true
         note = "Benefit granted via external customer id."
-      } else {
-        const customer = await getCustomerByEmail(input.email)
-        if (customer?.id) {
-          const emailState = await getCustomerStateById(customer.id)
-          if (hasBenefit(emailState, env.polar.benefitId)) {
-            paidByBenefit = true
-            note = "Benefit granted via matching customer email."
-            await linkCustomerExternalId(customer, externalCustomerId).catch(() => undefined)
-          }
-        }
       }
     }
 
