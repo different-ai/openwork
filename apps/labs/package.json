@@ -1,0 +1,30 @@
+{
+  "name": "@openwork/labs",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "node ./scripts/dev.mjs",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3340 --strictPort",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "electron ./electron/main.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.1.31",
+    "@tanstack/react-virtual": "^3.13.23",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "streamdown": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "electron": "^41.1.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  }
+}
