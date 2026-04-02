@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { BookOpen, FileText, Pencil, Plus, Search } from "lucide-react";
+import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import {
   getNewSkillHubRoute,
   getNewSkillRoute,
@@ -21,39 +22,10 @@ import {
 
 type SkillLibraryView = "hubs" | "skills";
 
-function ViewToggle({
-  activeView,
-  onChange,
-}: {
-  activeView: SkillLibraryView;
-  onChange: (value: SkillLibraryView) => void;
-}) {
-  return (
-    <div className="inline-flex rounded-[28px] border border-gray-200 bg-white p-1 shadow-[0_8px_20px_-16px_rgba(15,23,42,0.3)]">
-      {([
-        ["hubs", "Hubs", BookOpen],
-        ["skills", "All Skills", FileText],
-      ] as const).map(([value, label, Icon]) => {
-        const selected = activeView === value;
-        return (
-          <button
-            key={value}
-            type="button"
-            onClick={() => onChange(value)}
-            className={`inline-flex items-center gap-2 rounded-[22px] px-5 py-3 text-[15px] font-medium tracking-[-0.02em] transition-all ${
-              selected
-                ? "bg-white text-gray-950 shadow-[0_8px_20px_-18px_rgba(15,23,42,0.4)]"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+const SKILL_LIBRARY_TABS = [
+  { value: "hubs" as const, label: "Hubs", icon: BookOpen },
+  { value: "skills" as const, label: "All Skills", icon: FileText },
+];
 
 export function SkillHubsScreen() {
   const { activeOrg, orgId, orgSlug, orgContext } = useOrgDashboard();
@@ -122,7 +94,7 @@ export function SkillHubsScreen() {
 
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-4">
-          <ViewToggle activeView={activeView} onChange={setActiveView} />
+          <UnderlineTabs tabs={SKILL_LIBRARY_TABS} activeTab={activeView} onChange={setActiveView} />
           <label className="relative block max-w-[640px]">
             <span className="pointer-events-none absolute inset-y-0 left-5 flex items-center text-gray-400">
               <Search className="h-5 w-5" />
