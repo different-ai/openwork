@@ -19,15 +19,23 @@ export function registerWorkerBillingRoutes<T extends { Variables: WorkerRouteVa
       return c.json({ error: "organization_required" }, 409)
     }
 
-    const billing = await getWorkerBilling({
-      userId: user.id,
-      orgId,
-      email,
-      name: user.name ?? user.email ?? "OpenWork User",
-      includeCheckoutUrl: queryIncludesFlag(query.includeCheckout),
-      includePortalUrl: !queryIncludesFlag(query.excludePortal),
-      includeInvoices: !queryIncludesFlag(query.excludeInvoices),
-    })
+    let billing
+    try {
+      billing = await getWorkerBilling({
+        userId: user.id,
+        orgId,
+        email,
+        name: user.name ?? user.email ?? "OpenWork User",
+        includeCheckoutUrl: queryIncludesFlag(query.includeCheckout),
+        includePortalUrl: !queryIncludesFlag(query.excludePortal),
+        includeInvoices: !queryIncludesFlag(query.excludeInvoices),
+      })
+    } catch (error) {
+      return c.json({
+        error: "billing_unavailable",
+        message: error instanceof Error ? error.message : "Billing is unavailable.",
+      }, 503)
+    }
 
     return c.json({
       billing: {
@@ -60,16 +68,25 @@ export function registerWorkerBillingRoutes<T extends { Variables: WorkerRouteVa
       name: user.name ?? user.email ?? "OpenWork User",
     }
 
-    const subscription = await setWorkerBillingSubscription({
-      ...billingInput,
-      cancelAtPeriodEnd: input.cancelAtPeriodEnd,
-    })
-    const billing = await getWorkerBilling({
-      ...billingInput,
-      includeCheckoutUrl: false,
-      includePortalUrl: true,
-      includeInvoices: true,
-    })
+    let subscription
+    let billing
+    try {
+      subscription = await setWorkerBillingSubscription({
+        ...billingInput,
+        cancelAtPeriodEnd: input.cancelAtPeriodEnd,
+      })
+      billing = await getWorkerBilling({
+        ...billingInput,
+        includeCheckoutUrl: false,
+        includePortalUrl: true,
+        includeInvoices: true,
+      })
+    } catch (error) {
+      return c.json({
+        error: "billing_unavailable",
+        message: error instanceof Error ? error.message : "Billing is unavailable.",
+      }, 503)
+    }
 
     return c.json({
       subscription,

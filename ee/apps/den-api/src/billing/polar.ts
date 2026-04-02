@@ -202,6 +202,25 @@ function assertPaywallConfig() {
   }
 }
 
+function assertWorkerPaywallConfig() {
+  if (!env.polar.featureGateEnabled) {
+    return
+  }
+
+  if (!env.polar.accessToken) {
+    throw new Error("POLAR_ACCESS_TOKEN is required when POLAR_FEATURE_GATE_ENABLED=true")
+  }
+  if (!env.polar.workerProductId) {
+    throw new Error("POLAR_WORKER_PRODUCT_ID is required when POLAR_FEATURE_GATE_ENABLED=true")
+  }
+  if (!env.polar.successUrl) {
+    throw new Error("POLAR_SUCCESS_URL is required when POLAR_FEATURE_GATE_ENABLED=true")
+  }
+  if (!env.polar.returnUrl) {
+    throw new Error("POLAR_RETURN_URL is required when POLAR_FEATURE_GATE_ENABLED=true")
+  }
+}
+
 async function getCustomerStateByExternalId(externalCustomerId: string): Promise<PolarCustomerState | null> {
   const encodedExternalId = encodeURIComponent(externalCustomerId)
   const { response, payload, text } = await polarFetchJson<PolarCustomerState>(`/v1/customers/external/${encodedExternalId}/state`, {
@@ -293,9 +312,7 @@ async function evaluateCloudWorkerAccess(
 }
 
 async function getActiveWorkerSubscriptionCount(input: CloudAccessInput): Promise<number> {
-  if (!env.polar.workerProductId) {
-    return 0
-  }
+  assertWorkerPaywallConfig()
 
   const subscriptions = await listSubscriptionsByExternalCustomer(getExternalCustomerId(input), {
     activeOnly: true,
@@ -307,11 +324,13 @@ async function getActiveWorkerSubscriptionCount(input: CloudAccessInput): Promis
 }
 
 async function createWorkerCheckoutSession(input: CloudAccessInput): Promise<string | null> {
-  if (!env.polar.workerProductId) {
-    return null
+  assertWorkerPaywallConfig()
+  const workerProductId = env.polar.workerProductId
+  if (!workerProductId) {
+    throw new Error("POLAR_WORKER_PRODUCT_ID is required when POLAR_FEATURE_GATE_ENABLED=true")
   }
 
-  return createCheckoutSessionForProduct(input, env.polar.workerProductId)
+  return createCheckoutSessionForProduct(input, workerProductId)
 }
 
 function normalizeRecurringInterval(value: string | null | undefined): string | null {
@@ -615,9 +634,11 @@ export async function requireCloudWorkerAccess(input: CloudAccessInput): Promise
 }
 
 export async function requireAdditionalCloudWorkerAccess(input: CloudAccessInput & { ownedWorkerCount: number }): Promise<CloudWorkerAccess> {
-  if (!env.polar.featureGateEnabled || !env.polar.workerProductId) {
+  if (!env.polar.featureGateEnabled) {
     return { allowed: true }
   }
+
+  assertWorkerPaywallConfig()
 
   const activeWorkerSubscriptions = await getActiveWorkerSubscriptionCount(input)
   if (input.ownedWorkerCount < activeWorkerSubscriptions) {
@@ -666,13 +687,25 @@ export async function getCloudWorkerBillingStatus(
     await sendSubscribedToDenEvent(input)
   }
 
-  const [activeWorkerSubscriptions, workerCheckoutUrl, workerPrice] = await Promise.all([
-    getActiveWorkerSubscriptionCount(input).catch(() => 0),
-    evaluation.hasActivePlan && options.includeCheckoutUrl
-      ? createWorkerCheckoutSession(input).catch(() => null)
-      : Promise.resolve<string | null>(null),
-    env.polar.workerProductId ? getProductBillingPrice(env.polar.workerProductId).catch(() => null) : Promise.resolve<CloudWorkerBillingPrice | null>(null),
-  ])
+  let activeWorkerSubscriptions = 0
+  let workerCheckoutUrl: string | null = null
+  let workerPrice: CloudWorkerBillingPrice | null = null
+
+  if (evaluation.hasActivePlan) {
+    assertWorkerPaywallConfig()
+    const workerProductId = env.polar.workerProductId
+    if (!workerProductId) {
+      throw new Error("POLAR_WORKER_PRODUCT_ID is required when POLAR_FEATURE_GATE_ENABLED=true")
+    }
+
+    ;[activeWorkerSubscriptions, workerCheckoutUrl, workerPrice] = await Promise.all([
+      getActiveWorkerSubscriptionCount(input),
+      options.includeCheckoutUrl ? createWorkerCheckoutSession(input).catch(() => null) : Promise.resolve<string | null>(null),
+      getProductBillingPrice(workerProductId).catch(() => null),
+    ])
+  } else if (env.polar.workerProductId) {
+    workerPrice = await getProductBillingPrice(env.polar.workerProductId).catch(() => null)
+  }
 
   const [subscriptionResult, priceResult, portalResult, invoicesResult] = await Promise.all([
     getPrimarySubscriptionForCustomer(getExternalCustomerId(input)).catch(() => null),

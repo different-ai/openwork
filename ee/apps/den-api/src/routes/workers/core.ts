@@ -75,42 +75,49 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         return c.json({ error: "user_email_required" }, 400)
       }
 
-      const baseAccess = await requireCloudAccessOrPayment({
-        userId: user.id,
-        orgId,
-        email,
-        name: user.name ?? user.email ?? "OpenWork User",
-      })
-      if (!baseAccess.allowed) {
-        return c.json({
-          error: "payment_required",
-          message: "OpenWork Cloud billing is required before launching workers.",
-          polar: {
-            checkoutUrl: baseAccess.checkoutUrl,
-            productId: env.polar.productId,
-            benefitId: env.polar.benefitId,
-          },
-        }, 402)
-      }
+      try {
+        const baseAccess = await requireCloudAccessOrPayment({
+          userId: user.id,
+          orgId,
+          email,
+          name: user.name ?? user.email ?? "OpenWork User",
+        })
+        if (!baseAccess.allowed) {
+          return c.json({
+            error: "payment_required",
+            message: "OpenWork Cloud billing is required before launching workers.",
+            polar: {
+              checkoutUrl: baseAccess.checkoutUrl,
+              productId: env.polar.productId,
+              benefitId: env.polar.benefitId,
+            },
+          }, 402)
+        }
 
-      const ownedWorkerCount = await countOrgCloudWorkers(orgId)
-      const workerAccess = await requireAdditionalCloudCapacityOrPayment({
-        userId: user.id,
-        orgId,
-        email,
-        name: user.name ?? user.email ?? "OpenWork User",
-        ownedWorkerCount,
-      })
-      if (!workerAccess.allowed) {
+        const ownedWorkerCount = await countOrgCloudWorkers(orgId)
+        const workerAccess = await requireAdditionalCloudCapacityOrPayment({
+          userId: user.id,
+          orgId,
+          email,
+          name: user.name ?? user.email ?? "OpenWork User",
+          ownedWorkerCount,
+        })
+        if (!workerAccess.allowed) {
+          return c.json({
+            error: "payment_required",
+            message: "No workers are included by default. Purchase a worker add-on to launch another hosted worker.",
+            polar: {
+              checkoutUrl: workerAccess.checkoutUrl,
+              productId: env.polar.workerProductId,
+              benefitId: env.polar.workerBenefitId,
+            },
+          }, 402)
+        }
+      } catch (error) {
         return c.json({
-          error: "payment_required",
-          message: "No workers are included by default. Purchase a worker add-on to launch another hosted worker.",
-          polar: {
-            checkoutUrl: workerAccess.checkoutUrl,
-            productId: env.polar.workerProductId,
-            benefitId: env.polar.workerBenefitId,
-          },
-        }, 402)
+          error: "billing_unavailable",
+          message: error instanceof Error ? error.message : "Worker billing is unavailable.",
+        }, 503)
       }
     }
 
