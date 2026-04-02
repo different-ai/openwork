@@ -639,7 +639,6 @@ export async function requireAdditionalCloudWorkerAccess(input: CloudAccessInput
   }
 
   assertWorkerPaywallConfig()
-
   const activeWorkerSubscriptions = await getActiveWorkerSubscriptionCount(input)
   if (input.ownedWorkerCount < activeWorkerSubscriptions) {
     return { allowed: true }
