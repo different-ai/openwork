@@ -96,6 +96,7 @@ type DenFlowContextValue = {
   billingSubscriptionBusy: boolean;
   billingError: string | null;
   effectiveCheckoutUrl: string | null;
+  effectiveWorkerCheckoutUrl: string | null;
   refreshBilling: (options?: { includeCheckout?: boolean; quiet?: boolean }) => Promise<BillingSummary | null>;
   handleSubscriptionCancellation: (cancelAtPeriodEnd: boolean) => Promise<void>;
   refreshCheckoutReturn: (sessionTokenPresent: boolean) => Promise<string>;
@@ -266,17 +267,18 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     activeWorker?.workerName ?? null,
     { autoConnect: true }
   );
-  const ownedWorkerCount = workers.filter((item) => item.isMine).length;
+  const ownedWorkerCount = workers.length;
+  const workerAllowance = billingSummary?.activeWorkerSubscriptions ?? 0;
   const additionalWorkerNeedsPlan = Boolean(
     user &&
-      ownedWorkerCount > 0 &&
       billingSummary?.featureGateEnabled &&
-      !billingSummary.hasActivePlan
+      ownedWorkerCount >= workerAllowance
   );
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
   const isSelectedWorkerFailed = selectedWorkerStatus.trim().toLowerCase() === "failed";
   const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
+  const effectiveWorkerCheckoutUrl = checkoutUrl ?? billingSummary?.workerCheckoutUrl ?? null;
   const onboardingPending = Boolean(onboardingIntent?.shouldLaunch && !onboardingIntent.completed);
   const onboardingDecisionBusy = onboardingPending && !billingLoadedOnce && (billingBusy || billingCheckoutBusy || !sessionHydrated);
 
@@ -1324,13 +1326,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
             return current;
           }
 
-          return {
-            ...current,
-            hasActivePlan: false,
-            checkoutRequired: true,
-            checkoutUrl: url ?? current.checkoutUrl
-          };
-        });
+            return {
+              ...current,
+              workerCheckoutRequired: true,
+              workerCheckoutUrl: url ?? current.workerCheckoutUrl
+            };
+          });
         setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
         setLaunchError(url ? null : "Checkout URL missing from paywall response.");
         appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
@@ -2015,7 +2016,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (ownedWorkerCount > 0) {
+    if (ownedWorkerCount >= workerAllowance) {
       markOnboardingComplete();
       return;
     }
@@ -2031,7 +2032,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     onboardingAutoLaunchKeyRef.current = autoLaunchKey;
     markOnboardingComplete();
-  }, [billingSummary?.featureGateEnabled, billingSummary?.hasActivePlan, launchBusy, onboardingIntent?.workerName, onboardingPending, ownedWorkerCount, user?.id]);
+  }, [billingSummary?.featureGateEnabled, billingSummary?.hasActivePlan, billingSummary?.activeWorkerSubscriptions, launchBusy, onboardingIntent?.workerName, onboardingPending, ownedWorkerCount, workerAllowance, user?.id]);
 
   useEffect(() => {
     if (!user) {
@@ -2078,6 +2079,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     billingSubscriptionBusy,
     billingError,
     effectiveCheckoutUrl,
+    effectiveWorkerCheckoutUrl,
     refreshBilling,
     handleSubscriptionCancellation,
     refreshCheckoutReturn,

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Cloud, Download, Shield, CornerRightDown } from "lucide-react";
+import { ArrowUpRight, Cloud, Download, Monitor, Shield } from "lucide-react";
 import { ResponsiveGrain } from "./responsive-grain";
 
 type PricingGridProps = {
@@ -27,11 +27,9 @@ type PricingCard = {
 
 function PricingCardView({ card }: { card: PricingCard }) {
   return (
-    <div className="flex h-full flex-col relative group">
-      {/* ── Header card ── */}
-      <div className="relative p-5 rounded-[20px] overflow-hidden mb-6 flex-shrink-0 bg-[#F4F4F4] text-gray-900 group-hover:text-white transition-colors duration-300">
-        {/* Shader layer — hidden by default, revealed on hover */}
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+    <div className="group relative flex h-full flex-col">
+      <div className="relative mb-6 flex-shrink-0 overflow-hidden rounded-[20px] bg-[#F4F4F4] p-5 text-gray-900 transition-colors duration-300 group-hover:text-white">
+        <div className="absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
           <ResponsiveGrain
             colors={card.gradientColors}
             colorBack={card.gradientBack}
@@ -44,19 +42,19 @@ function PricingCardView({ card }: { card: PricingCard }) {
           <div className="absolute inset-0 bg-black/10 mix-blend-overlay" />
         </div>
 
-        <div className="relative z-10 flex flex-col h-full min-h-[160px] justify-between">
+        <div className="relative z-10 flex min-h-[160px] flex-col justify-between">
           <div>
-            <div className="flex justify-between items-start mb-6">
+            <div className="mb-6 flex items-start justify-between">
               <h3 className="text-[17px] font-medium tracking-tight">{card.title}</h3>
             </div>
 
             {card.isCustomPricing ? (
-              <div className="text-[16px] font-semibold mt-4 mb-2">{card.price}</div>
+              <div className="mb-2 mt-4 text-[16px] font-semibold">{card.price}</div>
             ) : (
               <div className="mt-4">
                 <div className="flex items-baseline gap-1.5">
-                  <span className="text-[28px] font-semibold tracking-tight leading-none">{card.price}</span>
-                  <span className="text-[12px] font-medium text-gray-500 group-hover:text-white/80 transition-colors duration-300">
+                  <span className="text-[28px] font-semibold leading-none tracking-tight">{card.price}</span>
+                  <span className="text-[12px] font-medium text-gray-500 transition-colors duration-300 group-hover:text-white/80">
                     {card.priceSub}
                   </span>
                 </div>
@@ -67,7 +65,7 @@ function PricingCardView({ card }: { card: PricingCard }) {
           <a
             href={card.href}
             {...(card.external ? { rel: "noreferrer", target: "_blank" as const } : {})}
-            className="w-full mt-6 py-2.5 rounded-full text-[13px] font-medium bg-gray-950 text-white hover:bg-gray-900 shadow-sm transition-colors flex items-center justify-center gap-2"
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-gray-950 py-2.5 text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-gray-900"
           >
             {card.ctaLabel}
             <ArrowUpRight size={14} />
@@ -75,7 +73,6 @@ function PricingCardView({ card }: { card: PricingCard }) {
         </div>
       </div>
 
-      {/* ── Features list ── */}
       <div className="flex-1 pr-4">
         <div className="flex flex-col">
           {card.features.map((feature, idx) => {
@@ -83,9 +80,9 @@ function PricingCardView({ card }: { card: PricingCard }) {
             return (
               <div
                 key={idx}
-                className="flex items-start gap-3 py-3 border-b border-dotted border-gray-400/40 last:border-0 text-[13px] text-gray-700 font-medium"
+                className="flex items-start gap-3 border-b border-dotted border-gray-400/40 py-3 text-[13px] font-medium text-gray-700 last:border-0"
               >
-                <Icon className="w-[18px] h-[18px] text-gray-500 shrink-0 mt-0.5" strokeWidth={1.5} />
+                <Icon className="mt-0.5 h-[18px] w-[18px] shrink-0 text-gray-500" strokeWidth={1.5} />
                 <span className="leading-snug">{feature.text}</span>
               </div>
             );
@@ -93,7 +90,6 @@ function PricingCardView({ card }: { card: PricingCard }) {
         </div>
       </div>
 
-      {/* ── Footer ── */}
       <div className="mt-auto pt-8">
         <div className="text-[14px] font-medium text-gray-800">{card.footer}</div>
       </div>
@@ -121,19 +117,37 @@ export function PricingGrid(props: PricingGridProps) {
       gradientShape: "wave",
     },
     {
-      id: "cloud-workers",
-      title: "Cloud workers",
+      id: "windows-support",
+      title: "Windows support",
+      price: "$99",
+      priceSub: "per year · 1 seat",
+      ctaLabel: "Purchase Windows support",
+      href: props.windowsCheckoutUrl,
+      external: /^https?:\/\//.test(props.windowsCheckoutUrl),
+      features: [
+        { text: "1 Windows seat", icon: Monitor },
+        { text: "Binary access", icon: Monitor },
+        { text: "1 year of updates", icon: Monitor },
+      ],
+      footer: "Manual fulfillment in phase one",
+      gradientColors: ["#7C3AED", "#E11D48", "#9333EA", "#1F2937"],
+      gradientBack: "#111827",
+      gradientShape: "corners",
+    },
+    {
+      id: "cloud-teams",
+      title: "Cloud teams",
       price: "$50",
-      priceSub: "per month · per worker",
-      ctaLabel: "Purchase worker",
+      priceSub: "per month · 5 seats",
+      ctaLabel: "Start cloud plan",
       href: "https://app.openworklabs.com/checkout",
       external: true,
       features: [
         { text: "5 seats included", icon: Cloud },
-        { text: "Hosted OpenWork worker", icon: Cloud },
+        { text: "0 workers included by default", icon: Cloud },
         { text: "$50 per additional worker", icon: Cloud },
       ],
-      footer: "Workers disabled by default",
+      footer: "Base plan first, then add worker capacity as needed",
       gradientColors: ["#2563EB", "#0284C7", "#0EA5E9", "#0F172A"],
       gradientBack: "#0C1220",
       gradientShape: "ripple",
@@ -163,22 +177,30 @@ export function PricingGrid(props: PricingGridProps) {
     <section className="grid gap-8">
       {props.showHeader !== false ? (
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <h2 className="text-[40px] md:text-[46px] font-medium tracking-tight text-gray-900 leading-[1.1]">
-            Pricing
-          </h2>
+          <div>
+            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-500">
+              Pricing
+            </div>
+            <h2 className="text-[40px] font-medium leading-[1.1] tracking-tight text-gray-900 md:text-[46px]">
+              Gray by default. Clear when you hover.
+            </h2>
+          </div>
+          <p className="max-w-xl text-sm leading-7 text-gray-600 md:text-right md:text-base">
+            Solo stays free forever. Windows is annual. Cloud starts at 5 seats, and workers are added separately. Enterprise starts with a conversation.
+          </p>
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 relative border-l border-t border-dotted border-gray-400/50">
+      <div className="relative grid grid-cols-1 border-l border-t border-dotted border-gray-400/50 md:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
-          <div key={card.id} className="p-6 border-r border-b border-dotted border-gray-400/50 flex flex-col h-full">
+          <div key={card.id} className="flex h-full flex-col border-b border-r border-dotted border-gray-400/50 p-6">
             <PricingCardView card={card} />
           </div>
         ))}
       </div>
 
       <p className="text-center text-[12px] font-medium text-gray-500">
-        Prices exclude taxes.
+        Prices exclude taxes. Windows delivery is manual in phase one.
       </p>
     </section>
   );

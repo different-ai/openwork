@@ -15,12 +15,6 @@ type PolarCustomerSession = {
   customer_portal_url?: string
 }
 
-type PolarCustomer = {
-  id?: string
-  email?: string
-  external_id?: string | null
-}
-
 type PolarListResource<T> = {
   items?: T[]
 }
@@ -119,6 +113,10 @@ export type CloudWorkerBillingStatus = {
   hasActivePlan: boolean
   checkoutRequired: boolean
   checkoutUrl: string | null
+  activeWorkerSubscriptions: number
+  workerCheckoutUrl: string | null
+  workerCheckoutRequired: boolean
+  workerPrice: CloudWorkerBillingPrice | null
   portalUrl: string | null
   price: CloudWorkerBillingPrice | null
   subscription: CloudWorkerBillingSubscription | null
@@ -139,6 +137,7 @@ type CloudAccessInput = {
   userId: string
   email: string
   name: string
+  orgId?: string | null
 }
 
 type BillingStatusOptions = {
@@ -161,6 +160,10 @@ function parseJson<T>(text: string): T | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
+}
+
+function getExternalCustomerId(input: CloudAccessInput) {
+  return input.orgId?.trim() || input.userId
 }
 
 async function polarFetch(path: string, init: RequestInit = {}) {
@@ -216,75 +219,21 @@ async function getCustomerStateByExternalId(externalCustomerId: string): Promise
   return payload
 }
 
-async function getCustomerStateById(customerId: string): Promise<PolarCustomerState | null> {
-  const encodedCustomerId = encodeURIComponent(customerId)
-  const { response, payload, text } = await polarFetchJson<PolarCustomerState>(`/v1/customers/${encodedCustomerId}/state`, {
-    method: "GET",
-  })
-
-  if (response.status === 404) {
-    return null
-  }
-
-  if (!response.ok) {
-    throw new Error(`Polar customer state lookup by ID failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  return payload
-}
-
-async function getCustomerByEmail(email: string): Promise<PolarCustomer | null> {
-  const normalizedEmail = email.trim().toLowerCase()
-  if (!normalizedEmail) {
-    return null
-  }
-
-  const encodedEmail = encodeURIComponent(normalizedEmail)
-  const { response, payload, text } = await polarFetchJson<PolarListResource<PolarCustomer>>(`/v1/customers/?email=${encodedEmail}`, {
-    method: "GET",
-  })
-
-  if (!response.ok) {
-    throw new Error(`Polar customer lookup by email failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  const customers = payload?.items ?? []
-  const exact = customers.find((customer) => customer.email?.trim().toLowerCase() === normalizedEmail)
-  return exact ?? customers[0] ?? null
-}
-
-async function linkCustomerExternalId(customer: PolarCustomer, externalCustomerId: string): Promise<void> {
-  if (!customer.id) {
-    return
-  }
-
-  if (typeof customer.external_id === "string" && customer.external_id.length > 0) {
-    return
-  }
-
-  const encodedCustomerId = encodeURIComponent(customer.id)
-  await polarFetch(`/v1/customers/${encodedCustomerId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      external_id: externalCustomerId,
-    }),
-  })
-}
-
-function hasRequiredBenefit(state: PolarCustomerState | null) {
-  if (!state?.granted_benefits || !env.polar.benefitId) {
+function hasBenefit(state: PolarCustomerState | null, benefitId: string | undefined) {
+  if (!state?.granted_benefits || !benefitId) {
     return false
   }
 
-  return state.granted_benefits.some((grant) => grant.benefit_id === env.polar.benefitId)
+  return state.granted_benefits.some((grant) => grant.benefit_id === benefitId)
 }
 
-async function createCheckoutSession(input: CloudAccessInput): Promise<string> {
+async function createCheckoutSessionForProduct(input: CloudAccessInput, productId: string): Promise<string> {
+  const externalCustomerId = getExternalCustomerId(input)
   const payload = {
-    products: [env.polar.productId],
+    products: [productId],
     success_url: env.polar.successUrl,
     return_url: env.polar.returnUrl,
-    external_customer_id: input.userId,
+    external_customer_id: externalCustomerId,
     customer_email: input.email,
     customer_name: input.name,
   }
@@ -325,8 +274,9 @@ async function evaluateCloudWorkerAccess(
 
   assertPaywallConfig()
 
-  const externalState = await getCustomerStateByExternalId(input.userId)
-  if (hasRequiredBenefit(externalState)) {
+  const externalCustomerId = getExternalCustomerId(input)
+  const externalState = await getCustomerStateByExternalId(externalCustomerId)
+  if (hasBenefit(externalState, env.polar.benefitId)) {
     return {
       featureGateEnabled: true,
       hasActivePlan: true,
@@ -334,24 +284,34 @@ async function evaluateCloudWorkerAccess(
     }
   }
 
-  const customer = await getCustomerByEmail(input.email)
-  if (customer?.id) {
-    const emailState = await getCustomerStateById(customer.id)
-    if (hasRequiredBenefit(emailState)) {
-      await linkCustomerExternalId(customer, input.userId).catch(() => undefined)
-      return {
-        featureGateEnabled: true,
-        hasActivePlan: true,
-        checkoutUrl: null,
-      }
-    }
-  }
-
+  const productId = env.polar.productId
   return {
     featureGateEnabled: true,
     hasActivePlan: false,
-    checkoutUrl: options.includeCheckoutUrl ? await createCheckoutSession(input) : null,
+    checkoutUrl: options.includeCheckoutUrl && productId ? await createCheckoutSessionForProduct(input, productId) : null,
   }
+}
+
+async function getActiveWorkerSubscriptionCount(input: CloudAccessInput): Promise<number> {
+  if (!env.polar.workerProductId) {
+    return 0
+  }
+
+  const subscriptions = await listSubscriptionsByExternalCustomer(getExternalCustomerId(input), {
+    activeOnly: true,
+    limit: 100,
+    productId: env.polar.workerProductId,
+  })
+
+  return subscriptions.filter((subscription) => isActiveSubscriptionStatus(subscription.status)).length
+}
+
+async function createWorkerCheckoutSession(input: CloudAccessInput): Promise<string | null> {
+  if (!env.polar.workerProductId) {
+    return null
+  }
+
+  return createCheckoutSessionForProduct(input, env.polar.workerProductId)
 }
 
 function normalizeRecurringInterval(value: string | null | undefined): string | null {
@@ -419,12 +379,12 @@ async function getSubscriptionById(subscriptionId: string): Promise<PolarSubscri
 
 async function listSubscriptionsByExternalCustomer(
   externalCustomerId: string,
-  options: { activeOnly?: boolean; limit?: number } = {},
+  options: { activeOnly?: boolean; limit?: number; productId?: string | null } = {},
 ): Promise<PolarSubscription[]> {
   const params = new URLSearchParams()
   params.set("external_customer_id", externalCustomerId)
-  if (env.polar.productId) {
-    params.set("product_id", env.polar.productId)
+  if (options.productId) {
+    params.set("product_id", options.productId)
   }
   params.set("limit", String(options.limit ?? 1))
   params.set("sorting", "-started_at")
@@ -458,21 +418,26 @@ async function listSubscriptionsByExternalCustomer(
 }
 
 async function getPrimarySubscriptionForCustomer(externalCustomerId: string): Promise<PolarSubscription | null> {
-  const active = await listSubscriptionsByExternalCustomer(externalCustomerId, { activeOnly: true, limit: 1 })
+  const active = await listSubscriptionsByExternalCustomer(externalCustomerId, {
+    activeOnly: true,
+    limit: 1,
+    productId: env.polar.productId,
+  })
   if (active[0]) {
     return active[0]
   }
 
-  const recent = await listSubscriptionsByExternalCustomer(externalCustomerId, { activeOnly: false, limit: 1 })
+  const recent = await listSubscriptionsByExternalCustomer(externalCustomerId, {
+    activeOnly: false,
+    limit: 1,
+    productId: env.polar.productId,
+  })
   return recent[0] ?? null
 }
 
 async function listRecentOrdersByExternalCustomer(externalCustomerId: string, limit = 6): Promise<PolarOrder[]> {
   const params = new URLSearchParams()
   params.set("external_customer_id", externalCustomerId)
-  if (env.polar.productId) {
-    params.set("product_id", env.polar.productId)
-  }
   params.set("limit", String(limit))
   params.set("sorting", "-created_at")
 
@@ -649,6 +614,27 @@ export async function requireCloudWorkerAccess(input: CloudAccessInput): Promise
   }
 }
 
+export async function requireAdditionalCloudWorkerAccess(input: CloudAccessInput & { ownedWorkerCount: number }): Promise<CloudWorkerAccess> {
+  if (!env.polar.featureGateEnabled || !env.polar.workerProductId) {
+    return { allowed: true }
+  }
+
+  const activeWorkerSubscriptions = await getActiveWorkerSubscriptionCount(input)
+  if (input.ownedWorkerCount < activeWorkerSubscriptions) {
+    return { allowed: true }
+  }
+
+  const checkoutUrl = await createWorkerCheckoutSession(input)
+  if (!checkoutUrl) {
+    throw new Error("Polar worker checkout URL unavailable")
+  }
+
+  return {
+    allowed: false,
+    checkoutUrl,
+  }
+}
+
 export async function getCloudWorkerBillingStatus(
   input: CloudAccessInput,
   options: BillingStatusOptions = {},
@@ -665,6 +651,10 @@ export async function getCloudWorkerBillingStatus(
       hasActivePlan: true,
       checkoutRequired: false,
       checkoutUrl: null,
+      activeWorkerSubscriptions: 0,
+      workerCheckoutUrl: null,
+      workerCheckoutRequired: false,
+      workerPrice: null,
       portalUrl: null,
       price: null,
       subscription: null,
@@ -676,11 +666,19 @@ export async function getCloudWorkerBillingStatus(
     await sendSubscribedToDenEvent(input)
   }
 
+  const [activeWorkerSubscriptions, workerCheckoutUrl, workerPrice] = await Promise.all([
+    getActiveWorkerSubscriptionCount(input).catch(() => 0),
+    evaluation.hasActivePlan && options.includeCheckoutUrl
+      ? createWorkerCheckoutSession(input).catch(() => null)
+      : Promise.resolve<string | null>(null),
+    env.polar.workerProductId ? getProductBillingPrice(env.polar.workerProductId).catch(() => null) : Promise.resolve<CloudWorkerBillingPrice | null>(null),
+  ])
+
   const [subscriptionResult, priceResult, portalResult, invoicesResult] = await Promise.all([
-    getPrimarySubscriptionForCustomer(input.userId).catch(() => null),
+    getPrimarySubscriptionForCustomer(getExternalCustomerId(input)).catch(() => null),
     env.polar.productId ? getProductBillingPrice(env.polar.productId).catch(() => null) : Promise.resolve<CloudWorkerBillingPrice | null>(null),
-    includePortalUrl ? createCustomerPortalUrl(input.userId).catch(() => null) : Promise.resolve<string | null>(null),
-    includeInvoices ? listBillingInvoices(input.userId).catch(() => []) : Promise.resolve<CloudWorkerBillingInvoice[]>([]),
+    includePortalUrl ? createCustomerPortalUrl(getExternalCustomerId(input)).catch(() => null) : Promise.resolve<string | null>(null),
+    includeInvoices ? listBillingInvoices(getExternalCustomerId(input)).catch(() => []) : Promise.resolve<CloudWorkerBillingInvoice[]>([]),
   ])
 
   const subscription = toBillingSubscription(subscriptionResult)
@@ -693,6 +691,10 @@ export async function getCloudWorkerBillingStatus(
     hasActivePlan: evaluation.hasActivePlan,
     checkoutRequired: evaluation.featureGateEnabled && !evaluation.hasActivePlan,
     checkoutUrl: evaluation.checkoutUrl,
+    activeWorkerSubscriptions,
+    workerCheckoutUrl,
+    workerCheckoutRequired: evaluation.hasActivePlan && activeWorkerSubscriptions <= 0,
+    workerPrice,
     portalUrl,
     price: productPrice ?? toBillingPriceFromSubscription(subscription),
     subscription,
@@ -732,24 +734,15 @@ export async function getCloudWorkerAdminBillingStatus(
     let paidByBenefit = false
 
     if (env.polar.benefitId) {
-      const externalState = await getCustomerStateByExternalId(input.userId)
-      if (hasRequiredBenefit(externalState)) {
+      const externalCustomerId = getExternalCustomerId(input)
+      const externalState = await getCustomerStateByExternalId(externalCustomerId)
+      if (hasBenefit(externalState, env.polar.benefitId)) {
         paidByBenefit = true
         note = "Benefit granted via external customer id."
-      } else {
-        const customer = await getCustomerByEmail(input.email)
-        if (customer?.id) {
-          const emailState = await getCustomerStateById(customer.id)
-          if (hasRequiredBenefit(emailState)) {
-            paidByBenefit = true
-            note = "Benefit granted via matching customer email."
-            await linkCustomerExternalId(customer, input.userId).catch(() => undefined)
-          }
-        }
       }
     }
 
-    const subscription = env.polar.productId ? await getPrimarySubscriptionForCustomer(input.userId) : null
+    const subscription = env.polar.productId ? await getPrimarySubscriptionForCustomer(getExternalCustomerId(input)) : null
     const normalizedSubscription = toBillingSubscription(subscription)
     const paidBySubscription = isActiveSubscriptionStatus(normalizedSubscription?.status)
 
@@ -789,9 +782,10 @@ export async function setCloudWorkerSubscriptionCancellation(
 
   assertPaywallConfig()
 
-  const activeSubscriptions = await listSubscriptionsByExternalCustomer(input.userId, {
+  const activeSubscriptions = await listSubscriptionsByExternalCustomer(getExternalCustomerId(input), {
     activeOnly: true,
     limit: 1,
+    productId: env.polar.productId,
   })
   const active = activeSubscriptions[0]
   if (!active?.id) {

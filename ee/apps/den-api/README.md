@@ -12,6 +12,13 @@ It carries the full migrated Den API route surface in a foldered Hono structure 
 pnpm --filter @openwork-ee/den-api dev:local
 ```
 
+## Billing model
+
+- `POLAR_PRODUCT_ID` / `POLAR_BENEFIT_ID`: base OpenWork Cloud team plan
+- `POLAR_WORKER_PRODUCT_ID` / `POLAR_WORKER_BENEFIT_ID`: per-worker add-on product
+- The base plan unlocks the shared cloud workspace.
+- Workers are counted separately and billed as additional recurring subscriptions.
+
 ## Current routes
 
 - `GET /` -> `302 https://openworklabs.com`

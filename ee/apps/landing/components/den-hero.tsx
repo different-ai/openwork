@@ -14,7 +14,9 @@ export function DenHero(props: DenHeroProps) {
           <span className="block lg:whitespace-nowrap">Agents that never sleep</span>
         </h2>
         <p className="mt-5 max-w-[35rem] text-lg leading-relaxed text-gray-700 md:text-[1rem] md:leading-8 lg:text-[1.02rem]">
-          Cloud gives you a personal cloud workspace for long-running tasks, background automation, and the same agent workflows you already use locally in OpenWork, without keeping your own machine awake.
+          OpenWork Cloud gives your team a shared workspace for long-running tasks,
+          background automation, and the same agent workflows you already use locally,
+          with hosted workers added only when you need runtime.
         </p>
 
         <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-5">
@@ -27,8 +29,8 @@ export function DenHero(props: DenHeroProps) {
             Get started
           </a>
           <div className="flex flex-col text-[0.98rem] text-gray-500 sm:max-w-[14rem]">
-            <span className="font-semibold text-gray-700">$50/mo per worker</span>
-            <span>Free for a limited time</span>
+            <span className="font-semibold text-gray-700">$50/mo for 5 seats</span>
+            <span>$50/mo per worker add-on</span>
           </div>
         </div>
       </div>

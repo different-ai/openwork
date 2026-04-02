@@ -12,7 +12,7 @@ const MOCK_BILLING = process.env.NEXT_PUBLIC_DEN_MOCK_BILLING === "1";
 const MOCK_CHECKOUT_URL = (process.env.NEXT_PUBLIC_DEN_MOCK_CHECKOUT_URL ?? "").trim() || null;
 
 function formatSubscriptionStatus(value: string | null | undefined) {
-  if (!value) return "Purchase required";
+  if (!value) return "Plan required";
   return value
     .split(/[_\s]+/)
     .filter(Boolean)
@@ -35,7 +35,6 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   const router = useRouter();
   const pathname = usePathname();
   const handledReturnRef = useRef(false);
-  const redirectingRef = useRef(false);
   const [resuming, setResuming] = useState(false);
   const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
   const {
@@ -46,10 +45,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     billingCheckoutBusy,
     billingError,
     effectiveCheckoutUrl,
-    onboardingPending,
+    effectiveWorkerCheckoutUrl,
     refreshBilling,
     refreshCheckoutReturn,
-    resolveUserLandingRoute,
   } = useDenFlow();
 
   const mockMode = MOCK_BILLING && process.env.NODE_ENV !== "production";
@@ -59,9 +57,13 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         featureGateEnabled: true,
         hasActivePlan: false,
         checkoutRequired: true,
-              checkoutUrl: MOCK_CHECKOUT_URL,
-              portalUrl: null,
-              price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
+        checkoutUrl: MOCK_CHECKOUT_URL,
+        activeWorkerSubscriptions: 0,
+        workerCheckoutUrl: MOCK_CHECKOUT_URL,
+        workerCheckoutRequired: true,
+        workerPrice: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
+        portalUrl: null,
+        price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
         subscription: null,
         invoices: [],
         productId: null,
@@ -110,7 +112,11 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
       return;
     }
 
-    if (!billingSummary?.hasActivePlan && !effectiveCheckoutUrl && !billingBusy && !billingCheckoutBusy) {
+    const needsCheckoutUrl = billingSummary?.hasActivePlan
+      ? !effectiveWorkerCheckoutUrl
+      : !effectiveCheckoutUrl;
+
+    if (needsCheckoutUrl && !billingBusy && !billingCheckoutBusy) {
       void refreshBilling({ includeCheckout: true, quiet: true });
     }
   }, [
@@ -118,32 +124,12 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     billingCheckoutBusy,
     billingSummary?.hasActivePlan,
     effectiveCheckoutUrl,
+    effectiveWorkerCheckoutUrl,
     refreshBilling,
     resuming,
     sessionHydrated,
     user,
   ]);
-
-  useEffect(() => {
-    if (!sessionHydrated || !user || resuming || onboardingPending || mockMode || redirectingRef.current) {
-      return;
-    }
-
-    redirectingRef.current = true;
-    void resolveUserLandingRoute()
-      .then((target) => {
-        if (target && !isSamePathname(pathname, target)) {
-          setRedirectMessage("Redirecting to your workspace...");
-          router.replace(target);
-          return;
-        }
-
-        setRedirectMessage(null);
-      })
-      .finally(() => {
-        redirectingRef.current = false;
-      });
-  }, [mockMode, onboardingPending, pathname, resolveUserLandingRoute, resuming, router, sessionHydrated, user]);
 
   if (!sessionHydrated || (!user && !mockMode)) {
     return (
@@ -159,11 +145,19 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   }
 
   const billingPrice = billingSummary?.price ?? null;
+  const workerBillingPrice = billingSummary?.workerPrice ?? null;
   const showLoading = resuming || (billingBusy && !billingSummary && !MOCK_BILLING);
-  const checkoutHref = effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null;
+  const isWorkerCheckout = billingSummary?.hasActivePlan === true;
+  const checkoutHref = isWorkerCheckout
+    ? effectiveWorkerCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null
+    : effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null;
   const planAmountLabel =
     billingPrice && billingPrice.amount !== null
       ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)}/${billingPrice.recurringInterval}`
+      : "$50.00/month";
+  const workerAmountLabel =
+    workerBillingPrice && workerBillingPrice.amount !== null
+      ? `${formatMoneyMinor(workerBillingPrice.amount, workerBillingPrice.currency)}/${workerBillingPrice.recurringInterval}`
       : "$50.00/month";
   const subscription = billingSummary?.subscription ?? null;
   const subscriptionStatus = formatSubscriptionStatus(subscription?.status);
@@ -174,16 +168,20 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[12ch]">Purchase worker access before launch.</h1>
+            <h1 className="den-title-xl max-w-[12ch]">
+              {isWorkerCheckout ? "Add worker capacity to your org." : "Activate your team workspace."}
+            </h1>
             <p className="den-copy max-w-2xl">
-              Workers are disabled by default. Add one hosted OpenWork worker for $50/month, then launch it from your dashboard.
+              {isWorkerCheckout
+                ? "Your base team plan is active. Purchase worker runtime separately whenever your org needs more hosted capacity."
+                : "OpenWork Cloud starts at $50/month for up to 5 seats. Worker runtime is purchased separately after your team workspace is active."}
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             {checkoutHref ? (
               <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
-                Purchase worker — $50/month
+                {isWorkerCheckout ? "Purchase worker add-on — $50/month" : "Start team plan — $50/month"}
               </a>
             ) : (
               <button
@@ -192,7 +190,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
                 disabled={billingBusy || billingCheckoutBusy}
               >
-                Refresh purchase link
+                {isWorkerCheckout ? "Refresh worker checkout link" : "Refresh checkout link"}
               </button>
             )}
             <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
@@ -201,9 +199,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
-            <span>$50/month per worker</span>
+            <span>{isWorkerCheckout ? "$50/month per worker" : "$50/month for 5 seats"}</span>
             <span aria-hidden="true">•</span>
-            <span>{planAmountLabel} billed monthly</span>
+            <span>{isWorkerCheckout ? workerAmountLabel : planAmountLabel} billed monthly</span>
             <span aria-hidden="true">•</span>
             <span>{user?.email ?? "Signed in"}</span>
           </div>
@@ -225,7 +223,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 <span className="den-kicker w-fit">OpenWork Cloud</span>
                 <h2 className="den-title-lg">Share your setup across your team.</h2>
                 <p className="den-copy">
-                  Manage your team&apos;s setup, invite teammates, and keep everything in sync.
+                  Manage your team&apos;s setup, invite up to 5 seats, and add hosted workers only when you need runtime.
                 </p>
               </div>
 
@@ -279,7 +277,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your worker billing is active." : "Purchase a worker to enable hosted launches."}
+                {billingSummary.hasActivePlan
+                  ? "Your base team plan is active. Add worker capacity whenever you need more hosted runtime."
+                  : "Purchase the base team plan to unlock OpenWork Cloud."}
               </p>
             </div>
 
@@ -303,7 +303,12 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
             <div className="grid gap-3">
               {checkoutHref && !billingSummary.hasActivePlan ? (
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
-                  Purchase worker
+                  Purchase base plan
+                </a>
+              ) : null}
+              {checkoutHref && billingSummary.hasActivePlan ? (
+                <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
+                  Purchase worker add-on
                 </a>
               ) : null}
               {billingSummary.portalUrl ? (

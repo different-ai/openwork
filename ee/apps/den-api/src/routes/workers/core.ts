@@ -9,7 +9,7 @@ import { getRequiredUserEmail } from "../../user.js"
 import type { WorkerRouteVariables } from "./shared.js"
 import {
   continueCloudProvisioning,
-  countUserCloudWorkers,
+  countOrgCloudWorkers,
   createWorkerSchema,
   deleteWorkerCascade,
   getLatestWorkerInstance,
@@ -17,6 +17,7 @@ import {
   getWorkerTokensAndConnect,
   listWorkersQuerySchema,
   parseWorkerIdParam,
+  requireAdditionalCloudCapacityOrPayment,
   requireCloudAccessOrPayment,
   toInstanceResponse,
   toWorkerResponse,
@@ -68,25 +69,46 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       return c.json({ error: "workspace_path_required" }, 400)
     }
 
-    if (input.destination === "cloud" && !env.devMode && (await countUserCloudWorkers(user.id)) > 0) {
+    if (input.destination === "cloud" && !env.devMode) {
       const email = getRequiredUserEmail(user)
       if (!email) {
         return c.json({ error: "user_email_required" }, 400)
       }
 
-      const access = await requireCloudAccessOrPayment({
+      const baseAccess = await requireCloudAccessOrPayment({
         userId: user.id,
+        orgId,
         email,
         name: user.name ?? user.email ?? "OpenWork User",
       })
-      if (!access.allowed) {
+      if (!baseAccess.allowed) {
         return c.json({
           error: "payment_required",
-          message: "Additional cloud workers require an active Den Cloud plan.",
+          message: "OpenWork Cloud billing is required before launching workers.",
           polar: {
-            checkoutUrl: access.checkoutUrl,
+            checkoutUrl: baseAccess.checkoutUrl,
             productId: env.polar.productId,
             benefitId: env.polar.benefitId,
+          },
+        }, 402)
+      }
+
+      const ownedWorkerCount = await countOrgCloudWorkers(orgId)
+      const workerAccess = await requireAdditionalCloudCapacityOrPayment({
+        userId: user.id,
+        orgId,
+        email,
+        name: user.name ?? user.email ?? "OpenWork User",
+        ownedWorkerCount,
+      })
+      if (!workerAccess.allowed) {
+        return c.json({
+          error: "payment_required",
+          message: "No workers are included by default. Purchase a worker add-on to launch another hosted worker.",
+          polar: {
+            checkoutUrl: workerAccess.checkoutUrl,
+            productId: env.polar.workerProductId,
+            benefitId: env.polar.workerBenefitId,
           },
         }, 402)
       }
