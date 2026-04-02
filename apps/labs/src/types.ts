@@ -76,6 +76,7 @@ export type LabsWorkspace = {
   baseUrl: string;
   token?: string | null;
   color: string;
+  kind?: "local" | "remote";
   template?: WorkspaceTemplateBinding | null;
 };
 
@@ -122,6 +123,7 @@ declare global {
     openworkLabsDesktop?: {
       isDesktop: boolean;
       platform: string | null;
+      ensureLocalServer?: () => Promise<{ baseUrl: string }>;
     };
   }
 }

@@ -1,11 +1,46 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk/v2";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererUrl = process.env.LABS_RENDERER_URL || "";
+const localUrl = "http://127.0.0.1:4096";
 
 let mainWindow = null;
+let local = null;
+let boot = null;
+
+async function ensureLocalServer() {
+  if (local) {
+    return { baseUrl: local.url };
+  }
+
+  if (boot) {
+    return boot;
+  }
+
+  boot = (async () => {
+    try {
+      const client = createOpencodeClient({ baseUrl: localUrl });
+      await client.global.health();
+      return { baseUrl: localUrl };
+    } catch {
+      const runtime = await createOpencode();
+      local = {
+        url: runtime.server.url,
+        close: () => runtime.server.close(),
+      };
+      return { baseUrl: runtime.server.url };
+    }
+  })();
+
+  try {
+    return await boot;
+  } finally {
+    boot = null;
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -37,7 +72,17 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+ipcMain.handle("labs:ensure-local-server", async () => {
+  return ensureLocalServer();
+});
+
+app.whenReady().then(async () => {
+  try {
+    await ensureLocalServer();
+  } catch (error) {
+    console.error("Failed to start local OpenCode server", error);
+  }
+
   createWindow();
 
   app.on("activate", () => {
@@ -45,6 +90,11 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on("before-quit", () => {
+  local?.close();
+  local = null;
 });
 
 app.on("window-all-closed", () => {

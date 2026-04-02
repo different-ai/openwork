@@ -35,9 +35,6 @@ const WORKSPACE_COLORS = [
   "#06b6d4",
 ];
 
-const isDesktopRuntime = () =>
-  typeof window !== "undefined" && Boolean(window.openworkLabsDesktop?.isDesktop);
-
 type Action =
   | { type: "app/set-error"; error: string | null }
   | { type: "workspace/upsert"; workspace: LabsWorkspace }
@@ -84,6 +81,7 @@ type WorkspaceInput = {
   name?: string | null;
   baseUrl: string;
   token?: string | null;
+  kind?: "local" | "remote";
 };
 
 type Controller = {
@@ -92,6 +90,7 @@ type Controller = {
   activeSessions: Session[];
   selectedSessionId: string | null;
   saveWorkspace: (input: WorkspaceInput) => string;
+  createLocalWorkspace: (name?: string | null) => Promise<string | null>;
   removeWorkspace: (workspaceId: string) => void;
   setActiveWorkspace: (workspaceId: string) => void;
   selectSession: (workspaceId: string, sessionId: string) => Promise<void>;
@@ -870,51 +869,73 @@ export function useLabsApp(): Controller {
     }
   }, []);
 
-  const connectWorkspace = useCallback((workspace: LabsWorkspace) => {
-    if (!isDesktopRuntime()) {
-      dispatch({
-        type: "workspace/set-connection",
-        workspaceId: workspace.id,
-        connection: {
-          status: "disconnected",
-          message: "Web preview is visual-only. Use the Electron app for live connections.",
-        },
-      });
-      return;
+  const connectWorkspace = useCallback(async (workspace: LabsWorkspace) => {
+    let next = workspace;
+    if (workspace.kind === "local" && window.openworkLabsDesktop?.ensureLocalServer) {
+      try {
+        const local = await window.openworkLabsDesktop.ensureLocalServer();
+        const nextBaseUrl = normalizeOpencodeBaseUrl(local.baseUrl);
+        if (nextBaseUrl && nextBaseUrl !== workspace.baseUrl) {
+          next = {
+            ...workspace,
+            baseUrl: nextBaseUrl,
+          };
+          dispatch({ type: "workspace/upsert", workspace: next });
+        }
+      } catch (error) {
+        dispatch({
+          type: "workspace/set-connection",
+          workspaceId: workspace.id,
+          connection: {
+            status: "disconnected",
+            message: describeError(error),
+          },
+        });
+        return;
+      }
     }
 
-    const normalizedBaseUrl = normalizeOpencodeBaseUrl(workspace.baseUrl);
-    const configKey = `${normalizedBaseUrl}::${workspace.token?.trim() ?? ""}`;
-    const existing = connectionsRef.current.get(workspace.id);
+    const normalizedCurrent = normalizeOpencodeBaseUrl(next.baseUrl);
+    if (normalizedCurrent && normalizedCurrent !== next.baseUrl) {
+      next = {
+        ...next,
+        baseUrl: normalizedCurrent,
+      };
+      dispatch({ type: "workspace/upsert", workspace: next });
+    }
+
+    const normalizedBaseUrl = normalizeOpencodeBaseUrl(next.baseUrl);
+    const configKey = `${normalizedBaseUrl}::${next.token?.trim() ?? ""}`;
+    const existing = connectionsRef.current.get(next.id);
     if (existing && existing.configKey === configKey) {
       return;
     }
 
     existing?.cleanup();
-    connectionsRef.current.delete(workspace.id);
-    clientsRef.current.delete(workspace.id);
+    connectionsRef.current.delete(next.id);
+    clientsRef.current.delete(next.id);
 
     if (!normalizedBaseUrl) {
       dispatch({
         type: "workspace/set-connection",
-        workspaceId: workspace.id,
+        workspaceId: next.id,
         connection: {
           status: "disconnected",
-          message: "Enter a valid server URL.",
+          message: next.kind === "local" ? "Start a local OpenCode server on localhost:4096, or add a server URL." : "Enter a valid server URL.",
         },
       });
       return;
     }
 
     const client = createLabsClient({
-      ...workspace,
+      ...next,
       baseUrl: normalizedBaseUrl,
     });
-    clientsRef.current.set(workspace.id, client);
+    clientsRef.current.set(next.id, client);
 
     dispatch({
       type: "workspace/set-connection",
-      workspaceId: workspace.id,
+      workspaceId: next.id,
       connection: {
         status: "connecting",
         message: "Connecting...",
@@ -927,7 +948,7 @@ export function useLabsApp(): Controller {
 
     const runHealthCheck = async () => {
       if (cancelled) return;
-      await refreshWorkspace(workspace.id);
+      await refreshWorkspace(next.id);
     };
 
     void runHealthCheck();
@@ -950,7 +971,7 @@ export function useLabsApp(): Controller {
           if (controller.signal.aborted) return;
           dispatch({
             type: "workspace/set-connection",
-            workspaceId: workspace.id,
+            workspaceId: next.id,
             connection: {
               status: "disconnected",
               message: describeError(error),
@@ -962,7 +983,7 @@ export function useLabsApp(): Controller {
       }
     })();
 
-    connectionsRef.current.set(workspace.id, {
+    connectionsRef.current.set(next.id, {
       configKey,
       cleanup: () => {
         cancelled = true;
@@ -983,7 +1004,9 @@ export function useLabsApp(): Controller {
       }
     }
 
-    state.workspaces.forEach((workspace) => connectWorkspace(workspace));
+    state.workspaces.forEach((workspace) => {
+      void connectWorkspace(workspace);
+    });
 
     return () => {
       for (const entry of connectionsRef.current.values()) {
@@ -1028,6 +1051,7 @@ export function useLabsApp(): Controller {
       baseUrl: normalizedBaseUrl,
       token: input.token?.trim() || null,
       color: existing?.color ?? pickWorkspaceColor(id),
+      kind: input.kind ?? existing?.kind ?? "remote",
       template: existing?.template ?? null,
     };
 
@@ -1035,6 +1059,36 @@ export function useLabsApp(): Controller {
     dispatch({ type: "workspace/set-active", workspaceId: id });
     return id;
   }, []);
+
+  const createLocalWorkspace = useCallback(async (name?: string | null) => {
+    const title = name?.trim() || "Workspace";
+    let baseUrl = normalizeOpencodeBaseUrl("http://localhost:4096");
+
+    if (window.openworkLabsDesktop?.ensureLocalServer) {
+      try {
+        const local = await window.openworkLabsDesktop.ensureLocalServer();
+        baseUrl = normalizeOpencodeBaseUrl(local.baseUrl);
+      } catch (error) {
+        dispatch({ type: "app/set-error", error: describeError(error) });
+        return null;
+      }
+    }
+
+    const id = `workspace-${randomId()}`;
+    const workspace: LabsWorkspace = {
+      id,
+      name: title,
+      baseUrl,
+      token: null,
+      color: pickWorkspaceColor(id),
+      kind: "local",
+      template: null,
+    };
+
+    dispatch({ type: "workspace/upsert", workspace });
+    dispatch({ type: "workspace/set-active", workspaceId: id });
+    return id;
+  }, [connectWorkspace]);
 
   const removeWorkspace = useCallback((workspaceId: string) => {
     const existing = connectionsRef.current.get(workspaceId);
@@ -1248,6 +1302,7 @@ export function useLabsApp(): Controller {
       ? state.selectedSessionIdByWorkspaceId[activeWorkspace.id] ?? null
       : null,
     saveWorkspace,
+    createLocalWorkspace,
     removeWorkspace,
     setActiveWorkspace,
     selectSession,

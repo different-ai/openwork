@@ -877,6 +877,11 @@ pre,
   color: #6a6f69;
 }
 
+.modal-help {
+  font-size: 0.78rem;
+  color: #7d827d;
+}
+
 .template-modal-layout {
   display: grid;
   gap: 18px;

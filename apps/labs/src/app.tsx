@@ -16,7 +16,7 @@ import { useLabsApp } from "./use-labs-app";
 
 const DEFAULT_EMPTY_STATE = {
   title: "Where are my workspaces, what chats do I have, and how do I start from something useful?",
-  body: "Connect a workspace, then open a template or start typing.",
+  body: "Create a workspace, open a template, or start typing.",
 };
 
 const synthesizeSeedMessages = (seedMessages: SeedMessage[]) =>
@@ -76,6 +76,7 @@ export function App() {
   const [templateUrl, setTemplateUrl] = useState("");
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<LabsTemplateProfile | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(builtInTemplates[0]?.id ?? "");
   const [templateTargetMode, setTemplateTargetMode] = useState<"current" | "existing" | "new">("current");
@@ -162,16 +163,23 @@ export function App() {
 
   const handleAddWorkspace = () => {
     setWorkspaceForm({
-      name: activeWorkspace?.name ?? "",
-      baseUrl: activeWorkspace?.baseUrl ?? "",
-      token: activeWorkspace?.token ?? "",
+      name: "",
+      baseUrl: "",
+      token: "",
     });
     setWorkspaceModalOpen(true);
   };
 
-  const handleWorkspaceSave = () => {
-    if (!workspaceForm.baseUrl.trim()) return;
-    const workspaceId = labs.saveWorkspace(workspaceForm);
+  const handleWorkspaceSave = async () => {
+    setWorkspaceBusy(true);
+    let workspaceId: string | null = null;
+    if (workspaceForm.baseUrl.trim()) {
+      workspaceId = labs.saveWorkspace(workspaceForm);
+    } else {
+      workspaceId = await labs.createLocalWorkspace(workspaceForm.name);
+    }
+    setWorkspaceBusy(false);
+    if (!workspaceId) return;
     setWorkspaceModalOpen(false);
     labs.setActiveWorkspace(workspaceId);
   };
@@ -198,19 +206,17 @@ export function App() {
       workspaceId = templateWorkspaceId || null;
     }
     if (templateTargetMode === "new") {
-      if (!newWorkspaceUrl.trim()) {
-        setTemplateError("Add a server URL so Labs knows where to create the starter chats.");
-        return;
-      }
-      workspaceId = labs.saveWorkspace({
-        name: newWorkspaceName,
-        baseUrl: newWorkspaceUrl,
-        token: newWorkspaceToken,
-      });
+      workspaceId = newWorkspaceUrl.trim()
+        ? labs.saveWorkspace({
+            name: newWorkspaceName,
+            baseUrl: newWorkspaceUrl,
+            token: newWorkspaceToken,
+          })
+        : await labs.createLocalWorkspace(newWorkspaceName);
     }
 
     if (!workspaceId) {
-      setTemplateError("Choose where this template should land.");
+      setTemplateError("Choose where this template should land, or create a local workspace first.");
       return;
     }
 
@@ -378,9 +384,9 @@ export function App() {
               <div className="sidebar-empty">
                 <p className="eyebrow">Start here</p>
                 <h2>Connect a workspace</h2>
-                <p>
-                  Labs is session-first. Add an OpenCode server URL, then jump straight into the conversations inside that workspace.
-                </p>
+                 <p>
+                    Labs is session-first. Use your local OpenCode server on localhost:4096, or connect an existing remote server and jump straight into the conversations inside it.
+                  </p>
                 <button type="button" className="primary-button" onClick={handleAddWorkspace}>
                   Add workspace
                 </button>
@@ -513,7 +519,7 @@ export function App() {
       </main>
 
       {workspaceModalOpen ? (
-        <ModalFrame title="Add workspace" subtitle="Connect a workspace by URL and keep its chats live in the background.">
+        <ModalFrame title="Add workspace" subtitle="Leave the URL blank to use your local OpenCode server on localhost:4096, or paste a remote server URL.">
           <div className="modal-field-grid">
             <label className="modal-field">
               <span>Name</span>
@@ -537,28 +543,35 @@ export function App() {
                 }
                 placeholder="https://worker.openworklabs.com/opencode"
               />
+              <small className="modal-help">Leave this blank to use the local OpenCode server on localhost:4096.</small>
             </label>
 
-            <label className="modal-field">
-              <span>Access token</span>
-              <input
-                name="workspace-token"
-                value={workspaceForm.token}
-                onChange={(event) =>
-                  setWorkspaceForm((current) => ({ ...current, token: event.target.value }))
-                }
-                placeholder="Optional bearer token"
-                type="password"
-              />
-            </label>
+            {workspaceForm.baseUrl.trim() ? (
+              <label className="modal-field">
+                <span>Access token</span>
+                <input
+                  name="workspace-token"
+                  value={workspaceForm.token}
+                  onChange={(event) =>
+                    setWorkspaceForm((current) => ({ ...current, token: event.target.value }))
+                  }
+                  placeholder="Optional bearer token"
+                  type="password"
+                />
+              </label>
+            ) : null}
           </div>
 
           <div className="modal-actions">
             <button type="button" className="ghost-button" onClick={() => setWorkspaceModalOpen(false)}>
               Cancel
             </button>
-            <button type="button" className="primary-button" onClick={handleWorkspaceSave}>
-              Save workspace
+            <button type="button" className="primary-button" onClick={() => void handleWorkspaceSave()} disabled={workspaceBusy}>
+              {workspaceBusy
+                ? "Creating..."
+                : workspaceForm.baseUrl.trim()
+                  ? "Connect workspace"
+                  : "Create workspace"}
             </button>
           </div>
         </ModalFrame>
@@ -686,17 +699,20 @@ export function App() {
                             onChange={(event) => setNewWorkspaceUrl(event.target.value)}
                             placeholder="https://worker.openworklabs.com/opencode"
                           />
+                          <small className="modal-help">Leave this blank to use the local OpenCode server on localhost:4096.</small>
                         </label>
-                        <label className="modal-field">
-                          <span>Access token</span>
-                          <input
-                            name="new-workspace-token"
-                            type="password"
-                            value={newWorkspaceToken}
-                            onChange={(event) => setNewWorkspaceToken(event.target.value)}
-                            placeholder="Optional bearer token"
-                          />
-                        </label>
+                        {newWorkspaceUrl.trim() ? (
+                          <label className="modal-field">
+                            <span>Access token</span>
+                            <input
+                              name="new-workspace-token"
+                              type="password"
+                              value={newWorkspaceToken}
+                              onChange={(event) => setNewWorkspaceToken(event.target.value)}
+                              placeholder="Optional bearer token"
+                            />
+                          </label>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

@@ -22,8 +22,12 @@ export function normalizeOpencodeBaseUrl(input: string) {
 
   try {
     const url = new URL(withInferredProtocol(trimmed));
+    if (/^localhost$/i.test(url.hostname)) {
+      url.hostname = "127.0.0.1";
+    }
     const path = stripTrailingSlash(url.pathname || "");
-    url.pathname = path.endsWith("/opencode") ? path : `${path || ""}/opencode`;
+    const isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(url.hostname);
+    url.pathname = isLocal ? "" : path.endsWith("/opencode") ? path : `${path || ""}/opencode`;
     return stripTrailingSlash(url.toString());
   } catch {
     return "";
