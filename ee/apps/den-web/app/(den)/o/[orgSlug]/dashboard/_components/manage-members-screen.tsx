@@ -22,6 +22,7 @@ import {
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
+import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 
 type MembersTab = "members" | "teams" | "roles" | "invitations";
 
@@ -620,21 +621,15 @@ export function ManageMembersScreen() {
   })();
 
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-8 md:px-8">
-      <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">
-            {activeOrg.name}
-          </p>
-          <h1 className="text-[28px] font-semibold tracking-[-0.05em] text-gray-950">
-            Members
-          </h1>
-          <p className="mt-2 text-[15px] leading-7 text-gray-400">
-            Invite teammates, adjust roles, and keep access clean.
-          </p>
-        </div>
-
-        {toolbarAction ? (
+    <DashboardPageTemplate
+      icon={Users}
+      badgeLabel="Team"
+      title="Members"
+      description="Invite teammates, adjust roles, and keep access clean."
+      colors={["#F3EEFF", "#4A1D96", "#7C3AED", "#C4B5FD"]}
+    >
+      {toolbarAction ? (
+        <div className="mb-6 flex justify-end">
           <button
             type="button"
             onClick={toolbarAction.onClick}
@@ -643,8 +638,8 @@ export function ManageMembersScreen() {
             <Plus className="h-4 w-4" />
             {toolbarAction.label}
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {pageError ? (
         <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
@@ -1006,6 +1001,6 @@ export function ManageMembersScreen() {
           </div>
         </div>
       ) : null}
-    </div>
+    </DashboardPageTemplate>
   );
 }

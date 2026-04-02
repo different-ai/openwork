@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Search, Share2, Trash2 } from "lucide-react";
+import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { requestJson, getErrorMessage } from "../../../../_lib/den-flow";
 import { getMembersRoute } from "../../../../_lib/den-org";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
@@ -117,40 +118,28 @@ export function SharedSetupsScreen() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-6 py-8 md:px-8">
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="mb-1 text-[12px] text-gray-400">{activeOrg?.name ?? "OpenWork Cloud"}</p>
-          <h1 className="text-[28px] font-semibold tracking-[-0.5px] text-gray-900">
-            Team Templates
-          </h1>
-          <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-gray-500">
-            Browse the shared setups your team has already published from the desktop app.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <a
-            href={OPENWORK_DOCS_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-          >
-            Learn how
-          </a>
-          <Link
-            href={getMembersRoute(orgSlug)}
-            className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-          >
-            Members
-          </Link>
-          <a
-            href="https://openworklabs.com/download"
-            className="rounded-full bg-gray-900 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-gray-800"
-          >
-            Use desktop app
-          </a>
-        </div>
+    <DashboardPageTemplate
+      icon={Share2}
+      badgeLabel="Templates"
+      title="Team Templates"
+      description="Browse the shared setups your team has already published from the desktop app."
+      colors={["#FFFBEB", "#78350F", "#F59E0B", "#FDE68A"]}
+    >
+      <div className="mb-4 flex flex-wrap justify-end gap-3">
+        <a
+          href={OPENWORK_DOCS_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
+        >
+          Learn how
+        </a>
+        <a
+          href="https://openworklabs.com/download"
+          className="rounded-full bg-gray-900 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-gray-800"
+        >
+          Use desktop app
+        </a>
       </div>
 
       <div className="relative mb-6">
@@ -257,6 +246,6 @@ export function SharedSetupsScreen() {
       <p className="mt-6 text-[12px] text-gray-400">
         {orgContext?.members.length ?? 0} members currently have access to this library.
       </p>
-    </div>
+    </DashboardPageTemplate>
   );
 }

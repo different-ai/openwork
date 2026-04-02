@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
+import { CreditCard } from "lucide-react";
 import {
   formatIsoDate,
   formatMoneyMinor,
   formatRecurringInterval,
   formatSubscriptionStatus,
 } from "../../../../_lib/den-flow";
+import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 
 export function BillingDashboardScreen() {
@@ -40,11 +42,17 @@ export function BillingDashboardScreen() {
 
   if (!sessionHydrated) {
     return (
-      <div className="mx-auto w-full max-w-[960px] px-6 py-8 md:px-8">
+      <DashboardPageTemplate
+        icon={CreditCard}
+        badgeLabel="Plan"
+        title="Billing"
+        description="Manage your plan, view usage, and update payment details."
+        colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
+      >
         <div className="rounded-[20px] border border-gray-100 bg-white px-5 py-8 text-[14px] text-gray-500">
           Checking billing details…
         </div>
-      </div>
+      </DashboardPageTemplate>
     );
   }
 
@@ -71,16 +79,13 @@ export function BillingDashboardScreen() {
       : "Not available";
 
   return (
-    <div className="mx-auto w-full max-w-[960px] px-6 py-8 md:px-8">
-      <div className="mb-8">
-        <h1 className="mb-2 text-[28px] font-semibold tracking-[-0.5px] text-gray-900">
-          Billing
-        </h1>
-        <p className="text-[15px] text-gray-500">
-          Manage your billing information and subscription settings.
-        </p>
-      </div>
-
+    <DashboardPageTemplate
+      icon={CreditCard}
+      badgeLabel="Plan"
+      title="Billing"
+      description="Manage your plan, view usage, and update payment details."
+      colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
+    >
       {billingError ? (
         <div className="mb-6 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
           {billingError}
@@ -233,6 +238,6 @@ export function BillingDashboardScreen() {
           </button>
         )}
       </div>
-    </div>
+    </DashboardPageTemplate>
   );
 }

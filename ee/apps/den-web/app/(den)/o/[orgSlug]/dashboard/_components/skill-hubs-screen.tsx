@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { BookOpen, FileText, Pencil, Plus, Search } from "lucide-react";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
+import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import {
   getNewSkillHubRoute,
   getNewSkillRoute,
@@ -65,33 +66,13 @@ export function SkillHubsScreen() {
   }, [query, skills]);
 
   return (
-    <div className="mx-auto w-full max-w-[1380px] px-6 py-8 md:px-8">
-      <div className="mb-8 flex flex-col gap-3">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">
-          {activeOrg?.name ?? "Organization library"}
-        </p>
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950">Skill Hubs</h1>
-            <p className="mt-3 max-w-[700px] text-[16px] leading-8 text-gray-500">
-              Curate shared skill libraries for each team, then publish reusable skills your whole organization can discover.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3 text-[13px] font-medium text-gray-600">
-            <span className="rounded-full border border-gray-200 bg-white px-4 py-2">
-              {skillHubs.length} {skillHubs.length === 1 ? "hub" : "hubs"}
-            </span>
-            <span className="rounded-full border border-gray-200 bg-white px-4 py-2">
-              {skills.length} {skills.length === 1 ? "skill" : "skills"}
-            </span>
-            <span className="rounded-full border border-gray-200 bg-white px-4 py-2">
-              {orgContext?.teams.length ?? 0} {orgContext?.teams.length === 1 ? "team" : "teams"}
-            </span>
-          </div>
-        </div>
-      </div>
-
+    <DashboardPageTemplate
+      icon={BookOpen}
+      badgeLabel="New"
+      title="Skill Hubs"
+      description="Curate shared skill libraries for each team, then publish reusable skills your whole organization can discover."
+      colors={["#FFF0F3", "#881337", "#F43F5E", "#FDA4AF"]}
+    >
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-4">
           <UnderlineTabs tabs={SKILL_LIBRARY_TABS} activeTab={activeView} onChange={setActiveView} />
@@ -252,6 +233,6 @@ export function SkillHubsScreen() {
           })}
         </div>
       )}
-    </div>
+    </DashboardPageTemplate>
   );
 }
