@@ -4,6 +4,7 @@ const path = require("path");
 const nextConfig = {
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
+  transpilePackages: ["@openwork/ui"],
   outputFileTracingRoot: path.join(__dirname, "../../.."),
 };
 

@@ -6,12 +6,12 @@
     "./react": {
       "types": "./src/react/index.ts",
       "development": "./src/react/index.ts",
-      "default": "./dist/react/index.js"
+      "default": "./src/react/index.ts"
     },
     "./solid": {
       "types": "./src/solid/index.ts",
       "development": "./src/solid/index.ts",
-      "default": "./dist/solid/index.js"
+      "default": "./src/solid/index.ts"
     }
   },
   "files": [
