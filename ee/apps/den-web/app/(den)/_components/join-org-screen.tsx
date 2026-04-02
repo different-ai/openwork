@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
@@ -13,6 +13,7 @@ import {
   type DenInvitationPreview,
 } from "../_lib/den-org";
 import { useDenFlow } from "../_providers/den-flow-provider";
+import { AuthPanel } from "./auth-panel";
 
 function LoadingCard({ title, body }: { title: string; body: string }) {
   return (
@@ -50,22 +51,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
-
-  const signUpHref = useMemo(() => {
-    if (!invitationId) {
-      return "/?mode=sign-up";
-    }
-
-    return `/?mode=sign-up&invite=${encodeURIComponent(invitationId)}`;
-  }, [invitationId]);
-
-  const signInHref = useMemo(() => {
-    if (!invitationId) {
-      return "/?mode=sign-in";
-    }
-
-    return `/?mode=sign-in&invite=${encodeURIComponent(invitationId)}`;
-  }, [invitationId]);
 
   const invitedEmailMatches = preview && user
     ? preview.invitation.email.trim().toLowerCase() === user.email.trim().toLowerCase()
@@ -173,6 +158,9 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
   async function handleSwitchAccount() {
     await signOut();
+    if (typeof window !== "undefined" && invitationId) {
+      window.sessionStorage.setItem(PENDING_ORG_INVITATION_STORAGE_KEY, invitationId);
+    }
     router.replace(getJoinOrgRoute(invitationId));
   }
 
@@ -193,6 +181,45 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             Back to OpenWork Cloud
           </Link>
         </div>
+      </section>
+    );
+  }
+
+  if (preview.invitation.status === "pending" && !user) {
+    return (
+      <section className="mx-auto grid w-full max-w-[64rem] gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
+        <div className="grid gap-6 rounded-[32px] border border-gray-100 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.22)] md:p-8">
+          <div className="grid gap-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
+            <div className="grid gap-2">
+              <p className="text-[15px] font-medium text-gray-500">You&apos;ve been invited to</p>
+              <h1 className="text-[2.5rem] font-semibold tracking-[-0.06em] text-gray-900">{preview.organization.name}</h1>
+            </div>
+            <p className="text-[14px] leading-relaxed text-gray-500">Role: {formatRoleLabel(preview.invitation.role)}</p>
+          </div>
+
+          <div className="grid gap-4 rounded-3xl border border-gray-100 bg-gray-50 p-5">
+            <div className="grid gap-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Invited email</p>
+              <p className="text-[16px] font-medium text-gray-900">{preview.invitation.email}</p>
+            </div>
+            <p className="text-[14px] leading-relaxed text-gray-600">
+              Set a password for this invited email to create your OpenWork Cloud account, or switch to sign in if you already use it.
+            </p>
+          </div>
+        </div>
+
+        <AuthPanel
+          eyebrow="Invite"
+          panelTitle={`Join ${preview.organization.name}.`}
+          panelCopy="We prefilled your invited email so you can finish account setup without going through the generic signup flow first."
+          prefilledEmail={preview.invitation.email}
+          prefillKey={preview.invitation.id}
+          initialMode="sign-up"
+          lockEmail
+          hideSocialAuth
+          hideEmailField
+        />
       </section>
     );
   }
@@ -225,18 +252,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
               className="inline-flex items-center rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800"
             >
               {user && invitedEmailMatches ? "Open organization" : "Back to OpenWork Cloud"}
-            </Link>
-          </div>
-        </div>
-      ) : !user ? (
-        <div className="grid gap-4">
-          <p className="text-[15px] leading-relaxed text-gray-600">Create an account or sign in first, then come back here to confirm the invitation.</p>
-          <div className="flex flex-wrap gap-3">
-            <Link href={signUpHref} className="inline-flex items-center rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800">
-              Create account to continue
-            </Link>
-            <Link href={signInHref} className="inline-flex items-center rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50">
-              Sign in instead
             </Link>
           </div>
         </div>
