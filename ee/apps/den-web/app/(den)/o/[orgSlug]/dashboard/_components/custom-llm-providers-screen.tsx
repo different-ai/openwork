@@ -1,7 +1,8 @@
 "use client";
 
 import { Cpu } from "lucide-react";
-import { Dithering, MeshGradient } from "@paper-design/shaders-react";
+import { PaperMeshGradient } from "@openwork/ui/react";
+import { Dithering } from "@paper-design/shaders-react";
 
 const comingSoonItems = [
   "Standardize provider access across your team.",
@@ -25,7 +26,7 @@ export function CustomLlmProvidersScreen() {
             colorFront="#FEFEFE"
             style={{ backgroundColor: "#1C2A30", width: "100%", height: "100%" }}
           >
-            <MeshGradient
+            <PaperMeshGradient
               speed={0.1}
               distortion={0.8}
               swirl={0.1}

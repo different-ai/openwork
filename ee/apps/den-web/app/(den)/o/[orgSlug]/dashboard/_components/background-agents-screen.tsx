@@ -16,7 +16,8 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { Dithering, MeshGradient } from "@paper-design/shaders-react";
+import { PaperMeshGradient } from "@openwork/ui/react";
+import { Dithering } from "@paper-design/shaders-react";
 import {
   OPENWORK_APP_CONNECT_BASE_URL,
   buildOpenworkAppConnectUrl,
@@ -406,7 +407,7 @@ export function BackgroundAgentsScreen() {
             colorFront="#FEFEFE"
             style={{ backgroundColor: "#23301C", width: "100%", height: "100%" }}
           >
-            <MeshGradient
+            <PaperMeshGradient
               speed={0}
               distortion={0.8}
               swirl={0.1}

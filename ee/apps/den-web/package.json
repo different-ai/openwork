@@ -5,12 +5,14 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
     "dev:local": "sh -lc 'OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port ${DEN_WEB_PORT:-3005}'",
+    "prebuild": "pnpm --dir ../../../packages/ui build",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "next lint"
   },
   "dependencies": {
-    "@paper-design/shaders-react": "0.0.71",
+    "@openwork/ui": "workspace:*",
+    "@paper-design/shaders-react": "0.0.72",
     "lucide-react": "^0.577.0",
     "next": "16.2.1",
     "react": "19.2.4",

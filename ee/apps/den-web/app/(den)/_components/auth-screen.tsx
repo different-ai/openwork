@@ -1,6 +1,7 @@
 "use client";
 
-import { Dithering, MeshGradient } from "@paper-design/shaders-react";
+import { PaperMeshGradient } from "@openwork/ui/react";
+import { Dithering } from "@paper-design/shaders-react";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -184,7 +185,7 @@ export function AuthScreen() {
                 colorFront="#FEFEFE"
                 style={{ backgroundColor: "#142033", width: "100%", height: "100%" }}
               >
-                <MeshGradient
+                <PaperMeshGradient
                   speed={0.1}
                   distortion={0.8}
                   swirl={0.1}
