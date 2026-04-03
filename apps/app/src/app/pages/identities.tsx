@@ -270,11 +270,11 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     const elapsedMs = Math.max(0, Date.now() - ts);
     if (elapsedMs < 60_000) return t("identities.just_now");
     const minutes = Math.floor(elapsedMs / 60_000);
-    if (minutes < 60) return t("identities.minutes_ago", { minutes });
+    if (minutes < 60) return t("identities.minutes_ago", undefined, { minutes });
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return t("identities.hours_ago", { hours });
+    if (hours < 24) return t("identities.hours_ago", undefined, { hours });
     const days = Math.floor(hours / 24);
-    return t("identities.days_ago", { days });
+    return t("identities.days_ago", undefined, { days });
   });
 
   const workspaceAgentStatus = createMemo(() => {
@@ -416,7 +416,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         ...(sendAutoBind() ? { autoBind: true } : {}),
       });
       setSendResult(result);
-      const base = t("identities.dispatched_messages", { sent: result.sent, attempted: result.attempted });
+      const base = t("identities.dispatched_messages", undefined, { sent: result.sent, attempted: result.attempted });
       setSendStatus(result.reason?.trim() ? `${base} ${result.reason.trim()}` : base);
     } catch (error) {
       setSendError(formatRequestError(error));
@@ -493,7 +493,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const message =
             (healthRes.json && typeof (healthRes.json as any).message === "string")
               ? String((healthRes.json as any).message)
-              : t("identities.health_unavailable_status", { status: healthRes.status });
+              : t("identities.health_unavailable_status", undefined, { status: healthRes.status });
           setHealthError(message);
         }
         setMessagingRestartRequired(true);
@@ -666,7 +666,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         const pairingCode = typeof result.telegram?.pairingCode === "string" ? result.telegram.pairingCode.trim() : "";
         if (access === "private" && pairingCode) {
           setTelegramPairingCode(pairingCode);
-          setTelegramStatus(t("identities.telegram_private_saved_pair", { code: pairingCode }));
+          setTelegramStatus(t("identities.telegram_private_saved_pair", undefined, { code: pairingCode }));
         } else {
           setTelegramPairingCode(null);
         }
@@ -675,7 +675,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const normalized = String(username).trim().replace(/^@+/, "");
           setTelegramBotUsername(normalized || null);
           if (access !== "private" || !pairingCode) {
-            setTelegramStatus(t("identities.telegram_saved_username", { username: normalized || String(username) }));
+            setTelegramStatus(t("identities.telegram_saved_username", undefined, { username: normalized || String(username) }));
           }
         } else {
           if (access !== "private" || !pairingCode) {
@@ -1290,7 +1290,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           class="inline-flex items-center gap-2 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[12px] font-medium text-gray-11 hover:bg-gray-2"
                         >
                           <Link size={14} />
-                          {t("identities.open_bot_link", { username: telegramBotUsername() })}
+                          {t("identities.open_bot_link", undefined, { username: telegramBotUsername() ?? "" })}
                         </a>
                       )}
                     </Show>
@@ -1546,7 +1546,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           <Show when={workspaceAgentStatus()}>
             {(value) => (
               <div class="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10">
-                {t("identities.agent_scope_status", { status: value().loaded ? t("identities.agent_status_loaded") : t("identities.agent_status_missing"), agent: value().selected || t("identities.agent_none") })}
+                {t("identities.agent_scope_status", undefined, { status: value().loaded ? t("identities.agent_status_loaded") : t("identities.agent_status_missing"), agent: value().selected || t("identities.agent_none") })}
               </div>
             )}
           </Show>

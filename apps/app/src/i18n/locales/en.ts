@@ -1222,7 +1222,6 @@ export default {
 
   // ==================== Dashboard page (session/share strings) ====================
   "scheduled.title": "Automations",
-  "extensions.title": "Extensions",
   "settings.tab_automations": "Automations",
   "settings.tab_skills": "Skills",
   "settings.tab_extensions": "Extensions",
@@ -1570,7 +1569,6 @@ export default {
   "scheduled.task_summary_prompt": "Prompt",
   "scheduled.template_badge": "Template",
   "scheduled.template_count": "{count} templates",
-  "scheduled.title": "Automations",
   "scheduled.tpl_daily_planning_desc": "Build a focused plan from your tasks and calendar.",
   "scheduled.tpl_daily_planning_name": "Daily planning brief",
   "scheduled.tpl_habit_checkin_desc": "Run a quick accountability check through the day.",
@@ -1634,7 +1632,6 @@ export default {
   "settings.messaging_section_title": "Messaging",
   "settings.sandbox_result": "Result: {status}",
   "settings.sandbox_run_id": "Run ID: {id}",
-  "settings.tab_advanced": "Advanced",
   "settings.update_available_version": "Update available: v{version}",
   "settings.update_last_checked": "Last checked {time}",
   "settings.update_published": "Published {date}",
