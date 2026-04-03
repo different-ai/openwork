@@ -426,6 +426,9 @@ importers:
 
   ee/apps/den-web:
     dependencies:
+      '@openwork-ee/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       '@openwork/ui':
         specifier: workspace:*
         version: link:../../../packages/ui

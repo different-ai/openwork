@@ -16,6 +16,7 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   buildSkillText,
+  getSkillBodyText,
   parseSkillDraft,
   useOrgSkillLibrary,
 } from "./skill-hub-data";
@@ -67,7 +68,10 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
     });
     setName(draft.name || skill.title);
     setDescription(draft.description || skill.description || "");
-    setDetails(draft.details || skill.skillText);
+    setDetails(getSkillBodyText(skill.skillText, {
+      name: skill.title,
+      description: skill.description,
+    }));
     setVisibility(
       skill.shared === "org" ? "org" : skill.shared === "public" ? "public" : "private",
     );
@@ -129,7 +133,7 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
     setUploadedFileName(file.name);
     setName(draft.name || file.name.replace(/\.md$/i, ""));
     setDescription(draft.description);
-    setDetails(draft.details || text);
+    setDetails(getSkillBodyText(text));
     setMode("upload");
   }
 

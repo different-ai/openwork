@@ -8,6 +8,7 @@ import {
   SkillTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
+import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { z } from "zod"
@@ -23,13 +24,30 @@ import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema, memberHasRole, orgIdParamSchema } from "./shared.js"
 
+const skillTextSchema = z.string().superRefine((value, ctx) => {
+  if (!value.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Skill content cannot be empty.",
+    })
+    return
+  }
+
+  if (!hasSkillFrontmatterName(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Skill content must start with frontmatter that includes a name.",
+    })
+  }
+})
+
 const createSkillSchema = z.object({
-  skillText: z.string().trim().min(1),
+  skillText: skillTextSchema,
   shared: z.enum(["org", "public"]).nullable().optional(),
 })
 
 const updateSkillSchema = z.object({
-  skillText: z.string().trim().min(1).optional(),
+  skillText: skillTextSchema.optional(),
   shared: z.enum(["org", "public"]).nullable().optional(),
 }).superRefine((value, ctx) => {
   if (value.skillText === undefined && value.shared === undefined) {
@@ -111,6 +129,17 @@ function parseTeamId(value: string) {
 }
 
 function parseSkillMetadata(skillText: string) {
+  const parsed = parseSkillMarkdown(skillText)
+  if (parsed.hasFrontmatter) {
+    const title = parsed.name.trim() || "Untitled skill"
+    const description = parsed.description.trim() || null
+
+    return {
+      title: title.slice(0, 255),
+      description: description ? description.slice(0, 65535) : null,
+    }
+  }
+
   const lines = skillText
     .split(/\r?\n/g)
     .map((line) => line.trim())

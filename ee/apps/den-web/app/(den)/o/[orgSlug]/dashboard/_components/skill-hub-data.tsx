@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { composeSkillMarkdown, parseSkillMarkdown } from "@openwork-ee/utils";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 
 export type DenSkillShared = "org" | "public" | null;
@@ -220,6 +221,16 @@ export function parseSkillCategory(skillText: string): string | null {
 }
 
 export function parseSkillDraft(skillText: string, fallback?: { name?: string | null; description?: string | null }): SkillComposerDraft {
+  const parsed = parseSkillMarkdown(skillText);
+  if (parsed.hasFrontmatter) {
+    return {
+      name: parsed.name || fallback?.name || "",
+      description: parsed.description || fallback?.description || "",
+      category: parseSkillCategory(skillText) ?? "General",
+      details: parsed.body.trim(),
+    };
+  }
+
   const lines = skillText.split(/\r?\n/g);
   const nonEmptyIndexes = lines.reduce<number[]>((indexes, line, index) => {
     if (line.trim()) {
@@ -252,6 +263,11 @@ export function parseSkillDraft(skillText: string, fallback?: { name?: string | 
 }
 
 export function getSkillBodyText(skillText: string, fallback?: { name?: string | null; description?: string | null }) {
+  const parsed = parseSkillMarkdown(skillText);
+  if (parsed.hasFrontmatter) {
+    return parsed.body.trim();
+  }
+
   const draft = parseSkillDraft(skillText, fallback);
   return draft.details || skillText;
 }
@@ -284,21 +300,7 @@ function cleanupSkillMetadataLine(value: string): string {
 }
 
 export function buildSkillText(input: SkillComposerDraft): string {
-  const sections = [`# ${input.name.trim()}`];
-
-  if (input.description.trim()) {
-    sections.push(input.description.trim());
-  }
-
-  if (input.category.trim()) {
-    sections.push(`Category: ${input.category.trim()}`);
-  }
-
-  if (input.details.trim()) {
-    sections.push(input.details.trim());
-  }
-
-  return `${sections.join("\n\n")}\n`;
+  return composeSkillMarkdown(input.name, input.description, input.details);
 }
 
 export function getSkillVisibilityLabel(shared: DenSkillShared): string {
