@@ -330,6 +330,23 @@ async function connectRemote(urlInput: string, token: string): Promise<Snapshot>
   return snapshot();
 }
 
+async function runMainSmokeFlow(promptValue: string): Promise<void> {
+  const data = (await api("/session", { method: "POST", body: JSON.stringify({ title: "Smoke chat" }) })) as {
+    session: SessionSummary;
+  };
+  currentSessionID = data.session.id;
+  messages = [];
+  upsertSession(data.session);
+  pushLog("main", "info", `Smoke created session ${data.session.id}`);
+  await api(`/session/${data.session.id}/prompt_async`, {
+    method: "POST",
+    body: JSON.stringify({ prompt: promptValue }),
+  });
+  pushLog("main", "info", `Smoke prompt submitted for ${data.session.id}`);
+  await waitForAssistantReply(data.session.id);
+  emitState();
+}
+
 async function waitForAssistantReply(sessionID: string, timeoutMs = 30_000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -436,18 +453,9 @@ app.whenReady().then(async () => {
     try {
       await connectLocal(smokeWorkspaceDir);
       pushLog("main", "info", `Smoke connected local workspace ${smokeWorkspaceDir}`);
-      const data = (await api("/session", { method: "POST", body: JSON.stringify({ title: "Smoke chat" }) })) as {
-        session: SessionSummary;
-      };
-      currentSessionID = data.session.id;
-      upsertSession(data.session);
       if (smokePrompt.trim()) {
-        await api(`/session/${data.session.id}/prompt_async`, {
-          method: "POST",
-          body: JSON.stringify({ prompt: smokePrompt }),
-        });
-        await waitForAssistantReply(data.session.id);
-        pushLog("main", "info", `Smoke prompt completed for ${data.session.id}`);
+        await runMainSmokeFlow(smokePrompt);
+        pushLog("main", "info", `Smoke prompt completed`);
       }
       emitState();
     } catch (error) {
