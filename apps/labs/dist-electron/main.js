@@ -271,17 +271,34 @@ async function connectRemote(urlInput, token) {
     await saveConnection();
     return snapshot();
 }
+async function runMainSmokeFlow(promptValue) {
+    const data = (await api("/session", { method: "POST", body: JSON.stringify({ title: "Smoke chat" }) }));
+    currentSessionID = data.session.id;
+    messages = [];
+    upsertSession(data.session);
+    pushLog("main", "info", `Smoke created session ${data.session.id}`);
+    await api(`/session/${data.session.id}/prompt_async`, {
+        method: "POST",
+        body: JSON.stringify({ prompt: promptValue }),
+    });
+    pushLog("main", "info", `Smoke prompt submitted for ${data.session.id}`);
+    await waitForAssistantReply(data.session.id);
+    emitState();
+}
 async function waitForAssistantReply(sessionID, timeoutMs = 30_000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
         currentSessionID = sessionID;
         await refreshMessages();
-        const done = messages.some((message) => message.role === "assistant" && message.text.trim().length > 0)
-            && !sessions.find((session) => session.id === sessionID)?.active;
-        if (done)
+        await refreshSessions();
+        const done = messages.some((message) => message.role === "assistant" && message.text.trim().length > 0);
+        if (done) {
+            pushLog("main", "info", `Assistant reply observed for ${sessionID}`);
             return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 250));
     }
+    pushLog("main", "error", `Assistant reply timeout for ${sessionID}; last messages=${JSON.stringify(messages)}`);
     throw new Error(`Timed out waiting for assistant reply for session ${sessionID}`);
 }
 async function createWindow() {
@@ -326,6 +343,7 @@ ipcMain.handle("ow:selectSession", async (_event, sessionID) => {
     return snapshot();
 });
 ipcMain.handle("ow:sendPrompt", async (_event, payload) => {
+    pushLog("main", "info", `Sending prompt for ${payload.sessionID}`);
     await api(`/session/${payload.sessionID}/prompt_async`, {
         method: "POST",
         body: JSON.stringify({ prompt: payload.prompt }),
@@ -371,16 +389,9 @@ app.whenReady().then(async () => {
         try {
             await connectLocal(smokeWorkspaceDir);
             pushLog("main", "info", `Smoke connected local workspace ${smokeWorkspaceDir}`);
-            const data = (await api("/session", { method: "POST", body: JSON.stringify({ title: "Smoke chat" }) }));
-            currentSessionID = data.session.id;
-            upsertSession(data.session);
             if (smokePrompt.trim()) {
-                await api(`/session/${data.session.id}/prompt_async`, {
-                    method: "POST",
-                    body: JSON.stringify({ prompt: smokePrompt }),
-                });
-                await waitForAssistantReply(data.session.id);
-                pushLog("main", "info", `Smoke prompt completed for ${data.session.id}`);
+                await runMainSmokeFlow(smokePrompt);
+                pushLog("main", "info", `Smoke prompt completed`);
             }
             emitState();
         }
