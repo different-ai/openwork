@@ -603,6 +603,33 @@ function getBillingInvoice(value: unknown): DenBillingInvoice | null {
   };
 }
 
+export type DenOrgSkillHubSummary = {
+  id: string;
+  name: string;
+  canManage: boolean;
+};
+
+function getOrgSkillHubSummaries(payload: unknown): DenOrgSkillHubSummary[] {
+  if (!isRecord(payload) || !Array.isArray(payload.skillHubs)) {
+    return [];
+  }
+
+  return payload.skillHubs
+    .map((entry) => {
+      if (!isRecord(entry)) return null;
+      if (typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.canManage !== "boolean") {
+        return null;
+      }
+      return { id: entry.id, name: entry.name, canManage: entry.canManage };
+    })
+    .filter((entry): entry is DenOrgSkillHubSummary => Boolean(entry));
+}
+
+function getCreatedOrgSkillId(payload: unknown): string | null {
+  if (!isRecord(payload) || !isRecord(payload.skill)) return null;
+  return typeof payload.skill.id === "string" ? payload.skill.id : null;
+}
+
 function getBillingSummary(payload: unknown): DenBillingSummary | null {
   if (!isRecord(payload) || !isRecord(payload.billing)) {
     return null;
@@ -877,6 +904,46 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         token,
       });
       return getDenOrgSkillHubsFromPayload(payload);
+    },
+
+    async listOrgSkillHubSummaries(orgId: string): Promise<DenOrgSkillHubSummary[]> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs`, {
+        method: "GET",
+        token,
+      });
+      return getOrgSkillHubSummaries(payload);
+    },
+
+    async createOrgSkill(
+      orgId: string,
+      input: { skillText: string; shared?: "org" | "public" | null },
+    ): Promise<{ id: string }> {
+      const body = {
+        skillText: input.skillText,
+        shared: input.shared === undefined ? ("org" as const) : input.shared,
+      };
+      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skills`, {
+        method: "POST",
+        token,
+        body,
+      });
+      const id = getCreatedOrgSkillId(payload);
+      if (!id) {
+        throw new DenApiError(500, "invalid_skill_payload", "Skill response was missing id.");
+      }
+      return { id };
+    },
+
+    async addOrgSkillToHub(orgId: string, skillHubId: string, skillId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs/${encodeURIComponent(skillHubId)}/skills`,
+        {
+          method: "POST",
+          token,
+          body: { skillId },
+        },
+      );
     },
 
     async getBillingStatus(options: { includeCheckout?: boolean; includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
