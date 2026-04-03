@@ -1,5 +1,6 @@
 > OpenWork is the open source alternative to Claude Cowork/Codex (desktop app).
 
+
 ## Core Philosophy
 
 - Local-first, cloud-ready: OpenWork runs on your machine in one click. Send a message instantly.
@@ -14,7 +15,6 @@
 OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
 
 ## Alternate UIs
-
 - **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
   - install: `npm install -g openwork-orchestrator`
   - run: `openwork start --workspace /path/to/workspace --approval auto`
@@ -26,7 +26,8 @@ Download the desktop app from [openworklabs.com/download](https://openworklabs.c
 
 - macOS and Linux downloads are available directly.
 - Windows access is currently handled through the paid support plan on [openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support).
-- Hosted OpenWork Cloud workers are launched from the web app after checkout, then connected from the desktop app via `Add a worker` -> `Connect remote`.
+- Hosted OpenWork Cloud workers are launched from the web app after org setup, including checkout when billing is required, then connected from the desktop app via `Add a worker` -> `Connect remote`.
+- OpenWork Cloud org dashboards now include shared team management and skill hub management so admins can decide who can access each published skill library before workers are launched.
 
 ## Why
 
@@ -41,17 +42,14 @@ OpenWork is designed to be:
 
 ## What’s Included
 
-- **Local host mode**: run OpenCode locally on your computer.
-- **Remote connect**: attach to an OpenWork worker with a shared URL + token.
-- **Workspaces**: create local workspaces or connect remote workers from the same workspace sidebar.
+- **Host mode**: runs opencode locally on your computer
+- **Client mode**: connect to an existing OpenCode server by URL.
 - **Sessions**: create/select sessions and send prompts.
 - **Live streaming**: SSE `/event` subscription for realtime updates.
 - **Execution plan**: render OpenCode todos as a timeline.
 - **Permissions**: surface permission requests and reply (allow once / always / deny).
 - **Templates**: save and re-run common workflows (stored locally).
 - **Debug exports**: copy or export the runtime debug report and developer log stream from Settings -> Debug when you need to file a bug.
-- **Unified settings shell**: manage skills, extensions, automations, messaging, and appearance from one shell instead of separate dashboard tabs.
-- **Authorized folders**: manage extra filesystem access from Settings when a workspace needs directories outside its root.
 - **Skills manager**:
   - list installed `.opencode/skills` folders
   - import a local skill folder into `.opencode/skills/<skill-name>`
@@ -153,7 +151,7 @@ Capability permissions are defined in:
 
 ## OpenCode Plugins
 
-Plugins are the **native** way to extend OpenCode. OpenWork now manages them from `Settings -> Extensions` by
+Plugins are the **native** way to extend OpenCode. OpenWork now manages them from the Skills tab by
 reading and writing `opencode.json`.
 
 - **Project scope**: `<workspace>/opencode.json`

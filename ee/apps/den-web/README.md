@@ -6,8 +6,10 @@ Frontend for `app.openworklabs.com`.
 
 - Signs up / signs in users against Den service auth.
 - Handles invited-org signup flows where the invited email stays locked and the user verifies access before joining.
+- Lets org admins manage members, teams, roles, invitations, and shared skill hubs from the hosted dashboard.
 - Launches cloud workers via `POST /v1/workers`.
-- Handles paywall responses (`402 payment_required`), routes users through Polar checkout, and only enables worker launch after purchase.
+- Handles paywall responses (`402 payment_required`), routes users through Polar checkout during org setup or worker launch, and only enables worker launch after purchase.
+- Surfaces org limit states before launch so users know when a plan upgrade or seat change is required.
 - Offers desktop handoff actions so users can open the generated worker directly in OpenWork or copy the connect credentials manually.
 - Uses a Next.js proxy route (`/api/den/*`) to reach `api.openworklabs.com` without browser CORS issues.
 - Uses a same-origin auth proxy (`/api/auth/*`) so GitHub OAuth callbacks can land on `app.openworklabs.com`.
@@ -15,9 +17,10 @@ Frontend for `app.openworklabs.com`.
 ## Current hosted user flow
 
 1. Sign in with a standard provider or accept an org invite.
-2. If the org requires billing, complete checkout before launching a worker.
-3. Launch the worker from the cloud dashboard.
-4. Open the worker in the desktop app with the provided deep link, or copy the URL/token into `Connect remote` manually.
+2. Create or join an organization; if that org requires billing, complete checkout before continuing.
+3. Optional admin step: manage members, teams, and shared skill hubs from the org dashboard.
+4. Launch the worker from the cloud dashboard.
+5. Open the worker in the desktop app with the provided deep link, or copy the URL/token into `Connect remote` manually.
 
 ## Local development
 
@@ -54,11 +57,9 @@ Recommended project settings:
 
 - Root directory: `ee/apps/den-web`
 - Framework preset: Next.js
-- Build command: `cd ../../.. && pnpm --filter @openwork-ee/den-web build`
+- Build command: `next build`
 - Output directory: `.next`
-- Install command: `cd ../../.. && pnpm install --frozen-lockfile`
-
-These commands should be configured in the Vercel dashboard rather than committed in `vercel.json`, so the app still builds from the monorepo root and can resolve shared workspace packages like `@openwork-ee/utils`.
+- Install command: `pnpm install --frozen-lockfile`
 
 Then assign custom domain:
 
