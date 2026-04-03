@@ -9,7 +9,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { t, currentLocale } from "../../i18n";
+import { t } from "../../i18n";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   ComposerDraft,
@@ -101,7 +101,6 @@ import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
-import { t } from "../../i18n";
 import {
   useStatusToasts,
   type AppStatusToastTone,

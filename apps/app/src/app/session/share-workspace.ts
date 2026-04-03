@@ -7,7 +7,6 @@ import {
   type Accessor,
 } from "solid-js";
 
-import { t } from "../../i18n";
 
 import {
   publishSkillsSetBundleFromWorkspace,

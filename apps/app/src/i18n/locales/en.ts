@@ -197,7 +197,6 @@ export default {
   "session.rename_description": "Update the name for this session.",
   "session.rename_label": "Session name",
   "session.rename_placeholder": "Enter a new name",
-  "session.provider_auth_in_progress": "Provider auth is already in progress.",
   "session.provider_connected": "Provider connected",
   "session.oauth_failed": "OAuth failed",
   "session.api_key_saved": "API key saved",
