@@ -1,0 +1,9 @@
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/msb_krun_kernel-07cdd6346d3f4ee1.d: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/cmdline/mod.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/loader/mod.rs
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libmsb_krun_kernel-07cdd6346d3f4ee1.rlib: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/cmdline/mod.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/loader/mod.rs
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libmsb_krun_kernel-07cdd6346d3f4ee1.rmeta: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/cmdline/mod.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/loader/mod.rs
+
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/lib.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/cmdline/mod.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/msb_krun_kernel-0.1.9/src/loader/mod.rs:

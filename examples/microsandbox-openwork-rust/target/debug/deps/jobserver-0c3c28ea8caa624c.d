@@ -1,0 +1,9 @@
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/jobserver-0c3c28ea8caa624c.d: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/error.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/unix.rs
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libjobserver-0c3c28ea8caa624c.rlib: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/error.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/unix.rs
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libjobserver-0c3c28ea8caa624c.rmeta: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/error.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/unix.rs
+
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/lib.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/error.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/jobserver-0.1.34/src/unix.rs:

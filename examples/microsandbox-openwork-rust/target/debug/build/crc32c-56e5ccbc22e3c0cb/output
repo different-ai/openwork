@@ -1,0 +1,2 @@
+cargo::rustc-check-cfg=cfg(armsimd)
+cargo::rustc-cfg=armsimd

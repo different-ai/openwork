@@ -1,0 +1,9 @@
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/crypto_common-c665398caf498051.d: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/hazmat.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/../README.md
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libcrypto_common-c665398caf498051.rlib: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/hazmat.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/../README.md
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libcrypto_common-c665398caf498051.rmeta: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/hazmat.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/../README.md
+
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/lib.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/hazmat.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crypto-common-0.2.1/src/../README.md:

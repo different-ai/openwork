@@ -1,0 +1,17 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-env-changed=SMOLTCP_IFACE_MAX_ADDR_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_IFACE_MAX_MULTICAST_GROUP_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_IFACE_MAX_SIXLOWPAN_ADDRESS_CONTEXT_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_IFACE_NEIGHBOR_CACHE_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_IFACE_MAX_ROUTE_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_IFACE_MAX_PREFIX_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_FRAGMENTATION_BUFFER_SIZE
+cargo:rerun-if-env-changed=SMOLTCP_ASSEMBLER_MAX_SEGMENT_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_REASSEMBLY_BUFFER_SIZE
+cargo:rerun-if-env-changed=SMOLTCP_REASSEMBLY_BUFFER_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_IPV6_HBH_MAX_OPTIONS
+cargo:rerun-if-env-changed=SMOLTCP_DNS_MAX_RESULT_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_DNS_MAX_SERVER_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_DNS_MAX_NAME_SIZE
+cargo:rerun-if-env-changed=SMOLTCP_RPL_RELATIONS_BUFFER_COUNT
+cargo:rerun-if-env-changed=SMOLTCP_RPL_PARENTS_BUFFER_COUNT

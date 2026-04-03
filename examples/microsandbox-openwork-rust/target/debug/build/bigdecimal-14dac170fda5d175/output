@@ -1,0 +1,16 @@
+cargo:rustc-check-cfg=cfg(rustc_1_75)
+cargo:rustc-cfg=rustc_1_75
+cargo:rustc-check-cfg=cfg(rustc_1_60)
+cargo:rustc-cfg=rustc_1_60
+cargo:rustc-check-cfg=cfg(rustc_1_50)
+cargo:rustc-cfg=rustc_1_50
+cargo:rustc-check-cfg=cfg(rustc_1_46)
+cargo:rustc-cfg=rustc_1_46
+cargo:rustc-check-cfg=cfg(has_unsigned_abs)
+cargo:rustc-cfg=has_unsigned_abs
+cargo:rerun-if-env-changed=RUST_BIGDECIMAL_DEFAULT_PRECISION
+cargo:rerun-if-env-changed=RUST_BIGDECIMAL_DEFAULT_ROUNDING_MODE
+cargo:rerun-if-env-changed=RUST_BIGDECIMAL_FMT_EXPONENTIAL_LOWER_THRESHOLD
+cargo:rerun-if-env-changed=RUST_BIGDECIMAL_FMT_EXPONENTIAL_UPPER_THRESHOLD
+cargo:rerun-if-env-changed=RUST_BIGDECIMAL_FMT_MAX_INTEGER_PADDING
+cargo:rerun-if-env-changed=RUST_BIGDECIMAL_SERDE_SCALE_LIMIT

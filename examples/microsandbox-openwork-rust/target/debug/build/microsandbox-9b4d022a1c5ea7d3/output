@@ -1,0 +1,3 @@
+cargo:rerun-if-changed=/Users/benjaminshafii/.microsandbox/bin/msb
+cargo:rerun-if-changed=/Users/benjaminshafii/.microsandbox/lib/libkrunfw.5.dylib
+cargo:warning=downloading microsandbox runtime dependencies (v0.3.9)...

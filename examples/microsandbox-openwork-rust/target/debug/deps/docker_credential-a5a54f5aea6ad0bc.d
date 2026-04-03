@@ -1,0 +1,9 @@
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/docker_credential-a5a54f5aea6ad0bc.d: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/config.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/helper.rs
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libdocker_credential-a5a54f5aea6ad0bc.rlib: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/config.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/helper.rs
+
+/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libdocker_credential-a5a54f5aea6ad0bc.rmeta: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/config.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/helper.rs
+
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/lib.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/config.rs:
+/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/docker_credential-1.3.2/src/helper.rs:
