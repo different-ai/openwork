@@ -3,7 +3,9 @@ import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { z } from "zod"
+import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { acceptInvitationForUser, createOrganizationForUser, getInvitationPreview, setSessionActiveOrganization } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
@@ -27,6 +29,29 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     const user = c.get("user")
     const session = c.get("session")
     const input = c.req.valid("json")
+    const email = getRequiredUserEmail(user)
+
+    if (!email) {
+      return c.json({ error: "user_email_required" }, 400)
+    }
+
+    const access = await requireCloudWorkerAccess({
+      userId: normalizeDenTypeId("user", user.id),
+      email,
+      name: user.name ?? user.email ?? "OpenWork User",
+    })
+
+    if (!access.allowed) {
+      return c.json({
+        error: "payment_required",
+        message: "Creating a workspace requires an active OpenWork Cloud plan.",
+        polar: {
+          checkoutUrl: access.checkoutUrl,
+          productId: env.polar.productId,
+          benefitId: env.polar.benefitId,
+        },
+      }, 402)
+    }
 
     const organizationId = await createOrganizationForUser({
       userId: normalizeDenTypeId("user", user.id),

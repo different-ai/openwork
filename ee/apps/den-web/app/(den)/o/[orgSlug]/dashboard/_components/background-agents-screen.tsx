@@ -21,6 +21,7 @@ import {
 import { DenInput } from "../../../../_components/ui/input";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
+import { OrgLimitDialog } from "../../../../_components/org-limit-dialog";
 import {
   OPENWORK_APP_CONNECT_BASE_URL,
   buildOpenworkAppConnectUrl,
@@ -31,6 +32,7 @@ import {
   requestJson,
   type WorkerListItem,
 } from "../../../../_lib/den-flow";
+import { buildDenFeedbackUrl } from "../../../../_lib/feedback";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import { getSharedSetupsRoute } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -309,9 +311,16 @@ export function BackgroundAgentsScreen() {
     workersError,
     launchBusy,
     launchWorker,
+    orgLimitError,
+    clearOrgLimitError,
     renameWorker,
     renameBusyWorkerId,
   } = useDenFlow();
+  const feedbackHref = buildDenFeedbackUrl({
+    pathname: `/o/${orgSlug}/dashboard/background-agents`,
+    orgSlug,
+    topic: "workspace-limits",
+  });
 
   async function handleAddWorkspace() {
     const result = await launchWorker({ source: "manual" });
@@ -403,6 +412,19 @@ export function BackgroundAgentsScreen() {
       description="Keep selected workflows running in the background without asking each teammate to run them locally."
       colors={["#E9FFE0", "#3E9A1D", "#B3F750", "#51F0A3"]}
     >
+      <OrgLimitDialog
+        open={Boolean(orgLimitError)}
+        title={orgLimitError?.limitType === "workers" ? "Worker limit reached" : "Member limit reached"}
+        message={orgLimitError?.message ?? "This workspace reached its current plan limit."}
+        detail={
+          orgLimitError
+            ? `${orgLimitError.currentCount} of ${orgLimitError.limit} ${orgLimitError.limitType} are already in use.`
+            : null
+        }
+        feedbackHref={feedbackHref}
+        onClose={clearOrgLimitError}
+      />
+
       <div className="mb-10 flex items-center gap-3">
         <DenButton
           icon={Plus}

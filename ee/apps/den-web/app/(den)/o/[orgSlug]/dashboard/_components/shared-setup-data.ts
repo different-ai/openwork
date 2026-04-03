@@ -2,25 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
+import { OPENWORK_FEEDBACK_URL, buildDenFeedbackUrl } from "../../../../_lib/feedback";
 
 export const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
-export const OPENWORK_FEEDBACK_URL = "https://openworklabs.com/feedback";
-
-export function buildDenFeedbackUrl(options?: {
-  pathname?: string;
-  orgSlug?: string;
-}) {
-  const url = new URL(OPENWORK_FEEDBACK_URL);
-  url.searchParams.set("source", "openwork-web-app");
-  url.searchParams.set("deployment", "web");
-  url.searchParams.set("entrypoint", options?.pathname ?? "dashboard");
-
-  if (options?.orgSlug) {
-    url.searchParams.set("org", options.orgSlug);
-  }
-
-  return url.toString();
-}
+export { OPENWORK_FEEDBACK_URL, buildDenFeedbackUrl };
 
 export function formatTemplateTimestamp(value: string | null, options?: { includeTime?: boolean }) {
   if (!value) {

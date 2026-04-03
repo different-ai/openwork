@@ -51,6 +51,14 @@ export type BillingSummary = {
   benefitId: string | null;
 };
 
+export type OrgLimitError = {
+  error: "org_limit_reached";
+  message: string;
+  limitType: "members" | "workers";
+  currentCount: number;
+  limit: number;
+};
+
 export type AuthUser = {
   id: string;
   email: string;
@@ -362,6 +370,29 @@ export function getErrorMessage(payload: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+export function getOrgLimitError(payload: unknown): OrgLimitError | null {
+  if (!isRecord(payload) || payload.error !== "org_limit_reached") {
+    return null;
+  }
+
+  if (
+    (payload.limitType !== "members" && payload.limitType !== "workers") ||
+    typeof payload.message !== "string" ||
+    typeof payload.currentCount !== "number" ||
+    typeof payload.limit !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    error: "org_limit_reached",
+    message: payload.message,
+    limitType: payload.limitType,
+    currentCount: payload.currentCount,
+    limit: payload.limit,
+  };
 }
 
 export function getUser(payload: unknown): AuthUser | null {

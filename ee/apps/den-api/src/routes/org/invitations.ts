@@ -6,6 +6,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { sendDenOrganizationInvitationEmail } from "../../email.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { listAssignableRoles } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName, orgIdParamSchema } from "./shared.js"
@@ -47,6 +48,17 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({
         error: "member_exists",
         message: "That email address is already a member of this organization.",
+      }, 409)
+    }
+
+    const memberLimit = await getOrganizationLimitStatus(payload.organization.id, "members")
+    if (memberLimit.exceeded) {
+      return c.json({
+        error: "org_limit_reached",
+        limitType: "members",
+        limit: memberLimit.limit,
+        currentCount: memberLimit.currentCount,
+        message: `This workspace currently supports up to ${memberLimit.limit} members. Contact support to increase the limit.`,
       }, 409)
     }
 

@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm"
-import { index, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
 
 export const DesktopHandoffGrantTable = mysqlTable(
@@ -25,7 +25,7 @@ export const OrganizationTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     slug: varchar("slug", { length: 255 }).notNull(),
     logo: varchar("logo", { length: 2048 }),
-    metadata: text("metadata"),
+    metadata: json("metadata").$type<Record<string, unknown> | null>(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()

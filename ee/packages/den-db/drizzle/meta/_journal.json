@@ -43,6 +43,13 @@
       "when": 1775077000006,
       "tag": "0006_skill_hub",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1775170250887,
+      "tag": "0007_organization_metadata_limits",
+      "breakpoints": true
     }
   ]
 }

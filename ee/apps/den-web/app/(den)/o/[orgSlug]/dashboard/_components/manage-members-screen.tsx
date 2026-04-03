@@ -18,8 +18,12 @@ import {
   DEN_ROLE_PERMISSION_OPTIONS,
   formatRoleLabel,
   getOrgAccessFlags,
+  getMembersRoute,
   splitRoleString,
 } from "../../../../_lib/den-org";
+import { type OrgLimitError, getOrgLimitError } from "../../../../_lib/den-flow";
+import { buildDenFeedbackUrl } from "../../../../_lib/feedback";
+import { OrgLimitDialog } from "../../../../_components/org-limit-dialog";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
@@ -142,6 +146,7 @@ export function ManageMembersScreen() {
   const [rolePermissionDraft, setRolePermissionDraft] = useState<
     Record<string, string[]>
   >({});
+  const [limitDialogError, setLimitDialogError] = useState<OrgLimitError | null>(null);
 
   const assignableRoles = useMemo(
     () => (orgContext?.roles ?? []).filter((role) => !role.protected),
@@ -188,6 +193,16 @@ export function ManageMembersScreen() {
       ]),
     );
   }, [orgContext?.members, orgContext?.teams]);
+
+  const feedbackHref = useMemo(
+    () =>
+      buildDenFeedbackUrl({
+        pathname: activeOrg ? getMembersRoute(activeOrg.slug) : "/organization",
+        orgSlug: activeOrg?.slug ?? null,
+        topic: "workspace-limits",
+      }),
+    [activeOrg],
+  );
 
   function resetInviteForm() {
     setInviteEmail("");
@@ -263,6 +278,12 @@ export function ManageMembersScreen() {
               await inviteMember({ email: inviteEmail, role: inviteRole });
               resetInviteForm();
             } catch (error) {
+              const limitError = getOrgLimitError(error);
+              if (limitError) {
+                setLimitDialogError(limitError);
+                return;
+              }
+
               setPageError(
                 error instanceof Error
                   ? error.message
@@ -601,6 +622,19 @@ export function ManageMembersScreen() {
       description="Invite teammates, adjust roles, and keep access clean."
       colors={["#F3EEFF", "#4A1D96", "#7C3AED", "#C4B5FD"]}
     >
+      <OrgLimitDialog
+        open={Boolean(limitDialogError)}
+        title={limitDialogError?.limitType === "members" ? "Member limit reached" : "Worker limit reached"}
+        message={limitDialogError?.message ?? "This workspace reached its current plan limit."}
+        detail={
+          limitDialogError
+            ? `${limitDialogError.currentCount} of ${limitDialogError.limit} ${limitDialogError.limitType} are already in use.`
+            : null
+        }
+        feedbackHref={feedbackHref}
+        onClose={() => setLimitDialogError(null)}
+      />
+
       {pageError ? (
         <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
           {pageError}

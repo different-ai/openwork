@@ -3,13 +3,11 @@ import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { db } from "../../db.js"
-import { env } from "../../env.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
-import { getRequiredUserEmail } from "../../user.js"
+import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import type { WorkerRouteVariables } from "./shared.js"
 import {
   continueCloudProvisioning,
-  countUserCloudWorkers,
   createWorkerSchema,
   deleteWorkerCascade,
   getLatestWorkerInstance,
@@ -17,7 +15,6 @@ import {
   getWorkerTokensAndConnect,
   listWorkersQuerySchema,
   parseWorkerIdParam,
-  requireCloudAccessOrPayment,
   toInstanceResponse,
   toWorkerResponse,
   token,
@@ -68,27 +65,16 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       return c.json({ error: "workspace_path_required" }, 400)
     }
 
-    if (input.destination === "cloud" && !env.devMode && (await countUserCloudWorkers(user.id)) > 0) {
-      const email = getRequiredUserEmail(user)
-      if (!email) {
-        return c.json({ error: "user_email_required" }, 400)
-      }
-
-      const access = await requireCloudAccessOrPayment({
-        userId: user.id,
-        email,
-        name: user.name ?? user.email ?? "OpenWork User",
-      })
-      if (!access.allowed) {
+    if (input.destination === "cloud") {
+      const workerLimit = await getOrganizationLimitStatus(orgId, "workers")
+      if (workerLimit.exceeded) {
         return c.json({
-          error: "payment_required",
-          message: "Additional cloud workers require an active Den Cloud plan.",
-          polar: {
-            checkoutUrl: access.checkoutUrl,
-            productId: env.polar.productId,
-            benefitId: env.polar.benefitId,
-          },
-        }, 402)
+          error: "org_limit_reached",
+          limitType: "workers",
+          limit: workerLimit.limit,
+          currentCount: workerLimit.currentCount,
+          message: `This workspace currently supports up to ${workerLimit.limit} workers. Contact support to increase the limit.`,
+        }, 409)
       }
     }
 

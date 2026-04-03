@@ -125,7 +125,18 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   ]);
 
   useEffect(() => {
-    if (!sessionHydrated || !user || resuming || onboardingPending || mockMode || redirectingRef.current) {
+    if (
+      !sessionHydrated ||
+      !user ||
+      resuming ||
+      onboardingPending ||
+      mockMode ||
+      redirectingRef.current ||
+      billingBusy ||
+      billingCheckoutBusy ||
+      !billingSummary ||
+      (billingSummary.featureGateEnabled && !billingSummary.hasActivePlan)
+    ) {
       return;
     }
 
@@ -143,7 +154,19 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
       .finally(() => {
         redirectingRef.current = false;
       });
-  }, [mockMode, onboardingPending, pathname, resolveUserLandingRoute, resuming, router, sessionHydrated, user]);
+  }, [
+    billingBusy,
+    billingCheckoutBusy,
+    billingSummary,
+    mockMode,
+    onboardingPending,
+    pathname,
+    resolveUserLandingRoute,
+    resuming,
+    router,
+    sessionHydrated,
+    user,
+  ]);
 
   if (!sessionHydrated || (!user && !mockMode)) {
     return (
@@ -174,16 +197,16 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[12ch]">Purchase worker access before launch.</h1>
+            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before creating your workspace.</h1>
             <p className="den-copy max-w-2xl">
-              Workers are disabled by default. Add one hosted OpenWork worker for $50/month, then launch it from your dashboard.
+              Start with one workspace plan for $50/month. Each plan includes up to 5 members and 1 hosted worker.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             {checkoutHref ? (
               <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
-                Purchase worker — $50/month
+                Purchase plan — $50/month
               </a>
             ) : (
               <button
@@ -201,7 +224,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
-            <span>$50/month per worker</span>
+            <span>$50/month per workspace</span>
             <span aria-hidden="true">•</span>
             <span>{planAmountLabel} billed monthly</span>
             <span aria-hidden="true">•</span>
@@ -279,7 +302,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your worker billing is active." : "Purchase a worker to enable hosted launches."}
+                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to create your first workspace."}
               </p>
             </div>
 
@@ -303,7 +326,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
             <div className="grid gap-3">
               {checkoutHref && !billingSummary.hasActivePlan ? (
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
-                  Purchase worker
+                  Purchase plan
                 </a>
               ) : null}
               {billingSummary.portalUrl ? (

@@ -11,6 +11,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { DEFAULT_ORGANIZATION_LIMITS, serializeOrganizationMetadata } from "./organization-limits.js"
 import { denDefaultDynamicOrganizationRoles, denOrganizationStaticRoles } from "./organization-access.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -401,16 +402,23 @@ async function createOrganizationRecord(input: {
   userId: UserId
   name: string
   logo?: string | null
-  metadata?: string | null
+  metadata?: Record<string, unknown> | null
 }) {
   const organizationId = createDenTypeId("organization")
+  const metadata =
+    input.metadata ?? {
+      limits: {
+        members: DEFAULT_ORGANIZATION_LIMITS.members,
+        workers: DEFAULT_ORGANIZATION_LIMITS.workers,
+      },
+    }
 
   await db.insert(OrganizationTable).values({
     id: organizationId,
     name: input.name,
     slug: organizationId,
     logo: input.logo ?? null,
-    metadata: input.metadata ?? null,
+    metadata,
   })
 
   await db.insert(MemberTable).values({
@@ -511,7 +519,7 @@ export async function listUserOrgs(userId: UserId) {
     name: row.organization.name,
     slug: row.organization.slug,
     logo: row.organization.logo,
-    metadata: row.organization.metadata,
+    metadata: serializeOrganizationMetadata(row.organization.metadata),
     role: row.role,
     orgMemberId: row.membershipId,
     membershipId: row.membershipId,
@@ -524,7 +532,7 @@ export async function resolveUserOrganizations(input: {
   activeOrganizationId?: string | null
   userId: UserId
 }) {
-  await ensurePersonalOrganizationForUser(input.userId)
+  await ensureUserOrgAccess({ userId: input.userId })
 
   const orgs = await listUserOrgs(input.userId)
 
@@ -628,7 +636,7 @@ export async function getOrganizationContextForUser(input: {
       name: organization.name,
       slug: organization.slug,
       logo: organization.logo,
-      metadata: organization.metadata,
+      metadata: serializeOrganizationMetadata(organization.metadata),
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
     },

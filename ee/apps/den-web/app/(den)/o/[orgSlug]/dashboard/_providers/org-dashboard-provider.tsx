@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
-import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
+import { getErrorMessage, getOrgLimitError, requestJson } from "../../../../_lib/den-flow";
 import {
   type DenOrgContext,
   type DenOrgSummary,
@@ -158,6 +158,10 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
+        if (response.status === 402) {
+          router.push("/checkout");
+          return;
+        }
         throw new Error(getErrorMessage(payload, `Failed to create organization (${response.status}).`));
       }
 
@@ -193,6 +197,10 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
+        const limitError = getOrgLimitError(payload);
+        if (limitError) {
+          throw limitError;
+        }
         throw new Error(getErrorMessage(payload, `Failed to invite member (${response.status}).`));
       }
     });

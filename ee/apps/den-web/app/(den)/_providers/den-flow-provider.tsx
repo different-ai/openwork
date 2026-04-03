@@ -16,6 +16,7 @@ import {
   type BillingSummary,
   type LaunchEvent,
   type OnboardingIntent,
+  type OrgLimitError,
   type RuntimeServiceName,
   type SocialAuthProvider,
   type WorkerLaunch,
@@ -31,6 +32,7 @@ import {
   getCheckoutUrl,
   getEmailDomain,
   getErrorMessage,
+  getOrgLimitError,
   getRuntimeServiceLabel,
   getSocialCallbackUrl,
   getSocialProviderLabel,
@@ -60,7 +62,7 @@ import {
   parseOrgListPayload,
 } from "../_lib/den-org";
 
-type LaunchWorkerResult = "success" | "checkout" | "error";
+type LaunchWorkerResult = "success" | "checkout" | "limit" | "error";
 type AuthNavigationResult = "dashboard" | "checkout" | "join-org" | null;
 
 type DenFlowContextValue = {
@@ -96,6 +98,8 @@ type DenFlowContextValue = {
   billingSubscriptionBusy: boolean;
   billingError: string | null;
   effectiveCheckoutUrl: string | null;
+  orgLimitError: OrgLimitError | null;
+  clearOrgLimitError: () => void;
   refreshBilling: (options?: { includeCheckout?: boolean; quiet?: boolean }) => Promise<BillingSummary | null>;
   handleSubscriptionCancellation: (cancelAtPeriodEnd: boolean) => Promise<void>;
   refreshCheckoutReturn: (sessionTokenPresent: boolean) => Promise<string>;
@@ -150,23 +154,6 @@ type DenFlowContextValue = {
 
 const DenFlowContext = createContext<DenFlowContextValue | null>(null);
 
-function readLocalStorage<T>(key: string): T | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const raw = window.localStorage.getItem(key);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
 function getPendingOrgInvitationId() {
   if (typeof window === "undefined") {
     return null;
@@ -211,6 +198,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [billingSubscriptionBusy, setBillingSubscriptionBusy] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [billingLoadedOnce, setBillingLoadedOnce] = useState(false);
+  const [orgLimitError, setOrgLimitError] = useState<OrgLimitError | null>(null);
 
   const [workerName, setWorkerName] = useState(DEFAULT_WORKER_NAME);
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
@@ -237,7 +225,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
 
-  const [onboardingIntent, setOnboardingIntent] = useState<OnboardingIntent | null>(() => readLocalStorage<OnboardingIntent>(ONBOARDING_INTENT_STORAGE_KEY));
+  const [onboardingIntent, setOnboardingIntent] = useState<OnboardingIntent | null>(null);
   const onboardingAutoLaunchKeyRef = useRef<string | null>(null);
   const socialSignupHandledRef = useRef<string | null>(null);
   const pendingWorkersRequestRef = useRef<Promise<{ response: Response; payload: unknown }> | null>(null);
@@ -1039,27 +1027,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function beginSignupOnboarding(authenticatedUser: AuthUser, authMethod: AuthMethod) {
+  async function beginSignupOnboarding(authenticatedUser: AuthUser, _authMethod: AuthMethod) {
     const autoName = deriveOnboardingWorkerName(authenticatedUser);
     setWorkerName(autoName);
     setLaunchError(null);
-    setLaunchStatus("Preparing your first worker.");
-
-    const intent: OnboardingIntent = {
-      version: 1,
-      workerName: autoName,
-      shouldLaunch: true,
-      completed: false,
-      authMethod
-    };
-
-    persistOnboardingIntent(intent);
-    const summary = await refreshBilling({ includeCheckout: true, quiet: true });
-    if (!summary) {
-      return "checkout" as const;
-    }
-
-    return !summary.featureGateEnabled || summary.hasActivePlan ? ("dashboard" as const) : ("checkout" as const);
+    setLaunchStatus("Create a workspace to get started.");
+    persistOnboardingIntent(null);
+    return "dashboard" as const;
   }
 
   async function resolveUserLandingRoute() {
@@ -1074,19 +1048,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     const dashboardRoute = await resolveDashboardRoute();
 
-    if (!onboardingPending) {
+    if (dashboardRoute) {
       return dashboardRoute;
     }
 
-    const summary =
-      billingSummary ??
-      (billingBusy || billingCheckoutBusy ? null : await refreshBilling({ includeCheckout: true, quiet: true }));
-
-    if (!summary) {
-      return "/checkout";
-    }
-
-    return !summary.featureGateEnabled || summary.hasActivePlan ? (dashboardRoute ?? "/") : "/checkout";
+    return "/organization";
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -1254,6 +1220,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setCheckoutUrl(null);
     setBillingSummary(null);
     setBillingError(null);
+    setOrgLimitError(null);
     setBillingBusy(false);
     setBillingCheckoutBusy(false);
     setBillingSubscriptionBusy(false);
@@ -1298,6 +1265,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     setLaunchBusy(true);
     setLaunchError(null);
+    setOrgLimitError(null);
     setCheckoutUrl(null);
     setLaunchStatus(options.source === "signup_auto" ? "Creating your first worker..." : "Checking worker billing and launch eligibility...");
     appendEvent("info", "Launch requested", resolvedLaunchName);
@@ -1315,6 +1283,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         },
         12000
       );
+
+      const limitError = getOrgLimitError(payload);
+      if (limitError) {
+        setOrgLimitError(limitError);
+        setLaunchStatus(limitError.message);
+        setLaunchError(limitError.message);
+        appendEvent("warning", "Workspace limit reached", limitError.message);
+        return "limit" as const;
+      }
 
       if (response.status === 402) {
         const url = getCheckoutUrl(payload);
@@ -1748,7 +1725,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     if (!summary.featureGateEnabled || summary.hasActivePlan) {
-      return (await resolveDashboardRoute()) ?? "/";
+      return (await resolveUserLandingRoute()) ?? "/organization";
     }
 
     return "/checkout" as const;
@@ -2078,6 +2055,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     billingSubscriptionBusy,
     billingError,
     effectiveCheckoutUrl,
+    orgLimitError,
+    clearOrgLimitError: () => setOrgLimitError(null),
     refreshBilling,
     handleSubscriptionCancellation,
     refreshCheckoutReturn,

@@ -93,11 +93,11 @@ export function BillingDashboardScreen() {
 
       <div className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
         <div className="mb-8 border-b border-gray-100 pb-6">
-          <p className="text-[15px] text-gray-700">
-            {billingSummary?.hasActivePlan
-              ? `This workspace's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
-              : "Workers are $50/month each. Purchase a worker to enable hosted launches for your team."}
-          </p>
+            <p className="text-[15px] text-gray-700">
+              {billingSummary?.hasActivePlan
+                ? `This workspace's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
+                : "Workspace plans are $50/month and include up to 5 members plus 1 hosted worker."}
+            </p>
         </div>
 
         <div className="mb-10 grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-2 lg:grid-cols-3">
@@ -144,7 +144,7 @@ export function BillingDashboardScreen() {
         <div className="flex flex-wrap items-center gap-3">
           {effectiveCheckoutUrl && !billingSummary?.hasActivePlan ? (
             <a href={effectiveCheckoutUrl} rel="noreferrer" className={buttonVariants({ variant: "primary" })}>
-              Purchase worker
+              Purchase plan
             </a>
           ) : null}
 
@@ -175,9 +175,9 @@ export function BillingDashboardScreen() {
             <p className="mt-1 text-[13px] text-gray-500">Free forever · open source</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
-            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Cloud worker</p>
+            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Workspace plan</p>
             <p className="text-[20px] font-semibold text-gray-900">$50<span className="text-[13px] font-medium text-gray-500">/month</span></p>
-            <p className="mt-1 text-[13px] text-gray-500">Per worker · 5 seats included</p>
+            <p className="mt-1 text-[13px] text-gray-500">5 members included · 1 hosted worker</p>
           </div>
           <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Enterprise</p>
