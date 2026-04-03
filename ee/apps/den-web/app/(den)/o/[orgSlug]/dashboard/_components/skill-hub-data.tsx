@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { composeSkillMarkdown, parseSkillMarkdown } from "../../../../../_lib/skill-markdown";
+import { composeSkillMarkdown, parseSkillMarkdown } from "@openwork-ee/utils";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 
 export type DenSkillShared = "org" | "public" | null;
