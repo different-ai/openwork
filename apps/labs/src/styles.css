@@ -1,0 +1,180 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, sans-serif;
+  background: #0b1020;
+  color: #e7ebff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #17203f 0%, #0b1020 55%, #05070f 100%);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button,
+input,
+textarea {
+  border-radius: 14px;
+  border: 1px solid rgba(142, 155, 255, 0.22);
+  background: rgba(15, 20, 38, 0.92);
+  color: inherit;
+  padding: 0.8rem 0.95rem;
+}
+
+button {
+  cursor: pointer;
+}
+
+button.primary {
+  background: linear-gradient(135deg, #6a7cff, #8f5dff);
+  border-color: transparent;
+}
+
+textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+code,
+pre {
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 360px;
+  gap: 16px;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.card {
+  border: 1px solid rgba(142, 155, 255, 0.18);
+  background: rgba(9, 13, 26, 0.82);
+  backdrop-filter: blur(18px);
+  border-radius: 24px;
+  padding: 16px;
+  min-height: 0;
+}
+
+.sidebar,
+.thread,
+.logs,
+.stack,
+.session-list,
+.messages,
+.log-list,
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.thread {
+  min-height: 0;
+}
+
+.thread-header,
+.connection,
+.session,
+.log {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-title {
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #90a0ff;
+}
+
+.muted,
+.session small {
+  color: #98a2c6;
+}
+
+.session {
+  align-items: center;
+  text-align: left;
+}
+
+.session.active {
+  border-color: rgba(132, 153, 255, 0.58);
+  background: rgba(40, 53, 104, 0.45);
+}
+
+.messages,
+.log-list {
+  overflow: auto;
+  min-height: 0;
+}
+
+.message {
+  border-radius: 18px;
+  padding: 14px;
+  border: 1px solid rgba(142, 155, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.message.user {
+  background: rgba(106, 124, 255, 0.16);
+}
+
+.message.error {
+  background: rgba(255, 76, 76, 0.16);
+}
+
+.message header {
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: #90a0ff;
+}
+
+.message pre,
+.log code {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log {
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.log.error {
+  background: rgba(255, 76, 76, 0.14);
+}
+
+.empty {
+  padding: 24px;
+  border-radius: 18px;
+  border: 1px dashed rgba(142, 155, 255, 0.2);
+  color: #98a2c6;
+}
+
+@media (max-width: 1100px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .logs {
+    min-height: 280px;
+  }
+}

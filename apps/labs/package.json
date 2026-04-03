@@ -1,0 +1,28 @@
+{
+  "name": "@openwork/labs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "dev:shell": "node ./scripts/dev-shell.mjs",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "start": "electron ./dist-electron/main.js"
+  },
+  "dependencies": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "electron": "^35.7.5",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12"
+  },
+  "packageManager": "pnpm@10.27.0"
+}
