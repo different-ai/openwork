@@ -58,7 +58,7 @@ type Props = {
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
-const COLLAPSED_SESSIONS_PREVIEW = MAX_SESSIONS_PREVIEW;
+const COLLAPSED_SESSIONS_PREVIEW = 2;
 
 type SessionListItem = WorkspaceSessionGroup["sessions"][number];
 type FlattenedSessionRow = { session: SessionListItem; depth: number };
