@@ -1,17 +1,53 @@
-import { For, Show, createMemo, createSignal, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
 import type { HubSkillCard, HubSkillRepo, SkillCard } from "../types";
 import { useExtensions } from "../extensions/provider";
 import type { SkillBundleV1 } from "../bundles/types";
+import { saveInstalledSkillToOpenWorkOrg } from "../bundles/skill-org-publish";
 
 import Button from "../components/button";
-import { Copy, Edit2, FolderOpen, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
+import {
+  ArrowLeft,
+  Copy,
+  Edit2,
+  FolderOpen,
+  Loader2,
+  Package,
+  Plus,
+  RefreshCw,
+  Rocket,
+  Search,
+  Share2,
+  Sparkles,
+  Trash2,
+  Upload,
+  Users,
+  X,
+} from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+import { buildDenAuthUrl, createDenClient, readDenSettings, type DenOrgSkillHubSummary } from "../lib/den";
 import { useStatusToasts, type AppStatusToastTone } from "../shell/status-toasts";
+import WorkspaceOptionCard from "../workspace/option-card";
+import {
+  errorBannerClass,
+  inputClass,
+  modalHeaderButtonClass,
+  modalHeaderClass,
+  modalOverlayClass,
+  modalShellClass,
+  modalSubtitleClass,
+  modalTitleClass,
+  pillPrimaryClass as sharePillPrimaryClass,
+  pillSecondaryClass as sharePillSecondaryClass,
+  successBannerClass,
+  surfaceCardClass,
+  tagClass as shareTagClass,
+} from "../workspace/modal-styles";
 
 type InstallResult = { ok: boolean; message: string };
 type SkillsFilter = "all" | "installed" | "hub";
+type ShareSkillSubView = "chooser" | "public" | "team";
 
 const pageTitleClass = "text-[28px] font-semibold tracking-[-0.5px] text-dls-text";
 const sectionTitleClass = "text-[15px] font-medium tracking-[-0.2px] text-dls-text";
@@ -66,9 +102,18 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const [shareTarget, setShareTarget] = createSignal<SkillCard | null>(null);
   const shareOpen = createMemo(() => shareTarget() != null);
+  const [shareSubView, setShareSubView] = createSignal<ShareSkillSubView>("chooser");
   const [shareBusy, setShareBusy] = createSignal(false);
   const [shareUrl, setShareUrl] = createSignal<string | null>(null);
   const [shareError, setShareError] = createSignal<string | null>(null);
+  const [cloudSessionNonce, setCloudSessionNonce] = createSignal(0);
+  const [shareTeamBusy, setShareTeamBusy] = createSignal(false);
+  const [shareTeamError, setShareTeamError] = createSignal<string | null>(null);
+  const [shareTeamSuccess, setShareTeamSuccess] = createSignal<string | null>(null);
+  const [shareHubChoice, setShareHubChoice] = createSignal("");
+  const [shareHubsLoading, setShareHubsLoading] = createSignal(false);
+  const [shareHubsError, setShareHubsError] = createSignal<string | null>(null);
+  const [shareManageableHubs, setShareManageableHubs] = createSignal<DenOrgSkillHubSummary[]>([]);
 
   const [selectedSkill, setSelectedSkill] = createSignal<SkillCard | null>(null);
   const [selectedContent, setSelectedContent] = createSignal("");
@@ -81,6 +126,97 @@ export default function SkillsView(props: SkillsViewProps) {
 
   onMount(() => {
     extensions.ensureHubSkillsFresh();
+    const onDenSession = () => setCloudSessionNonce((n) => n + 1);
+    window.addEventListener("openwork-den-session-updated", onDenSession);
+    onCleanup(() => window.removeEventListener("openwork-den-session-updated", onDenSession));
+  });
+
+  const shareCloudSignedIn = createMemo(() => {
+    cloudSessionNonce();
+    return Boolean(readDenSettings().authToken?.trim());
+  });
+
+  const shareTeamOrgLabel = createMemo(() => {
+    cloudSessionNonce();
+    const name = readDenSettings().activeOrgName?.trim();
+    return name || translate("skills.share_team_org_fallback");
+  });
+
+  const shareTeamDisabledReason = createMemo(() => {
+    if (!shareCloudSignedIn()) return null;
+    const settings = readDenSettings();
+    if (!settings.activeOrgId?.trim() && !settings.activeOrgSlug?.trim()) {
+      return translate("skills.share_team_choose_org");
+    }
+    return null;
+  });
+
+  const shareModalSubtitle = createMemo(() => {
+    switch (shareSubView()) {
+      case "public":
+        return translate("skills.share_subtitle_public");
+      case "team":
+        return translate("skills.share_subtitle_team");
+      default:
+        return translate("skills.share_chooser_subtitle");
+    }
+  });
+
+  createEffect(() => {
+    if (!shareOpen()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (shareSubView() !== "chooser") {
+        goBackShareSubView();
+        return;
+      }
+      closeShareLink();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
+
+  createEffect(() => {
+    if (!shareOpen() || shareSubView() !== "team" || !shareCloudSignedIn()) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      setShareHubsLoading(true);
+      setShareHubsError(null);
+      try {
+        const settings = readDenSettings();
+        const token = settings.authToken?.trim() ?? "";
+        if (!token) return;
+
+        let orgId = settings.activeOrgId?.trim() ?? "";
+        const client = createDenClient({ baseUrl: settings.baseUrl, token });
+        if (!orgId) {
+          const res = await client.listOrgs();
+          orgId = res.orgs[0]?.id ?? "";
+        }
+        if (!orgId) {
+          throw new Error(translate("skills.share_team_choose_org"));
+        }
+
+        const hubs = await client.listOrgSkillHubSummaries(orgId);
+        if (cancelled) return;
+        setShareManageableHubs(hubs.filter((h) => h.canManage));
+      } catch (e) {
+        if (!cancelled) {
+          setShareHubsError(maskError(e));
+          setShareManageableHubs([]);
+        }
+      } finally {
+        if (!cancelled) setShareHubsLoading(false);
+      }
+    })();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   const maskError = (value: unknown) => (value instanceof Error ? value.message : "Something went wrong");
@@ -204,16 +340,68 @@ export default function SkillsView(props: SkillsViewProps) {
   const openShareLink = (skill: SkillCard) => {
     if (props.busy) return;
     setShareTarget(skill);
+    setShareSubView("chooser");
     setShareBusy(false);
     setShareUrl(null);
     setShareError(null);
+    setShareTeamBusy(false);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    setShareHubChoice("");
+    setShareHubsError(null);
+    setShareManageableHubs([]);
+    setCloudSessionNonce((n) => n + 1);
   };
 
   const closeShareLink = () => {
     setShareTarget(null);
+    setShareSubView("chooser");
     setShareBusy(false);
     setShareUrl(null);
     setShareError(null);
+    setShareTeamBusy(false);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    setShareHubChoice("");
+    setShareHubsError(null);
+    setShareManageableHubs([]);
+  };
+
+  const goBackShareSubView = () => {
+    setShareSubView("chooser");
+    setShareError(null);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    setShareHubChoice("");
+    setShareHubsError(null);
+  };
+
+  const startShareSkillSignIn = () => {
+    const settings = readDenSettings();
+    window.open(buildDenAuthUrl(settings.baseUrl, "sign-in"), "_blank", "noopener,noreferrer");
+  };
+
+  const publishSkillToTeam = async () => {
+    const target = shareTarget();
+    if (!target) return;
+    if (props.busy || shareTeamBusy() || shareTeamDisabledReason()) return;
+    setShareTeamBusy(true);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    try {
+      const skill = await extensions.readSkill(target.name);
+      if (!skill) throw new Error("Failed to load skill");
+      const hubId = shareHubChoice().trim();
+      const { orgName } = await saveInstalledSkillToOpenWorkOrg({
+        skillText: skill.content,
+        skillHubId: hubId || null,
+      });
+      setShareTeamSuccess(t("skills.share_team_success", currentLocale(), { org: orgName }));
+    } catch (e) {
+      setShareTeamError(maskError(e));
+    } finally {
+      setShareTeamBusy(false);
+    }
   };
 
   const publishShareLink = async () => {
@@ -813,55 +1001,195 @@ export default function SkillsView(props: SkillsViewProps) {
       </Show>
 
       <Show when={shareOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6 space-y-4">
-              <div>
-                <h3 class="text-lg font-semibold text-dls-text">Share link</h3>
-                <p class="text-sm text-dls-secondary mt-1">
-                  Publish a public link. Anyone with the URL can install this skill.
-                </p>
+        <div class={`${modalOverlayClass} items-start pt-[10vh]`}>
+          <div class={`${modalShellClass} max-h-[78vh] max-w-md`} role="dialog" aria-modal="true">
+            <div class={modalHeaderClass}>
+              <div class="flex min-w-0 items-start gap-3">
+                <Show when={shareSubView() !== "chooser"}>
+                  <button
+                    type="button"
+                    onClick={goBackShareSubView}
+                    class={modalHeaderButtonClass}
+                    aria-label={translate("skills.share_back")}
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                </Show>
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h2 class={modalTitleClass}>{translate("skills.share_title")}</h2>
+                    <Show when={shareSubView() === "chooser"}>
+                      <span class={shareTagClass}>{shareTarget()?.name}</span>
+                    </Show>
+                  </div>
+                  <p class={modalSubtitleClass}>{shareModalSubtitle()}</p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={closeShareLink}
+                class={modalHeaderButtonClass}
+                aria-label={translate("skills.share_close")}
+                title={translate("skills.share_close")}
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-              <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
-                <div class="font-semibold text-dls-text">{shareTarget()?.name}</div>
-                <div class="mt-1 font-mono break-all">Publisher: {DEFAULT_OPENWORK_PUBLISHER_BASE_URL}</div>
-              </div>
-
-              <Show when={shareError()}>
-                <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
-                  {shareError()}
+            <div class="flex-1 overflow-y-auto px-6 pb-7 pt-2">
+              <Show when={shareSubView() === "chooser"}>
+                <div class="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
+                  <WorkspaceOptionCard
+                    title={translate("skills.share_option_team_title")}
+                    description={translate("skills.share_option_team_desc")}
+                    icon={Users}
+                    onClick={() => setShareSubView("team")}
+                  />
+                  <WorkspaceOptionCard
+                    title={translate("skills.share_option_public_title")}
+                    description={translate("skills.share_option_public_desc")}
+                    icon={Rocket}
+                    onClick={() => setShareSubView("public")}
+                  />
                 </div>
               </Show>
 
-              <Show
-                when={shareUrl()}
-                fallback={
-                  <div class="flex justify-end gap-2">
-                    <Button variant="outline" onClick={closeShareLink} disabled={shareBusy()}>
-                      {translate("common.cancel")}
-                    </Button>
-                    <Button variant="secondary" onClick={() => void publishShareLink()} disabled={shareBusy()}>
-                      {shareBusy() ? "Publishing…" : "Create link"}
-                    </Button>
+              <Show when={shareSubView() === "public"}>
+                <div class="space-y-5 pt-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <p class="text-[14px] leading-relaxed text-dls-secondary">{translate("skills.share_public_intro")}</p>
+
+                  <div class={surfaceCardClass}>
+                    <div class="mb-3 text-[12px] text-dls-secondary font-mono break-all">
+                      {translate("skills.share_publisher_label")}: {DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
+                    </div>
+
+                    <Show when={shareError()}>
+                      <div class={`mb-3 ${errorBannerClass}`}>{shareError()}</div>
+                    </Show>
+
+                    <Show
+                      when={shareUrl()}
+                      fallback={
+                        <button
+                          type="button"
+                          onClick={() => void publishShareLink()}
+                          disabled={shareBusy() || props.busy}
+                          class={`${sharePillPrimaryClass} w-full`}
+                        >
+                          {shareBusy() ? translate("skills.share_public_creating") : translate("skills.share_public_create")}
+                        </button>
+                      }
+                    >
+                      <div class="flex items-center gap-2">
+                        <input type="text" readonly value={shareUrl()!} class={`${inputClass} flex-1 font-mono text-[12px]`} />
+                        <button type="button" onClick={() => void copyShareLink()} class={sharePillSecondaryClass}>
+                          <Copy size={14} class="mr-1 inline" />
+                          {translate("skills.share_copy_link")}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void publishShareLink()}
+                        disabled={shareBusy()}
+                        class={`${sharePillSecondaryClass} mt-3 w-full`}
+                      >
+                        {shareBusy() ? translate("skills.share_public_creating") : translate("skills.share_public_regenerate")}
+                      </button>
+                    </Show>
                   </div>
-                }
-              >
-                <div class="flex items-start gap-2 rounded-xl bg-dls-hover border border-dls-border p-3">
-                  <div class="min-w-0 flex-1 text-xs text-dls-secondary font-mono break-all">{shareUrl()}</div>
-                  <Button
-                    variant="outline"
-                    onClick={() => void copyShareLink()}
-                    disabled={!shareUrl()}
-                  >
-                    <Copy size={14} />
-                    Copy link
-                  </Button>
+
+                  <div class="flex justify-end">
+                    <button type="button" onClick={closeShareLink} class={sharePillSecondaryClass}>
+                      {translate("skills.share_done")}
+                    </button>
+                  </div>
                 </div>
-                <div class="flex justify-end gap-2">
-                  <Button variant="secondary" onClick={closeShareLink}>
-                    Done
-                  </Button>
+              </Show>
+
+              <Show when={shareSubView() === "team"}>
+                <div class="space-y-5 pt-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <p class="text-[14px] leading-relaxed text-dls-secondary">{translate("skills.share_team_intro")}</p>
+
+                  <div class={surfaceCardClass}>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class={shareTagClass}>{shareTeamOrgLabel()}</span>
+                    </div>
+
+                    <Show when={shareTeamError()?.trim()}>
+                      <div class={`mt-4 ${errorBannerClass}`}>{shareTeamError()}</div>
+                    </Show>
+
+                    <Show when={shareTeamSuccess()?.trim()}>
+                      <div class={`mt-4 ${successBannerClass}`}>{shareTeamSuccess()}</div>
+                    </Show>
+
+                    <Show when={shareHubsError()?.trim()}>
+                      <div class={`mt-4 ${errorBannerClass}`}>{shareHubsError()}</div>
+                    </Show>
+
+                    <Show when={shareCloudSignedIn() && shareTeamDisabledReason()?.trim()}>
+                      <div class="mt-4 text-[12px] text-dls-secondary">{shareTeamDisabledReason()}</div>
+                    </Show>
+
+                    <Show when={shareCloudSignedIn() && shareManageableHubs().length > 0}>
+                      <label class="mt-4 block">
+                        <span class="mb-1.5 block text-[13px] font-medium text-dls-text">
+                          {translate("skills.share_team_hub_label")}
+                        </span>
+                        <select
+                          class={inputClass}
+                          value={shareHubChoice()}
+                          onChange={(e) => setShareHubChoice(e.currentTarget.value)}
+                          disabled={shareTeamBusy() || Boolean(shareTeamSuccess()?.trim())}
+                        >
+                          <option value="">{translate("skills.share_team_hub_none")}</option>
+                          <For each={shareManageableHubs()}>
+                            {(hub) => <option value={hub.id}>{hub.name}</option>}
+                          </For>
+                        </select>
+                      </label>
+                    </Show>
+
+                    <Show when={shareCloudSignedIn() && shareHubsLoading()}>
+                      <div class="mt-3 flex items-center gap-2 text-[12px] text-dls-secondary">
+                        <Loader2 size={14} class="animate-spin" />
+                        {translate("skills.share_team_hubs_loading")}
+                      </div>
+                    </Show>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!shareCloudSignedIn()) {
+                          startShareSkillSignIn();
+                          return;
+                        }
+                        void publishSkillToTeam();
+                      }}
+                      disabled={
+                        shareCloudSignedIn()
+                          ? Boolean(shareTeamDisabledReason()) || shareTeamBusy() || Boolean(shareTeamSuccess()?.trim())
+                          : false
+                      }
+                      class={`${sharePillPrimaryClass} mt-4 w-full`}
+                    >
+                      {!shareCloudSignedIn()
+                        ? translate("skills.share_team_sign_in")
+                        : shareTeamBusy()
+                          ? translate("skills.share_team_saving")
+                          : translate("skills.share_team_save")}
+                    </button>
+
+                    <Show when={!shareCloudSignedIn()}>
+                      <p class="mt-3 text-[12px] text-dls-secondary">{translate("skills.share_team_sign_in_hint")}</p>
+                    </Show>
+                  </div>
+
+                  <div class="flex justify-end">
+                    <button type="button" onClick={closeShareLink} class={sharePillSecondaryClass}>
+                      {translate("skills.share_done")}
+                    </button>
+                  </div>
                 </div>
               </Show>
             </div>
