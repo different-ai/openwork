@@ -86,7 +86,7 @@ type WorkspaceInput = {
   baseUrl: string;
   token?: string | null;
   kind?: "local" | "remote";
-  runtime?: "microsandbox" | "remote";
+  runtime?: "microsandbox" | "openwork-host" | "remote";
   repoPath?: string | null;
   hostPort?: number | null;
   sandboxName?: string | null;
@@ -1140,7 +1140,7 @@ export function useLabsApp(): Controller {
       token: input.token?.trim() || null,
       color: existing?.color ?? pickWorkspaceColor(id),
       kind: input.kind ?? existing?.kind ?? "remote",
-      runtime: input.runtime ?? existing?.runtime ?? (input.kind === "local" ? "microsandbox" : "remote"),
+      runtime: input.runtime ?? existing?.runtime ?? (input.kind === "local" ? "openwork-host" : "remote"),
       repoPath: input.repoPath?.trim() || existing?.repoPath || null,
       hostPort: input.hostPort ?? existing?.hostPort ?? null,
       sandboxName: input.sandboxName?.trim() || existing?.sandboxName || null,
@@ -1170,7 +1170,7 @@ export function useLabsApp(): Controller {
       token: null,
       color: pickWorkspaceColor(id),
       kind: "local",
-      runtime: "microsandbox",
+      runtime: "openwork-host",
       repoPath: sourceRepo,
       hostPort: null,
       sandboxName: `labs-${id}`,

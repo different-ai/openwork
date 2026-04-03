@@ -77,7 +77,7 @@ export type LabsWorkspace = {
   token?: string | null;
   color: string;
   kind?: "local" | "remote";
-  runtime?: "microsandbox" | "remote";
+  runtime?: "microsandbox" | "openwork-host" | "remote";
   repoPath?: string | null;
   hostPort?: number | null;
   sandboxName?: string | null;

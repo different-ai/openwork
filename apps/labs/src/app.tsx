@@ -540,7 +540,7 @@ export function App() {
       </main>
 
       {workspaceModalOpen ? (
-        <ModalFrame title="Create workspace" subtitle="Leave the URL blank to launch a local microsandbox workspace from a repo, or paste any OpenWork/OpenCode server URL.">
+        <ModalFrame title="Create workspace" subtitle="Leave the URL blank to launch a local OpenWork Host workspace from a repo, or paste any OpenWork/OpenCode server URL.">
           <div className="modal-field-grid">
             <label className="modal-field">
               <span>Name</span>
@@ -564,7 +564,7 @@ export function App() {
                 }
                 placeholder="https://worker.openworklabs.com/opencode"
               />
-              <small className="modal-help">Leave this blank to launch a local microsandbox workspace from a repo. Add an access token below for protected remote servers.</small>
+              <small className="modal-help">Leave this blank to launch a local OpenWork Host workspace from a repo. Add an access token below for protected remote servers.</small>
             </label>
 
             {!workspaceForm.baseUrl.trim() ? (
@@ -583,7 +583,7 @@ export function App() {
                     Browse
                   </button>
                 </div>
-                <small className="modal-help">Local workspaces boot OpenWork inside microsandbox using a snapshot of this repo.</small>
+                <small className="modal-help">Local workspaces boot OpenWork Host from this repo on your machine in this branch.</small>
               </label>
             ) : null}
 
@@ -740,7 +740,7 @@ export function App() {
                             onChange={(event) => setNewWorkspaceUrl(event.target.value)}
                             placeholder="https://worker.openworklabs.com/opencode"
                           />
-                          <small className="modal-help">Leave this blank to launch a local microsandbox workspace from a repo. Add an access token below for protected remote servers.</small>
+                          <small className="modal-help">Leave this blank to launch a local OpenWork Host workspace from a repo. Add an access token below for protected remote servers.</small>
                         </label>
                         {!newWorkspaceUrl.trim() ? (
                           <label className="modal-field">
@@ -756,7 +756,7 @@ export function App() {
                                 Browse
                               </button>
                             </div>
-                            <small className="modal-help">Local workspaces boot OpenWork inside microsandbox using a snapshot of this repo.</small>
+                            <small className="modal-help">Local workspaces boot OpenWork Host from this repo on your machine in this branch.</small>
                           </label>
                         ) : null}
                         {newWorkspaceUrl.trim() ? (

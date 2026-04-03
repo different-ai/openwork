@@ -18,6 +18,8 @@ const SESSION_LIMIT = 200;
 const OPENWORK_PORT = 8787;
 const MICROSANDBOX_IMAGE = process.env.LABS_MICROSANDBOX_IMAGE || "node:current-bookworm";
 const KERNEL_DIR = dirname(fileURLToPath(import.meta.url));
+const OPENWORK_HOST_DIR = resolve(KERNEL_DIR, "../../openwork-host");
+const OPENWORK_HOST_ENTRY = resolve(OPENWORK_HOST_DIR, "dist/index.js");
 const SDK_DIR = resolve(KERNEL_DIR, "../node_modules/@opencode-ai/sdk");
 const GUEST_START_PATH = resolve(KERNEL_DIR, "../runtime/guest-start.mjs");
 const OPENCODE_CACHE_DIR = resolve(KERNEL_DIR, "../.cache/opencode-linux-arm64");
@@ -210,6 +212,17 @@ async function ensureMicrosandbox() {
   }
 }
 
+async function ensureOpenworkHostBuild() {
+  try {
+    return await ensurePath(OPENWORK_HOST_ENTRY);
+  } catch {
+    await run("pnpm", ["--filter", "openwork-host", "build"], {
+      cwd: resolve(KERNEL_DIR, "../../.."),
+    });
+    return ensurePath(OPENWORK_HOST_ENTRY);
+  }
+}
+
 async function ensureGuestAssets() {
   await ensurePath(SDK_DIR);
   await ensurePath(GUEST_START_PATH);
@@ -318,6 +331,73 @@ async function maybeResolveRemoteBase(workspace) {
   }
 }
 
+async function ensureOpenworkHostWorkspace(workspace) {
+  if (!workspace.repoPath?.trim()) {
+    throw new Error("Choose a repository folder for this workspace.");
+  }
+
+  const existing = runtimeState.hosts.get(workspace.id);
+  if (existing) {
+    return {
+      ...workspace,
+      baseUrl: existing.baseUrl,
+      runtime: "openwork-host",
+      kind: "local",
+      hostPort: existing.hostPort,
+      serverType: "opencode",
+      serverWorkspaceId: null,
+    };
+  }
+
+  await ensureOpenworkHostBuild();
+  const hostPort = Number.isFinite(workspace.hostPort) && workspace.hostPort ? workspace.hostPort : await getFreePort();
+  const child = spawn("node", [OPENWORK_HOST_ENTRY], {
+    cwd: OPENWORK_HOST_DIR,
+    env: {
+      ...process.env,
+      OPENWORK_HOST_PORT: String(hostPort),
+      OPENWORK_HOST_WORKSPACE_DIR: workspace.repoPath.trim(),
+      OPENWORK_HOST_MODEL_PROVIDER: process.env.OPENWORK_HOST_MODEL_PROVIDER,
+      OPENWORK_HOST_MODEL_ID: process.env.OPENWORK_HOST_MODEL_ID,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let output = "";
+  child.stdout?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+
+  const baseUrl = `http://127.0.0.1:${hostPort}`;
+  await waitFor(() => fetchJson(`${baseUrl}/global/health`, null), 30_000, 1_000).catch((error) => {
+    child.kill();
+    throw new Error(`${describeError(error)}\n${output}`.trim());
+  });
+
+  runtimeState.hosts.set(workspace.id, {
+    child,
+    hostPort,
+    baseUrl,
+  });
+
+  child.once("exit", () => {
+    runtimeState.hosts.delete(workspace.id);
+  });
+
+  return {
+    ...workspace,
+    baseUrl,
+    runtime: "openwork-host",
+    kind: "local",
+    hostPort,
+    serverType: "opencode",
+    serverWorkspaceId: null,
+  };
+}
+
 async function ensureMicrosandboxWorkspace(workspace) {
   if (!workspace.repoPath?.trim()) {
     throw new Error("Choose a repository folder for this workspace.");
@@ -423,6 +503,7 @@ const runtimeState = {
   localBoot: null,
   workspaces: new Map(),
   locals: new Map(),
+  hosts: new Map(),
 };
 
 async function ensureLocalServer() {
@@ -506,7 +587,13 @@ async function removeWorkspace(workspaceId) {
   const workspace = cleanupWorkspaceEntry(workspaceId);
   const local = runtimeState.locals.get(workspaceId) ?? null;
   runtimeState.locals.delete(workspaceId);
+  const host = runtimeState.hosts.get(workspaceId) ?? null;
+  runtimeState.hosts.delete(workspaceId);
   if (!workspace) return true;
+
+  if (host?.child && !host.child.killed) {
+    host.child.kill();
+  }
 
   if (local?.sandbox) {
     try {
@@ -573,7 +660,9 @@ async function refreshWorkspace(workspaceId) {
 
 async function ensureWorkspace(workspace) {
   let normalized = { ...workspace };
-  if (normalized.kind === "local" || normalized.runtime === "microsandbox" || normalized.repoPath?.trim()) {
+  if (normalized.runtime === "openwork-host") {
+    normalized = await ensureOpenworkHostWorkspace(normalized);
+  } else if (normalized.kind === "local" || normalized.runtime === "microsandbox" || normalized.repoPath?.trim()) {
     normalized = await ensureMicrosandboxWorkspace(normalized);
   } else {
     normalized = await maybeResolveRemoteBase(normalized);
@@ -691,6 +780,12 @@ function teardownKernel() {
   }
   for (const [workspaceId] of runtimeState.locals.entries()) {
     runtimeState.locals.delete(workspaceId);
+  }
+  for (const [workspaceId, host] of runtimeState.hosts.entries()) {
+    runtimeState.hosts.delete(workspaceId);
+    if (host.child && !host.child.killed) {
+      host.child.kill();
+    }
   }
   runtimeState.localRuntime?.close();
   runtimeState.localRuntime = null;

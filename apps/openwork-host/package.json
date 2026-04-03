@@ -1,0 +1,22 @@
+{
+  "name": "openwork-host",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.4",
+    "@mariozechner/pi-ai": "^0.64.0",
+    "@mariozechner/pi-coding-agent": "^0.64.0",
+    "hono": "^4.10.1",
+    "nanoid": "^5.1.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  }
+}
