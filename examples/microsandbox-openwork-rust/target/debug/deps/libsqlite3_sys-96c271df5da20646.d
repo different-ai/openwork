@@ -1,9 +1,0 @@
-/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/libsqlite3_sys-96c271df5da20646.d: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/src/error.rs /Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/build/libsqlite3-sys-9f9f5c2dde48b09b/out/bindgen.rs
-
-/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/deps/liblibsqlite3_sys-96c271df5da20646.rmeta: /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/src/lib.rs /Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/src/error.rs /Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/build/libsqlite3-sys-9f9f5c2dde48b09b/out/bindgen.rs
-
-/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/src/lib.rs:
-/Users/benjaminshafii/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/src/error.rs:
-/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/build/libsqlite3-sys-9f9f5c2dde48b09b/out/bindgen.rs:
-
-# env-dep:OUT_DIR=/Users/benjaminshafii/openwork-enterprise/_repos/openwork/_worktrees/microsandbox-openwork-server/examples/microsandbox-openwork-rust/target/debug/build/libsqlite3-sys-9f9f5c2dde48b09b/out

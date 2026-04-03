@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=/Users/benjaminshafii/.microsandbox/bin/msb
-cargo:rerun-if-changed=/Users/benjaminshafii/.microsandbox/lib/libkrunfw.5.dylib

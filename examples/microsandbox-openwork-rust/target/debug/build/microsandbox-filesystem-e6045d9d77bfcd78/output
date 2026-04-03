@@ -1,4 +1,0 @@
-cargo:rerun-if-changed=build.rs
-cargo:rerun-if-changed=../utils/lib/lib.rs
-cargo:rerun-if-changed=../agentd
-cargo:rerun-if-changed=../protocol

@@ -1,4 +1,0 @@
-cargo:rerun-if-changed=build.rs
-cargo:rerun-if-env-changed=LIBCAPNG_LIB_PATH
-cargo:rerun-if-env-changed=LIBCAPNG_LINK_TYPE
-cargo:rustc-link-lib=dylib=cap-ng

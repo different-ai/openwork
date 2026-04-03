@@ -1,1 +1,0 @@
-cargo:rerun-if-changed=assets/oid_db.txt
