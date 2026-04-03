@@ -2944,7 +2944,6 @@ function resolveOpencodeStateLayout(options: {
     env: {
       OPENWORK_DEV_MODE: "1",
       OPENCODE_TEST_HOME: homeDir,
-      HOME: homeDir,
       XDG_CONFIG_HOME: xdgConfigHome,
       XDG_DATA_HOME: xdgDataHome,
       XDG_CACHE_HOME: xdgCacheHome,

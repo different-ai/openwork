@@ -98,7 +98,6 @@ pub fn spawn_engine(
         let dev_paths = resolve_dev_mode_paths(app)?;
         command = command.env("OPENWORK_DEV_MODE", "1");
         command = command.env("OPENCODE_TEST_HOME", &dev_paths.home_dir);
-        command = command.env("HOME", dev_paths.home_dir);
         command = command.env("XDG_CONFIG_HOME", dev_paths.xdg_config_home);
         command = command.env("XDG_DATA_HOME", dev_paths.xdg_data_home);
         command = command.env("XDG_CACHE_HOME", dev_paths.xdg_cache_home);
