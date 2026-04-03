@@ -1300,35 +1300,12 @@ export default {
   "question_modal.custom_answer_label": "Or type a custom answer",
   "question_modal.custom_answer_placeholder": "Type your answer here...",
 
-  // ==================== Onboarding Workspace Selector ====================
-  "onboarding.empty_worker": "Empty worker",
-  "onboarding.empty_worker_desc": "Start with a blank folder and add what you need.",
-
   // ==================== Common (additions) ====================
-  "common.something_went_wrong": "Something went wrong",
   "common.navigate": "navigate",
   "common.select": "select",
   "common.submit": "Submit",
   "common.next": "Next",
   "common.question": "Question",
-
-  // ==================== Shared bundle import ====================
-  "bundle.import_one_skill": "Import 1 skill",
-  "bundle.skill_description": "Add `{name}` to an existing worker or create a new one for it.",
-  "bundle.import_n_skills": "Import {count} skills",
-  "bundle.skills_set_description": "{name} is ready to import into an existing worker or a new worker.",
-  "bundle.shared_skills_fallback": "Shared skills",
-  "bundle.open_workspace_template": "Open workspace template",
-  "bundle.workspace_profile_description": "{name} is ready to start in a new worker or import into an existing one.",
-  "bundle.workspace_template_fallback": "This shared workspace template",
-  "bundle.shared_workspace_profile_fallback": "Shared workspace profile",
-  "bundle.invalid_payload": "Invalid shared bundle payload.",
-  "bundle.unsupported_version": "Unsupported bundle schema version.",
-  "bundle.invalid_skill_payload": "Invalid skill bundle payload.",
-  "bundle.no_importable_skills": "Skills set bundle has no importable skills.",
-  "bundle.missing_workspace_payload": "Workspace profile bundle is missing workspace payload.",
-  "bundle.invalid_url": "Invalid shared bundle URL.",
-  "bundle.url_must_be_https": "Shared bundle URL must use http(s).",
 
   // ==================== Providers store ====================
   "providers.api_key_label": "API key",
