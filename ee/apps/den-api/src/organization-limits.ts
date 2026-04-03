@@ -1,5 +1,5 @@
-import { eq, sql } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable, WorkerTable } from "@openwork-ee/den-db/schema"
+import { and, eq, gt, sql } from "@openwork-ee/den-db/drizzle"
+import { InvitationTable, MemberTable, OrganizationTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
 
 export const DEFAULT_ORGANIZATION_LIMITS = {
@@ -116,6 +116,15 @@ async function countOrganizationMembers(organizationId: OrganizationId) {
   return Number(rows[0]?.count ?? 0)
 }
 
+async function countPendingOrganizationInvitations(organizationId: OrganizationId) {
+  const rows = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(InvitationTable)
+    .where(and(eq(InvitationTable.organizationId, organizationId), eq(InvitationTable.status, "pending"), gt(InvitationTable.expiresAt, new Date())))
+
+  return Number(rows[0]?.count ?? 0)
+}
+
 async function countOrganizationWorkers(organizationId: OrganizationId) {
   const rows = await db
     .select({ count: sql<number>`count(*)` })
@@ -129,7 +138,7 @@ export async function getOrganizationLimitStatus(organizationId: OrganizationId,
   const metadata = await getOrInitializeOrganizationMetadata(organizationId)
   const currentCount =
     limitType === "members"
-      ? await countOrganizationMembers(organizationId)
+      ? (await countOrganizationMembers(organizationId)) + (await countPendingOrganizationInvitations(organizationId))
       : await countOrganizationWorkers(organizationId)
 
   const limit = metadata.limits[limitType]

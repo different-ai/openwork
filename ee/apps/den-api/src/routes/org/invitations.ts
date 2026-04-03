@@ -51,17 +51,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       }, 409)
     }
 
-    const memberLimit = await getOrganizationLimitStatus(payload.organization.id, "members")
-    if (memberLimit.exceeded) {
-      return c.json({
-        error: "org_limit_reached",
-        limitType: "members",
-        limit: memberLimit.limit,
-        currentCount: memberLimit.currentCount,
-        message: `This workspace currently supports up to ${memberLimit.limit} members. Contact support to increase the limit.`,
-      }, 409)
-    }
-
     const existingInvitation = await db
       .select()
       .from(InvitationTable)
@@ -74,6 +63,19 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         ),
       )
       .limit(1)
+
+    if (!existingInvitation[0]) {
+      const memberLimit = await getOrganizationLimitStatus(payload.organization.id, "members")
+      if (memberLimit.exceeded) {
+        return c.json({
+          error: "org_limit_reached",
+          limitType: "members",
+          limit: memberLimit.limit,
+          currentCount: memberLimit.currentCount,
+          message: `This workspace currently supports up to ${memberLimit.limit} members. Contact support to increase the limit.`,
+        }, 409)
+      }
+    }
 
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7)
     const invitationId = existingInvitation[0]?.id ?? createInvitationId()

@@ -9,9 +9,55 @@ import { useDenFlow } from "../_providers/den-flow-provider";
 
 type SettingsTab = "profile" | "organizations";
 
+const PENDING_ORG_DRAFT_STORAGE_KEY = "openwork-den-pending-org-draft";
+
+function readPendingOrgDraft(userEmail: string | null | undefined) {
+  if (typeof window === "undefined" || !userEmail) {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(PENDING_ORG_DRAFT_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { name?: unknown; email?: unknown };
+    if (typeof parsed.name !== "string" || typeof parsed.email !== "string") {
+      return null;
+    }
+
+    return parsed.email === userEmail ? parsed.name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePendingOrgDraft(name: string, userEmail: string | null | undefined) {
+  if (typeof window === "undefined" || !userEmail) {
+    return;
+  }
+
+  window.localStorage.setItem(
+    PENDING_ORG_DRAFT_STORAGE_KEY,
+    JSON.stringify({
+      name,
+      email: userEmail,
+    }),
+  );
+}
+
+function clearPendingOrgDraft() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(PENDING_ORG_DRAFT_STORAGE_KEY);
+}
+
 export function OrganizationScreen() {
   const router = useRouter();
-  const { user, sessionHydrated, signOut } = useDenFlow();
+  const { user, sessionHydrated, signOut, billingSummary } = useDenFlow();
   const [orgs, setOrgs] = useState<DenOrgSummary[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +66,7 @@ export function OrganizationScreen() {
   const [createName, setCreateName] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [hasPendingOrgDraft, setHasPendingOrgDraft] = useState(false);
 
   const userDisplayName = useMemo(() => {
     const trimmedName = user?.name?.trim();
@@ -35,6 +82,8 @@ export function OrganizationScreen() {
 
   const activeOrg = useMemo(() => orgs.find((org) => org.isActive) ?? null, [orgs]);
   const showDirectCreateFlow = orgs.length === 0;
+  const returningToSavedDraft = showDirectCreateFlow && hasPendingOrgDraft;
+  const draftReadyAfterCheckout = returningToSavedDraft && Boolean(billingSummary?.hasActivePlan);
 
   useEffect(() => {
     if (!sessionHydrated) return;
@@ -74,6 +123,28 @@ export function OrganizationScreen() {
     };
   }, [sessionHydrated, user, router]);
 
+  useEffect(() => {
+    if (!user?.email) {
+      setHasPendingOrgDraft(false);
+      return;
+    }
+
+    if (!showDirectCreateFlow) {
+      clearPendingOrgDraft();
+      setHasPendingOrgDraft(false);
+      return;
+    }
+
+    const savedName = readPendingOrgDraft(user.email);
+    if (!savedName) {
+      setHasPendingOrgDraft(false);
+      return;
+    }
+
+    setCreateName((current) => current || savedName);
+    setHasPendingOrgDraft(true);
+  }, [showDirectCreateFlow, user?.email]);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = createName.trim();
@@ -89,6 +160,8 @@ export function OrganizationScreen() {
 
       if (!response.ok) {
         if (response.status === 402) {
+          writePendingOrgDraft(trimmed, user?.email);
+          setHasPendingOrgDraft(true);
           setCreateBusy(false);
           router.push("/checkout");
           return;
@@ -106,6 +179,8 @@ export function OrganizationScreen() {
         throw new Error("Organization was created, but no slug was returned.");
       }
 
+      clearPendingOrgDraft();
+      setHasPendingOrgDraft(false);
       router.push(getOrgDashboardRoute(nextSlug));
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create organization.");
@@ -153,9 +228,15 @@ export function OrganizationScreen() {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-medium uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-                  <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-gray-950">Create your first organization.</h1>
+                  <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-gray-950">
+                    {returningToSavedDraft ? "Finish creating your organization." : "Create your first organization."}
+                  </h1>
                   <p className="mt-3 max-w-xl text-sm leading-6 text-gray-500">
-                    Name the workspace you want to set up for your team. If billing is enabled, the plan step comes right after this.
+                    {draftReadyAfterCheckout
+                      ? "Your plan is ready. Confirm the workspace name below and create the workspace to finish setup."
+                      : returningToSavedDraft
+                        ? "We saved your workspace name so you can pick up right where you left off."
+                        : "Name the workspace you want to set up for your team. If billing is enabled, the plan step comes right after this."}
                   </p>
                 </div>
               </div>
@@ -188,7 +269,7 @@ export function OrganizationScreen() {
                     disabled={createBusy || !createName.trim()}
                     className="rounded-2xl bg-gray-900 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
                   >
-                    {createBusy ? "Creating..." : "Continue"}
+                    {createBusy ? "Creating..." : returningToSavedDraft ? "Create organization" : "Continue"}
                   </button>
                   <p className="text-sm text-gray-500">Signed in as {user?.email ?? "your account"}</p>
                 </div>
