@@ -8,4 +8,5 @@ publish = false
 anyhow = "1"
 microsandbox = "0.3.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }

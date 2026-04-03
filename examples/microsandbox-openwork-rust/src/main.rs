@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use microsandbox::{ExecEvent, NetworkPolicy, Sandbox};
 use reqwest::StatusCode;
 use std::env;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[tokio::main]
@@ -10,10 +11,12 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| "openwork-microsandbox:dev".to_string());
     let name = env::var("OPENWORK_MICROSANDBOX_NAME")
         .unwrap_or_else(|_| "openwork-microsandbox-rust".to_string());
-    let workspace_volume = env::var("OPENWORK_MICROSANDBOX_WORKSPACE_VOLUME")
-        .unwrap_or_else(|_| format!("{name}-workspace"));
-    let data_volume =
-        env::var("OPENWORK_MICROSANDBOX_DATA_VOLUME").unwrap_or_else(|_| format!("{name}-data"));
+    let workspace_dir = env::var("OPENWORK_MICROSANDBOX_WORKSPACE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| default_bind_dir(&name, "workspace"));
+    let data_dir = env::var("OPENWORK_MICROSANDBOX_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| default_bind_dir(&name, "data"));
     let replace = env_flag("OPENWORK_MICROSANDBOX_REPLACE");
     let host_port = env::var("OPENWORK_MICROSANDBOX_PORT")
         .ok()
@@ -30,8 +33,8 @@ async fn main() -> Result<()> {
         "Starting microsandbox `{name}` from image `{image}` on http://{connect_host}:{host_port}"
     );
 
-    ensure_named_volume(&workspace_volume).await?;
-    ensure_named_volume(&data_volume).await?;
+    ensure_bind_dir(&workspace_dir).await?;
+    ensure_bind_dir(&data_dir).await?;
 
     let mut builder = Sandbox::builder(&name)
         .image(image.as_str())
@@ -42,8 +45,10 @@ async fn main() -> Result<()> {
         .env("OPENWORK_HOST_TOKEN", &host_token)
         .env("OPENWORK_APPROVAL_MODE", "auto")
         .port(host_port, 8787)
-        .volume("/workspace", |v| v.named(&workspace_volume))
-        .volume("/data", |v| v.named(&data_volume))
+        .volume("/workspace", |v| {
+            v.bind(workspace_dir.to_string_lossy().as_ref())
+        })
+        .volume("/data", |v| v.bind(data_dir.to_string_lossy().as_ref()))
         .network(|n| n.policy(NetworkPolicy::allow_all()));
 
     if replace {
@@ -91,8 +96,8 @@ async fn main() -> Result<()> {
     println!("Remote connect URL: http://{connect_host}:{host_port}");
     println!("Remote connect token: {client_token}");
     println!("Host/admin token: {host_token}");
-    println!("Workspace volume: {workspace_volume}");
-    println!("Data volume: {data_volume}");
+    println!("Workspace dir: {}", workspace_dir.display());
+    println!("Data dir: {}", data_dir.display());
     println!("Sandbox logs are streaming below.");
     println!("Press Ctrl+C to stop the sandbox.");
 
@@ -116,18 +121,17 @@ fn env_flag(name: &str) -> bool {
     )
 }
 
-async fn ensure_named_volume(name: &str) -> Result<()> {
-    match microsandbox::Volume::get(name).await {
-        Ok(_) => Ok(()),
-        Err(microsandbox::MicrosandboxError::VolumeNotFound(_)) => {
-            microsandbox::Volume::builder(name)
-                .create()
-                .await
-                .with_context(|| format!("failed to create named volume `{name}`"))?;
-            Ok(())
-        }
-        Err(error) => Err(error).with_context(|| format!("failed to access volume `{name}`")),
-    }
+fn default_bind_dir(name: &str, suffix: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(".state")
+        .join(name)
+        .join(suffix)
+}
+
+async fn ensure_bind_dir(path: &Path) -> Result<()> {
+    tokio::fs::create_dir_all(path)
+        .await
+        .with_context(|| format!("failed to create bind mount directory `{}`", path.display()))
 }
 
 async fn wait_for_health(base_url: &str) -> Result<()> {
@@ -181,4 +185,138 @@ async fn verify_remote_connect(base_url: &str, token: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+    use std::env::temp_dir;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[tokio::test]
+    #[ignore = "requires microsandbox runtime and a pullable OCI image"]
+    async fn rust_example_smoke_test_checks_health_and_session_endpoints() -> Result<()> {
+        let image = env::var("OPENWORK_MICROSANDBOX_IMAGE")
+            .unwrap_or_else(|_| "ttl.sh/openwork-microsandbox-11559:1d".to_string());
+        let connect_host = "127.0.0.1";
+        let client_token = "some-shared-secret";
+        let host_token = "some-owner-secret";
+        let host_port = 28787;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_millis();
+        let short = unique % 1_000_000;
+        let name = format!("owmsb-{short}");
+        let base_dir = temp_dir().join(format!("owmsb-{short}"));
+        let workspace_dir = base_dir.join("workspace");
+        let data_dir = base_dir.join("data");
+
+        ensure_bind_dir(&workspace_dir).await?;
+        ensure_bind_dir(&data_dir).await?;
+
+        let sandbox = Sandbox::builder(&name)
+            .image(image.as_str())
+            .replace()
+            .memory(2048)
+            .cpus(2)
+            .env("OPENWORK_CONNECT_HOST", connect_host)
+            .env("OPENWORK_TOKEN", client_token)
+            .env("OPENWORK_HOST_TOKEN", host_token)
+            .env("OPENWORK_APPROVAL_MODE", "auto")
+            .port(host_port, 8787)
+            .volume("/workspace", |v| {
+                v.bind(workspace_dir.to_string_lossy().as_ref())
+            })
+            .volume("/data", |v| v.bind(data_dir.to_string_lossy().as_ref()))
+            .network(|n| n.policy(NetworkPolicy::allow_all()))
+            .create()
+            .await?;
+
+        let server = sandbox
+            .exec_stream(
+                "/bin/sh",
+                ["-lc", "/usr/local/bin/microsandbox-entrypoint.sh"],
+            )
+            .await?;
+
+        let log_task = tokio::spawn(async move {
+            let mut server = server;
+            while let Some(event) = server.recv().await {
+                match event {
+                    ExecEvent::Stdout(data) => print!("{}", String::from_utf8_lossy(&data)),
+                    ExecEvent::Stderr(data) => eprint!("{}", String::from_utf8_lossy(&data)),
+                    ExecEvent::Exited { code } => {
+                        eprintln!("test microsandbox entrypoint exited with code {code}");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let base_url = format!("http://127.0.0.1:{host_port}");
+        let result = async {
+            wait_for_health(&base_url).await?;
+            verify_remote_connect(&base_url, client_token).await?;
+
+            let client = reqwest::Client::new();
+            let workspaces: Value = client
+                .get(format!("{base_url}/workspaces"))
+                .bearer_auth(client_token)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            let workspace_id = workspaces
+                .get("items")
+                .and_then(Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("id"))
+                .and_then(Value::as_str)
+                .context("missing workspace id from /workspaces")?;
+
+            let created: Value = client
+                .post(format!("{base_url}/w/{workspace_id}/opencode/session"))
+                .bearer_auth(client_token)
+                .json(&json!({ "title": "Rust microsandbox smoke test" }))
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            let session_id = created
+                .get("id")
+                .and_then(Value::as_str)
+                .context("missing session id from session create response")?;
+
+            client
+                .get(format!(
+                    "{base_url}/w/{workspace_id}/opencode/session/{session_id}"
+                ))
+                .bearer_auth(client_token)
+                .send()
+                .await?
+                .error_for_status()?;
+
+            client
+                .get(format!(
+                    "{base_url}/w/{workspace_id}/opencode/session/{session_id}/message?limit=10"
+                ))
+                .bearer_auth(client_token)
+                .send()
+                .await?
+                .error_for_status()?;
+
+            Result::<()>::Ok(())
+        }
+        .await;
+
+        let stop_result = sandbox.stop().await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), log_task).await;
+        stop_result?;
+        result
+    }
 }

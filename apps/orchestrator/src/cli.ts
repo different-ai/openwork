@@ -3501,6 +3501,19 @@ async function waitForOpencodeHealthy(
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
+
+    try {
+      // Some environments have a broken OpenCode /health probe even while the
+      // core API surface is already usable. Accept a successful path lookup as
+      // readiness so session APIs can come up in those runtimes.
+      unwrap(await client.path.get());
+      return { healthy: true, degraded: true, reason: lastError ?? undefined };
+    } catch (error) {
+      if (!lastError) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   throw new Error(lastError ?? "Timed out waiting for OpenCode health");
