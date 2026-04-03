@@ -69,3 +69,13 @@ export const errorBannerClass =
 
 export const successBannerClass =
   "rounded-[20px] border border-emerald-7/20 bg-emerald-3/30 px-4 py-3 text-[13px] text-emerald-11";
+
+/** Softer inline notices inside modals (avoids heavy outlines on light surfaces) */
+export const modalNoticeNeutralClass =
+  "rounded-xl border border-dls-border bg-dls-hover px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
+
+export const modalNoticeSuccessClass =
+  "rounded-xl border border-dls-border bg-emerald-2/25 px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
+
+export const modalNoticeErrorClass =
+  "rounded-xl border border-dls-border bg-red-2/20 px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";

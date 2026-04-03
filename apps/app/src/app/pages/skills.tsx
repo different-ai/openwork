@@ -6,6 +6,7 @@ import type { SkillBundleV1 } from "../bundles/types";
 import { saveInstalledSkillToOpenWorkOrg } from "../bundles/skill-org-publish";
 
 import Button from "../components/button";
+import SelectMenu, { type SelectMenuOption } from "../components/select-menu";
 import {
   ArrowLeft,
   Copy,
@@ -30,17 +31,17 @@ import { buildDenAuthUrl, createDenClient, readDenSettings, type DenOrgSkillHubS
 import { useStatusToasts, type AppStatusToastTone } from "../shell/status-toasts";
 import WorkspaceOptionCard from "../workspace/option-card";
 import {
-  errorBannerClass,
   inputClass,
   modalHeaderButtonClass,
   modalHeaderClass,
+  modalNoticeErrorClass,
+  modalNoticeSuccessClass,
   modalOverlayClass,
   modalShellClass,
   modalSubtitleClass,
   modalTitleClass,
   pillPrimaryClass as sharePillPrimaryClass,
   pillSecondaryClass as sharePillSecondaryClass,
-  successBannerClass,
   surfaceCardClass,
   tagClass as shareTagClass,
 } from "../workspace/modal-styles";
@@ -161,6 +162,13 @@ export default function SkillsView(props: SkillsViewProps) {
         return translate("skills.share_chooser_subtitle");
     }
   });
+
+  const shareHubSelectOptions = createMemo(
+    (): SelectMenuOption[] => [
+      { value: "", label: translate("skills.share_team_hub_none") },
+      ...shareManageableHubs().map((h) => ({ value: h.id, label: h.name })),
+    ],
+  );
 
   createEffect(() => {
     if (!shareOpen()) return;
@@ -1067,7 +1075,7 @@ export default function SkillsView(props: SkillsViewProps) {
                     </div>
 
                     <Show when={shareError()}>
-                      <div class={`mb-3 ${errorBannerClass}`}>{shareError()}</div>
+                      <div class={`mb-3 ${modalNoticeErrorClass}`}>{shareError()}</div>
                     </Show>
 
                     <Show
@@ -1119,15 +1127,15 @@ export default function SkillsView(props: SkillsViewProps) {
                     </div>
 
                     <Show when={shareTeamError()?.trim()}>
-                      <div class={`mt-4 ${errorBannerClass}`}>{shareTeamError()}</div>
+                      <div class={`mt-4 ${modalNoticeErrorClass}`}>{shareTeamError()}</div>
                     </Show>
 
                     <Show when={shareTeamSuccess()?.trim()}>
-                      <div class={`mt-4 ${successBannerClass}`}>{shareTeamSuccess()}</div>
+                      <div class={`mt-4 ${modalNoticeSuccessClass}`}>{shareTeamSuccess()}</div>
                     </Show>
 
                     <Show when={shareHubsError()?.trim()}>
-                      <div class={`mt-4 ${errorBannerClass}`}>{shareHubsError()}</div>
+                      <div class={`mt-4 ${modalNoticeErrorClass}`}>{shareHubsError()}</div>
                     </Show>
 
                     <Show when={shareCloudSignedIn() && shareTeamDisabledReason()?.trim()}>
@@ -1135,22 +1143,21 @@ export default function SkillsView(props: SkillsViewProps) {
                     </Show>
 
                     <Show when={shareCloudSignedIn() && shareManageableHubs().length > 0}>
-                      <label class="mt-4 block">
-                        <span class="mb-1.5 block text-[13px] font-medium text-dls-text">
+                      <div class="mt-4">
+                        <span
+                          id="skills-share-hub-label"
+                          class="mb-1.5 block text-[13px] font-medium text-dls-text"
+                        >
                           {translate("skills.share_team_hub_label")}
                         </span>
-                        <select
-                          class={inputClass}
+                        <SelectMenu
+                          aria-labelledby="skills-share-hub-label"
+                          options={shareHubSelectOptions()}
                           value={shareHubChoice()}
-                          onChange={(e) => setShareHubChoice(e.currentTarget.value)}
+                          onChange={setShareHubChoice}
                           disabled={shareTeamBusy() || Boolean(shareTeamSuccess()?.trim())}
-                        >
-                          <option value="">{translate("skills.share_team_hub_none")}</option>
-                          <For each={shareManageableHubs()}>
-                            {(hub) => <option value={hub.id}>{hub.name}</option>}
-                          </For>
-                        </select>
-                      </label>
+                        />
+                      </div>
                     </Show>
 
                     <Show when={shareCloudSignedIn() && shareHubsLoading()}>
