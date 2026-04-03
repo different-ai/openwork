@@ -50,18 +50,18 @@ export function App() {
         {snapshot.connection.kind === "none" ? (
           <>
             <button className="primary" onClick={() => void window.openwork.createWorkspace()}>
-              Create workspace
+              Open local workspace
             </button>
             <form className="stack" onSubmit={onConnectRemote}>
               <input value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="Remote URL" />
-              <input value={remoteToken} onChange={(event) => setRemoteToken(event.target.value)} placeholder="Token" />
-              <button type="submit">Connect to remote</button>
+              <input value={remoteToken} onChange={(event) => setRemoteToken(event.target.value)} placeholder="Bearer token (optional)" />
+              <button type="submit">Connect to opencode</button>
             </form>
           </>
         ) : (
           <>
             <div className="connection">
-              <div>{snapshot.connection.kind === "local" ? "Local runtime" : "Remote runtime"}</div>
+              <div>{snapshot.connection.kind === "local" ? "Embedded opencode" : "Remote opencode"}</div>
               <code>{snapshot.connection.kind === "local" ? snapshot.connection.workspacePath : snapshot.connection.url}</code>
             </div>
             <button className="primary" onClick={() => void window.openwork.createSession()}>

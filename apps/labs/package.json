@@ -12,6 +12,7 @@
     "start": "electron ./dist-electron/main.js"
   },
   "dependencies": {
+    "@opencode-ai/sdk": "^1.1.31",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },

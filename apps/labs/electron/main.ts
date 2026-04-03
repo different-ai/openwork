@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
-import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import net from "node:net";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import {
+  createOpencode,
+  createOpencodeClient,
+  type Event as OpencodeEvent,
+  type Message as OpencodeMessage,
+  type Part as OpencodePart,
+  type Session as OpencodeSession,
+  type SessionStatus as OpencodeSessionStatus,
+} from "@opencode-ai/sdk/v2";
 
 type Role = "user" | "assistant" | "error";
 
@@ -44,20 +50,15 @@ type LogEntry = {
   at: string;
 };
 
-type HostEvent =
-  | { type: "session.created"; session: SessionSummary }
-  | { type: "session.updated"; session: SessionSummary }
-  | { type: "message.created"; sessionID: string; message: Message }
-  | { type: "message.delta"; sessionID: string; messageID: string; delta: string }
-  | { type: "run.finished"; sessionID: string }
-  | { type: "run.failed"; sessionID: string; error: string }
-  | { type: "ready" };
+type Client = ReturnType<typeof createOpencodeClient>;
+type EmbeddedOpencode = Awaited<ReturnType<typeof createOpencode>>;
+type SyncRequest = {
+  sessions?: boolean;
+  messages?: boolean;
+};
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(packageRoot, "..", "..");
-const hostPackageRoot = path.resolve(repoRoot, "apps", "openwork-host");
-const hostEntry = path.resolve(hostPackageRoot, "dist", "index.js");
 const rendererUrl = process.env.OPENWORK_LABS_RENDERER_URL ?? "http://127.0.0.1:4174";
 const smokeWorkspaceDir = process.env.OPENWORK_LABS_SMOKE_WORKSPACE_DIR ?? "";
 const smokePrompt = process.env.OPENWORK_LABS_SMOKE_PROMPT ?? "";
@@ -66,13 +67,18 @@ const configFile = path.join(configDir, "workspace.json");
 const logFile = path.join(configDir, "runtime.log");
 
 let mainWindow: BrowserWindow | null = null;
-let localHost: ReturnType<typeof spawn> | null = null;
+let localOpencode: EmbeddedOpencode | null = null;
+let activeClient: Client | null = null;
+let activeDirectory: string | undefined;
 let eventAbort: AbortController | null = null;
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let connection: ConnectionState = { kind: "none" };
 let sessions: SessionSummary[] = [];
 let currentSessionID: string | null = null;
 let messages: Message[] = [];
 const logs: LogEntry[] = [];
+const sessionStatuses = new Map<string, OpencodeSessionStatus>();
+const pendingSync: Required<SyncRequest> = { sessions: false, messages: false };
 
 type PersistedConnection = Extract<ConnectionState, { kind: "local" | "remote" }>;
 
@@ -90,25 +96,6 @@ function pushLog(scope: LogEntry["scope"], level: LogEntry["level"], message: st
   if (logs.length > 500) logs.splice(0, logs.length - 500);
   mainWindow?.webContents.send("ow:log", entry);
   void appendFile(logFile, `[${entry.at}] [${scope}] [${level}] ${message}\n`).catch(() => undefined);
-}
-
-async function ensureHostBuilt(): Promise<void> {
-  try {
-    await access(hostEntry);
-    return;
-  } catch {
-    pushLog("main", "info", "Building openwork-host before launch");
-    const child = spawn("pnpm", ["--filter", "openwork-host", "build"], {
-      cwd: repoRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stdout.on("data", (chunk) => pushLog("main", "info", String(chunk).trim()));
-    child.stderr.on("data", (chunk) => pushLog("main", "error", String(chunk).trim()));
-    const [code] = (await once(child, "exit")) as [number | null];
-    if (code !== 0) {
-      throw new Error(`openwork-host build failed with code ${code}`);
-    }
-  }
 }
 
 async function saveConnection(): Promise<void> {
@@ -132,47 +119,112 @@ async function loadConnection(): Promise<PersistedConnection | null> {
   }
 }
 
-async function getPort(): Promise<number> {
-  const server = net.createServer();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  server.close();
-  if (!address || typeof address === "string") throw new Error("Unable to allocate port");
-  return address.port;
-}
-
-function baseUrl(): string {
-  if (connection.kind === "local" || connection.kind === "remote") return connection.url;
-  throw new Error("No active connection");
-}
-
-function authHeaders(): Record<string, string> {
-  if (connection.kind === "remote" && connection.token) {
-    return { Authorization: `Bearer ${connection.token}` };
+function clientOrThrow(): Client {
+  if (!activeClient) {
+    throw new Error("No active opencode connection");
   }
-  return {};
+  return activeClient;
 }
 
-async function api(pathname: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(`${baseUrl()}${pathname}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `${response.status} ${response.statusText}`);
+function requestArgs<T extends Record<string, unknown>>(input?: T): T & { directory?: string } {
+  if (!activeDirectory) {
+    return { ...(input ?? {}) } as T & { directory?: string };
   }
-  return response.json();
+  return { ...(input ?? {}), directory: activeDirectory } as T & { directory?: string };
+}
+
+function formatOpencodeError(error: unknown): string {
+  if (!error) return "Unknown error";
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (typeof error === "object") {
+    const value = error as { name?: unknown; data?: { message?: unknown } };
+    if (typeof value.data?.message === "string" && value.data.message.trim()) {
+      return value.data.message;
+    }
+    if (typeof value.name === "string" && value.name.trim()) {
+      return value.name;
+    }
+  }
+  return JSON.stringify(error);
+}
+
+function basicAuthHeader(username: string, password: string): string {
+  return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
+}
+
+function localServerHeaders(): Record<string, string> | undefined {
+  const password = process.env.OPENCODE_SERVER_PASSWORD?.trim();
+  if (!password) return undefined;
+  const username = process.env.OPENCODE_SERVER_USERNAME?.trim() || "opencode";
+  return { Authorization: basicAuthHeader(username, password) };
+}
+
+function isSessionActive(status: OpencodeSessionStatus | undefined): boolean {
+  return status?.type === "busy" || status?.type === "retry";
+}
+
+function toSessionSummary(session: OpencodeSession): SessionSummary {
+  return {
+    id: session.id,
+    title: session.title || "Untitled chat",
+    createdAt: new Date(session.time.created).toISOString(),
+    updatedAt: new Date(session.time.updated).toISOString(),
+    active: isSessionActive(sessionStatuses.get(session.id)),
+  };
+}
+
+function partText(part: OpencodePart): string {
+  if (part.type === "text") {
+    return part.text;
+  }
+  if (part.type === "tool" && part.state.status === "error") {
+    return `Tool ${part.tool} failed: ${part.state.error}`;
+  }
+  return "";
+}
+
+function messageText(info: OpencodeMessage, parts: OpencodePart[]): string {
+  const text = parts
+    .map((part) => partText(part))
+    .filter((value) => value.length > 0)
+    .join("");
+  if (text.trim()) return text;
+  if (info.role === "assistant" && info.error) return formatOpencodeError(info.error);
+  return "";
+}
+
+function toMessage(entry: { info: OpencodeMessage; parts: OpencodePart[] }): Message {
+  return {
+    id: entry.info.id,
+    role: entry.info.role === "assistant" && entry.info.error ? "error" : entry.info.role,
+    text: messageText(entry.info, entry.parts),
+    createdAt: new Date(entry.info.time.created).toISOString(),
+  };
+}
+
+function resetSnapshot(): void {
+  sessions = [];
+  currentSessionID = null;
+  messages = [];
+  sessionStatuses.clear();
 }
 
 async function refreshSessions(): Promise<void> {
-  const data = (await api("/session", { method: "GET" })) as { sessions: SessionSummary[] };
-  sessions = data.sessions;
+  const sdk = clientOrThrow();
+  const [listResult, statusResult] = await Promise.all([
+    sdk.session.list(requestArgs({ roots: true, limit: 100 })),
+    sdk.session.status(requestArgs()),
+  ]);
+  if (listResult.error) throw new Error(formatOpencodeError(listResult.error));
+  if (statusResult.error) throw new Error(formatOpencodeError(statusResult.error));
+
+  sessionStatuses.clear();
+  for (const [sessionID, status] of Object.entries(statusResult.data ?? {})) {
+    sessionStatuses.set(sessionID, status);
+  }
+
+  sessions = (listResult.data ?? []).map((session) => toSessionSummary(session));
   if (!currentSessionID && sessions[0]) currentSessionID = sessions[0].id;
   if (currentSessionID && !sessions.some((session) => session.id === currentSessionID)) {
     currentSessionID = sessions[0]?.id ?? null;
@@ -184,132 +236,127 @@ async function refreshMessages(): Promise<void> {
     messages = [];
     return;
   }
-  const data = (await api(`/session/${currentSessionID}/message`, { method: "GET" })) as { messages: Message[] };
-  messages = data.messages;
+  const result = await clientOrThrow().session.messages(requestArgs({ sessionID: currentSessionID, limit: 200 }));
+  if (result.error) throw new Error(formatOpencodeError(result.error));
+  messages = (result.data ?? []).map((entry) => toMessage(entry));
 }
 
-function upsertSession(summary: SessionSummary): void {
-  const existing = sessions.findIndex((session) => session.id === summary.id);
-  if (existing >= 0) {
-    sessions[existing] = summary;
-  } else {
-    sessions = [summary, ...sessions];
-  }
-  sessions = [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+function queueSync(request: SyncRequest): void {
+  pendingSync.sessions ||= request.sessions === true;
+  pendingSync.messages ||= request.messages === true;
+  if (syncTimer) return;
+
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    const next = { ...pendingSync };
+    pendingSync.sessions = false;
+    pendingSync.messages = false;
+
+    void (async () => {
+      if (next.sessions) await refreshSessions();
+      if (next.messages) await refreshMessages();
+      emitState();
+    })().catch((error: unknown) => {
+      pushLog("main", "error", formatOpencodeError(error));
+    });
+  }, 75);
 }
 
-function applyHostEvent(event: HostEvent): void {
-  if (event.type === "session.created") {
-    upsertSession(event.session);
-    currentSessionID = event.session.id;
-    messages = [];
+function applyEvent(event: OpencodeEvent): void {
+  if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
+    queueSync({ sessions: true, messages: event.type !== "session.deleted" });
+    return;
   }
-  if (event.type === "session.updated") {
-    upsertSession(event.session);
+
+  if (event.type === "session.status" || event.type === "session.idle") {
+    queueSync({ sessions: true, messages: event.properties.sessionID === currentSessionID });
+    return;
   }
-  if (event.type === "message.created" && event.sessionID === currentSessionID) {
-    messages = [...messages, event.message];
+
+  if (event.type === "message.updated") {
+    queueSync({ sessions: true, messages: event.properties.info.sessionID === currentSessionID });
+    return;
   }
-  if (event.type === "message.delta" && event.sessionID === currentSessionID) {
-    messages = messages.map((message) =>
-      message.id === event.messageID ? { ...message, text: `${message.text}${event.delta}` } : message,
-    );
+
+  if (event.type === "message.removed") {
+    queueSync({ messages: event.properties.sessionID === currentSessionID });
+    return;
   }
-  if (event.type === "run.failed") {
-    pushLog("host", "error", event.error);
+
+  if (event.type === "message.part.updated") {
+    queueSync({ messages: event.properties.part.sessionID === currentSessionID });
+    return;
   }
-  emitState();
+
+  if (event.type === "message.part.removed") {
+    queueSync({ messages: event.properties.sessionID === currentSessionID });
+    return;
+  }
+
+  if (event.type === "session.error") {
+    pushLog("host", "error", formatOpencodeError(event.properties.error));
+    queueSync({ sessions: true, messages: event.properties.sessionID === currentSessionID });
+    return;
+  }
 }
 
 async function openEventStream(): Promise<void> {
   eventAbort?.abort();
   const controller = new AbortController();
   eventAbort = controller;
-  const response = await fetch(`${baseUrl()}/event`, {
-    method: "GET",
-    headers: { Accept: "text/event-stream", ...authHeaders() },
-    signal: controller.signal,
-  });
-  if (!response.ok || !response.body) throw new Error(`SSE failed: ${response.status}`);
+  const stream = await clientOrThrow().event.subscribe(requestArgs(), { signal: controller.signal });
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  const read = async (): Promise<void> => {
-    while (!controller.signal.aborted) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
-      for (const frame of frames) {
-        const dataLine = frame
-          .split("\n")
-          .find((line) => line.startsWith("data:"));
-        if (!dataLine) continue;
-        const payload = dataLine.slice(5).trim();
-        if (!payload) continue;
-        applyHostEvent(JSON.parse(payload) as HostEvent);
-      }
+  void (async () => {
+    for await (const event of stream.stream as AsyncIterable<OpencodeEvent>) {
+      applyEvent(event);
+      if (controller.signal.aborted) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
-  };
-
-  void read().catch((error: unknown) => {
-    if (!controller.signal.aborted) pushLog("main", "error", String(error));
+  })().catch((error: unknown) => {
+    if (!controller.signal.aborted) {
+      pushLog("main", "error", formatOpencodeError(error));
+    }
   });
 }
 
 async function stopLocalHost(): Promise<void> {
   eventAbort?.abort();
   eventAbort = null;
-  if (!localHost) return;
-  localHost.kill();
-  await once(localHost, "exit").catch(() => undefined);
-  localHost = null;
-}
-
-async function waitForHealth(url: string): Promise<void> {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    try {
-      const response = await fetch(`${url}/global/health`);
-      if (response.ok) return;
-    } catch {
-      // Retry until the child is ready.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
   }
-  throw new Error("openwork-host did not become healthy in time");
+  pendingSync.sessions = false;
+  pendingSync.messages = false;
+  connection = { kind: "none" };
+  resetSnapshot();
+  activeClient = null;
+  activeDirectory = undefined;
+  sessionStatuses.clear();
+  if (!localOpencode) return;
+  localOpencode.server.close();
+  localOpencode = null;
+  pushLog("host", "info", "Embedded opencode server stopped");
 }
 
 async function connectLocal(workspacePath: string): Promise<Snapshot> {
   await stopLocalHost();
-  await ensureHostBuilt();
-  const port = await getPort();
-  const child = spawn(process.execPath, [hostEntry], {
-    cwd: hostPackageRoot,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      OPENWORK_HOST_WORKSPACE_DIR: workspacePath,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.stdout.on("data", (chunk) => pushLog("host", "info", String(chunk).trim()));
-  child.stderr.on("data", (chunk) => pushLog("host", "error", String(chunk).trim()));
-  child.on("exit", (code, signal) => pushLog("host", code === 0 ? "info" : "error", `host exited code=${code} signal=${signal}`));
-  localHost = child;
+  pushLog("host", "info", `Starting embedded opencode for ${workspacePath}`);
+  localOpencode = await createOpencode({ hostname: "127.0.0.1", port: 0 });
+  activeClient = createOpencodeClient({ baseUrl: localOpencode.server.url, headers: localServerHeaders() });
+  const health = await activeClient.global.health();
+  if (health.error || health.data?.healthy !== true) {
+    throw new Error(formatOpencodeError(health.error ?? "Embedded opencode health check failed"));
+  }
 
-  const url = `http://127.0.0.1:${port}`;
-  await waitForHealth(url);
-  connection = { kind: "local", workspacePath, url };
-  sessions = [];
-  currentSessionID = null;
-  messages = [];
+  activeDirectory = workspacePath;
+  connection = { kind: "local", workspacePath, url: localOpencode.server.url };
+  resetSnapshot();
   await refreshSessions();
   await refreshMessages();
   await openEventStream();
   emitState();
+  pushLog("host", "info", `Embedded opencode ready at ${localOpencode.server.url}`);
   pushLog("main", "info", `Connected local workspace ${workspacePath}`);
   await saveConnection();
   return snapshot();
@@ -317,10 +364,19 @@ async function connectLocal(workspacePath: string): Promise<Snapshot> {
 
 async function connectRemote(urlInput: string, token: string): Promise<Snapshot> {
   await stopLocalHost();
-  connection = { kind: "remote", url: urlInput.replace(/\/$/, ""), token };
-  sessions = [];
-  currentSessionID = null;
-  messages = [];
+  const url = urlInput.trim().replace(/\/$/, "");
+  const trimmedToken = token.trim();
+  const headers = trimmedToken ? { Authorization: `Bearer ${trimmedToken}` } : undefined;
+  const client = createOpencodeClient({ baseUrl: url, headers });
+  const health = await client.global.health();
+  if (health.error || health.data?.healthy !== true) {
+    throw new Error(formatOpencodeError(health.error ?? `Remote opencode health check failed for ${url}`));
+  }
+
+  activeClient = client;
+  activeDirectory = undefined;
+  connection = { kind: "remote", url, token: trimmedToken };
+  resetSnapshot();
   await refreshSessions();
   await refreshMessages();
   await openEventStream();
@@ -331,19 +387,26 @@ async function connectRemote(urlInput: string, token: string): Promise<Snapshot>
 }
 
 async function runMainSmokeFlow(promptValue: string): Promise<void> {
-  const data = (await api("/session", { method: "POST", body: JSON.stringify({ title: "Smoke chat" }) })) as {
-    session: SessionSummary;
-  };
-  currentSessionID = data.session.id;
-  messages = [];
-  upsertSession(data.session);
-  pushLog("main", "info", `Smoke created session ${data.session.id}`);
-  await api(`/session/${data.session.id}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({ prompt: promptValue }),
-  });
-  pushLog("main", "info", `Smoke prompt submitted for ${data.session.id}`);
-  await waitForAssistantReply(data.session.id);
+  const created = await clientOrThrow().session.create(requestArgs({ title: "Smoke chat" }));
+  if (created.error || !created.data) {
+    throw new Error(formatOpencodeError(created.error ?? "Smoke session create failed"));
+  }
+
+  currentSessionID = created.data.id;
+  await refreshSessions();
+  await refreshMessages();
+  pushLog("main", "info", `Smoke created session ${created.data.id}`);
+
+  const prompt = await clientOrThrow().session.promptAsync(
+    requestArgs({
+      sessionID: created.data.id,
+      parts: [{ type: "text", text: promptValue }],
+    }),
+  );
+  if (prompt.error) throw new Error(formatOpencodeError(prompt.error));
+
+  pushLog("main", "info", `Smoke prompt submitted for ${created.data.id}`);
+  await waitForAssistantReply(created.data.id);
   emitState();
 }
 
@@ -353,7 +416,9 @@ async function waitForAssistantReply(sessionID: string, timeoutMs = 30_000): Pro
     currentSessionID = sessionID;
     await refreshMessages();
     await refreshSessions();
-    const done = messages.some((message) => message.role === "assistant" && message.text.trim().length > 0);
+    const done = messages.some(
+      (message) => (message.role === "assistant" || message.role === "error") && message.text.trim().length > 0,
+    );
     if (done) {
       pushLog("main", "info", `Assistant reply observed for ${sessionID}`);
       return;
@@ -392,10 +457,13 @@ ipcMain.handle("ow:connectRemote", async (_event, payload: { url: string; token:
   return connectRemote(payload.url, payload.token);
 });
 ipcMain.handle("ow:createSession", async () => {
-  const data = (await api("/session", { method: "POST", body: JSON.stringify({}) })) as { session: SessionSummary };
-  currentSessionID = data.session.id;
-  messages = [];
-  upsertSession(data.session);
+  const created = await clientOrThrow().session.create(requestArgs({}));
+  if (created.error || !created.data) {
+    throw new Error(formatOpencodeError(created.error ?? "Session create failed"));
+  }
+  currentSessionID = created.data.id;
+  await refreshSessions();
+  await refreshMessages();
   emitState();
   return snapshot();
 });
@@ -407,14 +475,22 @@ ipcMain.handle("ow:selectSession", async (_event, sessionID: string) => {
 });
 ipcMain.handle("ow:sendPrompt", async (_event, payload: { sessionID: string; prompt: string }) => {
   pushLog("main", "info", `Sending prompt for ${payload.sessionID}`);
-  await api(`/session/${payload.sessionID}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({ prompt: payload.prompt }),
-  });
+  const result = await clientOrThrow().session.promptAsync(
+    requestArgs({
+      sessionID: payload.sessionID,
+      parts: [{ type: "text", text: payload.prompt }],
+    }),
+  );
+  if (result.error) throw new Error(formatOpencodeError(result.error));
+  await refreshSessions();
+  await refreshMessages();
   return snapshot();
 });
 ipcMain.handle("ow:abortSession", async (_event, sessionID: string) => {
-  await api(`/session/${sessionID}/abort`, { method: "POST", body: JSON.stringify({}) });
+  const result = await clientOrThrow().session.abort(requestArgs({ sessionID }));
+  if (result.error) throw new Error(formatOpencodeError(result.error));
+  await refreshSessions();
+  await refreshMessages();
   return snapshot();
 });
 ipcMain.on("ow:rendererLog", (_event, payload: { level: string; message: string }) => {
