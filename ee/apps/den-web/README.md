@@ -54,9 +54,9 @@ Recommended project settings:
 
 - Root directory: `ee/apps/den-web`
 - Framework preset: Next.js
-- Build command: `next build`
+- Build command: `cd ../../.. && pnpm --filter @openwork-ee/den-web build`
 - Output directory: `.next`
-- Install command: `pnpm install --frozen-lockfile`
+- Install command: `cd ../../.. && pnpm install --frozen-lockfile`
 
 Then assign custom domain:
 
