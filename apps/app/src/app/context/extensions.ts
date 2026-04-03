@@ -4,7 +4,7 @@ import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
-import type { Client, HubSkillCard, HubSkillRepo, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
+import type { Client, DenOrgSkillCard, HubSkillCard, HubSkillRepo, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
@@ -26,8 +26,46 @@ import {
   type OpencodeConfigFile,
 } from "../lib/tauri";
 import type { OpenworkHubRepo, OpenworkServerClient } from "../lib/openwork-server";
+import { createDenClient, fetchDenOrgSkillsCatalog, readDenSettings } from "../lib/den";
 import { createWorkspaceContextKey } from "./workspace-context";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
+
+
+const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function extractSkillBodyMarkdown(skillText: string): string {
+  const trimmed = skillText.trim();
+  if (!trimmed.startsWith("---")) return trimmed;
+  const rest = trimmed.slice(3);
+  const end = rest.indexOf("\n---");
+  if (end === -1) return trimmed;
+  return rest.slice(end + 4).replace(/^\s*\n?/, "");
+}
+
+function slugifyOpencodeSkillName(title: string): string {
+  let base = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!base) base = "skill";
+  if (base.length > 64) base = base.slice(0, 64).replace(/-+$/g, "");
+  if (!OPENCODE_SKILL_NAME_RE.test(base)) base = "skill";
+  return base;
+}
+
+function uniqueSkillInstallName(base: string, taken: Set<string>, stableSuffix: string): string {
+  const suffixSource = stableSuffix.replace(/[^a-z0-9]+/g, "").slice(-8) || "org";
+  let candidate = base;
+  if (!taken.has(candidate)) return candidate;
+  for (let n = 1; n < 50; n += 1) {
+    const extra = `${suffixSource}${n}`;
+    const trimmedBase = base.slice(0, Math.max(1, 64 - extra.length - 1));
+    candidate = `${trimmedBase}-${extra}`.replace(/^-+|-+$/g, "").slice(0, 64);
+    if (OPENCODE_SKILL_NAME_RE.test(candidate) && !taken.has(candidate)) return candidate;
+  }
+  return `skill-${suffixSource}`.slice(0, 64);
+}
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
@@ -60,16 +98,24 @@ export function createExtensionsStore(options: {
   const [skillsContextKey, setSkillsContextKey] = createSignal("");
   const [pluginsContextKey, setPluginsContextKey] = createSignal("");
   const [hubSkillsContextKey, setHubSkillsContextKey] = createSignal("");
+  const [cloudOrgSkillsContextKey, setCloudOrgSkillsContextKey] = createSignal("");
 
   const skillsStale = createMemo(() => skillsContextKey() !== workspaceContextKey());
   const pluginsStale = createMemo(() => pluginsContextKey() !== workspaceContextKey());
   const hubSkillsStale = createMemo(() => hubSkillsContextKey() !== workspaceContextKey());
+  const cloudOrgSkillsStale = createMemo(() => {
+    const orgId = readDenSettings().activeOrgId?.trim() ?? "";
+    return cloudOrgSkillsContextKey() !== `${workspaceContextKey()}::${orgId}`;
+  });
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
 
   const [hubSkills, setHubSkills] = createSignal<HubSkillCard[]>([]);
   const [hubSkillsStatus, setHubSkillsStatus] = createSignal<string | null>(null);
+
+  const [cloudOrgSkills, setCloudOrgSkills] = createSignal<DenOrgSkillCard[]>([]);
+  const [cloudOrgSkillsStatus, setCloudOrgSkillsStatus] = createSignal<string | null>(null);
 
   const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
 
@@ -132,8 +178,12 @@ export function createExtensionsStore(options: {
   let refreshHubSkillsAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
+  let cloudOrgSkillsLoaded = false;
   let skillsRoot = "";
   let hubSkillsLoadKey = "";
+  let cloudOrgSkillsLoadKey = "";
+  let refreshCloudOrgSkillsInFlight = false;
+  let refreshCloudOrgSkillsAborted = false;
 
   const HUB_REPOS_STORAGE_KEY = "openwork.skills.hubRepos.v1";
 
@@ -318,6 +368,64 @@ export function createExtensionsStore(options: {
     }
   }
 
+  async function refreshCloudOrgSkills(optionsOverride?: { force?: boolean }) {
+    const root = options.selectedWorkspaceRoot().trim();
+    const wk = workspaceContextKey();
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    const loadKey = `${wk}::${orgId}`;
+
+    if (!root) {
+      setCloudOrgSkills([]);
+      setCloudOrgSkillsStatus(null);
+      cloudOrgSkillsLoaded = true;
+      cloudOrgSkillsLoadKey = loadKey;
+      setCloudOrgSkillsContextKey(loadKey);
+      return;
+    }
+
+    if (loadKey !== cloudOrgSkillsLoadKey) {
+      cloudOrgSkillsLoaded = false;
+    }
+
+    if (!optionsOverride?.force && cloudOrgSkillsLoaded) return;
+    if (refreshCloudOrgSkillsInFlight) return;
+
+    refreshCloudOrgSkillsInFlight = true;
+    refreshCloudOrgSkillsAborted = false;
+
+    try {
+      setCloudOrgSkillsStatus(null);
+
+      if (!token || !orgId) {
+        setCloudOrgSkills([]);
+        setCloudOrgSkillsStatus(null);
+        cloudOrgSkillsLoaded = true;
+        cloudOrgSkillsLoadKey = loadKey;
+        setCloudOrgSkillsContextKey(loadKey);
+        return;
+      }
+
+      const client = createDenClient({ baseUrl: settings.baseUrl, token });
+      const catalog = await fetchDenOrgSkillsCatalog(client, orgId);
+      if (refreshCloudOrgSkillsAborted) return;
+      setCloudOrgSkills(catalog);
+      if (!catalog.length) {
+        setCloudOrgSkillsStatus(translate("skills.cloud_org_empty"));
+      }
+      cloudOrgSkillsLoaded = true;
+      cloudOrgSkillsLoadKey = loadKey;
+      setCloudOrgSkillsContextKey(loadKey);
+    } catch (e) {
+      if (refreshCloudOrgSkillsAborted) return;
+      setCloudOrgSkills([]);
+      setCloudOrgSkillsStatus(e instanceof Error ? e.message : translate("skills.cloud_org_load_failed"));
+    } finally {
+      refreshCloudOrgSkillsInFlight = false;
+    }
+  }
+
   async function installHubSkill(name: string): Promise<{ ok: boolean; message: string }> {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, message: "Skill name is required." };
@@ -363,6 +471,54 @@ export function createExtensionsStore(options: {
         return { ok: false, message: "Install failed." };
       }
       return { ok: true, message: `Installed ${trimmed}.` };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function installCloudOrgSkill(skill: DenOrgSkillCard): Promise<{ ok: boolean; message: string }> {
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServer.openworkServerClient();
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServer.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.skills?.write &&
+      typeof openworkClient.upsertSkill === "function";
+
+    if (!canUseOpenworkServer) {
+      if (isRemoteWorkspace) {
+        return { ok: false, message: translate("skills.cloud_install_need_server") };
+      }
+      return { ok: false, message: translate("skills.cloud_install_need_server") };
+    }
+
+    const installedNames = new Set(skills().map((s) => s.name));
+    const base = slugifyOpencodeSkillName(skill.title);
+    const installName = uniqueSkillInstallName(base, installedNames, skill.id);
+    const rawDesc = (skill.description?.trim() || skill.title).trim();
+    const description = rawDesc.slice(0, 1024) || skill.title.slice(0, 1024) || "Skill";
+    const body = extractSkillBodyMarkdown(skill.skillText);
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      await openworkClient.upsertSkill(openworkWorkspaceId, {
+        name: installName,
+        content: body,
+        description,
+      });
+      await refreshSkills({ force: true });
+      await refreshCloudOrgSkills({ force: true });
+      return { ok: true, message: t("skills.cloud_installed", currentLocale(), { name: installName }) };
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
@@ -1278,6 +1434,7 @@ export function createExtensionsStore(options: {
     refreshSkillsAborted = true;
     refreshPluginsAborted = true;
     refreshHubSkillsAborted = true;
+    refreshCloudOrgSkillsAborted = true;
   }
 
   /**
@@ -1306,6 +1463,11 @@ export function createExtensionsStore(options: {
     void refreshHubSkills({ force: true });
   }
 
+  function ensureCloudOrgSkillsFresh() {
+    if (!cloudOrgSkillsStale()) return;
+    void refreshCloudOrgSkills({ force: true });
+  }
+
   // When workspace context changes, invalidate caches and refresh core
   // resources (skills + plugins) that are visible across many surfaces
   // (sidebar context panel, session view, dashboard panels).
@@ -1319,8 +1481,10 @@ export function createExtensionsStore(options: {
     // Reset in-memory cache flags so the next refresh actually fetches.
     skillsLoaded = false;
     hubSkillsLoaded = false;
+    cloudOrgSkillsLoaded = false;
     skillsRoot = "";
     hubSkillsLoadKey = "";
+    cloudOrgSkillsLoadKey = "";
 
     // Skip the very first run (empty key = no workspace selected yet).
     if (!key || key === "::::") return;
@@ -1330,11 +1494,20 @@ export function createExtensionsStore(options: {
     void refreshPlugins();
   });
 
+  if (typeof window !== "undefined") {
+    window.addEventListener("openwork-den-session-updated", () => {
+      cloudOrgSkillsLoaded = false;
+      setCloudOrgSkillsContextKey("");
+    });
+  }
+
   return {
     skills,
     skillsStatus,
     hubSkills,
     hubSkillsStatus,
+    cloudOrgSkills,
+    cloudOrgSkillsStatus,
     hubRepo,
     hubRepos,
     pluginScope,
@@ -1352,6 +1525,7 @@ export function createExtensionsStore(options: {
     isPluginInstalledByName,
     refreshSkills,
     refreshHubSkills,
+    refreshCloudOrgSkills,
     setHubRepo,
     addHubRepo,
     removeHubRepo,
@@ -1361,6 +1535,7 @@ export function createExtensionsStore(options: {
     importLocalSkill,
     installSkillCreator,
     installHubSkill,
+    installCloudOrgSkill,
     revealSkillsFolder,
     uninstallSkill,
     readSkill,
@@ -1371,8 +1546,10 @@ export function createExtensionsStore(options: {
     skillsStale,
     pluginsStale,
     hubSkillsStale,
+    cloudOrgSkillsStale,
     ensureSkillsFresh,
     ensurePluginsFresh,
     ensureHubSkillsFresh,
+    ensureCloudOrgSkillsFresh,
   };
 }

@@ -18,7 +18,6 @@ import type { OpenworkServerClient } from "../../app/src/app/lib/openwork-server
 import ExtensionsView from "../../app/src/app/pages/extensions";
 import IdentitiesView from "../../app/src/app/pages/identities";
 import ScheduledTasksView from "../../app/src/app/pages/scheduled";
-import SkillsView from "../../app/src/app/pages/skills";
 import {
   applyThemeMode,
   getInitialThemeMode,
@@ -1519,43 +1518,11 @@ export default function NewLayoutApp() {
                       </Show>
 
                       <Show when={settingsTab() === "skills"}>
-                        <SkillsView
-                          workspaceName={activeWorkspace().displayName ?? activeWorkspace().name}
-                          busy={false}
-                          canInstallSkillCreator={true}
-                          canUseDesktopTools={true}
-                          accessHint={null}
-                          refreshSkills={refreshSkills}
-                          refreshHubSkills={refreshHubSkills}
-                          skills={skills()}
-                          skillsStatus="Story-book sandbox loaded."
-                          hubSkills={hubSkills()}
-                          hubSkillsStatus="OpenWork Hub ready."
-                          hubRepo={hubRepo()}
-                          hubRepos={hubRepos()}
-                          importLocalSkill={importLocalSkill}
-                          installSkillCreator={installSkillCreator}
-                          installHubSkill={installHubSkill}
-                          setHubRepo={(repo) =>
-                            setHubRepo(
-                              repo
-                                ? {
-                                    owner: repo.owner?.trim() || initialHubRepo.owner,
-                                    repo: repo.repo?.trim() || initialHubRepo.repo,
-                                    ref: repo.ref?.trim() || initialHubRepo.ref,
-                                  }
-                                : null,
-                            )
-                          }
-                          addHubRepo={addHubRepo}
-                          removeHubRepo={removeHubRepo}
-                          revealSkillsFolder={revealSkillsFolder}
-                          uninstallSkill={uninstallSkill}
-                          readSkill={readSkill}
-                          saveSkill={saveSkill}
-                          createSessionAndOpen={createSessionAndOpen}
-                          setPrompt={(value) => openChatWithPrompt(value, "Skill action moved to chat.")}
-                        />
+                        <div class="rounded-[20px] border border-dls-border bg-dls-surface p-6 text-[14px] text-dls-secondary">
+                          Skills (installed, team catalog, GitHub hub) runs in the full app with{" "}
+                          <code class="rounded bg-dls-hover px-1 py-0.5 font-mono text-[12px]">ExtensionsProvider</code>.
+                          Use the OpenWork app shell to exercise this surface.
+                        </div>
                       </Show>
 
                       <Show when={settingsTab() === "extensions"}>
