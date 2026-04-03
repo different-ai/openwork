@@ -122,6 +122,9 @@ importers:
       '@tanstack/react-virtual':
         specifier: ^3.13.23
         version: 3.13.23(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      microsandbox:
+        specifier: ^0.3.8
+        version: 0.3.8
       react:
         specifier: 19.2.4
         version: 19.2.4
@@ -2757,6 +2760,24 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
+  '@superradcompany/microsandbox-darwin-arm64@0.3.8':
+    resolution: {integrity: sha512-l8+IDUxXu4dEXRDHSxiNmKPO2GBqFVNwquWrHTsCIp00rv4fIJ9h3KpNWaZgf2IX6kAez+YEfRkeRIZcHU+xNQ==}
+    engines: {node: '>= 18'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.3.8':
+    resolution: {integrity: sha512-T4+knvMQpHoNiV9wXwVow721/T9w0/pNj1Gv4Tq9uHUlRChCe9JQxgD/Ayaqqu+8CEYPtQYVEVo5e0BZvh2zkg==}
+    engines: {node: '>= 18'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.3.8':
+    resolution: {integrity: sha512-9tDzQ5bkY/H71qjtQQ06gW9GyBzXOtttdqEbFC3A+5xvP3F4JDvhTeK5n6O65giDIT86ZL24jSrpPgcofG00lw==}
+    engines: {node: '>= 18'}
+    cpu: [x64]
+    os: [linux]
+
   '@swc/counter@0.1.3':
     resolution: {integrity: sha512-e2BR4lsJkkRlKZ/qCHPw9ZaSxc0MVUd7gtbtaB7aMvHeJVYe8sOB8DBZkP2DtISHGSku9sCK6T6cnY0CtXrOCQ==}
 
@@ -4744,6 +4765,10 @@ packages:
   micromatch@4.0.8:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
+
+  microsandbox@0.3.8:
+    resolution: {integrity: sha512-xcixT5H9wk1zQYX9OEBq+0nEJSyHLwJ7NGHd+4J2rbvDMEhtlItD5zz4EL/FtB6TDSQNmMQyCMFa4aF/iFCJ0Q==}
+    engines: {node: '>= 18'}
 
   mime-db@1.52.0:
     resolution: {integrity: sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==}
@@ -8418,6 +8443,15 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
+  '@superradcompany/microsandbox-darwin-arm64@0.3.8':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.3.8':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.3.8':
+    optional: true
+
   '@swc/counter@0.1.3': {}
 
   '@swc/helpers@0.5.15':
@@ -10618,6 +10652,12 @@ snapshots:
     dependencies:
       braces: 3.0.3
       picomatch: 2.3.1
+
+  microsandbox@0.3.8:
+    optionalDependencies:
+      '@superradcompany/microsandbox-darwin-arm64': 0.3.8
+      '@superradcompany/microsandbox-linux-arm64-gnu': 0.3.8
+      '@superradcompany/microsandbox-linux-x64-gnu': 0.3.8
 
   mime-db@1.52.0: {}
 

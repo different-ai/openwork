@@ -77,6 +77,12 @@ export type LabsWorkspace = {
   token?: string | null;
   color: string;
   kind?: "local" | "remote";
+  runtime?: "microsandbox" | "remote";
+  repoPath?: string | null;
+  hostPort?: number | null;
+  sandboxName?: string | null;
+  serverType?: "openwork" | "opencode" | "unknown";
+  serverWorkspaceId?: string | null;
   template?: WorkspaceTemplateBinding | null;
 };
 
@@ -118,12 +124,47 @@ export type NormalizedLabsEvent = {
   properties?: unknown;
 };
 
+export type LabsDesktopEventPayload =
+  | {
+      kind: "event";
+      workspaceId: string;
+      event: NormalizedLabsEvent;
+    }
+  | {
+      kind: "connection";
+      workspaceId: string;
+      connection: ConnectionSnapshot;
+    };
+
 declare global {
   interface Window {
     openworkLabsDesktop?: {
       isDesktop: boolean;
       platform: string | null;
       ensureLocalServer?: () => Promise<{ baseUrl: string }>;
+      pickRepoDirectory?: () => Promise<string | null>;
+      ensureWorkspace?: (workspace: LabsWorkspace) => Promise<{
+        workspace: LabsWorkspace;
+        connection?: ConnectionSnapshot;
+        sessions?: Session[];
+      }>;
+      refreshWorkspace?: (workspaceId: string) => Promise<{
+        connection: ConnectionSnapshot;
+        sessions: Session[];
+      }>;
+      removeWorkspace?: (workspaceId: string) => Promise<boolean>;
+      getSessionMessages?: (workspaceId: string, sessionId: string) => Promise<MessageWithParts[]>;
+      createSession?: (
+        workspaceId: string,
+        options?: { title?: string },
+      ) => Promise<Session>;
+      sendPrompt?: (
+        workspaceId: string,
+        sessionId: string | null,
+        prompt: string,
+      ) => Promise<{ sessionId: string | null }>;
+      abortSession?: (workspaceId: string, sessionId: string | null) => Promise<boolean>;
+      subscribeEvents?: (listener: (payload: LabsDesktopEventPayload) => void) => () => void;
     };
   }
 }

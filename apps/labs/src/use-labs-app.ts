@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import type { Dispatch, MutableRefObject } from "react";
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
 
 import {
@@ -34,6 +35,9 @@ const WORKSPACE_COLORS = [
   "#22c55e",
   "#06b6d4",
 ];
+
+const hasDesktopKernel = () =>
+  typeof window !== "undefined" && Boolean(window.openworkLabsDesktop?.ensureWorkspace);
 
 type Action =
   | { type: "app/set-error"; error: string | null }
@@ -82,6 +86,12 @@ type WorkspaceInput = {
   baseUrl: string;
   token?: string | null;
   kind?: "local" | "remote";
+  runtime?: "microsandbox" | "remote";
+  repoPath?: string | null;
+  hostPort?: number | null;
+  sandboxName?: string | null;
+  serverType?: "openwork" | "opencode" | "unknown";
+  serverWorkspaceId?: string | null;
 };
 
 type Controller = {
@@ -90,7 +100,7 @@ type Controller = {
   activeSessions: Session[];
   selectedSessionId: string | null;
   saveWorkspace: (input: WorkspaceInput) => string;
-  createLocalWorkspace: (name?: string | null) => Promise<string | null>;
+  createLocalWorkspace: (name?: string | null, repoPath?: string | null) => Promise<string | null>;
   removeWorkspace: (workspaceId: string) => void;
   setActiveWorkspace: (workspaceId: string) => void;
   selectSession: (workspaceId: string, sessionId: string) => Promise<void>;
@@ -634,6 +644,28 @@ function persistState(state: LabsState) {
   }
 }
 
+async function maybeLoadActiveSessionMessages(
+  workspaceId: string,
+  sessions: Session[],
+  stateRef: MutableRefObject<LabsState>,
+  dispatch: Dispatch<Action>,
+  loadSessionMessages: (workspaceId: string, sessionId: string) => Promise<void>,
+) {
+  const current = stateRef.current.selectedSessionIdByWorkspaceId[workspaceId] ?? null;
+  const nextSelected = current || sessions[0]?.id || null;
+  if (!nextSelected) return;
+
+  dispatch({
+    type: "workspace/set-selected-session",
+    workspaceId,
+    sessionId: nextSelected,
+  });
+
+  if (stateRef.current.activeWorkspaceId === workspaceId) {
+    await loadSessionMessages(workspaceId, nextSelected);
+  }
+}
+
 export function useLabsApp(): Controller {
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const stateRef = useRef(state);
@@ -656,15 +688,19 @@ export function useLabsApp(): Controller {
   }, []);
 
   const loadSessionMessages = useCallback(async (workspaceId: string, sessionId: string) => {
-    const client = getClient(workspaceId);
-    if (!client) return;
-
     dispatch({ type: "session/set-loading", sessionId, loading: true });
 
     try {
-      const messages = unwrap<MessageWithParts[]>(
-        await client.session.messages({ sessionID: sessionId, limit: SESSION_LIMIT }),
-      );
+      let messages: MessageWithParts[];
+      if (window.openworkLabsDesktop?.getSessionMessages) {
+        messages = await window.openworkLabsDesktop.getSessionMessages(workspaceId, sessionId);
+      } else {
+        const client = getClient(workspaceId);
+        if (!client) return;
+        messages = unwrap<MessageWithParts[]>(
+          await client.session.messages({ sessionID: sessionId, limit: SESSION_LIMIT }),
+        );
+      }
       dispatch({ type: "session/set-messages", sessionId, messages });
     } catch (error) {
       dispatch({ type: "app/set-error", error: describeError(error) });
@@ -682,20 +718,7 @@ export function useLabsApp(): Controller {
         await client.session.list({ roots: false, limit: SESSION_LIMIT }),
       );
       dispatch({ type: "workspace/set-sessions", workspaceId, sessions });
-
-      const current = stateRef.current.selectedSessionIdByWorkspaceId[workspaceId] ?? null;
-      const nextSelected = current || sessions[0]?.id || null;
-      if (nextSelected) {
-        dispatch({
-          type: "workspace/set-selected-session",
-          workspaceId,
-          sessionId: nextSelected,
-        });
-
-        if (stateRef.current.activeWorkspaceId === workspaceId) {
-          await loadSessionMessages(workspaceId, nextSelected);
-        }
-      }
+      await maybeLoadActiveSessionMessages(workspaceId, sessions, stateRef, dispatch, loadSessionMessages);
     } catch (error) {
       dispatch({
         type: "workspace/set-connection",
@@ -709,9 +732,6 @@ export function useLabsApp(): Controller {
   }, [getClient, loadSessionMessages]);
 
   const refreshWorkspace = useCallback(async (workspaceId: string) => {
-    const client = getClient(workspaceId);
-    if (!client) return;
-
     dispatch({
       type: "workspace/set-connection",
       workspaceId,
@@ -722,6 +742,20 @@ export function useLabsApp(): Controller {
     });
 
     try {
+      if (window.openworkLabsDesktop?.refreshWorkspace) {
+        const result = await window.openworkLabsDesktop.refreshWorkspace(workspaceId);
+        dispatch({
+          type: "workspace/set-connection",
+          workspaceId,
+          connection: result.connection,
+        });
+        dispatch({ type: "workspace/set-sessions", workspaceId, sessions: result.sessions });
+        await maybeLoadActiveSessionMessages(workspaceId, result.sessions, stateRef, dispatch, loadSessionMessages);
+        return;
+      }
+
+      const client = getClient(workspaceId);
+      if (!client) return;
       const health = unwrap<{ healthy?: boolean }>(await client.global.health());
       if (health?.healthy === false) {
         throw new Error("Server reported unhealthy state.");
@@ -746,7 +780,7 @@ export function useLabsApp(): Controller {
         },
       });
     }
-  }, [getClient, loadWorkspaceSessions]);
+  }, [getClient, loadSessionMessages, loadWorkspaceSessions]);
 
   const handleEvent = useCallback((workspaceId: string, event: { type: string; properties?: unknown }) => {
     if (event.type === "session.updated" || event.type === "session.created") {
@@ -869,7 +903,58 @@ export function useLabsApp(): Controller {
     }
   }, []);
 
+  useEffect(() => {
+    if (!window.openworkLabsDesktop?.subscribeEvents) return;
+    return window.openworkLabsDesktop.subscribeEvents((payload) => {
+      if ("kind" in payload && payload.kind === "connection") {
+        dispatch({
+          type: "workspace/set-connection",
+          workspaceId: payload.workspaceId,
+          connection: payload.connection,
+        });
+        return;
+      }
+      handleEvent(payload.workspaceId, payload.event);
+    });
+  }, [handleEvent]);
+
   const connectWorkspace = useCallback(async (workspace: LabsWorkspace) => {
+    if (window.openworkLabsDesktop?.ensureWorkspace) {
+      try {
+        const result = await window.openworkLabsDesktop.ensureWorkspace(workspace);
+        const next = result.workspace ?? workspace;
+        if (
+          next.baseUrl !== workspace.baseUrl ||
+          next.name !== workspace.name ||
+          next.token !== workspace.token ||
+          next.kind !== workspace.kind
+        ) {
+          dispatch({ type: "workspace/upsert", workspace: next });
+        }
+        if (result.connection) {
+          dispatch({
+            type: "workspace/set-connection",
+            workspaceId: next.id,
+            connection: result.connection,
+          });
+        }
+        if (result.sessions) {
+          dispatch({ type: "workspace/set-sessions", workspaceId: next.id, sessions: result.sessions });
+          await maybeLoadActiveSessionMessages(next.id, result.sessions, stateRef, dispatch, loadSessionMessages);
+        }
+      } catch (error) {
+        dispatch({
+          type: "workspace/set-connection",
+          workspaceId: workspace.id,
+          connection: {
+            status: "disconnected",
+            message: describeError(error),
+          },
+        });
+      }
+      return;
+    }
+
     let next = workspace;
     if (workspace.kind === "local" && window.openworkLabsDesktop?.ensureLocalServer) {
       try {
@@ -1009,6 +1094,9 @@ export function useLabsApp(): Controller {
     });
 
     return () => {
+      if (window.openworkLabsDesktop?.removeWorkspace) {
+        return;
+      }
       for (const entry of connectionsRef.current.values()) {
         entry.cleanup();
       }
@@ -1052,6 +1140,12 @@ export function useLabsApp(): Controller {
       token: input.token?.trim() || null,
       color: existing?.color ?? pickWorkspaceColor(id),
       kind: input.kind ?? existing?.kind ?? "remote",
+      runtime: input.runtime ?? existing?.runtime ?? (input.kind === "local" ? "microsandbox" : "remote"),
+      repoPath: input.repoPath?.trim() || existing?.repoPath || null,
+      hostPort: input.hostPort ?? existing?.hostPort ?? null,
+      sandboxName: input.sandboxName?.trim() || existing?.sandboxName || null,
+      serverType: input.serverType ?? existing?.serverType ?? "unknown",
+      serverWorkspaceId: input.serverWorkspaceId?.trim() || existing?.serverWorkspaceId || null,
       template: existing?.template ?? null,
     };
 
@@ -1060,28 +1154,28 @@ export function useLabsApp(): Controller {
     return id;
   }, []);
 
-  const createLocalWorkspace = useCallback(async (name?: string | null) => {
+  const createLocalWorkspace = useCallback(async (name?: string | null, repoPath?: string | null) => {
     const title = name?.trim() || "Workspace";
-    let baseUrl = normalizeOpencodeBaseUrl("http://localhost:4096");
-
-    if (window.openworkLabsDesktop?.ensureLocalServer) {
-      try {
-        const local = await window.openworkLabsDesktop.ensureLocalServer();
-        baseUrl = normalizeOpencodeBaseUrl(local.baseUrl);
-      } catch (error) {
-        dispatch({ type: "app/set-error", error: describeError(error) });
-        return null;
-      }
+    const sourceRepo = repoPath?.trim() || null;
+    if (!sourceRepo) {
+      dispatch({ type: "app/set-error", error: "Choose a repository folder for this workspace." });
+      return null;
     }
 
     const id = `workspace-${randomId()}`;
     const workspace: LabsWorkspace = {
       id,
       name: title,
-      baseUrl,
+      baseUrl: "",
       token: null,
       color: pickWorkspaceColor(id),
       kind: "local",
+      runtime: "microsandbox",
+      repoPath: sourceRepo,
+      hostPort: null,
+      sandboxName: `labs-${id}`,
+      serverType: "openwork",
+      serverWorkspaceId: null,
       template: null,
     };
 
@@ -1091,6 +1185,9 @@ export function useLabsApp(): Controller {
   }, [connectWorkspace]);
 
   const removeWorkspace = useCallback((workspaceId: string) => {
+    if (window.openworkLabsDesktop?.removeWorkspace) {
+      void window.openworkLabsDesktop.removeWorkspace(workspaceId);
+    }
     const existing = connectionsRef.current.get(workspaceId);
     existing?.cleanup();
     connectionsRef.current.delete(workspaceId);
@@ -1112,24 +1209,31 @@ export function useLabsApp(): Controller {
     workspaceId: string,
     options?: { title?: string; seedMessages?: SeedMessage[] },
   ) => {
-    const client = getClient(workspaceId);
-    if (!client) {
-      dispatch({ type: "app/set-error", error: "Add a valid workspace URL before creating a chat." });
-      return null;
-    }
-
     try {
-      const created = unwrap<Session>(await client.session.create({}));
-      let session = created;
-      const nextTitle = options?.title?.trim();
-      if (nextTitle) {
-        try {
-          session = unwrap<Session>(await client.session.update({ sessionID: created.id, title: nextTitle }));
-        } catch {
-          session = {
-            ...created,
-            title: nextTitle,
-          } as Session;
+      let session: Session;
+      if (window.openworkLabsDesktop?.createSession) {
+        session = await window.openworkLabsDesktop.createSession(workspaceId, {
+          title: options?.title?.trim() || undefined,
+        });
+      } else {
+        const client = getClient(workspaceId);
+        if (!client) {
+          dispatch({ type: "app/set-error", error: "Add a valid workspace URL before creating a chat." });
+          return null;
+        }
+
+        const created = unwrap<Session>(await client.session.create({}));
+        session = created;
+        const nextTitle = options?.title?.trim();
+        if (nextTitle) {
+          try {
+            session = unwrap<Session>(await client.session.update({ sessionID: created.id, title: nextTitle }));
+          } catch {
+            session = {
+              ...created,
+              title: nextTitle,
+            } as Session;
+          }
         }
       }
 
@@ -1161,12 +1265,6 @@ export function useLabsApp(): Controller {
     const trimmed = prompt.trim();
     if (!trimmed) return sessionId;
 
-    const client = getClient(workspaceId);
-    if (!client) {
-      dispatch({ type: "app/set-error", error: "Connect a workspace before sending a prompt." });
-      return null;
-    }
-
     let resolvedSessionId = sessionId;
     if (!resolvedSessionId) {
       resolvedSessionId = await createSession(workspaceId);
@@ -1176,6 +1274,17 @@ export function useLabsApp(): Controller {
     dispatch({ type: "session/set-status", sessionId: resolvedSessionId, status: "busy" });
 
     try {
+      if (window.openworkLabsDesktop?.sendPrompt) {
+        const result = await window.openworkLabsDesktop.sendPrompt(workspaceId, resolvedSessionId, trimmed);
+        return result.sessionId;
+      }
+
+      const client = getClient(workspaceId);
+      if (!client) {
+        dispatch({ type: "app/set-error", error: "Connect a workspace before sending a prompt." });
+        return null;
+      }
+
       await unwrap(
         await client.session.promptAsync({
           sessionID: resolvedSessionId,
@@ -1192,11 +1301,15 @@ export function useLabsApp(): Controller {
 
   const abortSession = useCallback(async (workspaceId: string, sessionId: string | null) => {
     if (!sessionId) return;
-    const client = getClient(workspaceId);
-    if (!client) return;
 
     try {
-      await client.session.abort({ sessionID: sessionId });
+      if (window.openworkLabsDesktop?.abortSession) {
+        await window.openworkLabsDesktop.abortSession(workspaceId, sessionId);
+      } else {
+        const client = getClient(workspaceId);
+        if (!client) return;
+        await client.session.abort({ sessionID: sessionId });
+      }
       dispatch({ type: "session/set-status", sessionId, status: "idle" });
     } catch (error) {
       dispatch({ type: "app/set-error", error: describeError(error) });
@@ -1228,13 +1341,15 @@ export function useLabsApp(): Controller {
       template: binding,
     });
 
-    const client = getClient(workspaceId);
-    if (!client) {
-      dispatch({
-        type: "app/set-error",
-        error: "Template saved. Connect the workspace to materialize the starter chats.",
-      });
-      return;
+    if (!window.openworkLabsDesktop?.createSession) {
+      const client = getClient(workspaceId);
+      if (!client) {
+        dispatch({
+          type: "app/set-error",
+          error: "Template saved. Connect the workspace to materialize the starter chats.",
+        });
+        return;
+      }
     }
 
     const existingWorkspace = getWorkspace(workspaceId);

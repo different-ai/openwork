@@ -84,10 +84,12 @@ export function App() {
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [newWorkspaceUrl, setNewWorkspaceUrl] = useState("");
   const [newWorkspaceToken, setNewWorkspaceToken] = useState("");
+  const [newWorkspaceRepoPath, setNewWorkspaceRepoPath] = useState("");
   const [workspaceForm, setWorkspaceForm] = useState({
     name: "",
     baseUrl: "",
     token: "",
+    repoPath: "",
   });
 
   const activeWorkspace = labs.activeWorkspace;
@@ -153,6 +155,7 @@ export function App() {
       setNewWorkspaceName("");
       setNewWorkspaceUrl("");
       setNewWorkspaceToken("");
+      setNewWorkspaceRepoPath("");
     } else if (labs.state.workspaces.length > 0) {
       setTemplateTargetMode("existing");
       setTemplateWorkspaceId(labs.state.workspaces[0]?.id ?? "");
@@ -166,8 +169,26 @@ export function App() {
       name: "",
       baseUrl: "",
       token: "",
+      repoPath: "",
     });
     setWorkspaceModalOpen(true);
+  };
+
+  const pickRepoDirectory = async () => {
+    if (!window.openworkLabsDesktop?.pickRepoDirectory) return null;
+    return window.openworkLabsDesktop.pickRepoDirectory();
+  };
+
+  const handlePickWorkspaceRepo = async () => {
+    const picked = await pickRepoDirectory();
+    if (!picked) return;
+    setWorkspaceForm((current) => ({ ...current, repoPath: picked }));
+  };
+
+  const handlePickTemplateWorkspaceRepo = async () => {
+    const picked = await pickRepoDirectory();
+    if (!picked) return;
+    setNewWorkspaceRepoPath(picked);
   };
 
   const handleWorkspaceSave = async () => {
@@ -176,7 +197,7 @@ export function App() {
     if (workspaceForm.baseUrl.trim()) {
       workspaceId = labs.saveWorkspace(workspaceForm);
     } else {
-      workspaceId = await labs.createLocalWorkspace(workspaceForm.name);
+      workspaceId = await labs.createLocalWorkspace(workspaceForm.name, workspaceForm.repoPath);
     }
     setWorkspaceBusy(false);
     if (!workspaceId) return;
@@ -212,7 +233,7 @@ export function App() {
             baseUrl: newWorkspaceUrl,
             token: newWorkspaceToken,
           })
-        : await labs.createLocalWorkspace(newWorkspaceName);
+        : await labs.createLocalWorkspace(newWorkspaceName, newWorkspaceRepoPath);
     }
 
     if (!workspaceId) {
@@ -385,7 +406,7 @@ export function App() {
                 <p className="eyebrow">Start here</p>
                 <h2>Connect a workspace</h2>
                  <p>
-                    Labs is session-first. Use your local OpenCode server on localhost:4096, or connect an existing remote server and jump straight into the conversations inside it.
+                    Labs is session-first. Use your local OpenCode server on localhost:4096, or connect any OpenWork or OpenCode server with a URL and access token.
                   </p>
                 <button type="button" className="primary-button" onClick={handleAddWorkspace}>
                   Add workspace
@@ -519,7 +540,7 @@ export function App() {
       </main>
 
       {workspaceModalOpen ? (
-        <ModalFrame title="Add workspace" subtitle="Leave the URL blank to use your local OpenCode server on localhost:4096, or paste a remote server URL.">
+        <ModalFrame title="Create workspace" subtitle="Leave the URL blank to launch a local microsandbox workspace from a repo, or paste any OpenWork/OpenCode server URL.">
           <div className="modal-field-grid">
             <label className="modal-field">
               <span>Name</span>
@@ -534,7 +555,7 @@ export function App() {
             </label>
 
             <label className="modal-field">
-              <span>OpenCode server URL</span>
+              <span>OpenWork or OpenCode server URL</span>
               <input
                 name="workspace-url"
                 value={workspaceForm.baseUrl}
@@ -543,8 +564,28 @@ export function App() {
                 }
                 placeholder="https://worker.openworklabs.com/opencode"
               />
-              <small className="modal-help">Leave this blank to use the local OpenCode server on localhost:4096.</small>
+              <small className="modal-help">Leave this blank to launch a local microsandbox workspace from a repo. Add an access token below for protected remote servers.</small>
             </label>
+
+            {!workspaceForm.baseUrl.trim() ? (
+              <label className="modal-field">
+                <span>Repository</span>
+                <div className="field-with-button">
+                  <input
+                    name="workspace-repo-path"
+                    value={workspaceForm.repoPath}
+                    onChange={(event) =>
+                      setWorkspaceForm((current) => ({ ...current, repoPath: event.target.value }))
+                    }
+                    placeholder="/Users/you/code/project"
+                  />
+                  <button type="button" className="secondary-button" onClick={() => void handlePickWorkspaceRepo()}>
+                    Browse
+                  </button>
+                </div>
+                <small className="modal-help">Local workspaces boot OpenWork inside microsandbox using a snapshot of this repo.</small>
+              </label>
+            ) : null}
 
             {workspaceForm.baseUrl.trim() ? (
               <label className="modal-field">
@@ -692,15 +733,32 @@ export function App() {
                           />
                         </label>
                         <label className="modal-field">
-                          <span>OpenCode server URL</span>
+                          <span>OpenWork or OpenCode server URL</span>
                           <input
                             name="new-workspace-url"
                             value={newWorkspaceUrl}
                             onChange={(event) => setNewWorkspaceUrl(event.target.value)}
                             placeholder="https://worker.openworklabs.com/opencode"
                           />
-                          <small className="modal-help">Leave this blank to use the local OpenCode server on localhost:4096.</small>
+                          <small className="modal-help">Leave this blank to launch a local microsandbox workspace from a repo. Add an access token below for protected remote servers.</small>
                         </label>
+                        {!newWorkspaceUrl.trim() ? (
+                          <label className="modal-field">
+                            <span>Repository</span>
+                            <div className="field-with-button">
+                              <input
+                                name="new-workspace-repo-path"
+                                value={newWorkspaceRepoPath}
+                                onChange={(event) => setNewWorkspaceRepoPath(event.target.value)}
+                                placeholder="/Users/you/code/project"
+                              />
+                              <button type="button" className="secondary-button" onClick={() => void handlePickTemplateWorkspaceRepo()}>
+                                Browse
+                              </button>
+                            </div>
+                            <small className="modal-help">Local workspaces boot OpenWork inside microsandbox using a snapshot of this repo.</small>
+                          </label>
+                        ) : null}
                         {newWorkspaceUrl.trim() ? (
                           <label className="modal-field">
                             <span>Access token</span>

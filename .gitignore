@@ -1,6 +1,8 @@
 node_modules/
 packages/*/node_modules/
 apps/*/node_modules/
+apps/labs/.cache/
+apps/labs/runtime/.generated/
 ee/apps/*/node_modules/
 ee/packages/*/node_modules/
 .next/

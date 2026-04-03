@@ -27,7 +27,12 @@ export function normalizeOpencodeBaseUrl(input: string) {
     }
     const path = stripTrailingSlash(url.pathname || "");
     const isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(url.hostname);
-    url.pathname = isLocal ? "" : path.endsWith("/opencode") ? path : `${path || ""}/opencode`;
+    const isWorkspaceProxy = path.startsWith("/w/");
+    if (isLocal) {
+      url.pathname = isWorkspaceProxy ? path : "";
+    } else {
+      url.pathname = isWorkspaceProxy || path.endsWith("/opencode") ? path : `${path || ""}/opencode`;
+    }
     return stripTrailingSlash(url.toString());
   } catch {
     return "";

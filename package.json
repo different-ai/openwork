@@ -53,6 +53,7 @@
     "onlyBuiltDependencies": [
       "@whiskeysockets/baileys",
       "better-sqlite3",
+      "electron",
       "esbuild",
       "protobufjs"
     ],

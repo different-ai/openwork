@@ -9,11 +9,16 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 3340 --strictPort",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "electron ./electron/main.mjs"
+    "start": "electron ./electron/main.mjs",
+    "microsandbox:dry-run": "node ./scripts/microsandbox-dry-run.js",
+    "microsandbox:image-dry-run": "node ./scripts/microsandbox-image-dry-run.js",
+    "runtime:build": "bash ./scripts/build-runtime-image.sh",
+    "runtime:probe": "bash ./scripts/run-runtime-probe.sh"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.1.31",
     "@tanstack/react-virtual": "^3.13.23",
+    "microsandbox": "^0.3.8",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "streamdown": "^2.5.0"
