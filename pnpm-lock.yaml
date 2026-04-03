@@ -116,9 +116,6 @@ importers:
 
   apps/labs:
     dependencies:
-      '@opencode-ai/sdk':
-        specifier: ^1.1.31
-        version: 1.1.39
       react:
         specifier: 19.2.4
         version: 19.2.4
@@ -180,6 +177,19 @@ importers:
         version: 1.3.6
       typescript:
         specifier: ^5.6.3
+        version: 5.9.3
+
+  apps/openwork-host:
+    dependencies:
+      '@opencode-ai/sdk':
+        specifier: ^1.1.31
+        version: 1.1.39
+    devDependencies:
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.12.2
+      typescript:
+        specifier: ^5.9.3
         version: 5.9.3
 
   apps/orchestrator:
@@ -7812,7 +7822,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 24.12.2
+      '@types/node': 20.12.12
       '@types/responselike': 1.0.3
 
   '@types/estree@1.0.8': {}
@@ -7821,7 +7831,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 24.12.2
+      '@types/node': 20.12.12
 
   '@types/minimatch@5.1.2': {}
 
@@ -7864,7 +7874,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 24.12.2
+      '@types/node': 20.12.12
 
   '@types/retry@0.12.0': {}
 
@@ -7874,7 +7884,7 @@ snapshots:
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 24.12.2
+      '@types/node': 20.12.12
     optional: true
 
   '@vercel/blob@0.27.3':
