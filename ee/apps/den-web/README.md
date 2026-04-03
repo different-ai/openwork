@@ -58,6 +58,8 @@ Recommended project settings:
 - Output directory: `.next`
 - Install command: `cd ../../.. && pnpm install --frozen-lockfile`
 
+These commands should be configured in the Vercel dashboard rather than committed in `vercel.json`, so the app still builds from the monorepo root and can resolve shared workspace packages like `@openwork-ee/utils`.
+
 Then assign custom domain:
 
 - `app.openworklabs.com`
