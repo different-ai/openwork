@@ -3,7 +3,7 @@ import { createDenClient, readDenSettings, writeDenSettings } from "../lib/den";
 export async function saveInstalledSkillToOpenWorkOrg(input: {
   skillText: string;
   skillHubId?: string | null;
-}): Promise<{ skillId: string; orgName: string }> {
+}): Promise<{ skillId: string; orgId: string; orgName: string }> {
   const settings = readDenSettings();
   const token = settings.authToken?.trim() ?? "";
   if (!token) {
@@ -46,5 +46,5 @@ export async function saveInstalledSkillToOpenWorkOrg(input: {
     await cloudClient.addOrgSkillToHub(orgId, hubId, created.id);
   }
 
-  return { skillId: created.id, orgName };
+  return { skillId: created.id, orgId, orgName };
 }

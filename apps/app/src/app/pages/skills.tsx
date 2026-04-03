@@ -392,11 +392,14 @@ export default function SkillsView(props: SkillsViewProps) {
       const skill = await extensions.readSkill(target.name);
       if (!skill) throw new Error("Failed to load skill");
       const hubId = shareHubChoice().trim();
-      const { orgName } = await saveInstalledSkillToOpenWorkOrg({
+      const { orgName, orgId } = await saveInstalledSkillToOpenWorkOrg({
         skillText: skill.content,
         skillHubId: hubId || null,
       });
       setShareTeamSuccess(t("skills.share_team_success", currentLocale(), { org: orgName }));
+      window.dispatchEvent(
+        new CustomEvent<{ orgId: string }>("openwork-den-org-skills-changed", { detail: { orgId } }),
+      );
     } catch (e) {
       setShareTeamError(maskError(e));
     } finally {
