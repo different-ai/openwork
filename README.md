@@ -26,7 +26,9 @@ Download the desktop app from [openworklabs.com/download](https://openworklabs.c
 
 - macOS and Linux downloads are available directly.
 - Windows access is currently handled through the paid support plan on [openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support).
-- Hosted OpenWork Cloud workers are launched from the web app after checkout, then connected from the desktop app via `Add a worker` -> `Connect remote`.
+- Hosted OpenWork Cloud workers are launched from the web app after org setup, including checkout when billing is required, then connected from the desktop app via `Add a worker` -> `Connect remote`.
+- OpenWork Cloud org dashboards now include shared team management and skill hub management so admins can decide who can access each published skill library before workers are launched.
+- Signed-in desktop users can now browse their org's managed cloud skills directly from the Skills page and install them into the current workspace without copying files by hand.
 
 ## Why
 
@@ -52,6 +54,8 @@ OpenWork is designed to be:
 - **Skills manager**:
   - list installed `.opencode/skills` folders
   - import a local skill folder into `.opencode/skills/<skill-name>`
+  - browse OpenWork Cloud team skills from your active org and install them into the current workspace
+  - share an installed skill either as a public link or to an org-managed skill hub
 
 ## Skill Manager
 

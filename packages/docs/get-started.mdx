@@ -22,25 +22,29 @@ openwork start --workspace /path/to/your/workspace --approval auto
 ```
 
 <Frame>
-  ![OpenWork CLI terminal output showing URL and owner token](/images/get-started-cli-output.png)
+  ![OpenWork CLI terminal output showing the connect URL and owner token](/images/get-started-cli-output.png)
 </Frame>
 
 Copy:
 
 - `OpenWork URL`
-- `OpenWork Owner Token`
+- `OpenWork owner token`
 
 ## Step 3: Connect the OpenWork desktop app
 
 On your local machine, open the OpenWork desktop app and connect into a remote workspace with:
 
-- On the bottom left click `+ Add workspace`
-- Then click `+ Connect Remote workspace`
-- Type in the `OpenWork URL and OpenWork Owner Token` from earlier
+- On the bottom left click `+ Add a worker`
+- Then click `Connect remote`
+- Paste in the `OpenWork URL` and the token from earlier
+
+The connect form accepts a collaborator token or an owner token. If you started the worker yourself with `openwork start`, the token shown in the terminal is the owner token and works for this flow.
 
 <Frame>
   ![Add Remote Workspace dialog in OpenWork desktop app](/images/get-started-add-remote-workspace.png)
 </Frame>
+
+If you launched the worker from OpenWork Cloud, `Open in OpenWork` can prefill that remote-connect flow for you. The manual fallback is still the same `Add a worker` -> `Connect remote` path with the worker URL and token.
 
 ## What this gives you right away
 

@@ -1,38 +1,95 @@
 ---
-title: "How to share your agents with others"
-description: "Learn how to share your MCP, agents, skills with others"
+title: "OpenWork Templates: How to share your setup"
+description: "Learn how to share a full workspace template or a single skill in OpenWork"
 ---
 
-There are two main primitives for a template that you can share: `Workspace` and a `Skill`.
+There are two main things you can share from OpenWork:
+
+- a full `Workspace` template
+- a single `Skill`
 
 ## Sharing your entire configuration
 
-OpenWork also allows you to share your entire configuration with others. That includes skills, MCPs, agents, unique LLM providers you might've added, and more.
+OpenWork can package an entire workspace template into one share link. That bundle can include your skills, commands, agents, MCP/OpenCode settings, `opencode.json` state, and other shareable `.opencode/**` files.
 
-Click on the `...` next to the workspace name, then `Share ...` , then `Share a template`
+OpenWork does not copy secrets, runtime-only files, or your existing session history into the template. If OpenWork detects secret-like provider settings, plugin config, MCP credentials, or portable files that look sensitive, it warns and excludes that data from the exported template.
+
+Click the `...` next to the workspace name, then `Share...`, then `Share a template`.
 
 <Frame>
-  ![Share workspace dialog with template and remote options](/images/sharing-workspace-template-dialog.png)
+  ![Share workspace dialog with template and remote
+  options](/images/sharing-workspace-template-dialog.png)
 </Frame>
+
+When someone opens that link and clicks `Open in OpenWork`, OpenWork now creates a new workspace from the template instead of dropping the bundle into the current workspace.
+
+OpenWork asks the recipient to pick a destination folder first, then creates the workspace there from the shared template.
+
+Some templates can also include starter sessions. Those starter sessions are seeded into the new workspace on first load so the recipient gets the intended prompts and example setup, but OpenWork does not clone the original runtime chat history.
+
+This makes workspace templates a good fit for sharing:
+
+- complete project setup
+- reusable MCP and provider configuration
+- commands, agents, and skills that should travel together
+- example starter flows for a new workspace
+
+## Accessing a live workspace remotely
+
+The same `Share...` menu also includes `Access workspace remotely` for the running workspace itself.
+
+That flow is different from a template link:
+
+- a template creates a reusable copy someone can import into a new workspace
+- remote access reveals live connection details for the current running workspace
+
+Remote access is off by default. Turn it on only when you want this worker reachable from another machine, then click `Save` so OpenWork can restart the worker and reveal the current connection details.
+
+OpenWork can show:
+
+- the worker URL to paste into `Add a worker` -> `Connect remote`
+- an owner/access token for full control
+- an optional collaborator token for routine access without permission approvals
+
+Treat those credentials like passwords. Anyone who has them can connect to the live workspace.
+
+## Sharing a template with your Cloud team
+
+OpenWork can also save a workspace template directly to your active OpenWork Cloud organization.
+
+Open the same `Share a template` flow, then choose `Share with team`.
+
+From there you can:
+
+- pick the template name your teammates will see
+- save it to the currently selected Cloud organization
+- sign in to OpenWork Cloud first if the app prompts you to
+
+Team templates do not create a public share URL. Instead, they show up in the OpenWork Cloud area inside the app so other members of that organization can open them later.
+
+After sign-in, teammates can open the template from `Settings` -> `OpenWork Cloud` -> `Team templates`.
 
 ## How to share a SKILL.md
 
-You can share a `SKILL.md` by clicking under `Your_Workspace` \> `Skills`
+You can share a `SKILL.md` from `Your_Workspace` > `Skills`.
 
 Make sure the skill file starts with YAML frontmatter. At minimum it should include `name`, and `description` is used as the shared summary when present.
 
 <Frame>
-  ![Skills management page showing installed skills](/images/sharing-skills-list.png)
+  ![Skills management page showing installed
+  skills](/images/sharing-skills-list.png)
 </Frame>
 
-Then, on `Create Link` which will create a custom page for the skill at `share.openwork.software/b/:skill_id`
+Click `Create Link` to generate a custom share page for that skill at `share.openwork.software/b/:skill_id`.
 
 <Frame>
-  ![Create share link dialog for a skill](/images/sharing-create-link-dialog.png)
+  ![Create share link dialog for a
+  skill](/images/sharing-create-link-dialog.png)
 </Frame>
 
-This creates a url that you can share with other people so they can `copy the skill` or `Open in Openwork`
+That creates a URL you can send to other people so they can `Copy the skill` or `Open in OpenWork`.
 
 <Frame>
-  ![Shared skill page with Copy and Open in OpenWork buttons](/images/sharing-skill-share-page.png)
+  ![Shared skill page with Copy and Open in OpenWork
+  buttons](/images/sharing-skill-share-page.png)
 </Frame>
