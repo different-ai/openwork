@@ -13,12 +13,23 @@ export default function ReactSessionSidebarShellHost(
   let root: Root | undefined;
 
   createEffect(() => {
+    const snapshot: ReactSessionSidebarShellProps = {
+      leftSidebarWidth: props.leftSidebarWidth,
+      showUpdatePill: props.showUpdatePill,
+      updatePillLabel: props.updatePillLabel,
+      updatePillTitle: props.updatePillTitle,
+      updateVersion: props.updateVersion,
+      onUpdatePillClick: props.onUpdatePillClick,
+      onStartResize: props.onStartResize,
+      renderSidebar: props.renderSidebar,
+    };
+
     if (!container) return;
     if (!root) {
       root = createRoot(container);
     }
 
-    root.render(createElement(ReactSessionSidebarShell, props));
+    root.render(createElement(ReactSessionSidebarShell, snapshot));
   });
 
   onCleanup(() => {

@@ -1,8 +1,6 @@
 import { Fragment, createElement } from "react";
 
-import ReactWorkspaceSessionList, {
-  type ReactWorkspaceSessionListProps,
-} from "./react-workspace-session-list";
+import { SolidSlot } from "../shell/solid-slot";
 
 export type ReactSessionSidebarShellProps = {
   leftSidebarWidth: number;
@@ -12,7 +10,7 @@ export type ReactSessionSidebarShellProps = {
   updateVersion?: string | null;
   onUpdatePillClick: () => void;
   onStartResize: (event: any) => void;
-  sidebarProps: ReactWorkspaceSessionListProps;
+  renderSidebar: () => any;
 };
 
 export default function ReactSessionSidebarShell(
@@ -25,7 +23,7 @@ export default function ReactSessionSidebarShell(
       "aside",
       {
         className:
-          "relative hidden lg:flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5",
+          "relative hidden md:flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5",
         style: {
           width: `${props.leftSidebarWidth}px`,
           minWidth: `${props.leftSidebarWidth}px`,
@@ -66,11 +64,14 @@ export default function ReactSessionSidebarShell(
       createElement(
         "div",
         { className: "flex min-h-0 flex-1" },
-        createElement(ReactWorkspaceSessionList, props.sidebarProps),
+        createElement(SolidSlot, {
+          slotId: "session-sidebar-shell-slot",
+          renderContent: props.renderSidebar,
+        }),
       ),
       createElement("div", {
         className:
-          "absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 lg:block",
+          "absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 md:block",
         onPointerDown: props.onStartResize as any,
         title: "Resize workspace column",
         "aria-label": "Resize workspace column",

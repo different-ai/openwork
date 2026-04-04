@@ -97,6 +97,7 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerNotice } from "../components/session/composer-notice";
 import { createSessionScrollController } from "../components/session/scroll-controller";
+import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
@@ -2914,6 +2915,36 @@ export default function SessionView(props: SessionViewProps) {
       props.selectedWorkspaceDisplay.name ||
       t("session.workspace_fallback"),
   );
+  const renderSessionSidebar = () => (
+    <WorkspaceSessionList
+      workspaceSessionGroups={props.workspaceSessionGroups}
+      selectedWorkspaceId={props.selectedWorkspaceId}
+      developerMode={props.developerMode}
+      selectedSessionId={props.selectedSessionId}
+      showSessionActions
+      sessionStatusById={props.sessionStatusById}
+      connectingWorkspaceId={props.connectingWorkspaceId}
+      workspaceConnectionStateById={props.workspaceConnectionStateById}
+      newTaskDisabled={props.newTaskDisabled}
+      onSelectWorkspace={props.selectWorkspace}
+      onOpenSession={openSessionFromList}
+      onPrefetchSession={(workspaceId, sessionId) => {
+        if (workspaceId !== props.selectedWorkspaceId) return;
+        void props.ensureSessionLoaded(sessionId);
+      }}
+      onCreateTaskInWorkspace={createTaskInWorkspace}
+      onOpenRenameSession={openRenameModal}
+      onOpenDeleteSession={openDeleteSessionModal}
+      onOpenRenameWorkspace={props.openRenameWorkspace}
+      onShareWorkspace={shareWorkspaceState.openShareWorkspace}
+      onRevealWorkspace={revealWorkspaceInFinder}
+      onRecoverWorkspace={props.recoverWorkspace}
+      onTestWorkspaceConnection={props.testWorkspaceConnection}
+      onEditWorkspaceConnection={props.editWorkspaceConnection}
+      onForgetWorkspace={props.forgetWorkspace}
+      onOpenCreateWorkspace={props.openCreateWorkspace}
+    />
+  );
 
   const renderSessionHeaderActions = () => (
     <>
@@ -2990,6 +3021,390 @@ export default function SessionView(props: SessionViewProps) {
       </button>
     </>
   );
+  const renderSessionSearchPanel = () => (
+    <div class="border-b border-dls-border bg-dls-sidebar/70 px-4 py-2 md:px-6">
+      <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-[16px] border border-dls-border bg-dls-surface px-3 py-2 shadow-[var(--dls-card-shadow)]">
+        <Search size={14} class="text-gray-9" />
+        <input
+          ref={(el) => (searchInputEl = el)}
+          type="text"
+          value={searchQuery()}
+          onInput={(event) => {
+            setSearchQuery(event.currentTarget.value);
+            setActiveSearchHitIndex(0);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              moveSearchHit(event.shiftKey ? -1 : 1);
+              return;
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeSearch();
+            }
+          }}
+          class="min-w-0 flex-1 bg-transparent text-sm text-gray-11 placeholder:text-gray-9 focus:outline-none"
+          placeholder={t("session.search_placeholder")}
+          aria-label={t("session.search_placeholder")}
+        />
+        <span class="text-[11px] text-gray-10 tabular-nums">
+          {activeSearchPositionLabel()}
+        </span>
+        <button
+          type="button"
+          class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
+          disabled={searchHits().length === 0}
+          onClick={() => moveSearchHit(-1)}
+          aria-label={t("session.prev_match")}
+        >
+          {t("session.search_prev")}
+        </button>
+        <button
+          type="button"
+          class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
+          disabled={searchHits().length === 0}
+          onClick={() => moveSearchHit(1)}
+          aria-label={t("session.next_match")}
+        >
+          {t("session.search_next")}
+        </button>
+        <button
+          type="button"
+          class="flex h-7 w-7 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12"
+          onClick={closeSearch}
+          aria-label={t("session.close_search")}
+        >
+          <X size={14} />
+        </button>
+      </div>
+    </div>
+  );
+  const renderSessionMessageContent = () => (
+    <>
+      <div
+        class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20" : "pt-10"} bg-dls-surface`}
+        style={{ contain: "layout paint style" }}
+        onWheel={(event) => {
+          sessionScroll.markScrollGesture(event.target);
+        }}
+        onTouchStart={(event) => {
+          sessionScroll.markScrollGesture(event.target);
+        }}
+        onTouchMove={(event) => {
+          sessionScroll.markScrollGesture(event.target);
+        }}
+        onPointerDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          sessionScroll.markScrollGesture(event.currentTarget);
+        }}
+        onScroll={sessionScroll.handleScroll}
+        ref={(el) => {
+          chatContainerEl = el;
+        }}
+      >
+        <div
+          class="mx-auto w-full max-w-[800px]"
+          ref={(el) => {
+            chatContentEl = el;
+          }}
+        >
+          <Show when={showDelayedSessionLoadingState()}>
+            <div class="px-6 py-24">
+              <div
+                class="mx-auto flex max-w-sm flex-col items-center gap-4 rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center"
+                role="status"
+                aria-live="polite"
+              >
+                <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface">
+                  <Loader2 size={20} class="animate-spin text-dls-secondary" />
+                </div>
+                <div class="space-y-1">
+                  <h3 class="text-base font-medium text-dls-text">{t("session.loading_title")}</h3>
+                  <p class="text-sm text-dls-secondary">
+                    {t("session.loading_detail")}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Show>
+
+          <Show
+            when={
+              props.messages.length === 0 &&
+              !showWorkspaceSetupEmptyState() &&
+              !showSessionLoadingState() &&
+              !deferSessionRender()
+            }
+          >
+            <div class="text-center px-6 space-y-6">
+              <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
+                <Zap class="text-dls-secondary" />
+              </div>
+              <div class="space-y-2">
+                <h3 class="text-xl font-medium">
+                  {emptyStateTitle()}
+                </h3>
+                <p class="text-dls-secondary text-sm max-w-sm mx-auto">
+                  {emptyStateBody()}
+                </p>
+              </div>
+              <Show when={emptyStateStarters().length > 0}>
+                <div class="grid gap-3 max-w-lg mx-auto text-left">
+                  <For each={emptyStateStarters()}>
+                    {(starter) => (
+                      <button
+                        type="button"
+                        class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
+                        onClick={() => handleEmptyStateStarter(starter)}
+                      >
+                        <div class="text-sm font-semibold text-dls-text">
+                          {starter.title}
+                        </div>
+                        <Show when={starter.description}>
+                          <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                            {starter.description}
+                          </div>
+                        </Show>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          </Show>
+
+          <Show
+            when={!showDelayedSessionLoadingState() && !deferSessionRender()}
+          >
+            <Show
+              when={
+                hiddenMessageCount() > 0 || hasServerEarlierMessages()
+              }
+            >
+              <div class="mb-4 flex justify-center">
+                <button
+                  type="button"
+                  class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
+                  onClick={() => {
+                    void revealEarlierMessages();
+                  }}
+                  disabled={props.loadingEarlierMessages}
+                >
+                  {props.loadingEarlierMessages
+                    ? t("session.loading_earlier")
+                    : hiddenMessageCount() > 0
+                      ? t("session.show_earlier", undefined, { count: nextRevealCount().toLocaleString(), plural: nextRevealCount() === 1 ? "" : "s" })
+                      : t("session.load_earlier")}
+                </button>
+              </div>
+            </Show>
+
+            <Show when={batchedRenderedMessages().length > 0}>
+              <MessageList
+                messages={batchedRenderedMessages()}
+                isStreaming={showRunIndicator()}
+                developerMode={props.developerMode}
+                showThinking={showThinking()}
+                getSessionById={props.getSessionById}
+                getMessagesBySessionId={props.getMessagesBySessionId}
+                ensureSessionLoaded={props.ensureSessionLoaded}
+                sessionLoadingById={props.sessionLoadingById}
+                workspaceRoot={props.selectedWorkspaceRoot}
+                expandedStepIds={props.expandedStepIds}
+                setExpandedStepIds={props.setExpandedStepIds}
+                openSessionById={(sessionId) => {
+                  flushComposerDraft();
+                  props.setView("session", sessionId);
+                }}
+                searchMatchMessageIds={searchMatchMessageIds()}
+                activeSearchMessageId={activeSearchHit()?.messageId ?? null}
+                searchHighlightQuery={searchQueryDebounced().trim()}
+                scrollElement={() => chatContainerEl}
+                setScrollToMessageById={(handler) => {
+                  scrollMessageIntoViewById = handler;
+                }}
+                footer={
+                  showRunIndicator() && showFooterRunStatus() ? (
+                    <div class="flex justify-start">
+                      <div class="w-full max-w-[760px]">
+                        <div
+                          class={`mt-3 flex items-center gap-2 py-1 text-xs ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <span
+                            class={`truncate ${
+                              runPhase() === "thinking" ||
+                              runPhase() === "responding"
+                                ? "animate-pulse"
+                                : ""
+                            }`}
+                          >
+                            {thinkingStatus() || runLabel()}
+                          </span>
+                          <Show when={props.developerMode}>
+                            <span class="text-[10px] text-gray-8 ml-auto shrink-0">
+                              {runElapsedLabel()}
+                            </span>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  ) : undefined
+                }
+              />
+            </Show>
+          </Show>
+        </div>
+      </div>
+
+      <Show when={!showDelayedSessionLoadingState() && !deferSessionRender() && props.messages.length > 0 && !jumpControlsSuppressed() && (!sessionScroll.isAtBottom() || Boolean(sessionScroll.topClippedMessageId()))}>
+        <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
+          <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
+            <Show when={Boolean(sessionScroll.topClippedMessageId())}>
+              <button
+                type="button"
+                class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
+                onClick={() => {
+                  suppressJumpControlsTemporarily();
+                  sessionScroll.jumpToStartOfMessage("smooth");
+                }}
+              >
+                {t("session.jump_to_start")}
+              </button>
+            </Show>
+            <Show when={!sessionScroll.isAtBottom()}>
+              <button
+                type="button"
+                class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
+                onClick={() => {
+                  suppressJumpControlsTemporarily();
+                  sessionScroll.jumpToLatest("smooth");
+                }}
+              >
+                {t("session.jump_to_latest")}
+              </button>
+            </Show>
+          </div>
+        </div>
+      </Show>
+    </>
+  );
+  const renderTodoPanel = () => (
+    <div class="mx-auto w-full max-w-[800px] px-4">
+      <div class="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
+          onClick={() => setTodoExpanded((prev) => !prev)}
+        >
+          <div class="flex items-center gap-2">
+            <ListTodo size={14} class="text-gray-8" />
+            <span class="text-gray-11 font-medium">{todoLabel()}</span>
+          </div>
+          <Minimize2
+            size={12}
+            class={`text-gray-8 transition-transform ${todoExpanded() ? "" : "rotate-180"}`}
+          />
+        </button>
+        <Show when={todoExpanded()}>
+          <div class="max-h-60 overflow-auto border-t border-dls-border px-4 pb-3 space-y-2.5">
+            <For each={todoList()}>
+              {(todo, index) => {
+                const done = () => todo.status === "completed";
+                const cancelled = () => todo.status === "cancelled";
+                const active = () => todo.status === "in_progress";
+                return (
+                  <div class="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
+                    <div class="flex items-center gap-1.5 pt-0.5">
+                      <div
+                        class={`h-4.5 w-4.5 rounded-full border flex items-center justify-center ${
+                          done()
+                            ? "border-green-6 bg-green-2 text-green-11"
+                            : active()
+                              ? "border-amber-6 bg-amber-2 text-amber-11"
+                              : cancelled()
+                                ? "border-gray-6 bg-gray-2 text-gray-8"
+                                : "border-gray-6 bg-gray-1 text-gray-8"
+                        }`}
+                      >
+                        <Show when={done()}>
+                          <Check size={10} />
+                        </Show>
+                        <Show when={!done() && active()}>
+                          <span class="h-1.5 w-1.5 rounded-full bg-amber-9" />
+                        </Show>
+                      </div>
+                    </div>
+                    <div
+                      class={`flex-1 text-sm leading-relaxed ${
+                        cancelled()
+                          ? "text-gray-9 line-through"
+                          : "text-gray-12"
+                      }`}
+                    >
+                      <span class="text-gray-9 mr-1.5">
+                        {index() + 1}.
+                      </span>
+                      {todo.content}
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </div>
+  );
+  const renderComposerPanel = () => (
+    <Composer
+      prompt={props.prompt}
+      draftMode={composerDraftMode()}
+      draftScopeKey={composerDraftScopeKey()}
+      developerMode={props.developerMode}
+      busy={props.busy}
+      isStreaming={showRunIndicator()}
+      compactTopSpacing={todoCount() > 0}
+      onSend={handleSendPrompt}
+      onStop={cancelRun}
+      onDraftChange={handleDraftChange}
+      selectedModelLabel={modelControls.selectedSessionModelLabel() || t("session.model_fallback")}
+      onModelClick={() => modelControls.openSessionModelPicker()}
+      modelVariantLabel={modelControls.sessionModelVariantLabel()}
+      modelVariant={modelControls.sessionModelVariant()}
+      modelBehaviorOptions={modelControls.sessionModelBehaviorOptions()}
+      onModelVariantChange={modelControls.setSessionModelVariant}
+      agentLabel={agentLabel()}
+      selectedAgent={sessionActions.selectedSessionAgent()}
+      agentPickerOpen={agentPickerOpen()}
+      agentPickerBusy={agentPickerBusy()}
+      agentPickerError={agentPickerError()}
+      agentOptions={agentOptions()}
+      onToggleAgentPicker={openAgentPicker}
+      onSelectAgent={(agent) => {
+        applySessionAgent(agent);
+        setAgentPickerOpen(false);
+      }}
+      setAgentPickerRef={(el) => {
+        agentPickerRef = el;
+      }}
+      notice={composerNotice()}
+      onNotice={showComposerNotice}
+      listAgents={sessionActions.listAgents}
+      recentFiles={props.workingFiles}
+      searchFiles={sessionActions.searchWorkspaceFiles}
+      listCommands={sessionActions.listCommands}
+      isRemoteWorkspace={
+        props.selectedWorkspaceDisplay.workspaceType === "remote"
+      }
+      isSandboxWorkspace={isSandboxWorkspace()}
+      onUploadInboxFiles={uploadInboxFiles}
+      attachmentsEnabled={attachmentsEnabled()}
+      attachmentsDisabledReason={attachmentsDisabledReason()}
+    />
+  );
   return (
     <div class="h-[100dvh] min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] p-3 md:p-4 text-gray-12 font-sans">
       <div class="flex h-full w-full gap-3 md:gap-4">
@@ -3001,34 +3416,7 @@ export default function SessionView(props: SessionViewProps) {
           updateVersion={props.updateStatus?.version ?? null}
           onUpdatePillClick={handleUpdatePillClick}
           onStartResize={startLeftSidebarResize}
-          sidebarProps={{
-            workspaceSessionGroups: props.workspaceSessionGroups,
-            selectedWorkspaceId: props.selectedWorkspaceId,
-            developerMode: props.developerMode,
-            selectedSessionId: props.selectedSessionId,
-            showSessionActions: true,
-            sessionStatusById: props.sessionStatusById,
-            connectingWorkspaceId: props.connectingWorkspaceId,
-            workspaceConnectionStateById: props.workspaceConnectionStateById,
-            newTaskDisabled: props.newTaskDisabled,
-            onSelectWorkspace: props.selectWorkspace,
-            onOpenSession: openSessionFromList,
-            onPrefetchSession: (workspaceId, sessionId) => {
-              if (workspaceId !== props.selectedWorkspaceId) return;
-              void props.ensureSessionLoaded(sessionId);
-            },
-            onCreateTaskInWorkspace: createTaskInWorkspace,
-            onOpenRenameSession: openRenameModal,
-            onOpenDeleteSession: openDeleteSessionModal,
-            onOpenRenameWorkspace: props.openRenameWorkspace,
-            onShareWorkspace: shareWorkspaceState.openShareWorkspace,
-            onRevealWorkspace: revealWorkspaceInFinder,
-            onRecoverWorkspace: props.recoverWorkspace,
-            onTestWorkspaceConnection: props.testWorkspaceConnection,
-            onEditWorkspaceConnection: props.editWorkspaceConnection,
-            onForgetWorkspace: props.forgetWorkspace,
-            onOpenCreateWorkspace: props.openCreateWorkspace,
-          }}
+          renderSidebar={renderSessionSidebar}
         />
 
         <main class="min-w-0 flex-1 flex flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
@@ -3047,394 +3435,16 @@ export default function SessionView(props: SessionViewProps) {
             renderActions={renderSessionHeaderActions}
           />
 
-          <Show when={searchOpen()}>
-            <div class="border-b border-dls-border bg-dls-sidebar/70 px-4 py-2 md:px-6">
-              <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-[16px] border border-dls-border bg-dls-surface px-3 py-2 shadow-[var(--dls-card-shadow)]">
-                <Search size={14} class="text-gray-9" />
-                <input
-                  ref={(el) => (searchInputEl = el)}
-                  type="text"
-                  value={searchQuery()}
-                  onInput={(event) => {
-                    setSearchQuery(event.currentTarget.value);
-                    setActiveSearchHitIndex(0);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      moveSearchHit(event.shiftKey ? -1 : 1);
-                      return;
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      closeSearch();
-                    }
-                  }}
-                  class="min-w-0 flex-1 bg-transparent text-sm text-gray-11 placeholder:text-gray-9 focus:outline-none"
-                  placeholder={t("session.search_placeholder")}
-                  aria-label={t("session.search_placeholder")}
-                />
-                <span class="text-[11px] text-gray-10 tabular-nums">
-                  {activeSearchPositionLabel()}
-                </span>
-                <button
-                  type="button"
-                  class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
-                  disabled={searchHits().length === 0}
-                  onClick={() => moveSearchHit(-1)}
-                  aria-label={t("session.prev_match")}
-                >
-                  {t("session.search_prev")}
-                </button>
-                <button
-                  type="button"
-                  class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
-                  disabled={searchHits().length === 0}
-                  onClick={() => moveSearchHit(1)}
-                  aria-label={t("session.next_match")}
-                >
-                  {t("session.search_next")}
-                </button>
-                <button
-                  type="button"
-                  class="flex h-7 w-7 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12"
-                  onClick={closeSearch}
-                  aria-label={t("session.close_search")}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-          </Show>
+          <Show when={searchOpen()}>{renderSessionSearchPanel()}</Show>
 
           <div class="flex-1 flex overflow-hidden">
             <div class="relative min-w-0 flex-1 overflow-hidden bg-dls-surface">
-              <div
-                class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20" : "pt-10"} bg-dls-surface`}
-                style={{ contain: "layout paint style" }}
-                onWheel={(event) => {
-                  sessionScroll.markScrollGesture(event.target);
-                }}
-                onTouchStart={(event) => {
-                  sessionScroll.markScrollGesture(event.target);
-                }}
-                onTouchMove={(event) => {
-                  sessionScroll.markScrollGesture(event.target);
-                }}
-                onPointerDown={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  sessionScroll.markScrollGesture(event.currentTarget);
-                }}
-                onScroll={sessionScroll.handleScroll}
-                ref={(el) => {
-                  chatContainerEl = el;
-                }}
-              >
-                <div
-                  class="mx-auto w-full max-w-[800px]"
-                  ref={(el) => {
-                    chatContentEl = el;
-                  }}
-                >
-                  <Show when={showDelayedSessionLoadingState()}>
-                    <div class="px-6 py-24">
-                      <div
-                        class="mx-auto flex max-w-sm flex-col items-center gap-4 rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        <div class="flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface">
-                          <Loader2 size={20} class="animate-spin text-dls-secondary" />
-                        </div>
-                        <div class="space-y-1">
-                          <h3 class="text-base font-medium text-dls-text">{t("session.loading_title")}</h3>
-                          <p class="text-sm text-dls-secondary">
-                            {t("session.loading_detail")}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </Show>
-
-
-                  <Show
-                    when={
-                      props.messages.length === 0 &&
-                      !showWorkspaceSetupEmptyState() &&
-                      !showSessionLoadingState() &&
-                      !deferSessionRender()
-                    }
-                  >
-                    <div class="text-center px-6 space-y-6">
-                      <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
-                        <Zap class="text-dls-secondary" />
-                      </div>
-                      <div class="space-y-2">
-                        <h3 class="text-xl font-medium">
-                          {emptyStateTitle()}
-                        </h3>
-                        <p class="text-dls-secondary text-sm max-w-sm mx-auto">
-                          {emptyStateBody()}
-                        </p>
-                      </div>
-                      <Show when={emptyStateStarters().length > 0}>
-                        <div class="grid gap-3 max-w-lg mx-auto text-left">
-                          <For each={emptyStateStarters()}>
-                            {(starter) => (
-                              <button
-                                type="button"
-                                class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                                onClick={() => handleEmptyStateStarter(starter)}
-                              >
-                                <div class="text-sm font-semibold text-dls-text">
-                                  {starter.title}
-                                </div>
-                                <Show when={starter.description}>
-                                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                                    {starter.description}
-                                  </div>
-                                </Show>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
-
-                  <Show
-                    when={!showDelayedSessionLoadingState() && !deferSessionRender()}
-                  >
-                    <Show
-                      when={
-                        hiddenMessageCount() > 0 || hasServerEarlierMessages()
-                      }
-                    >
-                      <div class="mb-4 flex justify-center">
-                        <button
-                          type="button"
-                          class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
-                          onClick={() => {
-                            void revealEarlierMessages();
-                          }}
-                          disabled={props.loadingEarlierMessages}
-                        >
-                          {props.loadingEarlierMessages
-                            ? t("session.loading_earlier")
-                            : hiddenMessageCount() > 0
-                              ? t("session.show_earlier", undefined, { count: nextRevealCount().toLocaleString(), plural: nextRevealCount() === 1 ? "" : "s" })
-                              : t("session.load_earlier")}
-                        </button>
-                      </div>
-                    </Show>
-
-                    <Show when={batchedRenderedMessages().length > 0}>
-                      <MessageList
-                        messages={batchedRenderedMessages()}
-                        isStreaming={showRunIndicator()}
-                        developerMode={props.developerMode}
-                        showThinking={showThinking()}
-                        getSessionById={props.getSessionById}
-                        getMessagesBySessionId={props.getMessagesBySessionId}
-                        ensureSessionLoaded={props.ensureSessionLoaded}
-                        sessionLoadingById={props.sessionLoadingById}
-                        workspaceRoot={props.selectedWorkspaceRoot}
-                        expandedStepIds={props.expandedStepIds}
-                        setExpandedStepIds={props.setExpandedStepIds}
-                        openSessionById={(sessionId) => {
-                          flushComposerDraft();
-                          props.setView("session", sessionId);
-                        }}
-                        searchMatchMessageIds={searchMatchMessageIds()}
-                        activeSearchMessageId={activeSearchHit()?.messageId ?? null}
-                        searchHighlightQuery={searchQueryDebounced().trim()}
-                        scrollElement={() => chatContainerEl}
-                        setScrollToMessageById={(handler) => {
-                          scrollMessageIntoViewById = handler;
-                        }}
-                        footer={
-                          showRunIndicator() && showFooterRunStatus() ? (
-                            <div class="flex justify-start">
-                              <div class="w-full max-w-[760px]">
-                                <div
-                                  class={`mt-3 flex items-center gap-2 py-1 text-xs ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
-                                  role="status"
-                                  aria-live="polite"
-                                >
-                                  <span
-                                    class={`truncate ${
-                                      runPhase() === "thinking" ||
-                                      runPhase() === "responding"
-                                        ? "animate-pulse"
-                                        : ""
-                                    }`}
-                                  >
-                                    {thinkingStatus() || runLabel()}
-                                  </span>
-                                  <Show when={props.developerMode}>
-                                    <span class="text-[10px] text-gray-8 ml-auto shrink-0">
-                                      {runElapsedLabel()}
-                                    </span>
-                                  </Show>
-                                </div>
-                              </div>
-                            </div>
-                          ) : undefined
-                        }
-                      />
-                    </Show>
-                  </Show>
-                </div>
-              </div>
-
-              <Show when={!showDelayedSessionLoadingState() && !deferSessionRender() && props.messages.length > 0 && !jumpControlsSuppressed() && (!sessionScroll.isAtBottom() || Boolean(sessionScroll.topClippedMessageId()))}>
-                <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
-                  <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
-                    <Show when={Boolean(sessionScroll.topClippedMessageId())}>
-                      <button
-                        type="button"
-                        class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
-                        onClick={() => {
-                          suppressJumpControlsTemporarily();
-                          sessionScroll.jumpToStartOfMessage("smooth");
-                        }}
-                      >
-                        {t("session.jump_to_start")}
-                      </button>
-                    </Show>
-                    <Show when={!sessionScroll.isAtBottom()}>
-                      <button
-                        type="button"
-                        class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
-                        onClick={() => {
-                          suppressJumpControlsTemporarily();
-                          sessionScroll.jumpToLatest("smooth");
-                        }}
-                      >
-                        {t("session.jump_to_latest")}
-                      </button>
-                    </Show>
-                  </div>
-                </div>
-              </Show>
+              {renderSessionMessageContent()}
             </div>
           </div>
 
-          <Show when={todoCount() > 0}>
-            <div class="mx-auto w-full max-w-[800px] px-4">
-              <div class="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
-                <button
-                  type="button"
-                  class="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
-                  onClick={() => setTodoExpanded((prev) => !prev)}
-                >
-                  <div class="flex items-center gap-2">
-                    <ListTodo size={14} class="text-gray-8" />
-                    <span class="text-gray-11 font-medium">{todoLabel()}</span>
-                  </div>
-                  <Minimize2
-                    size={12}
-                    class={`text-gray-8 transition-transform ${todoExpanded() ? "" : "rotate-180"}`}
-                  />
-                </button>
-                <Show when={todoExpanded()}>
-                  <div class="max-h-60 overflow-auto border-t border-dls-border px-4 pb-3 space-y-2.5">
-                    <For each={todoList()}>
-                      {(todo, index) => {
-                        const done = () => todo.status === "completed";
-                        const cancelled = () => todo.status === "cancelled";
-                        const active = () => todo.status === "in_progress";
-                        return (
-                          <div class="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
-                            <div class="flex items-center gap-1.5 pt-0.5">
-                              <div
-                                class={`h-4.5 w-4.5 rounded-full border flex items-center justify-center ${
-                                  done()
-                                    ? "border-green-6 bg-green-2 text-green-11"
-                                    : active()
-                                      ? "border-amber-6 bg-amber-2 text-amber-11"
-                                      : cancelled()
-                                        ? "border-gray-6 bg-gray-2 text-gray-8"
-                                        : "border-gray-6 bg-gray-1 text-gray-8"
-                                }`}
-                              >
-                                <Show when={done()}>
-                                  <Check size={10} />
-                                </Show>
-                                <Show when={!done() && active()}>
-                                  <span class="h-1.5 w-1.5 rounded-full bg-amber-9" />
-                                </Show>
-                              </div>
-                            </div>
-                            <div
-                              class={`flex-1 text-sm leading-relaxed ${
-                                cancelled()
-                                  ? "text-gray-9 line-through"
-                                  : "text-gray-12"
-                              }`}
-                            >
-                              <span class="text-gray-9 mr-1.5">
-                                {index() + 1}.
-                              </span>
-                              {todo.content}
-                            </div>
-                          </div>
-                        );
-                      }}
-                    </For>
-                  </div>
-                </Show>
-              </div>
-            </div>
-          </Show>
-
-          <Show when={!showWorkspaceSetupEmptyState()}>
-            <Composer
-              prompt={props.prompt}
-              draftMode={composerDraftMode()}
-              draftScopeKey={composerDraftScopeKey()}
-              developerMode={props.developerMode}
-              busy={props.busy}
-              isStreaming={showRunIndicator()}
-              compactTopSpacing={todoCount() > 0}
-              onSend={handleSendPrompt}
-              onStop={cancelRun}
-              onDraftChange={handleDraftChange}
-              selectedModelLabel={modelControls.selectedSessionModelLabel() || t("session.model_fallback")}
-              onModelClick={() => modelControls.openSessionModelPicker()}
-              modelVariantLabel={modelControls.sessionModelVariantLabel()}
-              modelVariant={modelControls.sessionModelVariant()}
-              modelBehaviorOptions={modelControls.sessionModelBehaviorOptions()}
-              onModelVariantChange={modelControls.setSessionModelVariant}
-              agentLabel={agentLabel()}
-              selectedAgent={sessionActions.selectedSessionAgent()}
-              agentPickerOpen={agentPickerOpen()}
-              agentPickerBusy={agentPickerBusy()}
-              agentPickerError={agentPickerError()}
-              agentOptions={agentOptions()}
-              onToggleAgentPicker={openAgentPicker}
-              onSelectAgent={(agent) => {
-                applySessionAgent(agent);
-                setAgentPickerOpen(false);
-              }}
-              setAgentPickerRef={(el) => {
-                agentPickerRef = el;
-              }}
-              notice={composerNotice()}
-              onNotice={showComposerNotice}
-              listAgents={sessionActions.listAgents}
-              recentFiles={props.workingFiles}
-              searchFiles={sessionActions.searchWorkspaceFiles}
-              listCommands={sessionActions.listCommands}
-              isRemoteWorkspace={
-                props.selectedWorkspaceDisplay.workspaceType === "remote"
-              }
-              isSandboxWorkspace={isSandboxWorkspace()}
-              onUploadInboxFiles={uploadInboxFiles}
-              attachmentsEnabled={attachmentsEnabled()}
-              attachmentsDisabledReason={attachmentsDisabledReason()}
-            />
-          </Show>
+          <Show when={todoCount() > 0}>{renderTodoPanel()}</Show>
+          <Show when={!showWorkspaceSetupEmptyState()}>{renderComposerPanel()}</Show>
 
           <StatusBar
             clientConnected={props.clientConnected}

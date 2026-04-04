@@ -9,12 +9,24 @@ export default function ReactShellHost(props: ReactAppShellProps) {
   let root: Root | undefined;
 
   createEffect(() => {
+    const currentView = props.currentView;
+    const renderSession = props.renderSession;
+    const renderSettings = props.renderSettings;
+    const renderOverlays = props.renderOverlays;
+
     if (!container) return;
     if (!root) {
       root = createRoot(container);
     }
 
-    root.render(createElement(ReactAppShell, props));
+    root.render(
+      createElement(ReactAppShell, {
+        currentView,
+        renderSession,
+        renderSettings,
+        renderOverlays,
+      }),
+    );
   });
 
   onCleanup(() => {

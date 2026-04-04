@@ -11,12 +11,27 @@ export default function ReactSessionHeaderHost(props: ReactSessionHeaderProps) {
   let root: Root | undefined;
 
   createEffect(() => {
+    const snapshot: ReactSessionHeaderProps = {
+      title: props.title,
+      workspaceLabel: props.workspaceLabel,
+      developerMode: props.developerMode,
+      headerStatus: props.headerStatus,
+      busyHint: props.busyHint,
+      showUpdatePill: props.showUpdatePill,
+      updatePillLabel: props.updatePillLabel,
+      updatePillTitle: props.updatePillTitle,
+      updateVersion: props.updateVersion,
+      onUpdatePillClick: props.onUpdatePillClick,
+      onOpenSettings: props.onOpenSettings,
+      renderActions: props.renderActions,
+    };
+
     if (!container) return;
     if (!root) {
       root = createRoot(container);
     }
 
-    root.render(createElement(ReactSessionHeader, props));
+    root.render(createElement(ReactSessionHeader, snapshot));
   });
 
   onCleanup(() => {
