@@ -31,7 +31,7 @@ export function LandingCloudWorkersCard(props: Props) {
             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
           <span className="truncate text-[11px] text-gray-400">
-            share.openwork.software/b/01KMK...
+            share.openworklabs.com/b/01KNB...
           </span>
         </div>
       </div>
