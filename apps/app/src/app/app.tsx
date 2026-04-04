@@ -2204,6 +2204,31 @@ export default function App() {
     error: error(),
   }));
 
+  const sendReactSessionPrompt = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const draft: ComposerDraft = {
+      mode: "prompt",
+      text: trimmed,
+      resolvedText: trimmed,
+      parts: [{ type: "text", text: trimmed }],
+      attachments: [],
+    };
+    await sessionActionsStore.sendPrompt(draft);
+  };
+
+  const abortReactSessionPrompt = async () => {
+    await sessionActionsStore.abortSession();
+  };
+
+  const undoReactSessionMessage = async () => {
+    await sessionActionsStore.undoLastUserMessage();
+  };
+
+  const redoReactSessionMessage = async () => {
+    await sessionActionsStore.redoLastUserMessage();
+  };
+
   syncShellRoute({
     pathname: () => location.pathname,
     navigate,
@@ -2266,6 +2291,10 @@ export default function App() {
                     renderSessionReact={() =>
                       createElement(ReactSessionViewV2, {
                         legacySurface: sessionSurface(),
+                        sendPrompt: sendReactSessionPrompt,
+                        abortPrompt: abortReactSessionPrompt,
+                        undoLastMessage: undoReactSessionMessage,
+                        redoLastMessage: redoReactSessionMessage,
                       })
                     }
                     renderSettings={() =>

@@ -1,4 +1,4 @@
-import { createElement, useMemo, useState } from "react";
+import { createElement, useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionViewProps } from "../pages/session";
 import ReactSessionCommandPalette from "../session/react-session-command-palette";
@@ -8,6 +8,10 @@ import ReactSessionWorkspaceListV2 from "./react-session-workspace-list-v2";
 
 type ReactSessionViewV2Props = {
   legacySurface: SessionViewProps;
+  sendPrompt: (text: string) => Promise<void>;
+  abortPrompt: () => Promise<void>;
+  undoLastMessage: () => Promise<void>;
+  redoLastMessage: () => Promise<void>;
 };
 
 const readMessageText = (parts: SessionViewProps["messages"][number]["parts"]) => {
@@ -25,12 +29,15 @@ const readMessageText = (parts: SessionViewProps["messages"][number]["parts"]) =
 
 export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
   const surface = props.legacySurface;
+  const timelineRef = useRef<HTMLDivElement | null>(null);
   const [prompt, setPrompt] = useState(surface.prompt || "");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIndex, setSearchIndex] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [todoExpanded, setTodoExpanded] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [followLatest, setFollowLatest] = useState(true);
+
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
 
@@ -125,8 +132,16 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
     if (!text || surface.busy) return;
     setPrompt("");
     surface.setPrompt(text);
-    surface.selectSession(surface.selectedSessionId || "");
+    await props.sendPrompt(text);
   };
+
+  const isRunning = surface.sessionStatus !== "idle";
+
+  useEffect(() => {
+    const node = timelineRef.current;
+    if (!node || !followLatest) return;
+    node.scrollTop = node.scrollHeight;
+  }, [followLatest, messageItems.length, isRunning]);
 
   const messageCards = messageItems.map((message) =>
     createElement(
@@ -247,7 +262,35 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
             : null,
           createElement(
             "div",
-            { className: "min-h-0 flex-1 overflow-y-auto space-y-3 p-3" },
+            {
+              className: "min-h-0 flex-1 overflow-y-auto space-y-3 p-3",
+              ref: timelineRef,
+              onScroll: (event: any) => {
+                const el = event.currentTarget as HTMLDivElement;
+                const distanceFromBottom = el.scrollHeight - (el.scrollTop + el.clientHeight);
+                setFollowLatest(distanceFromBottom < 80);
+              },
+            },
+            surface.hasEarlierMessages || surface.loadingEarlierMessages
+              ? createElement(
+                  "div",
+                  { className: "mb-2 flex justify-center" },
+                  createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className:
+                        "rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text disabled:opacity-60",
+                      disabled: surface.loadingEarlierMessages || !surface.selectedSessionId,
+                      onClick: () => {
+                        if (!surface.selectedSessionId) return;
+                        void surface.loadEarlierMessages(surface.selectedSessionId);
+                      },
+                    },
+                    surface.loadingEarlierMessages ? "Loading earlier..." : "Load earlier messages",
+                  ),
+                )
+              : null,
             messageCards.length > 0
               ? messageCards
               : createElement(
@@ -258,7 +301,38 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
                   },
                   "No messages yet.",
                 ),
+            isRunning
+              ? createElement(
+                  "div",
+                  {
+                    className:
+                      "sticky bottom-0 mt-2 rounded-md border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary backdrop-blur",
+                  },
+                  "Session is running...",
+                )
+              : null,
           ),
+          !followLatest && messageCards.length > 0
+            ? createElement(
+                "div",
+                { className: "absolute bottom-[112px] right-6" },
+                createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className:
+                      "rounded-full border border-dls-border bg-dls-surface px-3 py-1 text-xs text-dls-secondary shadow-[var(--dls-card-shadow)] transition-colors hover:bg-dls-hover hover:text-dls-text",
+                    onClick: () => {
+                      setFollowLatest(true);
+                      const el = timelineRef.current;
+                      if (!el) return;
+                      el.scrollTop = el.scrollHeight;
+                    },
+                  },
+                  "Jump to latest",
+                ),
+              )
+            : null,
           surface.todos.length > 0
             ? createElement(ReactSessionTodoPanel, {
                 items: surface.todos,
@@ -273,9 +347,43 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
             createElement(
               "div",
               { className: "flex items-end gap-2" },
+              createElement(
+                "div",
+                { className: "flex shrink-0 items-center gap-1.5 pb-1" },
+                createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className:
+                      "rounded-md border border-dls-border px-2 py-1 text-[11px] text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text",
+                    onClick: () => {
+                      void props.undoLastMessage();
+                    },
+                  },
+                  "Undo",
+                ),
+                createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className:
+                      "rounded-md border border-dls-border px-2 py-1 text-[11px] text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text",
+                    onClick: () => {
+                      void props.redoLastMessage();
+                    },
+                  },
+                  "Redo",
+                ),
+              ),
               createElement("textarea", {
                 value: prompt,
                 onChange: (event: any) => setPrompt(event.currentTarget.value),
+                onKeyDown: (event: any) => {
+                  if (event.key !== "Enter") return;
+                  if (event.shiftKey) return;
+                  event.preventDefault();
+                  void sendPrompt();
+                },
                 className:
                   "min-h-[64px] flex-1 resize-y rounded-md border border-dls-border bg-dls-surface px-3 py-2 text-sm text-dls-text focus:outline-none",
                 placeholder: "Ask OpenWork anything...",
@@ -291,8 +399,22 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
                     void sendPrompt();
                   },
                 },
-                surface.busy ? "Sending..." : "Send",
+                "Send",
               ),
+              isRunning
+                ? createElement(
+                    "button",
+                    {
+                      type: "button",
+                      className:
+                        "rounded-md border border-red-8 px-3 py-2 text-xs text-red-11 transition-colors hover:bg-red-2/40",
+                      onClick: () => {
+                        void props.abortPrompt();
+                      },
+                    },
+                    "Abort",
+                  )
+                : null,
             ),
           ),
         ),
