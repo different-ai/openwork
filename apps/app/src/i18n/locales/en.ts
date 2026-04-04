@@ -32,10 +32,12 @@ export default {
   "dashboard.new": "New",
   "dashboard.busy": "Busy",
   "dashboard.hero_title": "What should we do today?",
-  "dashboard.hero_description": "Describe an outcome. OpenWork will run it and keep an audit trail.",
+  "dashboard.hero_description":
+    "Describe an outcome. OpenWork will run it and keep an audit trail.",
   "dashboard.quick_start_commands": "Quick Start Commands",
   "dashboard.view_all": "View all",
-  "dashboard.no_commands": "No commands yet. Starter commands will appear here.",
+  "dashboard.no_commands":
+    "No commands yet. Starter commands will appear here.",
   "dashboard.run_command": "Run a saved command",
   "dashboard.recent_sessions": "Recent Sessions",
   "dashboard.this_workspace": "this workspace",
@@ -49,21 +51,25 @@ export default {
   "dashboard.retry": "Retry",
   "dashboard.alpha": "Alpha",
   "dashboard.create_workspace_title": "Create Workspace",
-  "dashboard.create_workspace_subtitle": "Initialize a new folder-based workspace.",
+  "dashboard.create_workspace_subtitle":
+    "Initialize a new folder-based workspace.",
   "dashboard.create_workspace_confirm": "Create Workspace",
   "dashboard.create_sandbox_confirm": "Create as sandbox",
   "share_skill_destination.title": "Where should this skill go?",
-  "share_skill_destination.subtitle": "Choose an existing workspace or create a new one before importing this shared skill.",
+  "share_skill_destination.subtitle":
+    "Choose an existing workspace or create a new one before importing this shared skill.",
   "share_skill_destination.skill_label": "Shared skill",
   "share_skill_destination.fallback_skill_name": "Shared skill",
   "share_skill_destination.trigger_label": "Trigger",
   "share_skill_destination.current_badge": "Current",
   "share_skill_destination.existing_workers": "Existing workspaces",
-  "share_skill_destination.no_workers": "No workspaces are ready yet. Create one or connect a remote workspace to install this skill.",
+  "share_skill_destination.no_workers":
+    "No workspaces are ready yet. Create one or connect a remote workspace to install this skill.",
   "share_skill_destination.new_destination": "New destination",
   "share_skill_destination.selection_ready": "Ready to add",
   "share_skill_destination.selected_badge": "Selected",
-  "share_skill_destination.selected_hint": "Selected. Review the destination below, then confirm.",
+  "share_skill_destination.selected_hint":
+    "Selected. Review the destination below, then confirm.",
   "share_skill_destination.footer_idle": "Choose a workspace to continue.",
   "share_skill_destination.footer_selected": "Selected workspace:",
   "share_skill_destination.confirm_button": "Add skill to workspace",
@@ -72,21 +78,27 @@ export default {
   "share_skill_destination.remote_badge": "Remote",
   "share_skill_destination.sandbox_badge": "Sandbox",
   "share_skill_destination.create_worker": "Create new workspace",
-  "share_skill_destination.create_worker_desc": "Open the workspace setup flow, then add this skill after the new workspace is ready.",
+  "share_skill_destination.create_worker_desc":
+    "Open the workspace setup flow, then add this skill after the new workspace is ready.",
   "share_skill_destination.connect_remote": "Connect remote workspace",
-  "share_skill_destination.connect_remote_desc": "Attach an OpenWork host, then choose it from the list to import this skill.",
+  "share_skill_destination.connect_remote_desc":
+    "Attach an OpenWork host, then choose it from the list to import this skill.",
   "dashboard.sandbox_get_ready_title": "Sandboxes need Docker",
   "dashboard.sandbox_get_ready_action": "Get your system ready",
-  "dashboard.sandbox_get_ready_desc": "Run this workspace in an isolated Docker container for safer, more reproducible runs.",
+  "dashboard.sandbox_get_ready_desc":
+    "Run this workspace in an isolated Docker container for safer, more reproducible runs.",
   "dashboard.sandbox_checking_docker": "Checking Docker...",
   "dashboard.create_remote_workspace_title": "Add Remote Workspace",
-  "dashboard.create_remote_workspace_subtitle": "Save an OpenWork server as a workspace.",
+  "dashboard.create_remote_workspace_subtitle":
+    "Save an OpenWork server as a workspace.",
   "dashboard.create_remote_workspace_confirm": "Add Workspace",
   "dashboard.edit_remote_workspace_title": "Edit Remote Connection",
-  "dashboard.edit_remote_workspace_subtitle": "Update the OpenWork server details for this workspace.",
+  "dashboard.edit_remote_workspace_subtitle":
+    "Update the OpenWork server details for this workspace.",
   "dashboard.edit_remote_workspace_confirm": "Save connection",
   "dashboard.remote_workspace_title": "Remote workspace",
-  "dashboard.remote_workspace_hint": "Track an OpenWork server and reconnect anytime.",
+  "dashboard.remote_workspace_hint":
+    "Track an OpenWork server and reconnect anytime.",
   "dashboard.remote_base_url_label": "OpenWork server URL",
   "dashboard.remote_base_url_placeholder": "http://127.0.0.1:<port>",
   "dashboard.remote_base_url_required": "Add a server URL to continue.",
@@ -95,7 +107,8 @@ export default {
   "dashboard.openwork_host_hint": "Use the URL shared by your OpenWork server.",
   "dashboard.openwork_host_token_label": "Collaborator or owner token",
   "dashboard.openwork_host_token_placeholder": "Paste your token",
-  "dashboard.openwork_host_token_hint": "Optional. Paste a collaborator token for routine access or an owner token when this client must answer permission prompts.",
+  "dashboard.openwork_host_token_hint":
+    "Optional. Paste a collaborator token for routine access or an owner token when this client must answer permission prompts.",
   "dashboard.remote_mode_openwork_alpha": "OpenWork server",
   "dashboard.remote_mode_direct": "Direct (legacy)",
   "dashboard.remote_connection_openwork": "OpenWork",
@@ -113,11 +126,14 @@ export default {
   "dashboard.choose_preset": "Choose Preset",
   "dashboard.choose_folder_continue": "Choose a folder to continue.",
   "dashboard.starter_workspace": "Starter workspace",
-  "dashboard.starter_workspace_desc": "Preconfigured to show you how to use plugins, commands, and skills.",
+  "dashboard.starter_workspace_desc":
+    "Preconfigured to show you how to use plugins, commands, and skills.",
   "dashboard.empty_workspace": "Empty workspace",
-  "dashboard.empty_workspace_desc": "Start with a blank folder and add what you need.",
+  "dashboard.empty_workspace_desc":
+    "Start with a blank folder and add what you need.",
   "dashboard.blueprints_workspace": "Blueprints",
-  "dashboard.blueprints_workspace_desc": "Start with an automation-ready workspace for reusable skills, commands, and shared flows.",
+  "dashboard.blueprints_workspace_desc":
+    "Start with an automation-ready workspace for reusable skills, commands, and shared flows.",
 
   // ==================== Workspace ====================
   "workspace.rename_title": "Edit workspace name",
@@ -130,9 +146,11 @@ export default {
   "session.back_to_dashboard": "Back to dashboard",
   "session.new_task": "New task",
   "session.recents": "Recents",
-  "session.recents_notice": "These tasks run locally and aren't synced across devices.",
+  "session.recents_notice":
+    "These tasks run locally and aren't synced across devices.",
   "session.ready_to_work_title": "Ready to work",
-  "session.ready_to_work_description": "Describe a task. I'll show progress and ask for permissions when needed.",
+  "session.ready_to_work_description":
+    "Describe a task. I'll show progress and ask for permissions when needed.",
   "session.document_label": "Document",
   "session.standard_label": "Standard",
   "session.no_artifacts_fallback": "No artifacts yet.",
@@ -144,13 +162,15 @@ export default {
   "session.working_files_label": "Working files",
   "session.none_yet_label": "None yet.",
   "session.permission_required_title": "Permission Required",
-  "session.permission_required_description": "OpenCode is requesting permission to continue.",
+  "session.permission_required_description":
+    "OpenCode is requesting permission to continue.",
   "session.permission_label_uppercase": "Permission",
   "session.scope_label_uppercase": "Scope",
   "session.details_label": "Details",
   "session.steps_notice_text": "Steps will show as the task unfolds.",
   "session.ready_to_work": "Ready to work",
-  "session.ready_description": "Describe a task. I'll show progress and ask for permissions when needed.",
+  "session.ready_description":
+    "Describe a task. I'll show progress and ask for permissions when needed.",
   "session.hide_steps": "Hide steps",
   "session.view_steps": "View steps",
   "session.open": "Open",
@@ -181,7 +201,8 @@ export default {
   "session.placeholder": "Ask OpenWork...",
   "session.run": "Run",
   "session.permission_required": "Permission Required",
-  "session.permission_description": "OpenCode is requesting permission to continue.",
+  "session.permission_description":
+    "OpenCode is requesting permission to continue.",
   "session.permission_label": "Permission",
   "session.scope_label": "Scope",
   "session.details": "Details",
@@ -189,7 +210,8 @@ export default {
   "session.once": "Once",
   "session.allow_for_session": "Allow for session",
 
-  "session.tasks_local_hint": "These tasks run locally and aren't synced across devices.",
+  "session.tasks_local_hint":
+    "These tasks run locally and aren't synced across devices.",
   "session.recents_label": "Recents",
   "session.model_standard": "Standard",
   "session.run_button_title": "Run",
@@ -212,7 +234,8 @@ export default {
   "session.redo_aria_label": "Redo last reverted message",
   // ==================== Commands ====================
   "commands.new": "New",
-  "commands.empty_state": "Save a prompt or command so you can run it again in one tap.",
+  "commands.empty_state":
+    "Save a prompt or command so you can run it again in one tap.",
   "commands.workspace": "This workspace",
   "commands.global": "Every workspace",
   "commands.other": "Other commands",
@@ -239,7 +262,8 @@ export default {
   "commands.name_will_be": "Will be created as",
   "commands.override_title": "Replace existing command?",
   "commands.override_description": "A command with this name already exists.",
-  "commands.override_warning": "This will replace the existing \"{name}\" command. This action cannot be undone.",
+  "commands.override_warning":
+    'This will replace the existing "{name}" command. This action cannot be undone.',
   "commands.override_confirm": "Replace",
   "commands.override_cancel": "Keep existing",
 
@@ -248,30 +272,39 @@ export default {
   "skills.subtitle": "Manage skills for this workspace.",
   "skills.refresh": "Refresh",
   "skills.add_title": "Add skills",
-  "skills.add_description": "Install a starter command, import a skill, or open the folder.",
+  "skills.add_description":
+    "Install a starter command, import a skill, or open the folder.",
   "skills.install_from_openpackage": "Install from OpenPackage",
   "skills.host_mode_only": "Local workspace only",
   "skills.install": "Install",
   "skills.installed_label": "Installed",
-  "skills.install_hint": "Installs OpenPackage packages into the current workspace. Skills should land in `.opencode/skills`.",
+  "skills.install_hint":
+    "Installs OpenPackage packages into the current workspace. Skills should land in `.opencode/skills`.",
   "skills.import_local": "Import local skill",
-  "skills.import_local_hint": "Copy an existing skill folder into this workspace.",
+  "skills.import_local_hint":
+    "Copy an existing skill folder into this workspace.",
   "skills.import": "Import",
   "skills.curated_packages": "Curated packages",
   "skills.view": "View",
-  "skills.search_placeholder": "Search packages or lists (e.g. claude, registry, community)",
+  "skills.search_placeholder":
+    "Search packages or lists (e.g. claude, registry, community)",
   "skills.no_matches": "No curated matches. Try a different search.",
   "skills.install_package": "Install",
-  "skills.registry_notice": "Publishing to the OpenPackage registry requires authentication today. A registry search + curated list sync is planned.",
+  "skills.registry_notice":
+    "Publishing to the OpenPackage registry requires authentication today. A registry search + curated list sync is planned.",
   "skills.installed": "Installed skills",
-  "skills.no_skills": "No skills detected in `.opencode/skills`, `.claude/skills`, or `~/.agents/skills`.",
+  "skills.no_skills":
+    "No skills detected in `.opencode/skills`, `.claude/skills`, or `~/.agents/skills`.",
   "skills.desktop_required": "Skill management requires the desktop app.",
-  "skills.host_only_error": "Skill management requires a local workspace or connected OpenWork server.",
+  "skills.host_only_error":
+    "Skill management requires a local workspace or connected OpenWork server.",
   "skills.install_skill_creator": "Install skill creator",
-  "skills.install_skill_creator_hint": "This skill allows you to create other skills from within the chat.",
+  "skills.install_skill_creator_hint":
+    "This skill allows you to create other skills from within the chat.",
   "skills.installing_skill_creator": "Installing skill creator...",
   "skills.skill_creator_installed": "Skill creator installed.",
-  "skills.skill_creator_already_installed": "Skill creator is already installed.",
+  "skills.skill_creator_already_installed":
+    "Skill creator is already installed.",
   "skills.install_failed": "Skill install failed.",
   "skills.reveal_folder": "Open skills folder",
   "skills.reveal_folder_hint": "Open the skill directory in Finder.",
@@ -279,51 +312,67 @@ export default {
   "skills.reveal_failed": "Failed to open skills folder.",
   "skills.uninstall": "Uninstall",
   "skills.uninstall_title": "Uninstall skill?",
-  "skills.uninstall_warning": "This will permanently delete the `{name}` skill from your workspace.",
+  "skills.uninstall_warning":
+    "This will permanently delete the `{name}` skill from your workspace.",
   "skills.uninstall_failed": "Failed to uninstall skill.",
   "skills.uninstalled": "Skill removed.",
   "skills.share_title": "Share skill",
-  "skills.share_chooser_subtitle": "Save to your OpenWork Cloud organization or publish a public install link.",
-  "skills.share_subtitle_public": "Anyone with the link can install this skill.",
+  "skills.share_chooser_subtitle":
+    "Save to your OpenWork Cloud organization or publish a public install link.",
+  "skills.share_subtitle_public":
+    "Anyone with the link can install this skill.",
   "skills.share_subtitle_team": "Stored in your organization for teammates.",
   "skills.share_option_team_title": "Share with team",
-  "skills.share_option_team_desc": "Add this skill to your active OpenWork Cloud organization.",
+  "skills.share_option_team_desc":
+    "Add this skill to your active OpenWork Cloud organization.",
   "skills.share_option_public_title": "Public link",
-  "skills.share_option_public_desc": "Create a link anyone can use to install this skill.",
-  "skills.share_public_intro": "Publish a public link. Anyone with the URL can install this skill.",
+  "skills.share_option_public_desc":
+    "Create a link anyone can use to install this skill.",
+  "skills.share_public_intro":
+    "Publish a public link. Anyone with the URL can install this skill.",
   "skills.share_publisher_label": "Publisher",
   "skills.share_public_create": "Create link",
   "skills.share_public_regenerate": "Regenerate link",
   "skills.share_public_creating": "Publishing…",
   "skills.share_copy_link": "Copy",
-  "skills.share_team_intro": "Save this skill to your active organization so teammates can install it from Cloud.",
+  "skills.share_team_intro":
+    "Save this skill to your active organization so teammates can install it from Cloud.",
   "skills.share_team_org_fallback": "Active Cloud org",
   "skills.share_team_hub_label": "Add to skill hub (optional)",
   "skills.share_team_hub_none": "Organization only — not in a hub",
   "skills.share_team_hubs_loading": "Loading hubs…",
   "skills.share_team_sign_in": "Sign in to share with team",
-  "skills.share_team_sign_in_hint": "OpenWork Cloud opens in your browser. Return here after signing in.",
+  "skills.share_team_sign_in_hint":
+    "OpenWork Cloud opens in your browser. Return here after signing in.",
   "skills.share_team_save": "Save to team",
   "skills.share_team_saving": "Saving…",
-  "skills.share_team_success": "Saved to {org}. Teammates can install it from your organization skills.",
-  "skills.share_team_choose_org": "Choose an organization in Settings → Cloud before sharing with your team.",
+  "skills.share_team_success":
+    "Saved to {org}. Teammates can install it from your organization skills.",
+  "skills.share_team_choose_org":
+    "Choose an organization in Settings → Cloud before sharing with your team.",
   "skills.share_back": "Back",
   "skills.share_close": "Close",
   "skills.share_done": "Done",
   "skills.source_placeholder": "github:anthropics/claude-code",
   "skills.notion_crm_title": "Notion CRM Enrichment Skills",
-  "skills.notion_crm_description": "Add enrichment workflows for contacts, pipelines, and follow-ups.",
-  "skills.notion_crm_card_description": "Enrich Notion CRM data with ready-made skills.",
+  "skills.notion_crm_description":
+    "Add enrichment workflows for contacts, pipelines, and follow-ups.",
+  "skills.notion_crm_card_description":
+    "Enrich Notion CRM data with ready-made skills.",
   "skills.connect_host_to_load": "Connect an OpenWork server to load skills.",
   "skills.pick_workspace_first": "Pick a workspace folder first.",
   "skills.no_skills_found": "No skills found yet.",
   "skills.installed_description": "Skills available in this workspace.",
   "skills.failed_to_load": "Failed to load skills",
-  "skills.plugin_management_host_only": "Plugin management requires the desktop app.",
+  "skills.plugin_management_host_only":
+    "Plugin management requires the desktop app.",
   "skills.plugins_host_only": "Plugins are only available in the desktop app.",
-  "skills.pick_project_for_plugins": "Pick a project folder to manage project plugins.",
-  "skills.pick_project_for_active": "Pick a project folder to load active plugins.",
-  "skills.no_opencode_found": "No opencode.json found yet. Add a plugin to create one.",
+  "skills.pick_project_for_plugins":
+    "Pick a project folder to manage project plugins.",
+  "skills.pick_project_for_active":
+    "Pick a project folder to load active plugins.",
+  "skills.no_opencode_found":
+    "No opencode.json found yet. Add a plugin to create one.",
   "skills.no_opencode_workspace": "No opencode.json in this workspace yet.",
   "skills.failed_parse_opencode": "Failed to parse opencode.json",
   "skills.failed_load_opencode": "Failed to load opencode.json",
@@ -331,12 +380,15 @@ export default {
   "skills.enter_plugin_name": "Enter a plugin package name.",
   "skills.plugin_already_listed": "Plugin already listed in opencode.json.",
   "skills.failed_update_opencode": "Failed to update opencode.json",
-  "skills.opackage_install_host_only": "OpenPackage installs require the desktop app.",
+  "skills.opackage_install_host_only":
+    "OpenPackage installs require the desktop app.",
   "skills.pick_project_first": "Pick a project folder first.",
-  "skills.enter_opackage_source": "Enter an OpenPackage source (e.g. github:anthropics/claude-code).",
+  "skills.enter_opackage_source":
+    "Enter an OpenPackage source (e.g. github:anthropics/claude-code).",
   "skills.installing_opackage": "Installing OpenPackage...",
   "skills.install_complete": "Installed.",
-  "skills.curated_list_notice": "This is a curated list, not an OpenPackage yet. Copy the link or watch the PRD for planned registry search integration.",
+  "skills.curated_list_notice":
+    "This is a curated list, not an OpenPackage yet. Copy the link or watch the PRD for planned registry search integration.",
   "skills.import_host_only": "Skill import requires the desktop app.",
   "skills.select_skill_folder": "Select skill folder",
   "skills.import_failed": "Import failed ({status})",
@@ -352,14 +404,18 @@ export default {
     "Skills shared with you through OpenWork Cloud — including team skill hubs you can access.",
   "skills.cloud_refresh": "Refresh team skills",
   "skills.cloud_org_fallback": "OpenWork Cloud",
-  "skills.cloud_sign_in_hint": "Sign in to OpenWork Cloud to browse team and org skills.",
+  "skills.cloud_sign_in_hint":
+    "Sign in to OpenWork Cloud to browse team and org skills.",
   "skills.cloud_sign_in": "Sign in to Cloud",
-  "skills.cloud_choose_org_hint": "Choose an organization in Settings → Cloud to load team skills.",
-  "skills.cloud_choose_org_detail": "Use the Cloud panel to pick your active org, then refresh this list.",
+  "skills.cloud_choose_org_hint":
+    "Choose an organization in Settings → Cloud to load team skills.",
+  "skills.cloud_choose_org_detail":
+    "Use the Cloud panel to pick your active org, then refresh this list.",
   "skills.cloud_org_empty": "No organization skills are available yet.",
   "skills.cloud_org_load_failed": "Failed to load organization skills.",
   "skills.cloud_no_search_matches": "No skills match that search.",
-  "skills.cloud_install_need_server": "Connect to an OpenWork server with skills write access to install team skills on this worker.",
+  "skills.cloud_install_need_server":
+    "Connect to an OpenWork server with skills write access to install team skills on this worker.",
   "skills.cloud_installed": "Installed {name} on this worker.",
   "skills.cloud_installing": "Installing {title}…",
   "skills.cloud_installing_short": "Installing",
@@ -372,7 +428,8 @@ export default {
 
   // ==================== Plugins ====================
   "plugins.title": "OpenCode plugins",
-  "plugins.description": "Manage `opencode.json` for your project or global OpenCode plugins.",
+  "plugins.description":
+    "Manage `opencode.json` for your project or global OpenCode plugins.",
   "plugins.config_label": "Config",
   "plugins.config_not_loaded": "Not loaded yet",
   "plugins.suggested_label": "Suggested plugins",
@@ -398,21 +455,26 @@ export default {
 
   // ==================== Apps (MCP) ====================
   "mcp.apps_title": "Apps",
-  "mcp.apps_subtitle": "Connect your favorite tools so OpenWork can use them on your behalf.",
+  "mcp.apps_subtitle":
+    "Connect your favorite tools so OpenWork can use them on your behalf.",
   "mcp.app_connected": "app connected",
   "mcp.apps_connected": "apps connected",
   "mcp.title": "Apps",
   "mcp.description": "Connect your tools with one click.",
-  "mcp.alpha_banner_title": "Apps are in early access while we polish the experience.",
-  "mcp.alpha_banner_help": "If you want to help, open a PR and include a short video showing the sign-in flow works end to end.",
+  "mcp.alpha_banner_title":
+    "Apps are in early access while we polish the experience.",
+  "mcp.alpha_banner_help":
+    "If you want to help, open a PR and include a short video showing the sign-in flow works end to end.",
   "mcp.mcps_title": "Apps",
   "mcp.connect_mcp_hint": "Connect apps to expand what OpenWork can do.",
   "mcp.finish_setup": "Almost there",
   "mcp.finish_setup_hint": "Tap Activate to finish connecting your app.",
   "mcp.activate_button": "Activate",
   "mcp.reload_banner_title": "Almost there",
-  "mcp.reload_banner_description": "Tap Activate to finish connecting your app.",
-  "mcp.reload_banner_description_blocked": "A task is running. Stop it first, then activate.",
+  "mcp.reload_banner_description":
+    "Tap Activate to finish connecting your app.",
+  "mcp.reload_banner_description_blocked":
+    "A task is running. Stop it first, then activate.",
   "mcp.reload_banner_blocked_hint": "Stop the running task to activate.",
   "mcp.available_apps": "Available apps",
   "mcp.one_click_connect": "One-click connect",
@@ -430,7 +492,8 @@ export default {
   "mcp.from_opencode_json": "From config",
   "mcp.no_servers_yet": "No apps connected yet.",
   "mcp.edit_config_title": "Edit config file",
-  "mcp.edit_config_description": "Apps are stored in your workspace config file.",
+  "mcp.edit_config_description":
+    "Apps are stored in your workspace config file.",
   "mcp.docs_link": "Learn more",
   "mcp.scope_project": "This workspace",
   "mcp.scope_global": "All workspaces",
@@ -445,11 +508,14 @@ export default {
   "mcp.open_file": "Open file",
   "mcp.pick_workspace_error": "Choose a workspace folder first.",
   "mcp.reveal_config_failed": "Couldn't open the config file",
-  "mcp.alpha_warning": "Apps are in early access while we polish the experience.",
+  "mcp.alpha_warning":
+    "Apps are in early access while we polish the experience.",
   "mcp.github_issue": "View issue #9510 on GitHub",
-  "mcp.contribution_guide": "If you want to help, open a PR and include a short video showing the sign-in flow works end to end.",
+  "mcp.contribution_guide":
+    "If you want to help, open a PR and include a short video showing the sign-in flow works end to end.",
   "mcp.advanced_settings": "Advanced settings",
-  "mcp.advanced_settings_hint": "Edit config files and manage connections manually.",
+  "mcp.advanced_settings_hint":
+    "Edit config files and manage connections manually.",
   "mcp.hide_advanced": "Hide advanced settings",
   "mcp.show_advanced": "Show advanced settings",
   "mcp.mcps_label": "Apps",
@@ -483,7 +549,8 @@ export default {
   "mcp.add_mcp": "Add app",
   "mcp.verify_connection": "Test connection",
   "mcp.cli_guidance": "Terminal command (advanced)",
-  "mcp.config_locations": "Config can live in opencode.json, opencode.jsonc, or .opencode/opencode.json.",
+  "mcp.config_locations":
+    "Config can live in opencode.json, opencode.jsonc, or .opencode/opencode.json.",
   "mcp.app_details": "App details",
   "mcp.details_title": "App details",
   "mcp.select_app_hint": "Select an app to see details.",
@@ -496,7 +563,8 @@ export default {
   "mcp.cap_signin": "Account sign-in",
   "mcp.tools_enabled_label": "AI tools",
   "mcp.oauth_ready_label": "Account sign-in",
-  "mcp.usage_hint_text": "Mention the app name in your prompt to use its tools.",
+  "mcp.usage_hint_text":
+    "Mention the app name in your prompt to use its tools.",
   "mcp.issue_label": "Issue",
   "mcp.technical_details": "Technical details",
   "mcp.next_steps_label": "What to do",
@@ -526,39 +594,53 @@ export default {
   "mcp.remove_app": "Remove",
   "mcp.remove_failed": "Couldn't remove the app.",
   "mcp.remove_modal_title": "Remove app",
-  "mcp.remove_modal_message": "Are you sure you want to remove {server}? You can always add it back later.",
+  "mcp.remove_modal_message":
+    "Are you sure you want to remove {server}? You can always add it back later.",
 
   // Add MCP Modal
   "mcp.add_modal_title": "Add Custom App",
-  "mcp.add_modal_subtitle": "Connect a custom MCP server by URL or local command.",
-  "mcp.custom_app_cta_hint": "Connect your own MCP server, internal tool, or hosted app.",
+  "mcp.add_modal_subtitle":
+    "Connect a custom MCP server by URL or local command.",
+  "mcp.custom_app_cta_hint":
+    "Connect your own MCP server, internal tool, or hosted app.",
   "mcp.server_type": "Type",
   "mcp.type_remote": "Remote (URL)",
   "mcp.type_local_cmd": "Local (command)",
   "mcp.server_command": "Command",
-  "mcp.server_command_placeholder": "npx -y @modelcontextprotocol/server-sequential-thinking",
+  "mcp.server_command_placeholder":
+    "npx -y @modelcontextprotocol/server-sequential-thinking",
   "mcp.server_command_hint": "The shell command to start the server.",
   "mcp.sign_in_section_label": "Sign-in",
   "mcp.oauth_optional_label": "This app requires sign-in",
-  "mcp.oauth_optional_hint": "Uses OAuth in the browser to connect your account.",
-  "mcp.remote_workspace_url_hint": "Remote workers connect fastest with URL-based MCP servers.",
+  "mcp.oauth_optional_hint":
+    "Uses OAuth in the browser to connect your account.",
+  "mcp.remote_workspace_url_hint":
+    "Remote workers connect fastest with URL-based MCP servers.",
   "mcp.add_server_button": "Add App",
   "mcp.name_required": "Enter a server name.",
-  "mcp.url_or_command_required": "Enter a URL for remote or a command for local servers.",
+  "mcp.url_or_command_required":
+    "Enter a URL for remote or a command for local servers.",
   "mcp.control_chrome_setup_title": "Set up Control Chrome",
-  "mcp.control_chrome_setup_subtitle": "Turn on Chrome access, then choose whether OpenWork should use its own clean profile or attach to the Chrome you already use.",
+  "mcp.control_chrome_setup_subtitle":
+    "Turn on Chrome access, then choose whether OpenWork should use its own clean profile or attach to the Chrome you already use.",
   "mcp.control_chrome_browser_title": "1. Turn on Chrome access",
   "mcp.control_chrome_browser_hint": "In Chrome 144 or newer, do this first:",
-  "mcp.control_chrome_browser_step_one": "Open chrome://inspect/#remote-debugging.",
+  "mcp.control_chrome_browser_step_one":
+    "Open chrome://inspect/#remote-debugging.",
   "mcp.control_chrome_browser_step_two": "Enable remote debugging.",
-  "mcp.control_chrome_browser_step_three": "Allow incoming debugging connections when Chrome asks.",
+  "mcp.control_chrome_browser_step_three":
+    "Allow incoming debugging connections when Chrome asks.",
   "mcp.control_chrome_docs": "Official MCP guide",
   "mcp.control_chrome_profile_title": "2. Choose which Chrome to use",
-  "mcp.control_chrome_profile_hint": "Control Chrome normally opens a separate Chrome profile. Turn this on if you want OpenWork to reuse the Chrome window you already have open.",
+  "mcp.control_chrome_profile_hint":
+    "Control Chrome normally opens a separate Chrome profile. Turn this on if you want OpenWork to reuse the Chrome window you already have open.",
   "mcp.control_chrome_toggle_label": "Use my existing Chrome profile",
-  "mcp.control_chrome_toggle_hint": "When this is on, OpenWork adds --autoConnect so the MCP attaches to a Chrome instance you already started.",
-  "mcp.control_chrome_toggle_on": "OpenWork will reuse your current tabs, cookies, and sign-ins.",
-  "mcp.control_chrome_toggle_off": "OpenWork will launch a separate Chrome profile just for automation.",
+  "mcp.control_chrome_toggle_hint":
+    "When this is on, OpenWork adds --autoConnect so the MCP attaches to a Chrome instance you already started.",
+  "mcp.control_chrome_toggle_on":
+    "OpenWork will reuse your current tabs, cookies, and sign-ins.",
+  "mcp.control_chrome_toggle_off":
+    "OpenWork will launch a separate Chrome profile just for automation.",
   "mcp.control_chrome_connect": "Add Control Chrome",
   "mcp.control_chrome_save": "Save settings",
   "mcp.control_chrome_edit": "Edit settings",
@@ -566,12 +648,14 @@ export default {
   "mcp.logout_label": "OAuth",
   "mcp.logout_action": "Log out",
   "mcp.logout_working": "Logging out...",
-  "mcp.logout_hint": "Removes stored OAuth credentials. You'll need to sign in again.",
+  "mcp.logout_hint":
+    "Removes stored OAuth credentials. You'll need to sign in again.",
   "mcp.login_action": "Sign in",
   "mcp.login_hint": "Connect your account to finish setting up this app.",
   "mcp.login_unavailable": "This app does not support sign-in from OpenWork.",
   "mcp.logout_modal_title": "Log out of this app?",
-  "mcp.logout_modal_message": "This will remove stored OAuth credentials for {server}. You'll need to sign in again to use this app.",
+  "mcp.logout_modal_message":
+    "This will remove stored OAuth credentials for {server}. You'll need to sign in again to use this app.",
   "mcp.logout_success": "Logged out of {server}.",
   "mcp.logout_failed": "Failed to log out.",
 
@@ -579,57 +663,82 @@ export default {
   "mcp.auth.open_browser_signin": "We'll open your browser to finish sign-in.",
   "mcp.auth.connect_server": "Connect {server}",
   "mcp.auth.already_connected": "Already Connected",
-  "mcp.auth.already_connected_description": "{server} is already authenticated and ready to use.",
-  "mcp.auth.configured_previously": "The MCP may have been configured globally or in a previous session. You can close this modal and start using the MCP tools right away.",
+  "mcp.auth.already_connected_description":
+    "{server} is already authenticated and ready to use.",
+  "mcp.auth.configured_previously":
+    "The MCP may have been configured globally or in a previous session. You can close this modal and start using the MCP tools right away.",
   "mcp.auth.reload_engine_retry": "Apply changes and retry",
   "mcp.auth.retry_now": "Retry Now",
   "mcp.auth.retry": "Retry",
   "mcp.auth.reload_failed": "Failed to reload the worker before sign-in.",
   "mcp.auth.applying_changes_title": "Applying changes before sign-in",
-  "mcp.auth.applying_changes_body": "We are restarting the worker so the new MCP is ready to authenticate.",
-  "mcp.auth.waiting_for_conversation_title": "Waiting for conversation to complete",
-  "mcp.auth.waiting_for_conversation_body": "We will redirect you to authenticate as soon as possible.",
+  "mcp.auth.applying_changes_body":
+    "We are restarting the worker so the new MCP is ready to authenticate.",
+  "mcp.auth.waiting_for_conversation_title":
+    "Waiting for conversation to complete",
+  "mcp.auth.waiting_for_conversation_body":
+    "We will redirect you to authenticate as soon as possible.",
   "mcp.auth.waiting_for_session": "Waiting for {session} to finish working",
   "mcp.auth.force_stop": "Force stop",
   "mcp.auth.force_stopping": "Stopping...",
-  "mcp.auth.reload_before_oauth": "Reload the engine to finish setting up this MCP before starting OAuth.",
-  "mcp.auth.reload_notice": "For this to take effect, OpenWork needs to refresh the worker service. This can interrupt a running session.",
-  "mcp.auth.reload_blocked": "Reload is paused while a session is running. Stop the run to finish setup.",
-  "mcp.auth.reload_remote_confirm": "For this to take effect, OpenWork needs to refresh the worker service. This might stop your running session. Continue?",
-  "mcp.auth.reload_needed": "Finish setup by reloading the engine, then try connecting again.",
+  "mcp.auth.reload_before_oauth":
+    "Reload the engine to finish setting up this MCP before starting OAuth.",
+  "mcp.auth.reload_notice":
+    "For this to take effect, OpenWork needs to refresh the worker service. This can interrupt a running session.",
+  "mcp.auth.reload_blocked":
+    "Reload is paused while a session is running. Stop the run to finish setup.",
+  "mcp.auth.reload_remote_confirm":
+    "For this to take effect, OpenWork needs to refresh the worker service. This might stop your running session. Continue?",
+  "mcp.auth.reload_needed":
+    "Finish setup by reloading the engine, then try connecting again.",
   "mcp.auth.manual_finish_title": "Remote server?",
-  "mcp.auth.manual_finish_hint": "Paste the callback URL (localhost:19876) or just the code to finish connecting.",
+  "mcp.auth.manual_finish_hint":
+    "Paste the callback URL (localhost:19876) or just the code to finish connecting.",
   "mcp.auth.callback_label": "Callback URL or code",
-  "mcp.auth.callback_placeholder": "http://127.0.0.1:19876/mcp/oauth/callback?code=...",
+  "mcp.auth.callback_placeholder":
+    "http://127.0.0.1:19876/mcp/oauth/callback?code=...",
   "mcp.auth.complete_connection": "Complete connection",
-  "mcp.auth.callback_invalid": "Paste the callback URL or the code parameter to finish OAuth.",
-  "mcp.auth.port_forward_hint": "Tip: forward the callback port if needed: ssh -L 19876:127.0.0.1:19876 user@host",
+  "mcp.auth.callback_invalid":
+    "Paste the callback URL or the code parameter to finish OAuth.",
+  "mcp.auth.port_forward_hint":
+    "Tip: forward the callback port if needed: ssh -L 19876:127.0.0.1:19876 user@host",
   "mcp.auth.step1_title": "Opening your browser",
-  "mcp.auth.step1_description": "We'll launch {server}'s sign-in flow automatically.",
+  "mcp.auth.step1_description":
+    "We'll launch {server}'s sign-in flow automatically.",
   "mcp.auth.step2_title": "Authorize OpenWork",
   "mcp.auth.step2_description": "Sign in and approve access when prompted.",
   "mcp.auth.step3_title": "Return here when you're done",
-  "mcp.auth.step3_description": "We'll finish connecting as soon as authorization completes.",
-  "mcp.auth.waiting_authorization": "Waiting for authorization to complete in your browser...",
-  "mcp.auth.follow_browser_steps": "Follow the authorization steps in the browser.",
+  "mcp.auth.step3_description":
+    "We'll finish connecting as soon as authorization completes.",
+  "mcp.auth.waiting_authorization":
+    "Waiting for authorization to complete in your browser...",
+  "mcp.auth.follow_browser_steps":
+    "Follow the authorization steps in the browser.",
   "mcp.auth.reopen_browser_link": "Click here to re-open the browser",
   "mcp.auth.done": "Done",
   "mcp.auth.cancel": "Cancel",
   "mcp.auth.im_done": "I'm done",
-  "mcp.auth.client_registration_required": "Client registration is required before OAuth can continue.",
-  "mcp.auth.server_disabled": "This MCP server is disabled. Enable it and try again.",
+  "mcp.auth.client_registration_required":
+    "Client registration is required before OAuth can continue.",
+  "mcp.auth.server_disabled":
+    "This MCP server is disabled. Enable it and try again.",
   "mcp.auth.oauth_failed": "OAuth authentication failed.",
-  "mcp.auth.invalid_refresh_token": "The OAuth refresh token is invalid or expired. Reauthorize to continue.",
+  "mcp.auth.invalid_refresh_token":
+    "The OAuth refresh token is invalid or expired. Reauthorize to continue.",
   "mcp.auth.reauth_action": "Reauthorize OAuth",
   "mcp.auth.reauth_running": "Reauthorizing...",
   "mcp.auth.reauth_failed": "Reauthorization failed.",
   "mcp.auth.reauth_cli_hint": "Run: opencode mcp auth {server}",
-  "mcp.auth.reauth_remote_hint": "Reauthorize from the machine running this worker.",
-  "mcp.auth.authorization_still_required": "Authorization is still required. Try again to restart the flow.",
-  "mcp.auth.oauth_not_supported_hint": "This could mean:\n• The MCP server doesn't advertise OAuth capabilities\n• The engine needs to reload to discover server capabilities\n• Try: opencode mcp auth {server} from the CLI",
+  "mcp.auth.reauth_remote_hint":
+    "Reauthorize from the machine running this worker.",
+  "mcp.auth.authorization_still_required":
+    "Authorization is still required. Try again to restart the flow.",
+  "mcp.auth.oauth_not_supported_hint":
+    "This could mean:\n• The MCP server doesn't advertise OAuth capabilities\n• The engine needs to reload to discover server capabilities\n• Try: opencode mcp auth {server} from the CLI",
   "mcp.auth.try_reload_engine": "{message}. Try reloading the engine first.",
   "mcp.auth.failed_to_start_oauth": "Failed to start OAuth flow",
-  "mcp.auth.oauth_completed_reload": "OAuth completed. Reload the engine to activate the MCP.",
+  "mcp.auth.oauth_completed_reload":
+    "OAuth completed. Reload the engine to activate the MCP.",
 
   // ==================== Settings ====================
   "settings.title": "Settings",
@@ -637,7 +746,8 @@ export default {
   "settings.engine_source": "Engine source",
   "settings.from_path": "From PATH",
   "settings.from_sidecar": "Bundled sidecar",
-  "settings.engine_source_description": "PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.",
+  "settings.engine_source_description":
+    "PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.",
   "settings.sidecar_unsupported": "Sidecar is available on Windows",
   "settings.sidecar_unavailable_detail": "Sidecar is bundled when available.",
   "settings.model": "Model",
@@ -653,11 +763,14 @@ export default {
   "settings.edit": "Edit",
   "settings.default_model": "Default model",
   "settings.session_model": "Model",
-  "settings.model_description_default": "Choose from your configured providers. This selection will be used for new sessions.",
-  "settings.model_description_session": "Choose from your configured providers. This selection applies to your next message.",
+  "settings.model_description_default":
+    "Choose from your configured providers. This selection will be used for new sessions.",
+  "settings.model_description_session":
+    "Choose from your configured providers. This selection applies to your next message.",
   "settings.search_models": "Search models…",
   "settings.showing_models": "Showing {count} of {total}",
-  "settings.model_variant_prompt": "Model variant (provider-specific, e.g. high/max/minimal). Leave blank to clear.",
+  "settings.model_variant_prompt":
+    "Model variant (provider-specific, e.g. high/max/minimal). Leave blank to clear.",
   "settings.model_fallback": "Fallback",
   "settings.model_default": "Default",
   "settings.model_free": "Free",
@@ -677,27 +790,36 @@ export default {
   "settings.published": "Published",
   "settings.check_update": "Check",
   "settings.install_restart": "Install & Restart",
-  "settings.update_not_supported": "Updates are not supported in this environment.",
-  "settings.update_desktop_only": "Updates are only available in the desktop app.",
+  "settings.update_not_supported":
+    "Updates are not supported in this environment.",
+  "settings.update_desktop_only":
+    "Updates are only available in the desktop app.",
   "settings.startup": "Startup",
   "settings.mode_label": "mode",
   "settings.switch_mode": "Switch",
   "settings.reset_startup": "Reset default startup mode",
-  "settings.reset_startup_description": "This clears your saved preference and shows mode selection on next launch.",
+  "settings.reset_startup_description":
+    "This clears your saved preference and shows mode selection on next launch.",
   "settings.advanced": "Advanced",
-  "settings.advanced_description": "Reset OpenWork local state to retest onboarding.",
+  "settings.advanced_description":
+    "Reset OpenWork local state to retest onboarding.",
   "settings.reset_onboarding": "Reset onboarding",
-  "settings.reset_onboarding_description": "Clears OpenWork preferences and restarts the app.",
+  "settings.reset_onboarding_description":
+    "Clears OpenWork preferences and restarts the app.",
   "settings.reset_app_data": "Reset app data",
-  "settings.reset_app_data_description": "More aggressive. Clears OpenWork cache + app data.",
+  "settings.reset_app_data_description":
+    "More aggressive. Clears OpenWork cache + app data.",
   "settings.reset": "Reset",
   "settings.requires_typing": "Requires typing",
   "settings.will_restart": "and will restart the app.",
   "settings.reset_onboarding_title": "Reset onboarding",
   "settings.reset_app_data_title": "Reset app data",
-  "settings.reset_confirmation_hint": "Type <span class=\"font-mono\">RESET</span> to confirm. OpenWork will restart.",
-  "settings.reset_onboarding_warning": "Clears OpenWork local preferences and workspace onboarding markers.",
-  "settings.reset_app_data_warning": "Clears OpenWork cache and app data on this device.",
+  "settings.reset_confirmation_hint":
+    'Type <span class="font-mono">RESET</span> to confirm. OpenWork will restart.',
+  "settings.reset_onboarding_warning":
+    "Clears OpenWork local preferences and workspace onboarding markers.",
+  "settings.reset_app_data_warning":
+    "Clears OpenWork cache and app data on this device.",
   "settings.reset_stop_active_runs": "Stop active runs before resetting.",
   "settings.reset_confirmation_label": "Confirmation",
   "settings.reset_confirmation_placeholder": "Type RESET",
@@ -705,10 +827,12 @@ export default {
   "settings.reset_confirm_button": "Reset & Restart",
   "settings.developer": "Developer",
   "settings.opencode_cache": "OpenCode cache",
-  "settings.opencode_cache_description": "Repairs cached data used to start the engine. Safe to run.",
+  "settings.opencode_cache_description":
+    "Repairs cached data used to start the engine. Safe to run.",
   "settings.repair_cache": "Repair cache",
   "settings.repairing_cache": "Repairing cache",
-  "settings.cache_repair_requires_desktop": "Cache repair requires the desktop app",
+  "settings.cache_repair_requires_desktop":
+    "Cache repair requires the desktop app",
   "settings.pending_permissions": "Pending permissions",
   "settings.recent_events": "Recent events",
   "settings.notion_connected": "Connected",
@@ -730,7 +854,8 @@ export default {
   "settings.language.description": "Choose your preferred language",
   "settings.connection_title": "Connection",
   "settings.engine_source_label": "Engine source",
-  "settings.engine_source_hint": "PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.",
+  "settings.engine_source_hint":
+    "PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.",
   "settings.sidecar_unavailable": "Sidecar is bundled when available.",
   "settings.model_title": "Model",
   "settings.model_hint": "Defaults + thinking controls for runs.",
@@ -742,37 +867,47 @@ export default {
   "settings.theme_system": "System",
   "settings.theme_light": "Light",
   "settings.theme_dark": "Dark",
-  "settings.theme_system_hint": "System mode follows your OS preference automatically.",
+  "settings.theme_system_hint":
+    "System mode follows your OS preference automatically.",
   "settings.updates_title": "Updates",
   "settings.updates_hint": "Keep OpenWork up to date.",
   "settings.automatic_checks_label": "Automatic checks",
   "settings.automatic_checks_hint": "Once per day (quiet)",
   "settings.last_checked_time": "Last checked {time}",
   "settings.published_date": "Published {date}",
-  "settings.update_not_supported_hint": "Updates are not supported in this environment.",
-  "settings.update_desktop_only_hint": "Updates are only available in the desktop app.",
+  "settings.update_not_supported_hint":
+    "Updates are not supported in this environment.",
+  "settings.update_desktop_only_hint":
+    "Updates are only available in the desktop app.",
   "settings.startup_title": "Startup",
   "settings.mode_suffix": "mode",
   "settings.reset_startup_label": "Reset default startup mode",
-  "settings.reset_startup_hint": "This clears your saved preference and shows mode selection on next launch.",
+  "settings.reset_startup_hint":
+    "This clears your saved preference and shows mode selection on next launch.",
   "settings.advanced_title": "Advanced",
   "settings.advanced_hint": "Reset OpenWork local state to retest onboarding.",
   "settings.reset_onboarding_label": "Reset onboarding",
-  "settings.reset_onboarding_hint": "Clears OpenWork preferences and restarts the app.",
+  "settings.reset_onboarding_hint":
+    "Clears OpenWork preferences and restarts the app.",
   "settings.reset_app_data_label": "Reset app data",
-  "settings.reset_app_data_hint": "More aggressive. Clears OpenWork cache + app data.",
-  "settings.reset_requires_hint": "Requires typing RESET and will restart the app.",
+  "settings.reset_app_data_hint":
+    "More aggressive. Clears OpenWork cache + app data.",
+  "settings.reset_requires_hint":
+    "Requires typing RESET and will restart the app.",
   "settings.developer_title": "Developer",
   "settings.opencode_cache_label": "OpenCode cache",
-  "settings.opencode_cache_hint": "Repairs cached data used to start the engine. Safe to run.",
+  "settings.opencode_cache_hint":
+    "Repairs cached data used to start the engine. Safe to run.",
   "settings.pending_permissions_label": "Pending permissions",
   "settings.recent_events_label": "Recent events",
   "settings.stop_active_runs_hint": "Stop active runs to update",
   "settings.stop_active_runs_reset_hint": "Stop active runs to reset",
   "settings.stop_runs_to_update": "Stop active runs to update",
   "settings.stop_runs_to_reset": "Stop active runs to reset",
-  "settings.updates_not_supported": "Updates are not supported in this environment.",
-  "settings.updates_desktop_only": "Updates are only available in the desktop app.",
+  "settings.updates_not_supported":
+    "Updates are not supported in this environment.",
+  "settings.updates_desktop_only":
+    "Updates are only available in the desktop app.",
 
   // ==================== Reload ====================
   "reload.toast_title": "Updates available",
@@ -785,7 +920,8 @@ export default {
   "reload.toast_dismiss": "Later",
   "reload.toast_blocked_host": "Reloading is only available for local workers.",
   "reload.toast_blocked_connect": "Connect to this workspace to reload.",
-  "reload.toast_blocked_runs": "Waiting for active tasks to complete before reloading.",
+  "reload.toast_blocked_runs":
+    "Waiting for active tasks to complete before reloading.",
 
   // ==================== Onboarding ====================
   "onboarding.starting_host": "Starting OpenWork server...",
@@ -794,7 +930,8 @@ export default {
   "onboarding.verifying": "Verifying secure handshake",
   "onboarding.create_first_workspace": "Create your first workspace",
   "onboarding.create_workspace": "Create a workspace",
-  "onboarding.workspace_description": "Choose a folder and preset to set up your workspace.",
+  "onboarding.workspace_description":
+    "Choose a folder and preset to set up your workspace.",
   "onboarding.start": "Start OpenWork",
   "onboarding.back": "Back",
   "onboarding.advanced_settings": "Advanced settings",
@@ -806,8 +943,10 @@ export default {
   "onboarding.opencode": "OpenCode",
   "onboarding.cli_ready": "OpenCode CLI ready.",
   "onboarding.cli_version": "OpenCode {version}",
-  "onboarding.windows_install_instruction": "Install OpenCode for Windows, then restart OpenWork. Ensure opencode.exe is on PATH.",
-  "onboarding.install_instruction": "Install OpenCode to enable the local server (no terminal required).",
+  "onboarding.windows_install_instruction":
+    "Install OpenCode for Windows, then restart OpenWork. Ensure opencode.exe is on PATH.",
+  "onboarding.install_instruction":
+    "Install OpenCode to enable the local server (no terminal required).",
   "onboarding.install": "Install OpenCode",
   "onboarding.recheck": "Re-check",
   "onboarding.ready_message": "OpenCode is ready to start the local server.",
@@ -815,7 +954,8 @@ export default {
   "onboarding.version": "Version",
   "onboarding.search_notes": "Search notes",
   "onboarding.serve_help": "serve --help output",
-  "onboarding.workspace_folder_label": "A workspace is a folder with its own skills, plugins, and commands.",
+  "onboarding.workspace_folder_label":
+    "A workspace is a folder with its own skills, plugins, and commands.",
   "onboarding.theme_label": "Theme",
   "onboarding.theme_current": "Current: {mode}",
   "onboarding.theme_system": "System",
@@ -823,8 +963,10 @@ export default {
   "onboarding.theme_dark": "Dark",
   "onboarding.access_label": "Access",
   "onboarding.folders_allowed": "{count} folder{plural} allowed",
-  "onboarding.manage_access_hint": "You can manage access in advanced settings.",
-  "onboarding.open_settings_hint": "Need engine or access options? Open Settings.",
+  "onboarding.manage_access_hint":
+    "You can manage access in advanced settings.",
+  "onboarding.open_settings_hint":
+    "Need engine or access options? Open Settings.",
   "onboarding.open_settings": "Open Settings",
   "onboarding.add_folder_path": "Add folder path",
   "onboarding.pick": "Pick",
@@ -832,34 +974,43 @@ export default {
   "onboarding.remove": "Remove",
   "onboarding.cli_label": "OpenCode CLI",
   "onboarding.cli_checking": "Checking install...",
-  "onboarding.cli_not_found_hint": "Not found. Install to run the local server.",
+  "onboarding.cli_not_found_hint":
+    "Not found. Install to run the local server.",
   "onboarding.cli_version_installed": "Installed",
   "onboarding.cli_recheck": "Re-check",
-  "onboarding.cli_install_commands": "Install OpenCode with one of the commands below, then restart OpenWork.",
+  "onboarding.cli_install_commands":
+    "Install OpenCode with one of the commands below, then restart OpenWork.",
   "onboarding.show_search_notes": "Show search notes",
   "onboarding.last_checked": "Last checked {time}",
   "onboarding.server_url_placeholder": "http://localhost:8088",
   "onboarding.directory_placeholder": "my-project",
   "onboarding.connect_host": "Connect to server",
-  "onboarding.connect_description": "Pair with an existing OpenCode server (LAN or tunnel).",
+  "onboarding.connect_description":
+    "Pair with an existing OpenCode server (LAN or tunnel).",
   "onboarding.server_url": "Server URL",
   "onboarding.directory": "Directory (optional)",
   "onboarding.directory_hint": "Use if your server runs multiple workers.",
   "onboarding.connect": "Connect",
   "onboarding.remote_workspace_title": "Connect to OpenWork server",
-  "onboarding.remote_workspace_description": "Connect to an OpenWork server to access a workspace from anywhere.",
+  "onboarding.remote_workspace_description":
+    "Connect to an OpenWork server to access a workspace from anywhere.",
   "onboarding.remote_workspace_action": "Connect",
   "onboarding.remote_workspace_card_title": "Connect a remote workspace",
-  "onboarding.remote_workspace_card_description": "Connect to an OpenWork server to access a shared workspace.",
+  "onboarding.remote_workspace_card_description":
+    "Connect to an OpenWork server to access a shared workspace.",
   "onboarding.advanced_openwork_host": "OpenWork server",
-  "onboarding.advanced_openwork_hint": "Use a server URL and access token for shared access.",
+  "onboarding.advanced_openwork_hint":
+    "Use a server URL and access token for shared access.",
   "onboarding.advanced_opencode_direct": "Advanced: OpenCode direct",
-  "onboarding.advanced_opencode_hint": "Connect straight to an OpenCode engine when no server is available.",
+  "onboarding.advanced_opencode_hint":
+    "Connect straight to an OpenCode engine when no server is available.",
   "onboarding.welcome_title": "How would you like to run OpenWork today?",
   "onboarding.run_local": "Run locally",
-  "onboarding.run_local_description": "OpenWork runs OpenCode locally and keeps your work private.",
+  "onboarding.run_local_description":
+    "OpenWork runs OpenCode locally and keeps your work private.",
   "onboarding.engine_running": "Engine already running",
-  "onboarding.attach_description": "Attach to the existing session on this device.",
+  "onboarding.attach_description":
+    "Attach to the existing session on this device.",
   "onboarding.attach": "Attach",
   "onboarding.remember_choice": "Remember my choice for next time",
   "onboarding.client_mode": "Connect as a Client (Remote Pairing)",
@@ -924,12 +1075,16 @@ export default {
   "app.error.choose_folder": "Choose a folder to continue.",
   "app.error.pick_workspace_folder": "Pick a workspace folder first.",
   "app.error.remote_base_url_required": "Add a server URL to continue.",
-  "app.error.host_requires_local": "Select a local workspace to start the engine.",
-  "app.error.sidecar_unsupported_windows": "Sidecar OpenCode is bundled on Windows when available. Falling back to PATH.",
+  "app.error.host_requires_local":
+    "Select a local workspace to start the engine.",
+  "app.error.sidecar_unsupported_windows":
+    "Sidecar OpenCode is bundled on Windows when available. Falling back to PATH.",
   "app.error.install_failed": "OpenCode install failed. See logs above.",
-  "app.error.command_name_template_required": "Command name and instructions are required.",
+  "app.error.command_name_template_required":
+    "Command name and instructions are required.",
   "app.error.workspace_commands_desktop": "Commands require the desktop app.",
-  "app.error.command_scope_unknown": "This command can't be managed in this mode.",
+  "app.error.command_scope_unknown":
+    "This command can't be managed in this mode.",
 
   // ==================== App top-level ====================
   "app.shared_setup": "Shared setup",
@@ -939,7 +1094,8 @@ export default {
   "app.remote_worker_detail": "Remote worker",
   "app.import_shared_bundle": "Import shared bundle",
   "app.import_bundle_desc": "Choose how to import this bundle.",
-  "app.local_disabled_reason": "Create local workspaces in the desktop app. Remote and shared workspaces still work here.",
+  "app.local_disabled_reason":
+    "Create local workspaces in the desktop app. Remote and shared workspaces still work here.",
   "app.reload_stop_tasks": "Reload & Stop Tasks",
   "app.reload_now": "Reload now",
   "app.reload_later": "Later",
@@ -947,36 +1103,51 @@ export default {
   "app.error_command_not_resolved": "Command was not resolved.",
   "app.error_auth_failed": "Authentication failed",
   "app.error_rate_limit": "Rate limit exceeded",
-  "app.error_compact_no_session": "Select a session with messages before running /compact.",
+  "app.error_compact_no_session":
+    "Select a session with messages before running /compact.",
   "app.error_not_connected": "Not connected to a server",
   "app.error_compact_no_session_id": "Select a session before compacting.",
   "app.error_compact_empty": "Nothing to compact yet.",
   "app.error_session_name_required": "Session name is required",
   "app.error_audit_load": "Failed to load audit log.",
-  "app.error_restart_local_worker": "Failed to restart the local worker with the updated sharing setting.",
+  "app.error_restart_local_worker":
+    "Failed to restart the local worker with the updated sharing setting.",
   "app.error_remote_access": "Failed to update remote access.",
-  "app.error_deep_link_unrecognized": "That link is not a recognized OpenWork deep link or share URL.",
+  "app.error_deep_link_unrecognized":
+    "That link is not a recognized OpenWork deep link or share URL.",
   "app.deep_link_auth_queued": "Queued the Cloud auth deep link for OpenWork.",
-  "app.deep_link_remote_queued": "Queued remote worker link. OpenWork should move into the connect flow.",
-  "app.error_desktop_signin": "Desktop sign-in completed, but OpenWork Cloud did not return a session token.",
+  "app.deep_link_remote_queued":
+    "Queued remote worker link. OpenWork should move into the connect flow.",
+  "app.error_desktop_signin":
+    "Desktop sign-in completed, but OpenWork Cloud did not return a session token.",
   "app.error_cloud_signin": "Failed to complete OpenWork Cloud sign-in.",
-  "app.error_pick_local_folder": "Pick a local worker folder before restarting the local server.",
-  "app.error_connect_first": "Connect to this worker before applying runtime changes.",
+  "app.error_pick_local_folder":
+    "Pick a local worker folder before restarting the local server.",
+  "app.error_connect_first":
+    "Connect to this worker before applying runtime changes.",
   "app.error_runtime_changes": "Failed to apply runtime changes.",
-  "app.reset_config_ok": "Reset app config defaults. Restart OpenWork if any stale settings remain.",
+  "app.reset_config_ok":
+    "Reset app config defaults. Restart OpenWork if any stale settings remain.",
   "app.error_reset_config": "Failed to reset app config defaults.",
   "app.model_behavior_title": "Model behavior",
-  "app.model_behavior_desc": "Choose the model first to see provider-specific behavior controls.",
+  "app.model_behavior_desc":
+    "Choose the model first to see provider-specific behavior controls.",
   "app.error_update_opencode_json": "Failed to update opencode.json",
-  "app.error_auto_compact_scope": "Auto context compaction can only be changed for a local workspace or a writable OpenWork server workspace.",
-  "app.skills_hint_disconnected": "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills.",
-  "app.skills_hint_limited": "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect.",
-  "app.skills_hint_readonly": "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs.",
-  "app.plugins_hint_disconnected": "OpenWork server unavailable. Plugins are read-only.",
+  "app.error_auto_compact_scope":
+    "Auto context compaction can only be changed for a local workspace or a writable OpenWork server workspace.",
+  "app.skills_hint_disconnected":
+    "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills.",
+  "app.skills_hint_limited":
+    "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect.",
+  "app.skills_hint_readonly":
+    "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs.",
+  "app.plugins_hint_disconnected":
+    "OpenWork server unavailable. Plugins are read-only.",
   "app.plugins_hint_limited": "OpenWork server needs a token to edit plugins.",
   "app.plugins_hint_readonly": "OpenWork server is read-only for plugins.",
   "app.compact_command_desc": "Summarize this session to reduce context size.",
-  "app.error_connection_failed_url": "Connection failed. Check the URL and token.",
+  "app.error_connection_failed_url":
+    "Connection failed. Check the URL and token.",
   "app.error_connection_failed": "Connection failed",
 
   // ==================== Status bar labels ====================
@@ -988,7 +1159,8 @@ export default {
   "status.providers_connected": "{count} provider{plural} connected",
   "status.mcp_connected": "{count} MCP connected",
   "status.limited_hint": "Reconnect to restore full OpenWork features",
-  "status.limited_mcp_hint": "{count} MCP connected · reconnect for full features",
+  "status.limited_mcp_hint":
+    "{count} MCP connected · reconnect for full features",
   "status.disconnected_hint": "Open settings to reconnect",
   "status.back": "Back to previous screen",
   "status.feedback": "Feedback",
@@ -1020,13 +1192,19 @@ export default {
   "composer.failed_read_attachment": "Failed to read attachment",
   "composer.attachments_unavailable": "Attachments are unavailable.",
   "composer.file_exceeds_limit": "{name} exceeds the 8MB limit.",
-  "composer.file_too_large_encoding": "{name} is too large after encoding. Try a smaller image.",
-  "composer.uploaded_single_file": "Uploaded {name} to the shared folder and inserted a link.",
-  "composer.uploaded_multiple_files": "Uploaded {count} files to the shared folder and inserted links.",
-  "composer.upload_failed_local_links": "Couldn't upload to the shared folder. Inserted local links instead.",
+  "composer.file_too_large_encoding":
+    "{name} is too large after encoding. Try a smaller image.",
+  "composer.uploaded_single_file":
+    "Uploaded {name} to the shared folder and inserted a link.",
+  "composer.uploaded_multiple_files":
+    "Uploaded {count} files to the shared folder and inserted links.",
+  "composer.upload_failed_local_links":
+    "Couldn't upload to the shared folder. Inserted local links instead.",
   "composer.unsupported_attachment_type": "Unsupported attachment type.",
-  "composer.inserted_links_unsupported": "Inserted links for unsupported files.",
-  "composer.remote_worker_paste_warning": "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Shared folder in the sidebar.",
+  "composer.inserted_links_unsupported":
+    "Inserted links for unsupported files.",
+  "composer.remote_worker_paste_warning":
+    "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Shared folder in the sidebar.",
   "composer.upload_to_shared_folder": "Upload to shared folder",
   "composer.placeholder": "Describe your task...",
   "composer.behavior_label": "Behavior",
@@ -1059,12 +1237,15 @@ export default {
   "inbox_panel.connect_to_see": "Connect to see shared files.",
   "inbox_panel.no_files": "No shared files yet.",
   "inbox_panel.showing_first": "Showing first {count}.",
-  "inbox_panel.upload_needs_worker": "Connect to a worker to upload files to the shared folder.",
+  "inbox_panel.upload_needs_worker":
+    "Connect to a worker to upload files to the shared folder.",
   "inbox_panel.uploading_label": "Uploading {label}...",
   "inbox_panel.upload_success": "Uploaded to the shared folder.",
   "inbox_panel.upload_failed": "Shared folder upload failed",
-  "inbox_panel.copy_failed": "Copy failed. Your browser may block clipboard access.",
-  "inbox_panel.connect_to_download": "Connect to a worker to download shared files.",
+  "inbox_panel.copy_failed":
+    "Copy failed. Your browser may block clipboard access.",
+  "inbox_panel.connect_to_download":
+    "Connect to a worker to download shared files.",
   "inbox_panel.missing_file_id": "Missing shared file id.",
   "inbox_panel.download": "Download",
   "inbox_panel.load_failed": "Failed to load shared folder",
@@ -1072,7 +1253,8 @@ export default {
   "inbox_panel.connect_to_upload": "Connect to a worker to upload",
 
   // ==================== Session Sidebar ====================
-  "sidebar.no_workspaces": "No workspaces in this session yet. Add one to get started.",
+  "sidebar.no_workspaces":
+    "No workspaces in this session yet. Add one to get started.",
   "sidebar.needs_attention": "Needs attention",
   "sidebar.active": "Active",
   "sidebar.switch": "Switch",
@@ -1116,7 +1298,8 @@ export default {
   "workspace_list.new_workspace": "New workspace",
   "workspace_list.connect_remote": "Connect remote workspace",
   "workspace_list.import_config": "Import config",
-  "workspace_list.desktop_only_hint": "Create local workspaces in the desktop app.",
+  "workspace_list.desktop_only_hint":
+    "Create local workspaces in the desktop app.",
 
   // ==================== Workspace badges ====================
   "workspace.sandbox_badge": "Sandbox",
@@ -1137,10 +1320,13 @@ export default {
 
   // ==================== Den settings panel (cont.) ====================
   "den.cloud_section_title": "OpenWork Cloud",
-  "den.cloud_section_desc": "Sign in, pick an org, and open Cloud workers or team templates.",
-  "den.cloud_sleep_hint": "Sign in to OpenWork Cloud to keep your tasks alive even when your computer sleeps.",
+  "den.cloud_section_desc":
+    "Sign in, pick an org, and open Cloud workers or team templates.",
+  "den.cloud_sleep_hint":
+    "Sign in to OpenWork Cloud to keep your tasks alive even when your computer sleeps.",
   "den.cloud_control_plane_url_label": "Cloud control plane URL",
-  "den.cloud_control_plane_url_hint": "Developer mode only. Use this to target a local or self-hosted Cloud control plane. Changing it signs you out so the app can re-hydrate against the new control plane.",
+  "den.cloud_control_plane_url_hint":
+    "Developer mode only. Use this to target a local or self-hosted Cloud control plane. Changing it signs you out so the app can re-hydrate against the new control plane.",
   "den.cloud_control_plane_reset": "Reset",
   "den.cloud_control_plane_save": "Save URL",
   "den.cloud_control_plane_open": "Open in browser",
@@ -1151,50 +1337,66 @@ export default {
   "den.paste_signin_code": "Paste sign-in code",
   "den.signin_link_label": "Sign-in link or one-time code",
   "den.signin_link_placeholder": "openwork://den-auth?... or pasted code",
-  "den.signin_link_hint": "If your browser doesn't bounce back into OpenWork automatically, paste the sign-in link or one-time code from OpenWork Cloud here.",
+  "den.signin_link_hint":
+    "If your browser doesn't bounce back into OpenWork automatically, paste the sign-in link or one-time code from OpenWork Cloud here.",
   "den.finishing": "Finishing...",
   "den.finish_signin": "Finish sign-in",
-  "den.signin_code_note": "Accepts an openwork://den-auth link or the raw one-time grant.",
-  "den.auto_reconnect_hint": "Finish auth in your browser and OpenWork will reconnect here automatically.",
+  "den.signin_code_note":
+    "Accepts an openwork://den-auth link or the raw one-time grant.",
+  "den.auto_reconnect_hint":
+    "Finish auth in your browser and OpenWork will reconnect here automatically.",
   "den.cloud_account_title": "Cloud account",
   "den.cloud_account_hint": "Manage your connected account and organization.",
   "den.signing_out": "Signing out...",
   "den.sign_out": "Sign out",
   "den.active_org_title": "Active org",
-  "den.active_org_hint": "Cloud workers and team templates are scoped to the selected org.",
+  "den.active_org_hint":
+    "Cloud workers and team templates are scoped to the selected org.",
   "den.no_org_selected": "No org selected",
   "den.needs_attention": "Needs attention",
   "den.checking_session": "Checking session",
   "den.signed_out": "Signed out",
   "den.cloud_workers_title": "Cloud workers",
-  "den.cloud_workers_hint": "Open workers directly into OpenWork using the same remote-connect flow the app already uses elsewhere.",
+  "den.cloud_workers_hint":
+    "Open workers directly into OpenWork using the same remote-connect flow the app already uses elsewhere.",
   "den.refresh": "Refresh",
-  "den.no_cloud_workers": "No cloud workers are visible for this org yet. Create one in Cloud, then refresh this tab.",
+  "den.no_cloud_workers":
+    "No cloud workers are visible for this org yet. Create one in Cloud, then refresh this tab.",
   "den.worker_mine_badge": "Mine",
   "den.worker_secondary_cloud": "Cloud worker",
   "den.worker_not_ready_title": "This worker is not ready to open yet.",
   "den.open": "Open",
   "den.opening": "Opening...",
   "den.team_templates_title": "Team templates",
-  "den.team_templates_hint": "Open reusable workspace templates shared with this organization.",
+  "den.team_templates_hint":
+    "Open reusable workspace templates shared with this organization.",
   "den.team_template_badge": "Team template",
-  "den.no_team_templates": "No team templates yet. Use Share \u2192 Template \u2192 Share with team.",
+  "den.no_team_templates":
+    "No team templates yet. Use Share \u2192 Template \u2192 Share with team.",
   "den.choose_org_for_templates": "Choose an org to view team templates.",
-  "den.error_base_url": "Enter a valid http:// or https:// Cloud control plane URL.",
+  "den.error_base_url":
+    "Enter a valid http:// or https:// Cloud control plane URL.",
   "den.error_choose_org": "Choose an org before opening a worker.",
-  "den.error_worker_not_ready": "Worker is not ready to open yet. Try again after provisioning finishes.",
+  "den.error_worker_not_ready":
+    "Worker is not ready to open yet. Try again after provisioning finishes.",
   "den.error_load_orgs": "Failed to load orgs.",
   "den.error_load_workers": "Failed to load workers.",
   "den.error_load_templates": "Failed to load team templates.",
   "den.error_no_session": "No active Cloud session found.",
-  "den.error_paste_valid_code": "Paste a valid OpenWork sign-in link or one-time sign-in code.",
+  "den.error_paste_valid_code":
+    "Paste a valid OpenWork sign-in link or one-time sign-in code.",
   "den.error_signin_failed": "Failed to complete OpenWork Cloud sign-in.",
-  "den.error_no_token": "Desktop sign-in completed, but OpenWork Cloud did not return a session token.",
-  "den.status_browser_signin": "Finish signing in in your browser to connect OpenWork.",
-  "den.status_browser_signup": "Finish account creation in your browser to connect OpenWork.",
+  "den.error_no_token":
+    "Desktop sign-in completed, but OpenWork Cloud did not return a session token.",
+  "den.status_browser_signin":
+    "Finish signing in in your browser to connect OpenWork.",
+  "den.status_browser_signup":
+    "Finish account creation in your browser to connect OpenWork.",
   "den.status_cloud_signin_done": "Connected OpenWork Cloud.",
-  "den.status_base_url_updated": "Updated the Cloud control plane URL. Sign in again to continue.",
-  "den.status_signed_out": "Signed out and cleared your OpenWork Cloud session on this device.",
+  "den.status_base_url_updated":
+    "Updated the Cloud control plane URL. Sign in again to continue.",
+  "den.status_signed_out":
+    "Signed out and cleared your OpenWork Cloud session on this device.",
   "den.status_signed_in_as": "Signed in as {email}.",
   "den.status_cloud_signed_in_as": "Connected OpenWork Cloud as {email}.",
   "den.status_loaded_orgs": "Loaded {count} org{plural}.",
@@ -1222,38 +1424,53 @@ export default {
   "dashboard.access_token": "Access token",
   // Screen titles / subtitles
   "dashboard.create_local_workspace_title": "Local workspace",
-  "dashboard.create_local_workspace_subtitle": "Create a workspace on this device and optionally start from a team template.",
+  "dashboard.create_local_workspace_subtitle":
+    "Create a workspace on this device and optionally start from a team template.",
   "dashboard.create_remote_custom_title": "Connect custom remote",
-  "dashboard.create_remote_custom_subtitle": "Attach to a self-hosted OpenWork worker.",
+  "dashboard.create_remote_custom_subtitle":
+    "Attach to a self-hosted OpenWork worker.",
   "dashboard.create_shared_title": "Shared workspaces",
-  "dashboard.create_shared_subtitle_signed_in": "Browse cloud workers shared with your organization and connect in one step.",
-  "dashboard.create_shared_subtitle_signed_out": "Sign in to OpenWork Cloud to access workers shared with your organization.",
+  "dashboard.create_shared_subtitle_signed_in":
+    "Browse cloud workers shared with your organization and connect in one step.",
+  "dashboard.create_shared_subtitle_signed_out":
+    "Sign in to OpenWork Cloud to access workers shared with your organization.",
   // Chooser cards
-  "dashboard.chooser_local_desc": "Create a workspace on this device and optionally start from a team template.",
-  "dashboard.chooser_remote_desc": "Attach to a self-hosted OpenWork worker using a URL and access token.",
-  "dashboard.chooser_shared_desc": "Browse cloud workers shared with your organization and connect in one step.",
+  "dashboard.chooser_local_desc":
+    "Create a workspace on this device and optionally start from a team template.",
+  "dashboard.chooser_remote_desc":
+    "Attach to a self-hosted OpenWork worker using a URL and access token.",
+  "dashboard.chooser_shared_desc":
+    "Browse cloud workers shared with your organization and connect in one step.",
   // Local body
   "dashboard.workspace_folder_title": "Workspace folder",
-  "dashboard.workspace_folder_hint": "Choose where this workspace should live on your device.",
+  "dashboard.workspace_folder_hint":
+    "Choose where this workspace should live on your device.",
   "dashboard.no_folder_selected": "No folder selected yet.",
   "dashboard.team_templates_title": "Team templates",
-  "dashboard.team_templates_hint": "Choose a starting point, or leave blank to create an empty workspace.",
+  "dashboard.team_templates_hint":
+    "Choose a starting point, or leave blank to create an empty workspace.",
   "dashboard.team_templates_syncing": "Syncing",
-  "dashboard.team_templates_none": "No shared workspace templates found for this org yet.",
+  "dashboard.team_templates_none":
+    "No shared workspace templates found for this org yet.",
   "dashboard.template_selected_badge": "Selected",
   // Remote body
   "dashboard.remote_server_details_title": "Remote server details",
-  "dashboard.remote_server_details_hint": "Attach to a self-hosted OpenWork worker.",
+  "dashboard.remote_server_details_hint":
+    "Attach to a self-hosted OpenWork worker.",
   "dashboard.worker_url_label": "Worker URL",
-  "dashboard.worker_url_hint": "Paste the URL for the OpenWork worker you want to connect to.",
-  "dashboard.access_token_optional_hint": "Add a token only if the worker requires one.",
+  "dashboard.worker_url_hint":
+    "Paste the URL for the OpenWork worker you want to connect to.",
+  "dashboard.access_token_optional_hint":
+    "Add a token only if the worker requires one.",
   "dashboard.display_name_label": "Display name",
   "dashboard.display_name_optional": "(optional)",
   // Cloud sign-in screen
   "dashboard.cloud_signin_title": "Sign in to OpenWork Cloud",
-  "dashboard.cloud_signin_hint": "Access remote workers shared with your organization.",
+  "dashboard.cloud_signin_hint":
+    "Access remote workers shared with your organization.",
   "dashboard.cloud_signin_button": "Continue with Cloud",
-  "dashboard.cloud_signin_next": "You'll pick a team and connect to an existing workspace next.",
+  "dashboard.cloud_signin_next":
+    "You'll pick a team and connect to an existing workspace next.",
   // Worker status badges
   "dashboard.worker_status_ready": "Ready",
   "dashboard.worker_status_starting": "Starting",
@@ -1261,10 +1478,12 @@ export default {
   "dashboard.worker_status_stopped": "Stopped",
   "dashboard.worker_status_unknown": "Unknown",
   // Errors
-  "dashboard.error_choose_org": "Choose an organization before opening a workspace.",
+  "dashboard.error_choose_org":
+    "Choose an organization before opening a workspace.",
   "dashboard.error_load_orgs": "Failed to load organizations.",
   "dashboard.error_load_shared_workspaces": "Failed to load shared workspaces.",
-  "dashboard.error_workspace_not_ready": "Workspace is not ready to connect yet. Try again in a moment.",
+  "dashboard.error_workspace_not_ready":
+    "Workspace is not ready to connect yet. Try again in a moment.",
   "dashboard.error_connect_worker": "Failed to connect to {name}.",
   "dashboard.error_create_template": "Failed to create {name}.",
   "dashboard.desktop_badge": "Desktop",
@@ -1273,12 +1492,15 @@ export default {
   // Shared signed-in body
   "dashboard.search_shared_workspaces": "Search shared workspaces",
   "dashboard.shared_workspaces_loading": "Loading shared workspaces\u2026",
-  "dashboard.shared_workspaces_no_match": "No shared workspaces match that search.",
+  "dashboard.shared_workspaces_no_match":
+    "No shared workspaces match that search.",
   "dashboard.shared_workspaces_none": "No shared workspaces available yet.",
   "dashboard.workspace_connecting": "Connecting",
   "dashboard.workspace_connect": "Connect",
-  "dashboard.workspace_connect_unavailable": "Connecting shared workspaces is unavailable here.",
-  "dashboard.workspace_not_ready_title": "This workspace is not ready to connect yet.",
+  "dashboard.workspace_connect_unavailable":
+    "Connecting shared workspaces is unavailable here.",
+  "dashboard.workspace_not_ready_title":
+    "This workspace is not ready to connect yet.",
   "dashboard.shared_workspaces_refreshing": "Refreshing workspaces\u2026",
   "dashboard.open_cloud_dashboard": "Open cloud dashboard",
   // Sandbox progress
@@ -1299,11 +1521,13 @@ export default {
   "den_settings.title": "Cloud",
   "den_settings.sign_in": "Sign in",
   "den_settings.sign_out": "Sign out",
-  "den_settings.sign_in_hint": "Sign in to OpenWork Cloud to access shared workspaces and team features.",
+  "den_settings.sign_in_hint":
+    "Sign in to OpenWork Cloud to access shared workspaces and team features.",
   "den_settings.signed_in_as": "Signed in as",
   "den_settings.manage_account": "Manage account",
   "den_settings.workers_title": "Shared workspaces",
-  "den_settings.workers_hint": "Cloud workspaces shared with your organization.",
+  "den_settings.workers_hint":
+    "Cloud workspaces shared with your organization.",
   "den_settings.no_workers": "No shared workspaces found.",
   "den_settings.open_workspace": "Open workspace",
   "den_settings.refresh": "Refresh",
@@ -1322,55 +1546,73 @@ export default {
   "share.publishing": "Publishing...",
   "share.included_in_template": "Included in this template",
   "share.template_item_settings": "Workspace settings",
-  "share.template_item_settings_desc": "The shared workspace profile and default behavior.",
+  "share.template_item_settings_desc":
+    "The shared workspace profile and default behavior.",
   "share.template_item_skills": "Included skills",
   "share.template_item_skills_desc": "Custom skills saved in this workspace.",
   "share.template_item_config": "Commands and config",
-  "share.template_item_config_desc": "Reusable commands plus OpenWork/OpenCode config.",
+  "share.template_item_config_desc":
+    "Reusable commands plus OpenWork/OpenCode config.",
   "share.view_template": "Share a template",
   "share.view_template_public": "Public template",
   "share.view_template_team": "Share with team",
   "share.view_access": "Access workspace remotely",
   "share.option_template_title": "Share a template",
-  "share.option_template_desc": "Package this setup so someone else can start from the same environment.",
+  "share.option_template_desc":
+    "Package this setup so someone else can start from the same environment.",
   "share.option_access_title": "Access workspace remotely",
-  "share.option_access_desc": "Reveal the live connection details needed to reach this running workspace from another machine.",
-  "share.template_intro": "Share a reusable setup without granting live access to this running workspace.",
+  "share.option_access_desc":
+    "Reveal the live connection details needed to reach this running workspace from another machine.",
+  "share.template_intro":
+    "Share a reusable setup without granting live access to this running workspace.",
   "share.option_team_title": "Share with team",
-  "share.option_team_desc": "Save this workspace template to your active OpenWork Cloud organization.",
+  "share.option_team_desc":
+    "Save this workspace template to your active OpenWork Cloud organization.",
   "share.option_public_title": "Public template",
-  "share.option_public_desc": "Create a share link anyone can use to start from this template.",
+  "share.option_public_desc":
+    "Create a share link anyone can use to start from this template.",
   "share.public_intro": "Share this workspace as a public template link.",
   "share.workspace_template_title": "Workspace template",
-  "share.workspace_template_desc": "Share the core setup and workspace defaults.",
+  "share.workspace_template_desc":
+    "Share the core setup and workspace defaults.",
   "share.create_template_link": "Create template link",
   "share.regenerate_link": "Regenerate link",
-  "share.team_intro": "Save this template to your active OpenWork Cloud organization so teammates can open it later from Cloud settings.",
+  "share.team_intro":
+    "Save this template to your active OpenWork Cloud organization so teammates can open it later from Cloud settings.",
   "share.active_cloud_org": "Active Cloud org",
   "share.template_name_label": "Template name",
   "share.sign_in_to_share": "Sign in to share with team",
   "share.saving": "Saving...",
   "share.save_to_team": "Save to team",
-  "share.cloud_signin_note": "OpenWork Cloud opens in your browser and returns here after sign-in.",
-  "share.warning_basic": "Share with trusted people only. These credentials grant live access to this workspace.",
-  "share.warning_full": "These credentials grant live access to this workspace. Sharing this workspace remotely may allow anyone with access to your network to control your worker.",
+  "share.cloud_signin_note":
+    "OpenWork Cloud opens in your browser and returns here after sign-in.",
+  "share.warning_basic":
+    "Share with trusted people only. These credentials grant live access to this workspace.",
+  "share.warning_full":
+    "These credentials grant live access to this workspace. Sharing this workspace remotely may allow anyone with access to your network to control your worker.",
   "share.remote_access_title": "Remote access",
-  "share.remote_access_desc": "Off by default. Turn this on only when you want this worker reachable from another machine.",
+  "share.remote_access_desc":
+    "Off by default. Turn this on only when you want this worker reachable from another machine.",
   "share.remote_access_enabled": "Remote access is currently enabled.",
   "share.remote_access_disabled": "Remote access is currently disabled.",
   "share.remote_save_busy": "Saving...",
   "share.remote_save": "Save",
-  "share.credentials_disabled_hint": "Enable remote access and click Save to restart the worker and reveal the live connection details for this workspace.",
+  "share.credentials_disabled_hint":
+    "Enable remote access and click Save to restart the worker and reveal the live connection details for this workspace.",
   "share.connection_details_label": "Connection details",
   "share.connect_messaging_title": "Connect messaging",
-  "share.connect_messaging_desc": "Use this workspace from Slack, Telegram, and others.",
+  "share.connect_messaging_desc":
+    "Use this workspace from Slack, Telegram, and others.",
   "share.setup": "Setup",
   "share.optional_collaborator": "Optional collaborator access",
   "share.collaborator_hint": "Routine access without permission approvals.",
   "share.chooser_subtitle": "Choose how you want to share this workspace.",
-  "share.subtitle_template_public": "Create a public workspace template link anyone can import.",
-  "share.subtitle_template_team": "Save a workspace template to your active OpenWork Cloud organization.",
-  "share.subtitle_access": "Reveal the live connection details needed to reach this workspace from another machine.",
+  "share.subtitle_template_public":
+    "Create a public workspace template link anyone can import.",
+  "share.subtitle_template_team":
+    "Save a workspace template to your active OpenWork Cloud organization.",
+  "share.subtitle_access":
+    "Reveal the live connection details needed to reach this workspace from another machine.",
 
   // ==================== Dashboard page (session/share strings) ====================
   "scheduled.title": "Automations",
@@ -1390,10 +1632,13 @@ export default {
   "session.share_worker_url": "Worker URL",
   "session.share_desktop_required": "Desktop app required",
   "session.share_starting_server": "Starting server...",
-  "session.share_url_worker_hint": "Use on phones or laptops connecting to this worker.",
-  "session.share_url_resolving_hint": "Worker URL is resolving; host URL shown as fallback.",
+  "session.share_url_worker_hint":
+    "Use on phones or laptops connecting to this worker.",
+  "session.share_url_resolving_hint":
+    "Worker URL is resolving; host URL shown as fallback.",
   "session.share_password": "Password",
-  "session.share_password_owner_hint": "Use when the remote client must answer permission prompts.",
+  "session.share_password_owner_hint":
+    "Use when the remote client must answer permission prompts.",
   "session.share_collaborator_token": "Collaborator token",
 
   // ==================== Workspace (additions) ====================
@@ -1413,14 +1658,17 @@ export default {
   "common.done": "Done",
 
   // ==================== Session view ====================
-  "session.permission_message": "OpenCode is requesting permission to continue.",
+  "session.permission_message":
+    "OpenCode is requesting permission to continue.",
   "session.doom_loop_title": "Doom Loop Detected",
-  "session.doom_loop_message": "OpenCode detected repeated tool calls with identical input and is asking whether it should continue after repeated failures.",
+  "session.doom_loop_message":
+    "OpenCode detected repeated tool calls with identical input and is asking whether it should continue after repeated failures.",
   "session.doom_loop_label": "Doom Loop",
   "session.doom_loop_tool_label": "Tool",
   "session.doom_loop_repeated_call_label": "Repeated call",
   "session.doom_loop_repeated_tool_call": "Repeated tool call",
-  "session.doom_loop_note": "Reject to stop the loop, or allow if you want the agent to keep trying.",
+  "session.doom_loop_note":
+    "Reject to stop the loop, or allow if you want the agent to keep trying.",
   "session.default_agent": "Default agent",
   "session.workspace_label": "Workspace",
   "session.no_matches": "No matches",
@@ -1439,8 +1687,10 @@ export default {
   "session.phase_run_failed": "Run failed",
   "session.compacting_auto": "OpenCode is auto-compacting this session",
   "session.compacting_manual": "OpenCode is compacting this session",
-  "session.compaction_started": "OpenCode started compacting the session context.",
-  "session.compaction_finished": "OpenCode finished compacting the session context.",
+  "session.compaction_started":
+    "OpenCode started compacting the session context.",
+  "session.compaction_finished":
+    "OpenCode finished compacting the session context.",
   "session.no_session_selected": "No session selected",
   "session.stopping_run": "Stopping the run...",
   "session.stopped": "Stopped.",
@@ -1463,13 +1713,16 @@ export default {
   "session.failed_to_create_session": "Failed to create session",
   "session.failed_to_load_providers": "Failed to load providers",
   "session.cmd_new_session_title": "Create new session",
-  "session.cmd_new_session_detail": "Start a fresh task in the current workspace",
+  "session.cmd_new_session_detail":
+    "Start a fresh task in the current workspace",
   "session.cmd_new_session_meta": "Create",
   "session.cmd_rename_title": "Rename current session",
-  "session.cmd_rename_detail_fallback": "Give your selected session a clearer name",
+  "session.cmd_rename_detail_fallback":
+    "Give your selected session a clearer name",
   "session.cmd_rename_meta": "Rename",
   "session.cmd_compact_title": "Compact Conversation",
-  "session.cmd_compact_detail": "Send a compact instruction to OpenCode for this session",
+  "session.cmd_compact_detail":
+    "Send a compact instruction to OpenCode for this session",
   "session.cmd_compact_detail_empty": "No user messages to compact yet",
   "session.cmd_compact_meta": "Compact",
   "session.cmd_sessions_title": "Search sessions",
@@ -1495,11 +1748,14 @@ export default {
   "session.loading_detail": "Pulling in the latest messages for this task.",
   "session.workspace_setup_label": "Workspace setup",
   "session.workspace_setup_title": "Set up your first workspace",
-  "session.workspace_setup_desc": "Start with a guided OpenWork workspace, or choose an existing folder you want to work in.",
+  "session.workspace_setup_desc":
+    "Start with a guided OpenWork workspace, or choose an existing folder you want to work in.",
   "session.create_workspace_title": "Create workspace",
-  "session.create_workspace_desc": "Open the workspace creator and choose how you want to start.",
+  "session.create_workspace_desc":
+    "Open the workspace creator and choose how you want to start.",
   "session.pick_folder_title": "Pick a folder you want to work in",
-  "session.pick_folder_desc": "Choose an existing project or notes folder and OpenWork will use it as your workspace.",
+  "session.pick_folder_desc":
+    "Choose an existing project or notes folder and OpenWork will use it as your workspace.",
   "session.loading_earlier": "Loading earlier messages...",
   "session.load_earlier": "Load earlier messages",
   "session.jump_to_start": "Jump to start of message",
@@ -1507,45 +1763,65 @@ export default {
   "session.flyout_new_task": "New Task",
   "session.flyout_file_modified": "File Modified",
   "session.attachments_add_token": "Add a server token to attach files.",
-  "session.attachments_connect_server": "Connect to OpenWork server to attach files.",
+  "session.attachments_connect_server":
+    "Connect to OpenWork server to attach files.",
   "session.unable_to_reveal": "Unable to reveal workspace",
   "session.workspace_path_unavailable": "Workspace path is unavailable.",
   "session.reveal_desktop_only": "Reveal is available in the desktop app.",
-  "session.file_open_remote_unavailable": "File open is unavailable for remote workspaces.",
-  "session.file_open_desktop_only": "File open is available in the desktop app.",
+  "session.file_open_remote_unavailable":
+    "File open is unavailable for remote workspaces.",
+  "session.file_open_desktop_only":
+    "File open is available in the desktop app.",
   "session.pick_workspace_to_open": "Pick a workspace to open files.",
   "session.unable_to_open_file": "Unable to open file",
   "session.share_collaborator_label": "Collaborator token",
   "session.share_desktop_app_required": "Desktop app required",
-  "session.share_worker_url_phones_hint": "Use on phones or laptops connecting to this worker.",
-  "session.share_worker_url_resolving_hint": "Worker URL is resolving; host URL shown as fallback.",
-  "session.share_owner_permission_hint": "Use when the remote client must answer permission prompts.",
-  "session.share_collaborator_hint": "Routine remote access when you do not need owner-only actions.",
-  "session.share_collaborator_host_hint": "Routine remote access to this host without owner-only actions.",
+  "session.share_worker_url_phones_hint":
+    "Use on phones or laptops connecting to this worker.",
+  "session.share_worker_url_resolving_hint":
+    "Worker URL is resolving; host URL shown as fallback.",
+  "session.share_owner_permission_hint":
+    "Use when the remote client must answer permission prompts.",
+  "session.share_collaborator_hint":
+    "Routine remote access when you do not need owner-only actions.",
+  "session.share_collaborator_host_hint":
+    "Routine remote access to this host without owner-only actions.",
   "session.share_set_token_hint": "Set token in workspace settings",
-  "session.share_connected_with_hint": "This workspace is currently connected with this password.",
+  "session.share_connected_with_hint":
+    "This workspace is currently connected with this password.",
   "session.share_opencode_base_url": "OpenCode base URL",
-  "session.share_note_direct_runtime": "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.",
+  "session.share_note_direct_runtime":
+    "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.",
   "session.share_select_workspace": "Select a workspace first.",
-  "session.share_openwork_workers_only": "Share service links are available for OpenWork workers.",
+  "session.share_openwork_workers_only":
+    "Share service links are available for OpenWork workers.",
   "session.share_local_host_not_ready": "Local OpenWork host is not ready yet.",
   "session.share_missing_host_url": "Missing OpenWork host URL.",
   "session.share_missing_token": "Missing OpenWork token.",
   "session.share_active_cloud_org": "Active Cloud org",
-  "session.share_choose_org": "Choose an organization in Settings -> Cloud before sharing with your team.",
-  "session.share_resolve_local_workspace_failed": "Could not resolve this workspace on the local OpenWork host.",
-  "session.share_host_url_and_token_required": "OpenWork host URL and token are required.",
-  "session.share_resolve_remote_workspace_failed": "Could not resolve this workspace on the OpenWork host.",
-  "session.share_workspace_template_desc": "Full OpenWork workspace template with config, commands, skills, and extra .opencode files.",
-  "session.share_publish_workspace_failed": "Failed to publish workspace profile",
-  "session.share_sign_in_required": "Sign in to OpenWork Cloud in Settings to share with your team.",
+  "session.share_choose_org":
+    "Choose an organization in Settings -> Cloud before sharing with your team.",
+  "session.share_resolve_local_workspace_failed":
+    "Could not resolve this workspace on the local OpenWork host.",
+  "session.share_host_url_and_token_required":
+    "OpenWork host URL and token are required.",
+  "session.share_resolve_remote_workspace_failed":
+    "Could not resolve this workspace on the OpenWork host.",
+  "session.share_workspace_template_desc":
+    "Full OpenWork workspace template with config, commands, skills, and extra .opencode files.",
+  "session.share_publish_workspace_failed":
+    "Failed to publish workspace profile",
+  "session.share_sign_in_required":
+    "Sign in to OpenWork Cloud in Settings to share with your team.",
   "session.share_team_fallback_name": "your team templates",
   "session.share_saved_to_org": "Saved {name} to {org}.",
   "session.share_save_team_template_failed": "Failed to save team template",
-  "session.share_skills_set_desc": "Complete skills set from an OpenWork workspace.",
+  "session.share_skills_set_desc":
+    "Complete skills set from an OpenWork workspace.",
   "session.share_no_skills": "No skills found in this workspace.",
   "session.share_publish_skills_failed": "Failed to publish skills set",
-  "session.export_desktop_only_local": "Export is available for local workers in the desktop app.",
+  "session.export_desktop_only_local":
+    "Export is available for local workers in the desktop app.",
   "session.export_local_only": "Export is only supported for local workers.",
   "session.export_desktop_only": "Export is available in the desktop app.",
   "session.export_already_running": "Export is already running.",
@@ -1554,17 +1830,20 @@ export default {
   "session.downloading": "Downloading",
   "session.update_available": "Update available",
   "session.connect_failed": "Connect failed",
-  "session.upload_connect_server": "Connect to the OpenWork server to upload files to the shared folder.",
+  "session.upload_connect_server":
+    "Connect to the OpenWork server to upload files to the shared folder.",
   "session.uploaded_to_shared_folder": "Uploaded to the shared folder.",
   "session.create_or_connect_workspace": "Create or connect a workspace",
   "session.allow_once": "Once",
   "session.connect_to_sync": "Connect to OpenWork server to sync remote files.",
-  "session.obsidian_worker_relative_only": "Only worker-relative files can be opened in Obsidian.",
+  "session.obsidian_worker_relative_only":
+    "Only worker-relative files can be opened in Obsidian.",
   "session.resize_workspace_column": "Resize workspace column",
   "dashboard.close_settings": "Close settings",
   "dashboard.nav_ids": "IDs",
   "session.downloading_percent": "Downloading {percent}%",
-  "session.update_ready_stop_runs_title": "Update ready {version}. Stop active runs to restart.",
+  "session.update_ready_stop_runs_title":
+    "Update ready {version}. Stop active runs to restart.",
   "session.restart_update_title": "Restart to apply update {version}",
   "session.downloading_update_title": "Downloading update {version}",
   "session.update_available_title": "Update available {version}",
@@ -1576,8 +1855,10 @@ export default {
   "session.status_ready_session": "Session Ready",
   "session.status_ready": "Ready",
   "session.delete_session_title": "Delete session?",
-  "session.delete_named_session_message": "This will permanently delete \"{title}\" and its messages.",
-  "session.delete_session_generic": "This will permanently delete the selected session and its messages.",
+  "session.delete_named_session_message":
+    'This will permanently delete "{title}" and its messages.',
+  "session.delete_session_generic":
+    "This will permanently delete the selected session and its messages.",
   "session.deleting": "Deleting...",
   "session.delete": "Delete",
   "session.loading_session": "Loading session",
@@ -1589,9 +1870,11 @@ export default {
   "session.close_search": "Close search",
   "session.unable_to_open_obsidian": "Unable to open file in Obsidian",
   "session.search_position": "{current} of {total}",
-  "session.conflict_sync_toast": "Conflict syncing {path}. Saved local changes to {conflictPath}.",
+  "session.conflict_sync_toast":
+    "Conflict syncing {path}. Saved local changes to {conflictPath}.",
   "session.todo_progress": "{completed} out of {total} tasks completed",
-  "session.uploading_to_shared_folder": "Uploading {label} to the shared folder...",
+  "session.uploading_to_shared_folder":
+    "Uploading {label} to the shared folder...",
   "session.uploaded_with_summary": "Uploaded to the shared folder: {summary}",
   "session.cmd_sessions_detail": "{count} available across workspaces",
   "session.cmd_model_detail": "{model} · {variant}",
@@ -1642,9 +1925,11 @@ export default {
   "automations.prompt_empty": "Automation prompt is empty.",
   "automations.prompt_required": "Prompt is required.",
   "automations.schedule_required": "Schedule is required.",
-  "automations.server_needs_token": "OpenWork server needs a token to load scheduled tasks.",
+  "automations.server_needs_token":
+    "OpenWork server needs a token to load scheduled tasks.",
   "automations.server_not_ready": "OpenWork server not ready.",
-  "automations.server_unavailable": "OpenWork server unavailable. Connect to sync scheduled tasks.",
+  "automations.server_unavailable":
+    "OpenWork server unavailable. Connect to sync scheduled tasks.",
 
   // common
   "common.navigate": "navigate",
@@ -1656,55 +1941,77 @@ export default {
   "common.submit": "Submit",
 
   // config
-  "config.auto_reload_desc": "Reload automatically after agents/skills/commands/config change (only when idle).",
+  "config.auto_reload_desc":
+    "Reload automatically after agents/skills/commands/config change (only when idle).",
   "config.auto_reload_title": "Auto reload (local)",
-  "config.auto_reload_unavailable": "Available for local workspaces in the desktop app.",
-  "config.collaborator_token_disabled_hint": "Stored in advance for remote sharing, but remote access is currently disabled.",
+  "config.auto_reload_unavailable":
+    "Available for local workspaces in the desktop app.",
+  "config.collaborator_token_disabled_hint":
+    "Stored in advance for remote sharing, but remote access is currently disabled.",
   "config.collaborator_token_label": "Collaborator token",
-  "config.collaborator_token_remote_hint": "Routine remote access for phones or laptops connecting to this server.",
+  "config.collaborator_token_remote_hint":
+    "Routine remote access for phones or laptops connecting to this server.",
   "config.connection_failed": "Connection failed.",
-  "config.connection_failed_check": "Connection failed. Check the host URL and token.",
+  "config.connection_failed_check":
+    "Connection failed. Check the host URL and token.",
   "config.connection_status_updated": "Connection status updated.",
   "config.connection_successful": "Connection successful.",
   "config.copied": "Copied",
   "config.copy": "Copy",
-  "config.desktop_only_hint": "Some config features (local server sharing + messaging bridge) require the desktop app.",
+  "config.desktop_only_hint":
+    "Some config features (local server sharing + messaging bridge) require the desktop app.",
   "config.diagnostics_desc": "Copy sanitized runtime state for debugging.",
   "config.diagnostics_title": "Diagnostics bundle",
   "config.enable_auto_reload_first": "Enable auto reload first",
-  "config.engine_reload_desc": "Restart the OpenCode server for this workspace.",
+  "config.engine_reload_desc":
+    "Restart the OpenCode server for this workspace.",
   "config.engine_reload_title": "Engine reload",
-  "config.host_admin_token_hint": "Internal host-only token for approvals CLI and admin APIs. Do not use this in the remote app connect flow.",
+  "config.host_admin_token_hint":
+    "Internal host-only token for approvals CLI and admin APIs. Do not use this in the remote app connect flow.",
   "config.host_admin_token_label": "Host admin token",
   "config.host_local_only": "Local only",
   "config.host_offline": "Offline",
   "config.host_remote_enabled": "Remote enabled",
-  "config.local_ip_hint": "Use your local IP on the same Wi-Fi for the fastest connection.",
-  "config.mdns_hint": ".local names are easier to remember but may not resolve on all networks.",
-  "config.messaging_identities_desc": "Manage Telegram/Slack identities and routing in the Identities tab.",
+  "config.local_ip_hint":
+    "Use your local IP on the same Wi-Fi for the fastest connection.",
+  "config.mdns_hint":
+    ".local names are easier to remember but may not resolve on all networks.",
+  "config.messaging_identities_desc":
+    "Manage Telegram/Slack identities and routing in the Identities tab.",
   "config.messaging_identities_title": "Messaging identities",
   "config.not_set": "Not set",
-  "config.owner_token_disabled_hint": "Only relevant after you enable remote access for this worker.",
+  "config.owner_token_disabled_hint":
+    "Only relevant after you enable remote access for this worker.",
   "config.owner_token_label": "Owner token",
-  "config.owner_token_remote_hint": "Use this when a remote client needs to answer permission prompts or take owner-only actions.",
+  "config.owner_token_remote_hint":
+    "Use this when a remote client needs to answer permission prompts or take owner-only actions.",
   "config.reload_active_tasks_warning": "Reloading will stop active tasks.",
-  "config.reload_availability_hint": "Reloading is only available for local workers or connected OpenWork servers.",
+  "config.reload_availability_hint":
+    "Reloading is only available for local workers or connected OpenWork servers.",
   "config.reload_connect_hint": "Connect to this worker to reload.",
   "config.reload_engine": "Reload engine",
-  "config.reload_now_desc": "Applies config updates and reconnects your session.",
+  "config.reload_now_desc":
+    "Applies config updates and reconnects your session.",
   "config.reload_now_title": "Reload now",
   "config.reloading": "Reloading...",
-  "config.remote_access_off_hint": "Remote access is off. Use Share workspace to enable it before connecting from another machine.",
+  "config.remote_access_off_hint":
+    "Remote access is off. Use Share workspace to enable it before connecting from another machine.",
   "config.resolved_worker_url": "Resolved worker URL:",
-  "config.resume_sessions_desc": "If a reload was queued while tasks were running, send a resume message afterward.",
+  "config.resume_sessions_desc":
+    "If a reload was queued while tasks were running, send a resume message afterward.",
   "config.resume_sessions_title": "Resume sessions after auto reload",
-  "config.server_needed_hint": "OpenWork server connection needed to sync skills, plugins, and commands.",
-  "config.server_section_desc": "Connect to an OpenWork server. Use the URL plus a collaborator or owner token from your server admin.",
+  "config.server_needed_hint":
+    "OpenWork server connection needed to sync skills, plugins, and commands.",
+  "config.server_section_desc":
+    "Connect to an OpenWork server. Use the URL plus a collaborator or owner token from your server admin.",
   "config.server_section_title": "OpenWork server",
-  "config.server_sharing_desc": "Share these details with a trusted device. Keep the server on the same network for the fastest setup.",
-  "config.server_sharing_menu_hint": "For per-workspace sharing links, use Share... in the workspace menu.",
+  "config.server_sharing_desc":
+    "Share these details with a trusted device. Keep the server on the same network for the fastest setup.",
+  "config.server_sharing_menu_hint":
+    "For per-workspace sharing links, use Share... in the workspace menu.",
   "config.server_sharing_title": "OpenWork server sharing",
-  "config.server_url_hint": "Use the URL shared by your OpenWork server. Local desktop workers reuse a persistent high port in the 48000-51000 range.",
+  "config.server_url_hint":
+    "Use the URL shared by your OpenWork server. Local desktop workers reuse a persistent high port in the 48000-51000 range.",
   "config.server_url_input_label": "OpenWork server URL",
   "config.server_url_label": "OpenWork Server URL",
   "config.starting_server": "Starting server…",
@@ -1714,12 +2021,14 @@ export default {
   "config.test_connection": "Test connection",
   "config.testing": "Testing...",
   "config.testing_connection": "Testing connection...",
-  "config.token_hint": "Optional. Paste a collaborator token for routine access or an owner token when this client must answer permission prompts.",
+  "config.token_hint":
+    "Optional. Paste a collaborator token for routine access or an owner token when this client must answer permission prompts.",
   "config.token_label": "Collaborator or owner token",
   "config.token_placeholder": "Paste your token",
   "config.unavailable": "Unavailable",
   "config.worker_id": "Worker ID:",
-  "config.workspace_config_desc": "These settings affect the selected workspace. Runtime-only actions apply to whichever workspace is currently connected.",
+  "config.workspace_config_desc":
+    "These settings affect the selected workspace. Runtime-only actions apply to whichever workspace is currently connected.",
   "config.workspace_config_title": "Workspace config",
   "config.workspace_id_prefix": "Workspace:",
 
@@ -1736,16 +2045,20 @@ export default {
   "extensions.subtitle": "Apps (MCP) and OpenCode plugins live in one place.",
 
   // identities
-  "identities.agent_behavior_desc": "One file per workspace. Add optional first line @agent <id> to route via a specific OpenCode agent.",
+  "identities.agent_behavior_desc":
+    "One file per workspace. Add optional first line @agent <id> to route via a specific OpenCode agent.",
   "identities.agent_behavior_title": "Messaging agent behavior",
   "identities.agent_created": "Created default messaging agent file.",
-  "identities.agent_file_changed": "File changed remotely. Reload and save again.",
+  "identities.agent_file_changed":
+    "File changed remotely. Reload and save again.",
   "identities.agent_loading": "Loading agent file…",
   "identities.agent_none": "none",
   "identities.agent_not_found": "Agent file not found in this workspace yet.",
-  "identities.agent_placeholder": "Add messaging behavior instructions for opencodeRouter here...",
+  "identities.agent_placeholder":
+    "Add messaging behavior instructions for opencodeRouter here...",
   "identities.agent_saved": "Saved messaging behavior.",
-  "identities.agent_scope_status": "Active scope: workspace · status: {status} · selected agent: {agent}",
+  "identities.agent_scope_status":
+    "Active scope: workspace · status: {status} · selected agent: {agent}",
   "identities.agent_status_loaded": "loaded",
   "identities.agent_status_missing": "missing",
   "identities.agent_worker_scope_unavailable": "Worker scope unavailable.",
@@ -1754,10 +2067,12 @@ export default {
   "identities.auto_bind_label": "Auto-bind peer to directory on direct send",
   "identities.available_channels": "Available channels",
   "identities.bot_token_label": "Bot token",
-  "identities.bot_token_placeholder": "Paste Telegram bot token from @BotFather",
+  "identities.bot_token_placeholder":
+    "Paste Telegram bot token from @BotFather",
   "identities.botfather_step1_open": "1. Open @BotFather in Telegram",
   "identities.botfather_step1_run": "and run /newbot",
-  "identities.botfather_step3_choose": "3. Choose a name and username for your bot",
+  "identities.botfather_step3_choose":
+    "3. Choose a name and username for your bot",
   "identities.botfather_step3_or_private": "for open inbox or",
   "identities.botfather_step3_private": "Private",
   "identities.botfather_step3_public": "Public",
@@ -1766,7 +2081,8 @@ export default {
   "identities.channels_connected": "connected",
   "identities.channels_label": "Channels",
   "identities.configured_suffix": "configured",
-  "identities.connect_server_desc": "Identities are available when you are connected to an OpenWork host.",
+  "identities.connect_server_desc":
+    "Identities are available when you are connected to an OpenWork host.",
   "identities.connect_server_title": "Connect to an OpenWork server",
   "identities.connect_slack": "Connect Slack",
   "identities.connected_badge": "Connected",
@@ -1780,21 +2096,24 @@ export default {
   "identities.default_routing": "Default routing",
   "identities.directory_label": "Directory (optional)",
   "identities.disable_messaging": "Disable messaging",
-  "identities.disable_messaging_message": "This will turn off messaging for this workspace. Telegram and Slack setup will be hidden until messaging is enabled again, and you will need to restart the worker to fully stop the messaging sidecar.",
+  "identities.disable_messaging_message":
+    "This will turn off messaging for this workspace. Telegram and Slack setup will be hidden until messaging is enabled again, and you will need to restart the worker to fully stop the messaging sidecar.",
   "identities.disable_messaging_title": "Disable messaging for this worker?",
   "identities.disabled_label": "Disabled",
   "identities.disabling": "Disabling...",
   "identities.disconnect": "Disconnect",
   "identities.dispatched_messages": "Dispatched {sent}/{attempted} messages.",
   "identities.enable_messaging": "Enable messaging",
-  "identities.enable_messaging_risk": "Messaging can expose this worker to remote commands. If a bot is public or compromised, it can access files, credentials, and API keys available to this worker.",
+  "identities.enable_messaging_risk":
+    "Messaging can expose this worker to remote commands. If a bot is public or compromised, it can access files, credentials, and API keys available to this worker.",
   "identities.enable_messaging_title": "Enable messaging for this worker?",
   "identities.enabled_label": "Enabled",
   "identities.enabling": "Enabling...",
   "identities.health_offline": "Offline",
   "identities.health_running": "Running",
   "identities.health_unavailable": "Unavailable",
-  "identities.health_unavailable_status": "OpenCodeRouter health unavailable ({status})",
+  "identities.health_unavailable_status":
+    "OpenCodeRouter health unavailable ({status})",
   "identities.health_unknown": "Unknown",
   "identities.hours_ago": "{hours}h ago",
   "identities.identities_label": "Identities",
@@ -1802,20 +2121,27 @@ export default {
   "identities.last_activity": "Last activity",
   "identities.later": "Later",
   "identities.message_label": "Message",
-  "identities.message_routing_desc": "Control which conversations go to which workspace folder. Messages are routed to the worker's default folder unless you set up rules here.",
+  "identities.message_routing_desc":
+    "Control which conversations go to which workspace folder. Messages are routed to the worker's default folder unless you set up rules here.",
   "identities.message_routing_title": "Message routing",
   "identities.messages_today": "Messages today",
-  "identities.messaging_disabled_hint": "Enable messaging only if you understand the risk and plan to secure access (for example, private Telegram pairing).",
-  "identities.messaging_disabled_restart": "Messaging disabled. Restart this worker to stop the messaging sidecar.",
-  "identities.messaging_disabled_risk": "Messaging bots can execute actions against your local worker. If exposed publicly, they may allow access to files, credentials, and API keys available to this worker.",
+  "identities.messaging_disabled_hint":
+    "Enable messaging only if you understand the risk and plan to secure access (for example, private Telegram pairing).",
+  "identities.messaging_disabled_restart":
+    "Messaging disabled. Restart this worker to stop the messaging sidecar.",
+  "identities.messaging_disabled_risk":
+    "Messaging bots can execute actions against your local worker. If exposed publicly, they may allow access to files, credentials, and API keys available to this worker.",
   "identities.messaging_disabled_title": "Messaging is disabled by default",
-  "identities.messaging_enabled_restart": "Messaging enabled. Restart this worker to apply before configuring channels.",
-  "identities.messaging_sidecar_not_running": "Messaging is enabled in this workspace, but the messaging sidecar is not running yet. Restart this worker, then return to Messaging settings to connect Telegram or Slack.",
+  "identities.messaging_enabled_restart":
+    "Messaging enabled. Restart this worker to apply before configuring channels.",
+  "identities.messaging_sidecar_not_running":
+    "Messaging is enabled in this workspace, but the messaging sidecar is not running yet. Restart this worker, then return to Messaging settings to connect Telegram or Slack.",
   "identities.minutes_ago": "{minutes}m ago",
   "identities.not_set": "Not set",
   "identities.open_bot_link": "Open @{username} in Telegram",
   "identities.pairing_code_copied": "Pairing code copied.",
-  "identities.pairing_code_copy_failed": "Could not copy pairing code. Copy it manually.",
+  "identities.pairing_code_copy_failed":
+    "Could not copy pairing code. Copy it manually.",
   "identities.pairing_code_instruction_prefix": "Send",
   "identities.peer_id_label": "Peer ID (optional)",
   "identities.peer_id_placeholder_slack": "e.g. slack:U12345678",
@@ -1823,18 +2149,24 @@ export default {
   "identities.private_label": "Private",
   "identities.private_pairing_code": "Private pairing code",
   "identities.public_bot_confirm": "Yes I understand the risk",
-  "identities.public_bot_warning_message": "Your bot will be accessible to the public and anyone who gets access to your bot will be able to have full access to your local worker including any files or API keys that you've given it. If you create a private bot, you can limit who can access it by requiring a pairing token. Are you sure you want to make your bot public?",
+  "identities.public_bot_warning_message":
+    "Your bot will be accessible to the public and anyone who gets access to your bot will be able to have full access to your local worker including any files or API keys that you've given it. If you create a private bot, you can limit who can access it by requiring a pairing token. Are you sure you want to make your bot public?",
   "identities.public_bot_warning_title": "Make this bot public?",
   "identities.public_label": "Public",
   "identities.quick_setup": "Quick setup",
-  "identities.reconnect_failed": "Reconnect failed. Check OpenWork URL/token and try again.",
+  "identities.reconnect_failed":
+    "Reconnect failed. Check OpenWork URL/token and try again.",
   "identities.reconnected": "Reconnected.",
-  "identities.reconnected_refreshing": "Reconnected. Refreshing worker state...",
+  "identities.reconnected_refreshing":
+    "Reconnected. Refreshing worker state...",
   "identities.reload": "Reload",
   "identities.repair_reconnect": "Repair & reconnect",
-  "identities.restart_failed": "Restart failed. Please restart the worker from Settings and try again.",
-  "identities.restart_to_disable_messaging": "Messaging was disabled for this workspace. Restart the worker now to stop the messaging sidecar.",
-  "identities.restart_to_enable_messaging": "Messaging was enabled for this workspace. Restart the worker now to start the messaging sidecar and unlock Telegram and Slack setup.",
+  "identities.restart_failed":
+    "Restart failed. Please restart the worker from Settings and try again.",
+  "identities.restart_to_disable_messaging":
+    "Messaging was disabled for this workspace. Restart the worker now to stop the messaging sidecar.",
+  "identities.restart_to_enable_messaging":
+    "Messaging was enabled for this workspace. Restart the worker now to start the messaging sidecar and unlock Telegram and Slack setup.",
   "identities.restart_worker": "Restart worker",
   "identities.restart_worker_title": "Restart worker now?",
   "identities.restarting": "Restarting...",
@@ -1844,24 +2176,31 @@ export default {
   "identities.save_behavior": "Save behavior",
   "identities.saving": "Saving...",
   "identities.send_test_button": "Send test message",
-  "identities.send_test_desc": "Validate outbound wiring. Use a peer ID for direct send, or leave peer ID empty to fan out by bindings in a directory.",
+  "identities.send_test_desc":
+    "Validate outbound wiring. Use a peer ID for direct send, or leave peer ID empty to fan out by bindings in a directory.",
   "identities.send_test_title": "Send test message",
   "identities.sending": "Sending...",
-  "identities.slack_desc": "Your worker appears as a bot in Slack channels. Team members can message it directly or mention it in threads.",
-  "identities.slack_intro": "Connect your Slack workspace to let team members interact with this worker in channels and DMs.",
+  "identities.slack_desc":
+    "Your worker appears as a bot in Slack channels. Team members can message it directly or mention it in threads.",
+  "identities.slack_intro":
+    "Connect your Slack workspace to let team members interact with this worker in channels and DMs.",
   "identities.slack_unavailable": "Slack identities unavailable.",
   "identities.status_active": "Active",
   "identities.status_label": "Status",
   "identities.status_stopped": "Stopped",
   "identities.stopped_label": "Stopped",
-  "identities.subtitle": "Let people reach your worker through messaging apps. Connect a channel and your worker will automatically read and respond to messages.",
+  "identities.subtitle":
+    "Let people reach your worker through messaging apps. Connect a channel and your worker will automatically read and respond to messages.",
   "identities.tab_general": "General",
-  "identities.telegram_bot_access_desc": "Public bot: first Telegram chat auto-links. Private bot: requires a pairing code before any messages run tools.",
+  "identities.telegram_bot_access_desc":
+    "Public bot: first Telegram chat auto-links. Private bot: requires a pairing code before any messages run tools.",
   "identities.telegram_delete_failed": "Failed to delete.",
   "identities.telegram_deleted": "Deleted.",
   "identities.telegram_deleted_pending": "Deleted (pending apply).",
-  "identities.telegram_desc": "Connect a Telegram bot in public mode (open inbox) or private mode (pairing code required).",
-  "identities.telegram_private_saved_pair": "Private bot saved. Pair via /pair {code}",
+  "identities.telegram_desc":
+    "Connect a Telegram bot in public mode (open inbox) or private mode (pairing code required).",
+  "identities.telegram_private_saved_pair":
+    "Private bot saved. Pair via /pair {code}",
   "identities.telegram_save_failed": "Failed to save.",
   "identities.telegram_saved": "Saved.",
   "identities.telegram_saved_pending": "Saved (pending apply).",
@@ -1872,11 +2211,14 @@ export default {
   "identities.worker_offline": "Worker offline",
   "identities.worker_online": "Worker online",
   "identities.worker_restarted": "Worker restarted.",
-  "identities.worker_restarted_refreshing": "Worker restarted. Refreshing messaging status...",
+  "identities.worker_restarted_refreshing":
+    "Worker restarted. Refreshing messaging status...",
   "identities.worker_scope_unavailable": "Worker scope unavailable.",
-  "identities.worker_scope_unavailable_detail": "Worker scope unavailable. Reconnect using a worker URL or switch to a known worker.",
+  "identities.worker_scope_unavailable_detail":
+    "Worker scope unavailable. Reconnect using a worker URL or switch to a known worker.",
   "identities.worker_unavailable": "Worker unavailable",
-  "identities.workspace_id_required": "Workspace ID is required to manage identities. Reconnect with a workspace URL or select a workspace mapped on this host.",
+  "identities.workspace_id_required":
+    "Workspace ID is required to manage identities. Reconnect with a workspace URL or select a workspace mapped on this host.",
   "identities.workspace_scope_prefix": "Workspace scope:",
 
   // mcp
@@ -1886,7 +2228,8 @@ export default {
   "mcp.auth.request_timed_out": "Request timed out.",
 
   // plugins
-  "plugins.desc": "Manage `opencode.json` for your project or global OpenCode plugins.",
+  "plugins.desc":
+    "Manage `opencode.json` for your project or global OpenCode plugins.",
   "plugins.empty": "No plugins configured yet.",
   "plugins.not_loaded_yet": "Not loaded yet",
   "plugins.remove": "Remove",
@@ -1904,16 +2247,19 @@ export default {
   "providers.no_oauth_prefix": "No OAuth flow available for",
   "providers.no_providers_available": "No providers available",
   "providers.not_connected": "Not connected to a server",
-  "providers.not_oauth_flow_prefix": "Selected auth method is not an OAuth flow for",
+  "providers.not_oauth_flow_prefix":
+    "Selected auth method is not an OAuth flow for",
   "providers.oauth_failed": "Failed to complete OAuth",
   "providers.oauth_method_required": "OAuth method is required",
   "providers.provider_error": "Provider error ({provider})",
   "providers.provider_id_required": "Provider ID is required",
   "providers.rate_limit_exceeded": "Rate limit exceeded",
-  "providers.removal_unsupported": "Provider auth removal is not supported by this client.",
+  "providers.removal_unsupported":
+    "Provider auth removal is not supported by this client.",
   "providers.request_failed": "Request failed",
   "providers.save_api_key_failed": "Failed to save API key",
-  "providers.still_connected_suffix": ", but the worker still reports it as connected. Clear any remaining API key or OAuth credentials and restart the worker to fully disconnect.",
+  "providers.still_connected_suffix":
+    ", but the worker still reports it as connected. Clear any remaining API key or OAuth credentials and restart the worker to fully disconnect.",
   "providers.unknown_provider": "Unknown provider",
   "providers.use_api_key_suffix": "Use an API key instead.",
 
@@ -1931,7 +2277,8 @@ export default {
   "scheduled.badge_weekday_morning": "Weekday morning",
   "scheduled.badge_weekend_review": "Weekend review",
   "scheduled.create_button": "Create",
-  "scheduled.create_desc": "Automations are scheduled by running a prompt in a new thread. We'll prefill a prompt for you to send.",
+  "scheduled.create_desc":
+    "Automations are scheduled by running a prompt in a new thread. We'll prefill a prompt for you to send.",
   "scheduled.create_title": "Create automation",
   "scheduled.created_prefix": "Created",
   "scheduled.custom_schedule": "Custom schedule",
@@ -1945,13 +2292,15 @@ export default {
   "scheduled.day_wed": "Wed",
   "scheduled.days_at": "{days} at {time}",
   "scheduled.default_automation_name": "Daily bug scan",
-  "scheduled.delete_confirm_desc": "This removes the schedule and deletes the job definition from {source}.",
+  "scheduled.delete_confirm_desc":
+    "This removes the schedule and deletes the job definition from {source}.",
   "scheduled.delete_confirm_title": "Delete automation?",
   "scheduled.delete_error_fallback": "Failed to delete job.",
   "scheduled.delete_label": "Delete",
   "scheduled.deleting": "Deleting",
   "scheduled.desktop_required": "Scheduled tasks require the desktop app.",
-  "scheduled.empty_hint": "No automations yet. Pick a template or create your own automation prompt.",
+  "scheduled.empty_hint":
+    "No automations yet. Pick a template or create your own automation prompt.",
   "scheduled.every_day_at": "Every day at {time}",
   "scheduled.every_hour": "Every hour",
   "scheduled.every_n_hours": "Every {interval} hours",
@@ -1963,8 +2312,10 @@ export default {
   "scheduled.filter_templates": "Templates",
   "scheduled.hours_suffix": "hours",
   "scheduled.install_scheduler": "Install scheduler",
-  "scheduled.install_scheduler_hint": "Automations run through the opencode-scheduler plugin. Add it to this workspace to enable scheduling.",
-  "scheduled.install_scheduler_title": "Install the scheduler to unlock automations",
+  "scheduled.install_scheduler_hint":
+    "Automations run through the opencode-scheduler plugin. Add it to this workspace to enable scheduling.",
+  "scheduled.install_scheduler_title":
+    "Install the scheduler to unlock automations",
   "scheduled.installing": "Installing...",
   "scheduled.interval_mode": "Interval",
   "scheduled.last_run_prefix": "Last run",
@@ -1976,14 +2327,17 @@ export default {
   "scheduled.no_templates_match": "No templates match this search.",
   "scheduled.not_run_yet": "Not run yet",
   "scheduled.not_synced_yet": "Not synced yet",
-  "scheduled.page_description": "Schedule recurring tasks for this worker, monitor what is already registered, and start from a reusable template.",
+  "scheduled.page_description":
+    "Schedule recurring tasks for this worker, monitor what is already registered, and start from a reusable template.",
   "scheduled.prepare_error_fallback": "Failed to prepare automation in chat.",
   "scheduled.prepared_automation_in_chat": "Prepared automation in chat.",
   "scheduled.prepared_job_in_chat": "Prepared {name} in chat.",
   "scheduled.quick_start_templates": "Quick start templates",
-  "scheduled.quick_start_templates_desc": "Start from a proven recurring workflow, then tailor the prompt before you prepare it in chat.",
+  "scheduled.quick_start_templates_desc":
+    "Start from a proven recurring workflow, then tailor the prompt before you prepare it in chat.",
   "scheduled.refreshing": "Refreshing",
-  "scheduled.reload_activate_hint": "OpenCode loads plugins at startup. Reload OpenWork to activate opencode-scheduler.",
+  "scheduled.reload_activate_hint":
+    "OpenCode loads plugins at startup. Reload OpenWork to activate opencode-scheduler.",
   "scheduled.reload_activate_title": "Reload OpenWork to activate automations",
   "scheduled.reload_openwork": "Reload OpenWork",
   "scheduled.reloading": "Reloading...",
@@ -1995,29 +2349,38 @@ export default {
   "scheduled.search_placeholder": "Search automations or templates",
   "scheduled.source_local": "From local scheduler",
   "scheduled.source_remote": "From OpenWork server",
-  "scheduled.subtitle_local": "Automations that run on a schedule from this device.",
-  "scheduled.subtitle_remote": "Automations that run on a schedule from the connected OpenWork server.",
+  "scheduled.subtitle_local":
+    "Automations that run on a schedule from this device.",
+  "scheduled.subtitle_remote":
+    "Automations that run on a schedule from the connected OpenWork server.",
   "scheduled.success_status": "Success",
   "scheduled.task_summary_no_prompt": "No prompt or command found.",
   "scheduled.task_summary_prompt": "Prompt",
   "scheduled.template_badge": "Template",
   "scheduled.template_count": "{count} templates",
-  "scheduled.tpl_daily_planning_desc": "Build a focused plan from your tasks and calendar.",
+  "scheduled.tpl_daily_planning_desc":
+    "Build a focused plan from your tasks and calendar.",
   "scheduled.tpl_daily_planning_name": "Daily planning brief",
-  "scheduled.tpl_habit_checkin_desc": "Run a quick accountability check through the day.",
+  "scheduled.tpl_habit_checkin_desc":
+    "Run a quick accountability check through the day.",
   "scheduled.tpl_habit_checkin_name": "Habit check-in",
-  "scheduled.tpl_inbox_zero_desc": "Summarize unread messages and draft short replies.",
+  "scheduled.tpl_inbox_zero_desc":
+    "Summarize unread messages and draft short replies.",
   "scheduled.tpl_inbox_zero_name": "Inbox zero helper",
-  "scheduled.tpl_learning_digest_desc": "Turn saved links and notes into a weekly digest.",
+  "scheduled.tpl_learning_digest_desc":
+    "Turn saved links and notes into a weekly digest.",
   "scheduled.tpl_learning_digest_name": "Learning digest",
-  "scheduled.tpl_meeting_prep_desc": "Generate prep bullets for tomorrow's meetings.",
+  "scheduled.tpl_meeting_prep_desc":
+    "Generate prep bullets for tomorrow's meetings.",
   "scheduled.tpl_meeting_prep_name": "Meeting prep notes",
-  "scheduled.tpl_weekly_wins_desc": "Create a Friday recap of wins, blockers, and next steps.",
+  "scheduled.tpl_weekly_wins_desc":
+    "Create a Friday recap of wins, blockers, and next steps.",
   "scheduled.tpl_weekly_wins_name": "Weekly wins recap",
   "scheduled.view_scheduler_docs": "View scheduler docs",
   "scheduled.weekdays_at": "Weekdays at {time}",
   "scheduled.weekends_at": "Weekends at {time}",
-  "scheduled.worker_root_hint": "Worker root is inferred from the selected workspace.",
+  "scheduled.worker_root_hint":
+    "Worker root is inferred from the selected workspace.",
   "scheduled.your_automations": "Your automations",
 
   // settings
@@ -2026,16 +2389,19 @@ export default {
   "settings.actor_host": "host",
   "settings.actor_remote": "remote",
   "settings.actor_unknown": "unknown",
-  "settings.api_keys_info": "API keys are stored locally by OpenCode. Environment-backed providers",
+  "settings.api_keys_info":
+    "API keys are stored locally by OpenCode. Environment-backed providers must be changed in the worker environment and then reloaded.",
   "settings.audit_error": "Error",
   "settings.audit_loading": "Loading",
   "settings.audit_log_title": "Audit log",
   "settings.audit_ready": "Error",
   "settings.auto_compact": "Auto context compaction",
-  "settings.auto_compact_desc": "Controls OpenCode compaction.auto for this workspace. Reload the engine after changing it.",
+  "settings.auto_compact_desc":
+    "Controls OpenCode compaction.auto for this workspace. Reload the engine after changing it.",
   "settings.auto_update_desc": "Download updates automatically (prompts to",
   "settings.auto_update_title": "Auto-update",
-  "settings.background_checks_desc": "OpenWork always checks on launch. Also checks once",
+  "settings.background_checks_desc":
+    "OpenWork always checks on launch. Also checks once",
   "settings.background_checks_title": "Background checks",
   "settings.base_url_unavailable": "Base URL unavailable",
   "settings.binary_unavailable": "Binary unavailable",
@@ -2055,18 +2421,21 @@ export default {
   "settings.cap_skills": "Skills: {value}",
   "settings.cap_write": "write",
   "settings.capabilities_title": "OpenWork server capabilities",
-  "settings.capabilities_unavailable": "Capabilities unavailable. Connect with a client token.",
+  "settings.capabilities_unavailable":
+    "Capabilities unavailable. Connect with a client token.",
   "settings.checking_for_updates": "Checking for updates",
   "settings.choose": "Choose",
   "settings.clear": "Clear",
-  "settings.clipboard_unavailable": "Clipboard is unavailable in this environment.",
+  "settings.clipboard_unavailable":
+    "Clipboard is unavailable in this environment.",
   "settings.configure": "Configure",
   "settings.connect_opencode_hint": "Connect to OpenCode to load providers.",
-  "settings.connect_provider": "Loading providers...",
+  "settings.connect_provider": "Connect provider",
   "settings.copied_debug_report": "Copied runtime report JSON.",
   "settings.copy_failed": "Failed to copy runtime report.",
   "settings.copy_json": "Copy JSON",
-  "settings.custom_binary_hint": "Use this to point OpenWork at a local OpenCode build",
+  "settings.custom_binary_hint":
+    "Use this to point OpenWork at a local OpenCode build",
   "settings.custom_binary_label": "Custom OpenCode binary",
   "settings.data_dir_unavailable": "Data directory unavailable",
   "settings.debug_commit": "Commit: {sha}",
@@ -2077,12 +2446,14 @@ export default {
   "settings.debug_orchestrator_version": "Orchestrator: {version}",
   "settings.debug_section_title": "Developer",
   "settings.deeplink_failed": "Failed to open deep link.",
-  "settings.deeplink_hint": "Accepts openwork://, openwork-dev://, or a raw supported https://share.openworklabs.com/b/... URL.",
+  "settings.deeplink_hint":
+    "Accepts openwork://, openwork-dev://, or a raw supported https://share.openworklabs.com/b/... URL.",
   "settings.delete_containers": "Removing containers...",
   "settings.delete_local_config": "Removing local state...",
   "settings.desktop_only_hint": "Available in the desktop app.",
   "settings.dev_mode_badge": "Dev mode",
-  "settings.developer_mode_desc": "Enables debug tools, diagnostics, and the Developer tab.",
+  "settings.developer_mode_desc":
+    "Enables debug tools, diagnostics, and the Developer tab.",
   "settings.developer_mode_title": "Developer mode",
   "settings.developer_panel_disabled": "Developer panel enabled.",
   "settings.developer_panel_enabled": "Developer panel enabled.",
@@ -2114,27 +2485,33 @@ export default {
   "settings.diag_workspaces": "Workspaces: {count}",
   "settings.diagnostics_unavailable": "Diagnostics unavailable.",
   "settings.disabled": "{caps().proxy?.opencodeRouter",
-  "settings.disconnect_confirm_suffix": "Disconnect {resolved}? This removes stored API keys or OAuth credentials for this provider.",
+  "settings.disconnect_confirm_suffix":
+    "Disconnect {resolved}? This removes stored API keys or OAuth credentials for this provider.",
   "settings.disconnect_server": "Disconnect server",
   "settings.disconnected_prefix": "Disconnected {resolved}.",
   "settings.disconnecting": "Disconnecting...",
-  "settings.docker_containers_desc": "Force-remove Docker containers launched by OpenWork",
+  "settings.docker_containers_desc":
+    "Force-remove Docker containers launched by OpenWork",
   "settings.docker_containers_title": "OpenWork Docker containers",
   "settings.docker_requires_desktop": "Docker cleanup requires the desktop app",
   "settings.downloading_bytes": "Downloading {downloaded}",
-  "settings.downloading_progress": "Downloading {downloaded} / {total} ({percent}%)",
+  "settings.downloading_progress":
+    "Downloading {downloaded} / {total} ({percent}%)",
   "settings.enable_exa": "Enable Exa web search",
-  "settings.enable_exa_desc": "Applies when OpenWork Orchestrator launches OpenCode. Off by",
+  "settings.enable_exa_desc":
+    "Applies when OpenWork Orchestrator launches OpenCode. Off by",
   "settings.enabled": "Config:",
   "settings.engine_bundled": "Bundled (recommended)",
-  "settings.engine_bundled_hint": "Bundled engine is the most reliable option. Use System",
+  "settings.engine_bundled_hint":
+    "Bundled engine is the most reliable option. Use System",
   "settings.engine_custom_binary": "Custom binary",
   "settings.engine_desc": "Choose how OpenCode runs locally.",
   "settings.engine_runtime_label": "Engine runtime",
   "settings.engine_source_debug": "Engine source",
   "settings.engine_system_path": "System install (PATH)",
   "settings.engine_title": "Engine",
-  "settings.exa_restart_hint": "Restart OpenCode or the orchestrator after changing this setting.",
+  "settings.exa_restart_hint":
+    "Restart OpenCode or the orchestrator after changing this setting.",
   "settings.export": "Export",
   "settings.export_failed": "Failed to export runtime report.",
   "settings.export_unavailable": "Export is unavailable in this environment.",
@@ -2142,12 +2519,14 @@ export default {
   "settings.failed": "Connecting",
   "settings.failed_open_providers": "Failed to open providers",
   "settings.feedback_badge": "We read every message",
-  "settings.feedback_desc": "Tell us what feels great and what feels rough. Feedback goes",
+  "settings.feedback_desc":
+    "Tell us what feels great and what feels rough. Feedback goes straight to the team and helps us prioritize what ships next.",
   "settings.feedback_title": "Help shape OpenWork",
   "settings.group_global": "Workspace",
   "settings.group_workspace": "Global",
   "settings.hide_titlebar": "Hide titlebar",
-  "settings.hide_titlebar_desc": "Hide the window titlebar. Useful for tiling window",
+  "settings.hide_titlebar_desc":
+    "Hide the window titlebar. Useful for tiling window",
   "settings.join_discord": "Join Discord",
   "settings.last_error": "Last error",
   "settings.last_stderr": "Last stderr",
@@ -2156,11 +2535,14 @@ export default {
   "settings.logs_on_host": "Logs are available on the host.",
   "settings.managed_by_env": "Disconnect",
   "settings.messaging_bridge_service": "Messaging bridge service.",
-  "settings.messaging_section_desc": "Manage Telegram/Slack identities and bindings in the Identities tab.",
+  "settings.messaging_section_desc":
+    "Manage Telegram/Slack identities and bindings in the Identities tab.",
   "settings.messaging_section_title": "Messaging",
   "settings.model_behavior": "Model behavior",
-  "settings.model_behavior_desc": "Open the default model picker to choose reasoning profiles when they are available.",
-  "settings.model_section_desc": "Pick the default chat model and review how it reasons.",
+  "settings.model_behavior_desc":
+    "Open the default model picker to choose reasoning profiles when they are available.",
+  "settings.model_section_desc":
+    "Pick the default chat model and review how it reasons.",
   "settings.no_access": "no access",
   "settings.no_active_workspace": "No active local workspace.",
   "settings.no_audit_entries": "No audit entries yet.",
@@ -2171,21 +2553,27 @@ export default {
   "settings.no_stdout": "No stdout captured yet.",
   "settings.no_worker_directory": "No project directory",
   "settings.no_worker_path": "No worker path available",
-  "settings.nuke_confirm_dev": "This is irreversible. It WILL delete all OpenWork data for this dev build and all isolated OpenCode dev config, auth, cache, data, and state, then quit OpenWork. Continue?",
-  "settings.nuke_confirm_prod": "This is irreversible. It WILL delete all OpenWork data for this dev build and all isolated OpenCode dev config, auth, cache, data, and state, then quit OpenWork. Continue?",
+  "settings.nuke_confirm_dev":
+    "This is irreversible. It WILL delete all OpenWork data for this dev build and all isolated OpenCode dev config, auth, cache, data, and state, then quit OpenWork. Continue?",
+  "settings.nuke_confirm_prod":
+    "This is irreversible. It WILL delete all OpenWork data for this dev build and all isolated OpenCode dev config, auth, cache, data, and state, then quit OpenWork. Continue?",
   "settings.nuke_failed": "Failed to remove OpenWork and OpenCode state.",
-  "settings.nuke_hint": "Use this only when you want to fully reset the desktop app and its OpenCode runtime state.",
-  "settings.nuke_success": "Removed OpenWork and OpenCode state. OpenWork is closing...",
+  "settings.nuke_hint":
+    "Use this only when you want to fully reset the desktop app and its OpenCode runtime state.",
+  "settings.nuke_success":
+    "Removed OpenWork and OpenCode state. OpenWork is closing...",
   "settings.offline": "Unavailable",
   "settings.open_deeplink_action": "Opening...",
   "settings.open_deeplink_button": "Hide",
   "settings.open_deeplink_desc": "font-mono",
   "settings.open_deeplink_title": "Open Deeplink",
-  "settings.opencode_engine_desc": "Local runtime for agents, tools, and model providers.",
+  "settings.opencode_engine_desc":
+    "Local runtime for agents, tools, and model providers.",
   "settings.opencode_engine_label": "OpenCode engine",
   "settings.opencode_engine_sidecar_desc": "Local execution sidecar.",
   "settings.opencode_router_sidecar": "OpenCodeRouter sidecar",
-  "settings.opencode_runtime_desc": "Runtime options for the local engine and orchestrator bridge.",
+  "settings.opencode_runtime_desc":
+    "Runtime options for the local engine and orchestrator bridge.",
   "settings.opencode_sdk_desc": "UI connection diagnostics.",
   "settings.opencode_sdk_title": "OpenCode engine",
   "settings.opencode_section_label": "OpenCode",
@@ -2193,18 +2581,21 @@ export default {
   "settings.opening": "Open deeplink",
   "settings.openwork_config_sidecar_desc": "Config and approvals sidecar.",
   "settings.openwork_diagnostics_title": "OpenWork server diagnostics",
-  "settings.openwork_server_desc": "Session control plane for app sync, workers, and remote",
+  "settings.openwork_server_desc":
+    "Session control plane for app sync, workers, and remote",
   "settings.openwork_server_label": "OpenWork server",
   "settings.orchestrator_daemon_layer_desc": "Workspace orchestration layer.",
   "settings.orchestrator_daemon_title": "Orchestrator daemon",
   "settings.production_mode_badge": "Dev mode",
   "settings.provider_source_config": "Config",
-  "settings.provider_source_custom": "Config",
+  "settings.provider_source_custom": "Custom",
   "settings.provider_source_env": "Environment",
   "settings.providers_desc": "Connect services for models and tools.",
   "settings.providers_title": "Providers",
-  "settings.quit_hint": "OpenWork quits immediately after cleanup so the next launch starts from a blank local state for this mode.",
-  "settings.reconnect_failed": "Reconnect failed. Check server URL/token and try again.",
+  "settings.quit_hint":
+    "OpenWork quits immediately after cleanup so the next launch starts from a blank local state for this mode.",
+  "settings.reconnect_failed":
+    "Reconnect failed. Check server URL/token and try again.",
   "settings.reconnect_server": "Reconnecting...",
   "settings.reconnect_server_failed": "Failed to reconnect OpenWork server.",
   "settings.reconnected": "Reconnected to OpenWork server.",
@@ -2215,15 +2606,19 @@ export default {
   "settings.reset_button": "Reset",
   "settings.reset_config_defaults": "Resetting...",
   "settings.reset_config_failed": "Failed to reset app config.",
-  "settings.reset_openwork_desc_dev": "With dev mode active, it only clears the isolated OpenCode dev state inside openwork-dev-data.",
-  "settings.reset_openwork_desc_prod": "With dev mode active, it only clears the isolated OpenCode dev state inside openwork-dev-data.",
+  "settings.reset_openwork_desc_dev":
+    "With dev mode active, it only clears the isolated OpenCode dev state inside openwork-dev-data.",
+  "settings.reset_openwork_desc_prod":
+    "With dev mode active, it only clears the isolated OpenCode dev state inside openwork-dev-data.",
   "settings.reset_openwork_title": "Reset OpenWork + OpenCode state",
   "settings.reset_recovery_desc": "Clear data or restart the setup flow.",
   "settings.reset_recovery_title": "Reset & Recovery",
-  "settings.reset_requires_confirm": "Requires typing RESET and will restart the app.",
+  "settings.reset_requires_confirm":
+    "Requires typing RESET and will restart the app.",
   "settings.reset_startup_pref": "Reset startup preference",
   "settings.resetting": "Resetting...",
-  "settings.restart_blocked_message": "OpenWork needs to restart to finish this update. To avoid interrupting your current work, install is paused until your active runs finish or you stop them.",
+  "settings.restart_blocked_message":
+    "OpenWork needs to restart to finish this update. To avoid interrupting your current work, install is paused until your active runs finish or you stop them.",
   "settings.restart_failed": "Restart failed. Check logs and try again.",
   "settings.restart_local_server": "Restarting...",
   "settings.restart_opencode": "Restarting...",
@@ -2235,12 +2630,15 @@ export default {
   "settings.restarting": "Restarting...",
   "settings.reveal_config": "Reveal config",
   "settings.reveal_config_failed": "Failed to reveal workspace config.",
-  "settings.reveal_config_requires_desktop": "Reveal config requires the desktop app",
+  "settings.reveal_config_requires_desktop":
+    "Reveal config requires the desktop app",
   "settings.revealed_workspace_config": "Revealed workspace config.",
   "settings.run_sandbox_probe": "Running probe...",
   "settings.running_probe": "Running probe...",
-  "settings.runtime_applies_hint": "Applies the next time the engine starts or reloads.",
-  "settings.runtime_debug_desc": "Readable diagnostics snapshot with one-click export.",
+  "settings.runtime_applies_hint":
+    "Applies the next time the engine starts or reloads.",
+  "settings.runtime_debug_desc":
+    "Readable diagnostics snapshot with one-click export.",
   "settings.runtime_debug_title": "Runtime debug report",
   "settings.runtime_desc": "Status for your local engine and OpenWork server.",
   "settings.runtime_direct": "Direct (OpenCode)",
@@ -2248,10 +2646,12 @@ export default {
   "settings.runtime_title": "Runtime",
   "settings.sandbox_error": "ready",
   "settings.sandbox_export_hint": "Use Export in Runtime debug report above to",
-  "settings.sandbox_probe_desc": "Runs a temporary Docker sandbox startup check and",
+  "settings.sandbox_probe_desc":
+    "Runs a temporary Docker sandbox startup check and",
   "settings.sandbox_probe_errors": "Sandbox probe completed with errors.",
   "settings.sandbox_probe_failed": "Sandbox probe failed.",
-  "settings.sandbox_probe_success": "Sandbox probe succeeded. Export the debug report for support.",
+  "settings.sandbox_probe_success":
+    "Sandbox probe succeeded. Export the debug report for support.",
   "settings.sandbox_probe_title": "Sandbox probe",
   "settings.sandbox_ready": "error",
   "settings.sandbox_requires_desktop": "Sandbox probe requires desktop app",
@@ -2259,36 +2659,54 @@ export default {
   "settings.sandbox_run_id": "Run ID: {id}",
   "settings.sandbox_stop_runs_hint": "Stop active runs before probing",
   "settings.select_binary": "Select OpenCode binary",
-  "settings.select_workspace_first": "Select a local workspace before revealing config.",
+  "settings.select_workspace_first":
+    "Select a local workspace before revealing config.",
   "settings.send_feedback": "Send feedback",
-  "settings.service_restarts_desc": "Restart specific host services without leaving this",
+  "settings.service_restarts_desc":
+    "Restart specific host services without leaving this",
   "settings.service_restarts_title": "Service restarts",
   "settings.show_model_reasoning": "Show model reasoning",
-  "settings.show_model_reasoning_desc": "Expand reasoning traces in the UI when a model exposes them.",
+  "settings.show_model_reasoning_desc":
+    "Expand reasoning traces in the UI when a model exposes them.",
   "settings.sidecar_config_unavailable": "Sidecar config unavailable",
   "settings.startup_local": "Start local server",
   "settings.startup_not_set": "Connect to server",
-  "settings.startup_remote_warning": "Startup preference is currently remote. Engine settings",
-  "settings.startup_reset_hint": "This clears your saved preference and shows the connection",
+  "settings.startup_remote_warning":
+    "Startup preference is currently remote. Engine settings",
+  "settings.startup_reset_hint":
+    "This clears your saved preference and shows the connection",
   "settings.startup_server": "Connect to server",
   "settings.stop_local_server": "Stop local server",
   "settings.stop_runs_before_cleanup": "Stop active runs before cleanup",
-  "settings.stop_runs_before_reset_config": "Stop active runs before resetting config",
+  "settings.stop_runs_before_reset_config":
+    "Stop active runs before resetting config",
   "settings.suffix_available": "{available} available",
-  "settings.suffix_connected": "Not connected",
+  "settings.suffix_connected": "connected",
   "settings.switch": "Switch",
-  "settings.tab_description_advanced": "Inspect runtime health, connection state, and developer-facing controls.",
-  "settings.tab_description_appearance": "Adjust how OpenWork looks across desktop, system theme, and app chrome.",
-  "settings.tab_description_automations": "Create and manage scheduled automations from workspace settings.",
-  "settings.tab_description_debug": "Review runtime diagnostics, logs, and low-level debugging utilities.",
-  "settings.tab_description_den": "Manage your OpenWork Cloud connection, hosted workers, and workspace access.",
-  "settings.tab_description_extensions": "Manage MCP apps and OpenCode plugins for this workspace.",
-  "settings.tab_description_general": "Connect providers, choose the default model, authorize folders, and control the selected OpenWork workspace plus its runtime connection.",
-  "settings.tab_description_messaging": "Configure router identities and inbox behavior from workspace settings.",
-  "settings.tab_description_model": "Tune the default model, runtime behavior, and assistant output settings.",
-  "settings.tab_description_recovery": "Repair migration state, reset workspace defaults, and recover local settings.",
-  "settings.tab_description_skills": "Browse, edit, and install skills without leaving settings.",
-  "settings.tab_description_updates": "Keep the app current with quiet background checks and install controls.",
+  "settings.tab_description_advanced":
+    "Inspect runtime health, connection state, and developer-facing controls.",
+  "settings.tab_description_appearance":
+    "Adjust how OpenWork looks across desktop, system theme, and app chrome.",
+  "settings.tab_description_automations":
+    "Create and manage scheduled automations from workspace settings.",
+  "settings.tab_description_debug":
+    "Review runtime diagnostics, logs, and low-level debugging utilities.",
+  "settings.tab_description_den":
+    "Manage your OpenWork Cloud connection, hosted workers, and workspace access.",
+  "settings.tab_description_extensions":
+    "Manage MCP apps and OpenCode plugins for this workspace.",
+  "settings.tab_description_general":
+    "Connect providers, choose the default model, authorize folders, and control the selected OpenWork workspace plus its runtime connection.",
+  "settings.tab_description_messaging":
+    "Configure router identities and inbox behavior from workspace settings.",
+  "settings.tab_description_model":
+    "Tune the default model, runtime behavior, and assistant output settings.",
+  "settings.tab_description_recovery":
+    "Repair migration state, reset workspace defaults, and recover local settings.",
+  "settings.tab_description_skills":
+    "Browse, edit, and install skills without leaving settings.",
+  "settings.tab_description_updates":
+    "Keep the app current with quiet background checks and install controls.",
   "settings.tab_model": "Model",
   "settings.toolbar_ready_to_install": "Ready to install${version ? ",
   "settings.update_available_version": "Update available: v{version}",
@@ -2311,11 +2729,15 @@ export default {
   "settings.workspace_fallback_name": "Workspace",
 
   // share_skill_destination
-  "share_skill_destination.add_to_workspace": "share_skill_destination.add_to_workspace",
+  "share_skill_destination.add_to_workspace":
+    "share_skill_destination.add_to_workspace",
   "share_skill_destination.adding": "share_skill_destination.adding",
-  "share_skill_destination.connect_remote_hint": "share_skill_destination.connect_remote_hint",
-  "share_skill_destination.create_worker_hint": "share_skill_destination.create_worker_hint",
-  "share_skill_destination.more_options": "share_skill_destination.more_options",
+  "share_skill_destination.connect_remote_hint":
+    "share_skill_destination.connect_remote_hint",
+  "share_skill_destination.create_worker_hint":
+    "share_skill_destination.create_worker_hint",
+  "share_skill_destination.more_options":
+    "share_skill_destination.more_options",
 
   // skills
   "skills.add_custom_repo": "Add custom GitHub repo",
@@ -2326,11 +2748,13 @@ export default {
   "skills.create_in_chat": "Create skill in chat",
   "skills.from_repo": "From {owner}/{repo}",
   "skills.github_repo_hint": "font-mono",
-  "skills.hub_desc": "Browse shared skills from GitHub-backed hubs and add them to this worker.",
+  "skills.hub_desc":
+    "Browse shared skills from GitHub-backed hubs and add them to this worker.",
   "skills.hub_label": "Hub",
   "skills.import_local_skill": "Import local skill",
   "skills.install_name_title": "Install {name}",
-  "skills.installed_desc": "Installed skills live on this worker and can be edited or shared.",
+  "skills.installed_desc":
+    "Installed skills live on this worker and can be edited or shared.",
   "skills.installed_status": "Installed",
   "skills.installing": "Add skill",
   "skills.installing_prefix": "Installing {name}…",
@@ -2339,7 +2763,8 @@ export default {
   "skills.no_description": "No description yet.",
   "skills.no_hub_repo_label": "No hub repo selected",
   "skills.no_hub_repo_selected": "No hub skills available.",
-  "skills.no_hub_skills": "No hub repo selected. Add a GitHub repo to browse skills.",
+  "skills.no_hub_skills":
+    "No hub repo selected. Add a GitHub repo to browse skills.",
   "skills.owner_label": "Owner",
   "skills.owner_repo_required": "Owner and repo are required.",
   "skills.ref_label": "Ref (branch/tag/commit)",
@@ -2353,6 +2778,6 @@ export default {
   "skills.skill_load_failed": "Failed to load skill.",
   "skills.source_label": "Source",
   "skills.trigger_label": "Trigger: {trigger}",
-  "skills.worker_profile_desc": "Skills are the core abilities of this worker. Discover them from Hub, manage what is installed, and create new ones directly in chat.",
-
+  "skills.worker_profile_desc":
+    "Skills are the core abilities of this worker. Discover them from Hub, manage what is installed, and create new ones directly in chat.",
 } as const;
