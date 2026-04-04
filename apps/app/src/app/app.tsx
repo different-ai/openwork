@@ -2069,7 +2069,6 @@ export default function App() {
   const settingsTabs = new Set<SettingsTab>([
     "general",
     "den",
-    "model",
     "automations",
     "skills",
     "extensions",

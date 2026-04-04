@@ -440,7 +440,7 @@ export default function SettingsShell(props: SettingsShellProps) {
   };
 
   const openAdvanced = () => {
-    openSettings(props.developerMode ? "advanced" : "messaging");
+    openSettings("advanced");
   };
 
   const revealWorkspaceInFinder = async (workspaceId: string) => {
@@ -1353,57 +1353,6 @@ export default function SettingsShell(props: SettingsShellProps) {
           onOpenMcp={openExtensions}
           providerConnectedIds={props.providerConnectedIds}
         />
-        <nav class="hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "automations" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("automations")}
-            >
-              <History size={18} />
-              {t("scheduled.title")}
-            </button>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "skills" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("skills")}
-            >
-              <Zap size={18} />
-              {t("dashboard.skills")}
-            </button>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "extensions" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("extensions")}
-            >
-              <Box size={18} />
-              {t("extensions.title")}
-            </button>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "messaging" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("messaging")}
-            >
-              <MessageCircle size={18} />
-              {t("dashboard.nav_ids")}
-            </button>
-            <Show when={props.developerMode}>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "advanced" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={openAdvanced}
-              >
-                <SlidersHorizontal size={18} />
-                {t("settings.tab_advanced")}
-              </button>
-            </Show>
-          </div>
-        </nav>
       </main>
       </div>
 

@@ -161,7 +161,6 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 export type SettingsTab =
   | "general"
   | "den"
-  | "model"
   | "automations"
   | "skills"
   | "extensions"

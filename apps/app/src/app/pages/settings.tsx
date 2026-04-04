@@ -217,31 +217,6 @@ const DISCORD_INVITE_URL = "https://discord.gg/VEhNQXxYMB";
 const BUG_REPORT_URL =
   "https://github.com/different-ai/openwork/issues/new?template=bug.yml";
 
-// OpenCodeRouter Settings Component
-//
-// Messaging identities + routing are managed in the Identities tab.
-export function OpenCodeRouterSettings(_props: {
-  busy: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerSettings: OpenworkServerSettings;
-  runtimeWorkspaceId: string | null;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  developerMode: boolean;
-}) {
-  return (
-    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-      <div class="flex items-center gap-2">
-        <MessageCircle size={16} class="text-gray-11" />
-        <div class="text-sm font-medium text-gray-12">{t("settings.messaging_section_title")}</div>
-      </div>
-      <div class="text-xs text-gray-10">
-        {t("settings.messaging_section_desc")}
-      </div>
-    </div>
-  );
-}
-
 export default function SettingsView(props: SettingsViewProps) {
   const modelControls = useModelControls();
   const { showThinking, toggleShowThinking } = useSessionDisplayPreferences();
@@ -807,8 +782,6 @@ export default function SettingsView(props: SettingsViewProps) {
     switch (tab) {
       case "den":
         return translate("settings.tab_cloud");
-      case "model":
-        return translate("settings.tab_model");
       case "automations":
         return translate("settings.tab_automations");
       case "skills":
@@ -1372,8 +1345,6 @@ export default function SettingsView(props: SettingsViewProps) {
     switch (tab) {
       case "den":
         return translate("settings.tab_description_den");
-      case "model":
-        return translate("settings.tab_description_model");
       case "automations":
         return translate("settings.tab_description_automations");
       case "skills":
