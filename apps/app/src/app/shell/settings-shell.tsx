@@ -93,7 +93,6 @@ export type SettingsShellProps = {
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   refreshProviders: () => Promise<unknown>;
-  view: View;
   setView: (view: View, sessionId?: string) => void;
   toggleSettings: () => void;
   startupPreference: StartupPreference | null;
@@ -101,7 +100,6 @@ export type SettingsShellProps = {
   clientConnected: boolean;
   busy: boolean;
   busyHint: string | null;
-  busyLabel: string | null;
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
@@ -135,11 +133,6 @@ export type SettingsShellProps = {
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
   reloadError: string | null;
-  workspaceAutoReloadAvailable: boolean;
-  workspaceAutoReloadEnabled: boolean;
-  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
-  workspaceAutoReloadResumeEnabled: boolean;
-  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
   selectedWorkspaceDisplay: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   selectedWorkspaceId: string;
@@ -150,7 +143,6 @@ export type SettingsShellProps = {
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
-  openCreateRemoteWorkspace: () => void;
   connectRemoteWorkspace: (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
@@ -163,8 +155,6 @@ export type SettingsShellProps = {
     templateData: unknown;
     organizationName?: string | null;
   }) => Promise<void> | void;
-  importWorkspaceConfig: () => void;
-  importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -172,10 +162,8 @@ export type SettingsShellProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  stopSandbox: (workspaceId: string) => void;
   schedulerPluginInstalled: boolean;
   selectedWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
@@ -201,7 +189,6 @@ export type SettingsShellProps = {
   addPlugin: (pluginNameOverride?: string) => void;
   createSessionInWorkspace: (workspaceId: string, initialPrompt?: string) => Promise<string | undefined> | string | void;
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
-  selectSession: (sessionId: string) => Promise<void> | void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   opencodeEnableExa: boolean;
@@ -1243,13 +1230,8 @@ export default function SettingsShell(props: SettingsShellProps) {
                     reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                    reloadBusy={props.reloadBusy}
                    reloadError={props.reloadError}
-                   workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
-                   workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
-                   setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
-                   workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
-                   setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
-                   connectRemoteWorkspace={props.connectRemoteWorkspace}
-                    openTeamBundle={props.openTeamBundle}
+                    connectRemoteWorkspace={props.connectRemoteWorkspace}
+                     openTeamBundle={props.openTeamBundle}
                 />
         </div>
 

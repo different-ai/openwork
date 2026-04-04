@@ -98,7 +98,6 @@ import Composer from "../components/session/composer";
 import type { ComposerNotice } from "../components/session/composer-notice";
 import { createSessionScrollController } from "../components/session/scroll-controller";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
-import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import {
@@ -116,7 +115,6 @@ import {
 export type SessionViewProps = {
   selectedSessionId: string | null;
   setView: (view: View, sessionId?: string) => void;
-  settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   toggleSettings: () => void;
   selectedWorkspaceDisplay: WorkspaceDisplay;
@@ -133,10 +131,6 @@ export type SessionViewProps = {
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
   openCreateWorkspace: () => void;
-  pickFolderWorkspace: () => Promise<boolean>;
-  openCreateRemoteWorkspace: () => void;
-  importWorkspaceConfig: () => void;
-  importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   clientConnected: boolean;
@@ -154,7 +148,6 @@ export type SessionViewProps = {
   orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
   appVersion: string | null;
-  stopHost: () => void;
   headerStatus: string;
   busyHint: string | null;
   updateStatus: {
@@ -167,13 +160,11 @@ export type SessionViewProps = {
     downloadedBytes?: number;
     message?: string;
   } | null;
-  updateEnv: { supported?: boolean; reason?: string | null } | null;
   anyActiveRuns: boolean;
   installUpdateAndRestart: () => void;
   newTaskDisabled: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   openRenameWorkspace: (workspaceId: string) => void;
-  selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
   getSessionById: (sessionId: string | null) => Session | null;
   getMessagesBySessionId: (sessionId: string | null) => MessageWithParts[];
@@ -187,16 +178,8 @@ export type SessionViewProps = {
   setExpandedStepIds: (
     updater: (current: Set<string>) => Set<string>,
   ) => Set<string>;
-  expandedSidebarSections: SidebarSectionState;
-  setExpandedSidebarSections: (
-    updater: (current: SidebarSectionState) => SidebarSectionState,
-  ) => SidebarSectionState;
   workingFiles: string[];
-  authorizedDirs: string[];
-  activePlugins: string[];
-  activePluginStatus: string | null;
   skills: SkillCard[];
-  skillsStatus: string | null;
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;

@@ -42,7 +42,6 @@ import {
   engineStart,
   engineStop,
   sandboxDoctor,
-  sandboxStop,
   orchestratorInstanceDispose,
   orchestratorStartDetached,
   orchestratorWorkspaceActivate,
@@ -3077,63 +3076,6 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function stopSandbox(workspaceId: string) {
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    const id = workspaceId.trim();
-    if (!id) return;
-
-    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
-    const containerName = workspace?.sandboxContainerName?.trim() ?? "";
-    if (!containerName) {
-      options.setError("Sandbox container name missing.");
-      return;
-    }
-
-    options.setBusy(true);
-    options.setBusyLabel("Stopping sandbox...");
-    options.setBusyStartedAt(Date.now());
-    options.setError(null);
-
-    try {
-      const result = await sandboxStop(containerName);
-      if (!result.ok) {
-        const details = [result.stderr?.trim(), result.stdout?.trim()]
-          .filter(Boolean)
-          .join("\n")
-          .trim();
-        throw new Error(details || `Failed to stop sandbox (status ${result.status})`);
-      }
-
-      // If the user stopped the runtime-connected workspace, proactively disconnect the client.
-      if (connectedWorkspaceId() === id) {
-        options.setClient(null);
-        options.setConnectedVersion(null);
-        setConnectedWorkspaceId(null);
-        if (isTauriRuntime()) {
-          try {
-            await workspaceSetRuntimeActive(null);
-          } catch {
-            // ignore
-          }
-        }
-        options.setSseConnected(false);
-      }
-
-      updateWorkspaceConnectionState(id, { status: "error", message: "Sandbox stopped." });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
   async function pickWorkspaceFolder() {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -3167,12 +3109,6 @@ export function createWorkspaceStore(options: {
   async function resolveFirstRunWelcomeFolder() {
     const base = (await homeDir()).replace(/[\\/]+$/, "");
     return joinNativePath(joinNativePath(base, DEFAULT_WORKSPACE_HOME_FOLDER_NAME), FIRST_RUN_WELCOME_WORKSPACE_NAME);
-  }
-
-  async function createWorkspaceFromPickedFolder() {
-    const folder = await pickWorkspaceFolder();
-    if (!folder) return false;
-    return createWorkspaceFlow("minimal", folder);
   }
 
   async function exportWorkspaceConfig(workspaceId?: string) {
@@ -3764,31 +3700,6 @@ export function createWorkspaceStore(options: {
     setWorkspaceConfig(cfg);
   }
 
-  async function persistReloadSettings(next: { auto?: boolean; resume?: boolean }) {
-    if (!isTauriRuntime()) return;
-    if (selectedWorkspaceInfo()?.workspaceType === "remote") return;
-    const root = selectedWorkspacePath().trim();
-    if (!root) return;
-
-    const existing = workspaceConfig();
-    const cfg: WorkspaceOpenworkConfig = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: Array.isArray(existing?.authorizedRoots) ? existing!.authorizedRoots : authorizedDirs(),
-      blueprint: existing?.blueprint ?? null,
-      reload: {
-        auto: Boolean(next.auto),
-        resume: Boolean(next.resume),
-      },
-    };
-
-    const persistedViaServer = await persistWorkspaceConfigToOpenworkServer(cfg).catch(() => false);
-    if (!persistedViaServer) {
-      await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
-    }
-    setWorkspaceConfig(cfg);
-  }
-
   async function addAuthorizedDir() {
     if (selectedWorkspaceInfo()?.workspaceType === "remote") return;
     const next = newAuthorizedDir().trim();
@@ -4119,7 +4030,6 @@ export function createWorkspaceStore(options: {
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
-    createWorkspaceFromPickedFolder,
     createSandboxFlow,
     createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow,
@@ -4132,7 +4042,6 @@ export function createWorkspaceStore(options: {
     saveWorkspaceConnectionSettings,
     forgetWorkspace,
     recoverWorkspace,
-    stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig,
     importWorkspaceConfig,
@@ -4152,7 +4061,6 @@ export function createWorkspaceStore(options: {
     addAuthorizedDirFromPicker,
     removeAuthorizedDir,
     removeAuthorizedDirAtIndex,
-    persistReloadSettings,
     setEngineInstallLogs,
     refreshSandboxDoctor,
     sandboxCreateProgress,

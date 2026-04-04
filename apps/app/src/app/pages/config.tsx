@@ -34,12 +34,6 @@ export type ConfigViewProps = {
   reloadBusy: boolean;
   reloadError: string | null;
 
-  workspaceAutoReloadAvailable: boolean;
-  workspaceAutoReloadEnabled: boolean;
-  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
-  workspaceAutoReloadResumeEnabled: boolean;
-  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
-
   developerMode: boolean;
 };
 
@@ -180,9 +174,6 @@ export default function ConfigView(props: ConfigViewProps) {
       },
       reload: {
         canReloadWorkspace: props.canReloadWorkspace,
-        autoReloadAvailable: props.workspaceAutoReloadAvailable,
-        autoReloadEnabled: props.workspaceAutoReloadEnabled,
-        autoReloadResumeEnabled: props.workspaceAutoReloadResumeEnabled,
       },
       sharing: {
         hostConnectUrl: hostConnectUrl() || null,
@@ -269,45 +260,6 @@ export default function ConfigView(props: ConfigViewProps) {
           </Button>
         </div>
 
-        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-          <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">{t("config.auto_reload_title")}</div>
-            <div class="text-xs text-gray-7">{t("config.auto_reload_desc")}</div>
-            <Show when={!props.workspaceAutoReloadAvailable}>
-              <div class="text-[11px] text-gray-9">{t("config.auto_reload_unavailable")}</div>
-            </Show>
-          </div>
-          <Button
-            variant="outline"
-            class="text-xs h-8 py-0 px-3 shrink-0"
-            onClick={() => props.setWorkspaceAutoReloadEnabled(!props.workspaceAutoReloadEnabled)}
-            disabled={props.busy || !props.workspaceAutoReloadAvailable}
-          >
-            {props.workspaceAutoReloadEnabled ? t("common.on") : t("common.off")}
-          </Button>
-        </div>
-
-        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-          <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">{t("config.resume_sessions_title")}</div>
-            <div class="text-xs text-gray-7">
-              {t("config.resume_sessions_desc")}
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            class="text-xs h-8 py-0 px-3 shrink-0"
-            onClick={() => props.setWorkspaceAutoReloadResumeEnabled(!props.workspaceAutoReloadResumeEnabled)}
-            disabled={
-              props.busy ||
-              !props.workspaceAutoReloadAvailable ||
-              !props.workspaceAutoReloadEnabled
-            }
-            title={props.workspaceAutoReloadEnabled ? "" : t("config.enable_auto_reload_first")}
-          >
-            {props.workspaceAutoReloadResumeEnabled ? t("common.on") : t("common.off")}
-          </Button>
-        </div>
       </div>
 
       <Show when={props.developerMode}>
