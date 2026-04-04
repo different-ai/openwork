@@ -1,5 +1,10 @@
 @echo off
 setlocal
+if defined NO_PROXY (
+  set "NO_PROXY=%NO_PROXY%,127.0.0.1,localhost"
+) else (
+  set "NO_PROXY=127.0.0.1,localhost"
+)
 
 set "TARGET_ARCH=%~1"
 set "VSDEVCMD=%VSDEVCMD_PATH%"
