@@ -1,6 +1,6 @@
 [![Discord](https://img.shields.io/badge/discord-加入-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
-[English](./README.md) | 简体中文 | [繁體中文](./README_ZH_hk.md)
+[English](./README.md) | 简体中文 | [繁體中文](./README_ZH_hk.md) | [日本語](./README_JA.md)
 
 # OpenWork
 > 让您的公司提升 1000 倍的生产力。
