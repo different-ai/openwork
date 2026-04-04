@@ -107,6 +107,7 @@ import {
 } from "../shell/status-toasts";
 import { createShareWorkspaceState } from "../session/share-workspace";
 import ReactSessionHeaderHost from "../session/react-session-header-host";
+import ReactSessionSearchPanelHost from "../session/react-session-search-panel-host";
 import ReactSessionSidebarShellHost from "../session/react-session-sidebar-shell-host";
 import { latestSessionErrorTurnTime, shouldResetRunState } from "../session/run-state";
 import {
@@ -3021,65 +3022,6 @@ export default function SessionView(props: SessionViewProps) {
       </button>
     </>
   );
-  const renderSessionSearchPanel = () => (
-    <div class="border-b border-dls-border bg-dls-sidebar/70 px-4 py-2 md:px-6">
-      <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-[16px] border border-dls-border bg-dls-surface px-3 py-2 shadow-[var(--dls-card-shadow)]">
-        <Search size={14} class="text-gray-9" />
-        <input
-          ref={(el) => (searchInputEl = el)}
-          type="text"
-          value={searchQuery()}
-          onInput={(event) => {
-            setSearchQuery(event.currentTarget.value);
-            setActiveSearchHitIndex(0);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              moveSearchHit(event.shiftKey ? -1 : 1);
-              return;
-            }
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeSearch();
-            }
-          }}
-          class="min-w-0 flex-1 bg-transparent text-sm text-gray-11 placeholder:text-gray-9 focus:outline-none"
-          placeholder={t("session.search_placeholder")}
-          aria-label={t("session.search_placeholder")}
-        />
-        <span class="text-[11px] text-gray-10 tabular-nums">
-          {activeSearchPositionLabel()}
-        </span>
-        <button
-          type="button"
-          class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
-          disabled={searchHits().length === 0}
-          onClick={() => moveSearchHit(-1)}
-          aria-label={t("session.prev_match")}
-        >
-          {t("session.search_prev")}
-        </button>
-        <button
-          type="button"
-          class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
-          disabled={searchHits().length === 0}
-          onClick={() => moveSearchHit(1)}
-          aria-label={t("session.next_match")}
-        >
-          {t("session.search_next")}
-        </button>
-        <button
-          type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12"
-          onClick={closeSearch}
-          aria-label={t("session.close_search")}
-        >
-          <X size={14} />
-        </button>
-      </div>
-    </div>
-  );
   const renderSessionMessageContent = () => (
     <>
       <div
@@ -3435,7 +3377,28 @@ export default function SessionView(props: SessionViewProps) {
             renderActions={renderSessionHeaderActions}
           />
 
-          <Show when={searchOpen()}>{renderSessionSearchPanel()}</Show>
+          <Show when={searchOpen()}>
+            <ReactSessionSearchPanelHost
+              query={searchQuery()}
+              positionLabel={activeSearchPositionLabel()}
+              hasHits={searchHits().length > 0}
+              placeholder={t("session.search_placeholder")}
+              prevLabel={t("session.search_prev")}
+              nextLabel={t("session.search_next")}
+              closeLabel={t("session.close_search")}
+              setInputRef={(element) => {
+                searchInputEl = element ?? undefined;
+              }}
+              onQueryChange={(value) => {
+                setSearchQuery(value);
+                setActiveSearchHitIndex(0);
+              }}
+              onMovePrev={() => moveSearchHit(-1)}
+              onMoveNext={() => moveSearchHit(1)}
+              onClose={closeSearch}
+              onSubmitStep={(direction) => moveSearchHit(direction)}
+            />
+          </Show>
 
           <div class="flex-1 flex overflow-hidden">
             <div class="relative min-w-0 flex-1 overflow-hidden bg-dls-surface">
