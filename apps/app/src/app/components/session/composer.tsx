@@ -7,6 +7,7 @@ import ComposerNotice, { type ComposerNotice as ComposerNoticeData } from "./com
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { t } from "../../../i18n";
 
 type MentionOption = {
   id: string;
@@ -516,7 +517,7 @@ export default function Composer(props: ComposerProps) {
     span.dataset.pasteId = part.id;
     span.dataset.pasteLabel = part.label;
     span.dataset.pasteLines = String(part.lines);
-    span.title = "Click to expand pasted text";
+    span.title = t("composer.expand_pasted");
     span.className =
       "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-gray-3 text-gray-10 border border-gray-6 cursor-pointer hover:bg-gray-4 hover:text-gray-11";
     return span;
@@ -1058,7 +1059,7 @@ export default function Composer(props: ComposerProps) {
   const addAttachments = async (files: File[]) => {
     if (attachmentsDisabled()) {
       props.onNotice({
-        title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
+        title: props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"),
         tone: "warning",
       });
       return;
@@ -1078,7 +1079,7 @@ export default function Composer(props: ComposerProps) {
     for (const file of supportedFiles) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
         props.onNotice({
-          title: `${file.name} exceeds the 8MB limit.`,
+          title: t("composer.file_exceeds_limit", undefined, { name: file.name }),
           tone: "warning",
         });
         continue;
@@ -1089,7 +1090,7 @@ export default function Composer(props: ComposerProps) {
         const estimatedJsonBytes = estimateInlineAttachmentBytes(processed);
         if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
           props.onNotice({
-            title: `${file.name} is too large after encoding. Try a smaller image.`,
+            title: t("composer.file_too_large_encoding", undefined, { name: file.name }),
             tone: "warning",
           });
           continue;
@@ -1105,7 +1106,7 @@ export default function Composer(props: ComposerProps) {
         });
       } catch (error) {
         props.onNotice({
-          title: error instanceof Error ? error.message : "Failed to read attachment",
+          title: error instanceof Error ? error.message : t("composer.failed_read_attachment"),
           tone: "error",
         });
       }
@@ -1221,29 +1222,29 @@ export default function Composer(props: ComposerProps) {
           props.onNotice({
             title:
               links.length === 1
-                ? `Uploaded ${links[0].name} to the shared folder and inserted a link.`
-                : `Uploaded ${links.length} files to the shared folder and inserted links.`,
+                ? t("composer.uploaded_single_file", undefined, { name: links[0].name })
+                : t("composer.uploaded_multiple_files", undefined, { count: links.length }),
             tone: "success",
           });
           return;
         }
       }
       props.onNotice({
-        title: "Couldn't upload to the shared folder. Inserted local links instead.",
+        title: t("composer.upload_failed_local_links"),
         tone: "warning",
       });
     }
 
     const text = formatLinks(fallbackLinks());
     if (!text) {
-      props.onNotice({ title: "Unsupported attachment type.", tone: "warning" });
+      props.onNotice({ title: t("composer.unsupported_attachment_type"), tone: "warning" });
       return;
     }
     insertPlainTextAtSelection(text);
     updateMentionQuery();
     updateSlashQuery();
     emitDraftChange();
-    props.onNotice({ title: "Inserted links for unsupported files.", tone: "info" });
+    props.onNotice({ title: t("composer.inserted_links_unsupported"), tone: "info" });
   };
 
   const handlePaste = (event: ClipboardEvent) => {
@@ -1277,10 +1278,9 @@ export default function Composer(props: ComposerProps) {
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
         props.onNotice({
-          title:
-            "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Shared folder in the sidebar.",
+          title: t("composer.remote_worker_paste_warning"),
           tone: "warning",
-          actionLabel: props.onUploadInboxFiles ? "Upload to shared folder" : undefined,
+          actionLabel: props.onUploadInboxFiles ? t("composer.upload_to_shared_folder") : undefined,
           onAction: props.onUploadInboxFiles ? () => inboxFileInputRef?.click() : undefined,
         });
       }
@@ -1572,7 +1572,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="max-h-64 overflow-y-auto bg-dls-surface p-2" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                   <Show
                     when={mentionVisible().length}
-                    fallback={<div class="px-3 py-2 text-xs text-gray-10">No matches found.</div>}
+                    fallback={<div class="px-3 py-2 text-xs text-gray-10">{t("composer.no_matches")}</div>}
                   >
                     <For each={mentionVisible()}>
                       {(option: MentionOption) => {
@@ -1635,7 +1635,7 @@ export default function Composer(props: ComposerProps) {
                     when={slashFiltered().length}
                     fallback={
                       <div class="px-3 py-2 text-xs text-gray-10">
-                        {slashLoading() ? "Loading commands..." : "No commands found."}
+                        {slashLoading() ? t("composer.loading_commands") : t("composer.no_commands")}
                       </div>
                     }
                   >
@@ -1662,7 +1662,7 @@ export default function Composer(props: ComposerProps) {
                             </div>
                             <Show when={cmd.source && cmd.source !== "command"}>
                               <span class="text-[10px] uppercase tracking-wider text-gray-10 shrink-0">
-                                {cmd.source === "skill" ? "Skill" : cmd.source === "mcp" ? "MCP" : ""}
+                                {cmd.source === "skill" ? t("composer.skill_source") : cmd.source === "mcp" ? "MCP" : ""}
                               </span>
                             </Show>
                           </button>
@@ -1697,7 +1697,7 @@ export default function Composer(props: ComposerProps) {
                       <div class="max-w-[160px]">
                         <div class="truncate text-gray-11">{attachment.name}</div>
                         <div class="text-[10px] text-gray-10">
-                          {attachment.kind === "image" ? "Image" : attachment.mimeType || "File"}
+                          {attachment.kind === "image" ? t("composer.image_kind") : attachment.mimeType || t("composer.file_kind")}
                         </div>
                       </div>
                       <button
@@ -1721,7 +1721,7 @@ export default function Composer(props: ComposerProps) {
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                     <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
-                        Describe your task...
+                        {t("composer.placeholder")}
                     </div>
                   </Show>
                     <div
@@ -1775,8 +1775,8 @@ export default function Composer(props: ComposerProps) {
                           disabled={attachmentsDisabled()}
                           title={
                             attachmentsDisabled()
-                              ? props.attachmentsDisabledReason ?? "Attachments are unavailable."
-                              : "Attach files"
+                              ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
+                              : t("composer.attach_files")
                           }
                         >
                           <Paperclip size={16} />
@@ -1794,10 +1794,10 @@ export default function Composer(props: ComposerProps) {
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-dls-accent text-white hover:bg-[var(--dls-accent-hover)]"
                                 }`}
-                              title="Run task"
+                              title={t("composer.run_task")}
                             >
                               <ArrowUp size={15} />
-                              <span>Run task</span>
+                              <span>{t("composer.run_task")}</span>
                             </button>
                           }
                         >
@@ -1805,10 +1805,10 @@ export default function Composer(props: ComposerProps) {
                             type="button"
                             onClick={() => props.onStop()}
                             class="inline-flex items-center gap-2 rounded-full bg-gray-12 px-4 py-2 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
-                            title="Stop"
+                            title={t("composer.stop")}
                           >
                             <Square size={12} fill="currentColor" />
-                            <span>Stop</span>
+                            <span>{t("composer.stop")}</span>
                           </button>
                         </Show>
                       </div>
@@ -1829,7 +1829,7 @@ export default function Composer(props: ComposerProps) {
                 onClick={props.onToggleAgentPicker}
                 disabled={props.busy}
                 aria-expanded={props.agentPickerOpen}
-                title="Agent"
+                title={t("composer.agent_label")}
               >
                 <span class="max-w-[140px] truncate">{props.agentLabel}</span>
                 <ChevronDown size={13} />
@@ -1838,14 +1838,14 @@ export default function Composer(props: ComposerProps) {
               <Show when={props.agentPickerOpen}>
                 <div class="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                   <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                    Agent
+                    {t("composer.agent_label")}
                   </div>
 
                   <div class="p-2 space-y-1 max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                     <Show
                       when={!props.agentPickerBusy}
                       fallback={
-                        <div class="px-3 py-2 text-xs text-gray-10">Loading agents...</div>
+                        <div class="px-3 py-2 text-xs text-gray-10">{t("composer.loading_agents")}</div>
                       }
                     >
                       <Show when={!props.agentPickerError}>
@@ -1860,7 +1860,7 @@ export default function Composer(props: ComposerProps) {
                             props.onSelectAgent(null);
                           }}
                         >
-                          <span>Default agent</span>
+                          <span>{t("composer.default_agent")}</span>
                           <Show when={!props.selectedAgent}>
                             <Check size={14} class="text-gray-10" />
                           </Show>
@@ -1931,7 +1931,7 @@ export default function Composer(props: ComposerProps) {
                 <Show when={variantMenuOpen()}>
                   <div class="absolute left-0 bottom-full z-40 mb-2 w-48 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                     <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                      Behavior
+                      {t("composer.behavior_label")}
                     </div>
                     <div class="p-2 space-y-1">
                       <For each={props.modelBehaviorOptions}>

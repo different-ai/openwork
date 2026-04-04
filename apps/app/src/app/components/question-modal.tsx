@@ -4,6 +4,7 @@ import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronRight, HelpCircle } from "lucide-solid";
 
 import Button from "./button";
+import { t } from "../../i18n";
 
 export type QuestionModalProps = {
     open: boolean;
@@ -138,10 +139,10 @@ export default function QuestionModal(props: QuestionModalProps) {
                             </div>
                             <div>
                                 <h3 class="text-lg font-semibold text-gray-12">
-                                    {currentQuestion()!.header || "Question"}
+                                    {currentQuestion()!.header || t("common.question")}
                                 </h3>
                                 <div class="text-xs text-gray-11 font-medium">
-                                    Question {currentIndex() + 1} of {props.questions.length}
+                                    {t("question_modal.question_counter", undefined, { current: currentIndex() + 1, total: props.questions.length })}
                                 </div>
                             </div>
                         </div>
@@ -186,14 +187,14 @@ export default function QuestionModal(props: QuestionModalProps) {
                         <Show when={currentQuestion()!.custom}>
                             <div class="mt-4 pt-4 border-t border-dls-border">
                                 <label class="block text-xs font-semibold text-dls-secondary mb-2 uppercase tracking-wide">
-                                    Or type a custom answer
+                                    {t("question_modal.custom_answer_label")}
                                 </label>
                                 <input
                                     type="text"
                                     value={customInput()}
                                     onInput={(e) => setCustomInput(e.currentTarget.value)}
                                     class="w-full px-4 py-3 rounded-xl bg-dls-surface border border-dls-border focus:border-dls-accent focus:ring-4 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] focus:outline-none text-sm text-dls-text placeholder:text-dls-secondary transition-shadow"
-                                    placeholder="Type your answer here..."
+                                    placeholder={t("question_modal.custom_answer_placeholder")}
                                     onKeyDown={(e) => {
                                         if (e.key === "Enter") {
                                             if (e.isComposing || e.keyCode === 229) return;
@@ -209,15 +210,15 @@ export default function QuestionModal(props: QuestionModalProps) {
                     <div class="p-6 border-t border-dls-border bg-dls-hover flex justify-between items-center">
                         <div class="text-xs text-dls-secondary flex items-center gap-2">
                             <span class="px-1.5 py-0.5 rounded border border-dls-border bg-dls-active font-mono">↑↓</span>
-                            <span>navigate</span>
+                            <span>{t("common.navigate")}</span>
                             <span class="px-1.5 py-0.5 rounded border border-gray-6 bg-gray-3 font-mono ml-2">↵</span>
-                            <span>select</span>
+                            <span>{t("common.select")}</span>
                         </div>
 
                         <div class="flex gap-2">
                             <Show when={currentQuestion()?.multiple || currentQuestion()?.custom}>
                                 <Button onClick={handleNext} disabled={!canProceed() || props.busy} class="!px-6">
-                                    {isLastQuestion() ? "Submit" : "Next"}
+                                    {isLastQuestion() ? t("common.submit") : t("common.next")}
                                     <Show when={!isLastQuestion()}>
                                         <ChevronRight size={16} class="ml-1 -mr-1 opacity-60" />
                                     </Show>
