@@ -1,4 +1,6 @@
 import os from "node:os";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import devtools from "solid-devtools/vite";
@@ -23,9 +25,19 @@ const shortHostname = hostname.split(".")[0];
 if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
+const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
 
 export default defineConfig({
   plugins: [
+    {
+      name: "openwork-dev-server-id",
+      configureServer(server) {
+        server.middlewares.use("/__openwork_dev_server_id", (_req, res) => {
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ appRoot }));
+        });
+      },
+    },
     tailwindcss(),
     devtools({
       autoname: true,
