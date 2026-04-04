@@ -21,7 +21,6 @@ import ModelPickerModal from "../../app/src/app/components/model-picker-modal";
 import ShareWorkspaceModal from "../../app/src/app/components/share-workspace-modal";
 import StatusBar from "../../app/src/app/components/status-bar";
 import Composer from "../../app/src/app/components/session/composer";
-import InboxPanel from "../../app/src/app/components/session/inbox-panel";
 import MessageList from "../../app/src/app/components/session/message-list";
 import WorkspaceSessionList from "../../app/src/app/components/session/workspace-session-list";
 import { createWorkspaceShellLayout } from "../../app/src/app/lib/workspace-shell-layout";
@@ -858,13 +857,8 @@ export default function StoryBookApp() {
         </div>
 
         <Show when={expanded && selectedWorkspaceId() === remoteWorkspace.id}>
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <InboxPanel
-              id="sidebar-inbox"
-              client={null}
-              workspaceId={null}
-              onToast={(message) => setComposerToast(message)}
-            />
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)] text-sm text-dls-secondary">
+            Remote inbox preview has been removed from the app shell.
           </div>
         </Show>
       </div>
@@ -1105,11 +1099,7 @@ export default function StoryBookApp() {
               if (!rightSidebarExpanded()) toggleRightSidebar();
               setRightRailNav("advanced");
             }}
-            onOpenMessaging={() => undefined}
-            onOpenProviders={() => undefined}
-            onOpenMcp={() => undefined}
             providerConnectedIds={["anthropic", "openai"]}
-            mcpStatuses={mcpStatuses}
             statusLabel="Session Ready"
           />
         </main>

@@ -8,7 +8,6 @@ import ModelPickerModal from "../../app/src/app/components/model-picker-modal";
 import ShareWorkspaceModal from "../../app/src/app/components/share-workspace-modal";
 import StatusBar from "../../app/src/app/components/status-bar";
 import Composer from "../../app/src/app/components/session/composer";
-import InboxPanel from "../../app/src/app/components/session/inbox-panel";
 import MessageList from "../../app/src/app/components/session/message-list";
 import WorkspaceSessionList from "../../app/src/app/components/session/workspace-session-list";
 import { MCP_QUICK_CONNECT, SUGGESTED_PLUGINS } from "../../app/src/app/constants";
@@ -1536,7 +1535,6 @@ export default function NewLayoutApp() {
                           mcpServers={storyMcpServers()}
                           mcpStatus="Story-book MCP sandbox ready."
                           mcpLastUpdatedAt={now}
-                          mcpStatuses={storyMcpStatuses()}
                           mcpConnectingName={null}
                           selectedMcp={selectedMcp()}
                           setSelectedMcp={setSelectedMcp}
@@ -1583,13 +1581,8 @@ export default function NewLayoutApp() {
                             developerMode
                           />
                           <Show when={selectedWorkspaceId() === remoteWorkspace.id}>
-                            <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-                              <InboxPanel
-                                id="settings-inbox"
-                                client={mockOpenworkServerClient}
-                                workspaceId={selectedWorkspaceId()}
-                                onToast={(message) => setComposerToast(message)}
-                              />
+                            <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)] text-sm text-dls-secondary">
+                              Remote inbox preview has been removed from the app shell.
                             </div>
                           </Show>
                           <Show when={selectedWorkspaceId() !== remoteWorkspace.id}>
@@ -1730,20 +1723,7 @@ export default function NewLayoutApp() {
               setSettingsTab("general");
               setShowingSettings((prev) => !prev);
             }}
-            onOpenMessaging={() => {
-              setSettingsTab("messaging");
-              setShowingSettings(true);
-            }}
-            onOpenProviders={() => {
-              setSettingsTab("general");
-              setShowingSettings(true);
-            }}
-            onOpenMcp={() => {
-              setSettingsTab("extensions");
-              setShowingSettings(true);
-            }}
             providerConnectedIds={["anthropic", "openai"]}
-            mcpStatuses={storyMcpStatuses()}
             statusLabel="Session Ready"
           />
         </main>

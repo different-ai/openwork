@@ -12,9 +12,6 @@ type StatusBarProps = {
   settingsOpen: boolean;
   onSendFeedback: () => void;
   onOpenSettings: () => void;
-  onOpenMessaging: () => void;
-  onOpenProviders: () => Promise<void> | void;
-  onOpenMcp: () => void;
   providerConnectedIds: string[];
   statusLabel?: string;
   statusDetail?: string;

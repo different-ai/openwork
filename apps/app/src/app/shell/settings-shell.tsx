@@ -431,14 +431,6 @@ export default function SettingsShell(props: SettingsShellProps) {
     props.setSettingsTab(tab);
   };
 
-  const openMessaging = () => {
-    openSettings("messaging");
-  };
-
-  const openExtensions = () => {
-    openSettings("extensions");
-  };
-
   const openAdvanced = () => {
     openSettings("advanced");
   };
@@ -1348,9 +1340,6 @@ export default function SettingsShell(props: SettingsShellProps) {
           showSettingsButton={true}
           onSendFeedback={openFeedback}
           onOpenSettings={props.toggleSettings}
-          onOpenMessaging={openMessaging}
-          onOpenProviders={() => props.openProviderAuthModal()}
-          onOpenMcp={openExtensions}
           providerConnectedIds={props.providerConnectedIds}
         />
       </main>

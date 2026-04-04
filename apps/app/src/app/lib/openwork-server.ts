@@ -690,30 +690,6 @@ export function clearOpenworkServerSettings() {
   }
 }
 
-export function deriveOpenworkServerUrl(
-  opencodeBaseUrl: string,
-  settings?: OpenworkServerSettings,
-) {
-  const override = settings?.urlOverride?.trim();
-  if (override) {
-    return normalizeOpenworkServerUrl(override);
-  }
-
-  const base = opencodeBaseUrl.trim();
-  if (!base) return null;
-  try {
-    const url = new URL(base);
-    const port = settings?.portOverride ?? DEFAULT_OPENWORK_SERVER_PORT;
-    url.port = String(port);
-    url.pathname = "";
-    url.search = "";
-    url.hash = "";
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
 export class OpenworkServerError extends Error {
   status: number;
   code: string;

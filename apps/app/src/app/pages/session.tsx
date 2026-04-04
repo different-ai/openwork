@@ -3510,12 +3510,6 @@ export default function SessionView(props: SessionViewProps) {
             onSendFeedback={openFeedback}
             showSettingsButton={true}
             onOpenSettings={props.toggleSettings}
-            onOpenMessaging={() => {
-              props.setSettingsTab("messaging");
-              props.setView("settings");
-            }}
-            onOpenProviders={openProviderAuth}
-            onOpenMcp={openMcp}
             providerConnectedIds={props.providerConnectedIds}
             statusLabel={statusBarCopy().label}
             statusDetail={statusBarCopy().detail}
@@ -3834,7 +3828,6 @@ export default function SessionView(props: SessionViewProps) {
         open={Boolean(props.activeQuestion)}
         questions={props.activeQuestion?.questions ?? []}
         busy={props.questionReplyBusy}
-        onClose={() => {}}
         onReply={(answers) => {
           if (props.activeQuestion) {
             props.respondQuestion(props.activeQuestion.id, answers);

@@ -274,21 +274,6 @@ export function formatRelativeTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleDateString();
 }
 
-export function commandPathFromWorkspaceRoot(workspaceRoot: string, commandName: string) {
-  const root = workspaceRoot.trim().replace(/\/+$/, "");
-  const name = commandName.trim().replace(/^\/+/, "");
-  if (!root || !name) return null;
-  return `${root}/.opencode/commands/${name}.md`;
-}
-
-export function safeParseJson<T>(raw: string): T | null {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
 export function addOpencodeCacheHint(message: string) {
   const lower = message.toLowerCase();
   const cacheSignals = [
@@ -436,64 +421,6 @@ export function upsertSession(list: Session[], next: Session) {
 
   const copy = list.slice();
   copy[idx] = next;
-  return copy;
-}
-
-export function upsertMessage(list: MessageWithParts[], nextInfo: MessageInfo) {
-  const idx = list.findIndex((m) => m.info.id === nextInfo.id);
-  if (idx === -1) {
-    return list.concat({ info: nextInfo, parts: [] });
-  }
-
-  const copy = list.slice();
-  copy[idx] = { ...copy[idx], info: nextInfo };
-  return copy;
-}
-
-export function upsertPart(list: MessageWithParts[], nextPart: Part) {
-  const msgIdx = list.findIndex((m) => m.info.id === nextPart.messageID);
-  if (msgIdx === -1) {
-    // avoids missing streaming events before message.updated
-    const placeholder: PlaceholderAssistantMessage = {
-      id: nextPart.messageID,
-      sessionID: nextPart.sessionID,
-      role: "assistant",
-      time: { created: Date.now() },
-      parentID: "",
-      modelID: "",
-      providerID: "",
-      mode: "",
-      agent: "",
-      path: { cwd: "", root: "" },
-      cost: 0,
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    };
-
-    return list.concat({ info: placeholder, parts: [nextPart] });
-  }
-
-  const copy = list.slice();
-  const msg = copy[msgIdx];
-  const parts = msg.parts.slice();
-  const partIdx = parts.findIndex((p) => p.id === nextPart.id);
-
-  if (partIdx === -1) {
-    parts.push(nextPart);
-  } else {
-    parts[partIdx] = nextPart;
-  }
-
-  copy[msgIdx] = { ...msg, parts };
-  return copy;
-}
-
-export function removePart(list: MessageWithParts[], messageID: string, partID: string) {
-  const msgIdx = list.findIndex((m) => m.info.id === messageID);
-  if (msgIdx === -1) return list;
-
-  const copy = list.slice();
-  const msg = copy[msgIdx];
-  copy[msgIdx] = { ...msg, parts: msg.parts.filter((p) => p.id !== partID) };
   return copy;
 }
 
