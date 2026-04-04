@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
+    "dev:react": "PORT=${PORT:-5182} OPENWORK_DEV_MODE=1 pnpm --parallel --filter @openwork/app dev:react --filter @openwork/desktop dev",
     "dev:windows": ".\\scripts\\dev-windows.cmd",
     "dev:windows:x64": ".\\scripts\\dev-windows.cmd x64",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
