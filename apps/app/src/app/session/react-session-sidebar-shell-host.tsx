@@ -33,7 +33,12 @@ export default function ReactSessionSidebarShellHost(
   });
 
   onCleanup(() => {
-    root?.unmount();
+    const currentRoot = root;
+    root = undefined;
+    if (!currentRoot) return;
+    queueMicrotask(() => {
+      currentRoot.unmount();
+    });
   });
 
   return <div ref={container} data-openwork-react-session-sidebar="" />;

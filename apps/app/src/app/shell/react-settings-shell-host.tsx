@@ -19,7 +19,12 @@ export default function ReactSettingsShellHost(props: SettingsShellProps) {
   });
 
   onCleanup(() => {
-    root?.unmount();
+    const currentRoot = root;
+    root = undefined;
+    if (!currentRoot) return;
+    queueMicrotask(() => {
+      currentRoot.unmount();
+    });
   });
 
   return <div ref={container} data-openwork-react-settings-shell="" />;

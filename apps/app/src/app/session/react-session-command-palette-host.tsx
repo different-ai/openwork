@@ -42,7 +42,12 @@ export default function ReactSessionCommandPaletteHost(
   });
 
   onCleanup(() => {
-    root?.unmount();
+    const currentRoot = root;
+    root = undefined;
+    if (!currentRoot) return;
+    queueMicrotask(() => {
+      currentRoot.unmount();
+    });
   });
 
   return <div ref={container} data-openwork-react-session-command-palette="" />;
