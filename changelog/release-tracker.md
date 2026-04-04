@@ -60,7 +60,11 @@ None.
 
 #### Published in changelog page
 
+False
+
 #### Published in docs
+
+False
 
 ## v0.11.101
 
@@ -121,4 +125,8 @@ None.
 
 #### Published in changelog page
 
+False
+
 #### Published in docs
+
+False
