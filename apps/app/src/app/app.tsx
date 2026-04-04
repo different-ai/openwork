@@ -38,7 +38,7 @@ import {
   CreateRemoteWorkspaceModal,
   CreateWorkspaceModal,
 } from "./workspace";
-import SessionView from "./pages/session";
+import SessionView, { type SessionViewProps } from "./pages/session";
 import { clearDevLogs, recordDevLog } from "./lib/dev-log";
 import { unwrap } from "./lib/opencode";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
@@ -2112,20 +2112,40 @@ export default function App() {
     };
   };
 
-  const sessionProps = () => ({
-    providerAuthWorkerType: providerAuthWorkerType(),
-    selectedSessionId: activeSessionId(),
+  const sessionProps = {
+    get providerAuthWorkerType() {
+      return providerAuthWorkerType();
+    },
+    get selectedSessionId() {
+      return activeSessionId();
+    },
     setView,
-    settingsTab: settingsTab(),
+    get settingsTab() {
+      return settingsTab();
+    },
     setSettingsTab,
     toggleSettings: () => toggleSettingsView("general"),
-    selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
-    selectedWorkspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-    activeWorkspaceConfig: resolvedActiveWorkspaceConfig(),
-    workspaces: workspaceStore.workspaces(),
-    selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
-    connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
-    workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
+    get selectedWorkspaceDisplay() {
+      return selectedWorkspaceDisplay();
+    },
+    get selectedWorkspaceRoot() {
+      return workspaceStore.selectedWorkspaceRoot().trim();
+    },
+    get activeWorkspaceConfig() {
+      return resolvedActiveWorkspaceConfig();
+    },
+    get workspaces() {
+      return workspaceStore.workspaces();
+    },
+    get selectedWorkspaceId() {
+      return workspaceStore.selectedWorkspaceId();
+    },
+    get connectingWorkspaceId() {
+      return workspaceStore.connectingWorkspaceId();
+    },
+    get workspaceConnectionStateById() {
+      return workspaceStore.workspaceConnectionStateById();
+    },
     selectWorkspace: workspaceStore.selectWorkspace,
     switchWorkspace: workspaceStore.switchWorkspace,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
@@ -2136,86 +2156,196 @@ export default function App() {
     pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
     openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
-    importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
+    get importingWorkspaceConfig() {
+      return workspaceStore.importingWorkspaceConfig();
+    },
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
-    exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
-    clientConnected: Boolean(client()),
-    openworkServerStatus: openworkServerStatus(),
-    openworkServerClient: openworkServerClient(),
-    openworkServerDiagnostics: openworkServerDiagnostics(),
-    openworkServerSettings: openworkServerSettings(),
-    openworkServerHostInfo: openworkServerHostInfo(),
-    shareRemoteAccessBusy: shareRemoteAccessBusy(),
-    shareRemoteAccessError: shareRemoteAccessError(),
+    get exportWorkspaceBusy() {
+      return workspaceStore.exportingWorkspaceConfig();
+    },
+    get clientConnected() {
+      return Boolean(client());
+    },
+    get openworkServerStatus() {
+      return openworkServerStatus();
+    },
+    get openworkServerClient() {
+      return openworkServerClient();
+    },
+    get openworkServerDiagnostics() {
+      return openworkServerDiagnostics();
+    },
+    get openworkServerSettings() {
+      return openworkServerSettings();
+    },
+    get openworkServerHostInfo() {
+      return openworkServerHostInfo();
+    },
+    get shareRemoteAccessBusy() {
+      return shareRemoteAccessBusy();
+    },
+    get shareRemoteAccessError() {
+      return shareRemoteAccessError();
+    },
     saveShareRemoteAccess,
-    runtimeWorkspaceId: runtimeWorkspaceId(),
-    engineInfo: workspaceStore.engine(),
-    engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
-    orchestratorStatus: orchestratorStatusState(),
-    opencodeRouterInfo: opencodeRouterInfoState(),
-    appVersion: appVersion(),
+    get runtimeWorkspaceId() {
+      return runtimeWorkspaceId();
+    },
+    get engineInfo() {
+      return workspaceStore.engine();
+    },
+    get engineDoctorVersion() {
+      return workspaceStore.engineDoctorResult()?.version ?? null;
+    },
+    get orchestratorStatus() {
+      return orchestratorStatusState();
+    },
+    get opencodeRouterInfo() {
+      return opencodeRouterInfoState();
+    },
+    get appVersion() {
+      return appVersion();
+    },
     stopHost,
-    headerStatus: headerStatus(),
-    busyHint: busyHint(),
-    updateStatus: updateStatus(),
-    updateEnv: updateEnv(),
-    anyActiveRuns: anyActiveRuns(),
+    get headerStatus() {
+      return headerStatus();
+    },
+    get busyHint() {
+      return busyHint();
+    },
+    get updateStatus() {
+      return updateStatus();
+    },
+    get updateEnv() {
+      return updateEnv();
+    },
+    get anyActiveRuns() {
+      return anyActiveRuns();
+    },
     installUpdateAndRestart,
-    activePlugins: sidebarPluginList(),
-    activePluginStatus: sidebarPluginStatus(),
-    skills: skills(),
-    skillsStatus: skillsStatus(),
-    newTaskDisabled: newTaskDisabled(),
-    workspaceSessionGroups: sidebarWorkspaceGroups(),
+    get activePlugins() {
+      return sidebarPluginList();
+    },
+    get activePluginStatus() {
+      return sidebarPluginStatus();
+    },
+    get skills() {
+      return skills();
+    },
+    get skillsStatus() {
+      return skillsStatus();
+    },
+    get newTaskDisabled() {
+      return newTaskDisabled();
+    },
+    get workspaceSessionGroups() {
+      return sidebarWorkspaceGroups();
+    },
     openRenameWorkspace: workspaceStore.openRenameWorkspace,
-    selectSession: selectSession,
-    messages: visibleMessages(),
+    selectSession,
+    get messages() {
+      return visibleMessages();
+    },
     getSessionById: sessionById,
     getMessagesBySessionId: messagesBySessionId,
     ensureSessionLoaded,
     sessionLoadingById,
-    todos: activeTodos(),
-    busyLabel: busyLabel(),
-    developerMode: developerMode(),
-    sessionCompactionState: selectedSessionCompactionState(),
-    expandedStepIds: expandedStepIds(),
-    setExpandedStepIds: setExpandedStepIds,
-    expandedSidebarSections: expandedSidebarSections(),
-    setExpandedSidebarSections: setExpandedSidebarSections,
-    workingFiles: activeWorkingFiles(),
-    authorizedDirs: activeAuthorizedDirs(),
-    busy: busy(),
-    prompt: prompt(),
-    setPrompt: setPrompt,
-    activePermission: activePermissionMemo(),
-    permissionReplyBusy: permissionReplyBusy(),
-    respondPermission: respondPermission,
-    respondPermissionAndRemember: respondPermissionAndRemember,
-    activeQuestion: activeQuestion(),
-    questionReplyBusy: questionReplyBusy(),
-    respondQuestion: respondQuestion,
-    safeStringify: safeStringify,
-    startProviderAuth: startProviderAuth,
-    completeProviderAuthOAuth: completeProviderAuthOAuth,
-    refreshProviders: refreshProviders,
-    submitProviderApiKey: submitProviderApiKey,
-    openProviderAuthModal: openProviderAuthModal,
-    closeProviderAuthModal: closeProviderAuthModal,
-    providerAuthModalOpen: providerAuthModalOpen(),
-    providerAuthBusy: providerAuthBusy(),
-    providerAuthError: providerAuthError(),
-    providerAuthMethods: providerAuthMethods(),
-    providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
-    providers: providers(),
-    providerConnectedIds: providerConnectedIds(),
-    sessionStatusById: activeSessionStatusById(),
-    hasEarlierMessages: selectedSessionHasEarlierMessages(),
-    loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
+    get todos() {
+      return activeTodos();
+    },
+    get busyLabel() {
+      return busyLabel();
+    },
+    get developerMode() {
+      return developerMode();
+    },
+    get sessionCompactionState() {
+      return selectedSessionCompactionState();
+    },
+    get expandedStepIds() {
+      return expandedStepIds();
+    },
+    setExpandedStepIds,
+    get expandedSidebarSections() {
+      return expandedSidebarSections();
+    },
+    setExpandedSidebarSections,
+    get workingFiles() {
+      return activeWorkingFiles();
+    },
+    get authorizedDirs() {
+      return activeAuthorizedDirs();
+    },
+    get busy() {
+      return busy();
+    },
+    get prompt() {
+      return prompt();
+    },
+    setPrompt,
+    get activePermission() {
+      return activePermissionMemo();
+    },
+    get permissionReplyBusy() {
+      return permissionReplyBusy();
+    },
+    respondPermission,
+    respondPermissionAndRemember,
+    get activeQuestion() {
+      return activeQuestion();
+    },
+    get questionReplyBusy() {
+      return questionReplyBusy();
+    },
+    respondQuestion,
+    safeStringify,
+    startProviderAuth,
+    completeProviderAuthOAuth,
+    refreshProviders,
+    submitProviderApiKey,
+    openProviderAuthModal,
+    closeProviderAuthModal,
+    get providerAuthModalOpen() {
+      return providerAuthModalOpen();
+    },
+    get providerAuthBusy() {
+      return providerAuthBusy();
+    },
+    get providerAuthError() {
+      return providerAuthError();
+    },
+    get providerAuthMethods() {
+      return providerAuthMethods();
+    },
+    get providerAuthPreferredProviderId() {
+      return providerAuthPreferredProviderId();
+    },
+    get providers() {
+      return providers();
+    },
+    get providerConnectedIds() {
+      return providerConnectedIds();
+    },
+    get sessionStatusById() {
+      return activeSessionStatusById();
+    },
+    get hasEarlierMessages() {
+      return selectedSessionHasEarlierMessages();
+    },
+    get loadingEarlierMessages() {
+      return selectedSessionLoadingEarlierMessages();
+    },
     loadEarlierMessages,
-    sessionErrorTurns: selectedSessionErrorTurns(),
-    sessionStatus: selectedSessionStatus(),
-    error: error(),
-  });
+    get sessionErrorTurns() {
+      return selectedSessionErrorTurns();
+    },
+    get sessionStatus() {
+      return selectedSessionStatus();
+    },
+    get error() {
+      return error();
+    },
+  } satisfies SessionViewProps;
 
   const settingsTabs = new Set<SettingsTab>([
     "general",
@@ -2343,7 +2473,7 @@ export default function App() {
                 <StatusToastsProvider store={statusToastsStore}>
             <Switch>
               <Match when={currentView() === "session"}>
-                <SessionView {...sessionProps()} />
+                <SessionView {...sessionProps} />
               </Match>
               <Match when={true}>
                 <SettingsShell {...settingsShellProps()} />
