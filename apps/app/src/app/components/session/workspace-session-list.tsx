@@ -25,7 +25,6 @@ import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
 } from "../../utils";
-import { t } from "../../../i18n";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -58,6 +57,7 @@ type Props = {
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
+const COLLAPSED_SESSIONS_PREVIEW = MAX_SESSIONS_PREVIEW;
 
 type SessionListItem = WorkspaceSessionGroup["sessions"][number];
 type FlattenedSessionRow = { session: SessionListItem; depth: number };
@@ -160,16 +160,16 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.openworkWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
-  t("workspace_list.workspace_fallback");
+  "Workspace";
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
     ? workspace.sandboxBackend === "docker" ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim())
-      ? t("workspace.sandbox_badge")
-      : t("workspace.remote_badge")
-    : t("workspace.local_badge");
+      ? "Sandbox"
+      : "Remote"
+    : "Local";
 
 const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 
@@ -184,9 +184,9 @@ const workspaceSwatchColor = (seed: string) => {
 };
 
 export default function WorkspaceSessionList(props: Props) {
-  const revealLabel = () => isWindowsPlatform()
-    ? t("workspace_list.reveal_explorer")
-    : t("workspace_list.reveal_finder");
+  const revealLabel = isWindowsPlatform()
+    ? "Reveal in Explorer"
+    : "Reveal in Finder";
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<
     Set<string>
   >(new Set());
@@ -238,8 +238,13 @@ export default function WorkspaceSessionList(props: Props) {
     expandWorkspace(props.selectedWorkspaceId);
   });
 
-  const previewCount = (workspaceId: string) =>
-    previewCountByWorkspaceId()[workspaceId] ?? MAX_SESSIONS_PREVIEW;
+  const previewCount = (workspaceId: string) => {
+    const base =
+      previewCountByWorkspaceId()[workspaceId] ?? MAX_SESSIONS_PREVIEW;
+    return isWorkspaceExpanded(workspaceId)
+      ? base
+      : Math.min(COLLAPSED_SESSIONS_PREVIEW, base);
+  };
 
   const previewSessions = (
     workspaceId: string,
@@ -282,7 +287,7 @@ export default function WorkspaceSessionList(props: Props) {
   const showMoreLabel = (workspaceId: string, totalRoots: number) => {
     const remaining = Math.max(0, totalRoots - previewCount(workspaceId));
     const nextCount = Math.min(MAX_SESSIONS_PREVIEW, remaining);
-    return nextCount > 0 ? t("workspace_list.show_more", undefined, { count: nextCount }) : t("workspace_list.show_more_fallback");
+    return nextCount > 0 ? `Show ${nextCount} more` : "Show more";
   };
 
   createEffect(() => {
@@ -406,7 +411,7 @@ export default function WorkspaceSessionList(props: Props) {
               <button
                 type="button"
                 class="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
-                aria-label={isExpanded() ? t("workspace_list.hide_child_sessions") : t("workspace_list.show_child_sessions")}
+                aria-label={isExpanded() ? "Hide child sessions" : "Show child sessions"}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -436,7 +441,7 @@ export default function WorkspaceSessionList(props: Props) {
               <button
                 type="button"
                 class="flex h-7 w-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
-                aria-label={t("workspace_list.session_actions")}
+                aria-label="Session actions"
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -464,7 +469,7 @@ export default function WorkspaceSessionList(props: Props) {
                   props.onOpenRenameSession?.();
                 }}
               >
-                {t("workspace_list.rename_session")}
+                Rename session
               </button>
             </Show>
 
@@ -477,7 +482,7 @@ export default function WorkspaceSessionList(props: Props) {
                   props.onOpenDeleteSession?.();
                 }}
               >
-                {t("workspace_list.delete_session")}
+                Delete session
               </button>
             </Show>
           </div>
@@ -519,9 +524,9 @@ export default function WorkspaceSessionList(props: Props) {
               getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
             const statusLabel = () => {
               if (group.status === "error") return taskLoadError().label;
-              if (isConnectionActionBusy()) return t("workspace_list.connecting");
+              if (isConnectionActionBusy()) return "Connecting";
               if (!props.developerMode) return "";
-              if (props.selectedWorkspaceId === workspace().id) return t("workspace.selected");
+              if (props.selectedWorkspaceId === workspace().id) return "Selected";
               return workspaceKindLabel(workspace());
             };
             const statusTone = () => {
@@ -595,7 +600,7 @@ export default function WorkspaceSessionList(props: Props) {
                             props.onCreateTaskInWorkspace(workspace().id);
                           }}
                           disabled={props.newTaskDisabled}
-                          aria-label={t("session.new_task")}
+                          aria-label="New task"
                         >
                           <Plus size={14} />
                         </button>
@@ -611,7 +616,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 : workspace().id,
                             );
                           }}
-                          aria-label={t("workspace_list.workspace_options")}
+                          aria-label="Workspace options"
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -622,8 +627,8 @@ export default function WorkspaceSessionList(props: Props) {
                         class="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
                         aria-label={
                           isWorkspaceExpanded(workspace().id)
-                            ? t("sidebar.collapse")
-                            : t("sidebar.expand")
+                            ? "Collapse"
+                            : "Expand"
                         }
                         onClick={(event) => {
                           event.stopPropagation();
@@ -654,7 +659,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {t("workspace_list.edit_name")}
+                        Edit name
                       </button>
                       <button
                         type="button"
@@ -664,7 +669,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {t("workspace_list.share")}
+                        Share...
                       </button>
                       <Show when={workspace().workspaceType === "local"}>
                         <button
@@ -675,7 +680,7 @@ export default function WorkspaceSessionList(props: Props) {
                             setWorkspaceMenuId(null);
                           }}
                         >
-                          {revealLabel()}
+                          {revealLabel}
                         </button>
                       </Show>
                       <Show when={workspace().workspaceType === "remote"}>
@@ -691,7 +696,7 @@ export default function WorkspaceSessionList(props: Props) {
                             }}
                             disabled={isConnectionActionBusy()}
                           >
-                            {t("workspace_list.recover")}
+                            Recover
                           </button>
                         </Show>
                         <button
@@ -705,7 +710,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          {t("workspace_list.test_connection")}
+                          Test connection
                         </button>
                         <button
                           type="button"
@@ -716,7 +721,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          {t("workspace_list.edit_connection")}
+                          Edit connection
                         </button>
                       </Show>
                       <button
@@ -727,110 +732,155 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {t("workspace_list.remove_workspace")}
+                        Remove workspace
                       </button>
                     </div>
                   </Show>
                 </div>
 
-                <Show when={isWorkspaceExpanded(workspace().id)}>
-                  <div class="mt-3 px-1 pb-1">
-                    <div class="relative flex flex-col gap-1 pl-2.5 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[2px] before:bg-gray-3 before:content-['']">
-                      <Show
-                        when={
-                          group.status === "loading" &&
-                          group.sessions.length === 0
-                        }
-                        fallback={
-                          <Show
-                            when={group.sessions.length > 0}
-                            fallback={
-                              <Show when={group.status === "error"}>
-                                <div
-                                  class={`w-full rounded-[15px] border px-3 py-2.5 text-left text-[11px] ${
-                                    taskLoadError().tone === "offline"
-                                      ? "border-amber-7/35 bg-amber-2/50 text-amber-11"
-                                      : "border-red-7/35 bg-red-1/40 text-red-11"
-                                  }`}
-                                  title={taskLoadError().title}
-                                >
-                                  {taskLoadError().message}
-                                </div>
-                              </Show>
-                            }
+                <div class="mt-3 px-1 pb-1">
+                  <div class="relative flex flex-col gap-1 pl-2.5 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[2px] before:bg-gray-3 before:content-['']">
+                   <Show
+                     when={isWorkspaceExpanded(workspace().id)}
+                     fallback={
+                       <Show when={group.sessions.length > 0}>
+                          <For
+                            each={previewSessions(
+                              workspace().id,
+                              group.sessions,
+                              tree,
+                              forcedExpandedSessionIds,
+                            )}
                           >
-                            <For
-                              each={previewSessions(
+                            {(row) =>
+                              renderSessionRow(
                                 workspace().id,
-                                group.sessions,
+                                row,
                                 tree,
                                 forcedExpandedSessionIds,
                               )}
-                            >
-                              {(row) =>
-                                renderSessionRow(
-                                  workspace().id,
-                                  row,
-                                  tree,
-                                  forcedExpandedSessionIds,
-                                )}
-                            </For>
+                          </For>
 
-                            <Show
-                              when={
-                                group.sessions.length === 0 &&
-                                group.status === "ready"
-                              }
-                            >
-                              <button
-                                type="button"
-                                class="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
-                                onClick={() =>
-                                  props.onCreateTaskInWorkspace(workspace().id)
-                                }
-                                disabled={props.newTaskDisabled}
-                              >
-                                <span class="group-hover/empty:hidden">
-                                  {t("workspace.no_tasks")}
-                                </span>
-                                <span class="hidden group-hover/empty:inline font-medium">
-                                  {t("workspace.new_task_inline")}
-                                </span>
-                              </button>
-                            </Show>
-
-                            <Show
-                              when={
-                                getRootSessions(group.sessions).length >
-                                previewCount(workspace().id)
-                              }
-                            >
-                              <button
-                                type="button"
-                                class="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
-                                onClick={() =>
-                                  showMoreSessions(
-                                    workspace().id,
-                                    getRootSessions(group.sessions).length,
-                                  )
-                                }
-                              >
-                                {showMoreLabel(
+                          <Show
+                            when={
+                              getRootSessions(group.sessions).length >
+                              previewCount(workspace().id)
+                            }
+                          >
+                            <button
+                              type="button"
+                              class="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              onClick={() =>
+                                showMoreSessions(
                                   workspace().id,
                                   getRootSessions(group.sessions).length,
-                                )}
-                              </button>
-                            </Show>
+                                )
+                              }
+                            >
+                              {showMoreLabel(
+                                workspace().id,
+                                getRootSessions(group.sessions).length,
+                              )}
+                            </button>
                           </Show>
-                        }
-                      >
-                        <div class="w-full rounded-[15px] px-3 py-2.5 text-left text-[11px] text-gray-10">
-                          {t("workspace.loading_tasks")}
-                        </div>
-                      </Show>
-                    </div>
+                        </Show>
+                      }
+                    >
+                    <Show
+                      when={
+                        group.status === "loading" &&
+                        group.sessions.length === 0
+                      }
+                      fallback={
+                        <Show
+                          when={group.sessions.length > 0}
+                          fallback={
+                            <Show when={group.status === "error"}>
+                              <div
+                                class={`w-full rounded-[15px] border px-3 py-2.5 text-left text-[11px] ${
+                                  taskLoadError().tone === "offline"
+                                    ? "border-amber-7/35 bg-amber-2/50 text-amber-11"
+                                    : "border-red-7/35 bg-red-1/40 text-red-11"
+                                }`}
+                                title={taskLoadError().title}
+                              >
+                                {taskLoadError().message}
+                              </div>
+                            </Show>
+                          }
+                        >
+                          <For
+                            each={previewSessions(
+                              workspace().id,
+                              group.sessions,
+                              tree,
+                              forcedExpandedSessionIds,
+                            )}
+                          >
+                            {(row) =>
+                              renderSessionRow(
+                                workspace().id,
+                                row,
+                                tree,
+                                forcedExpandedSessionIds,
+                              )}
+                          </For>
+
+                          <Show
+                            when={
+                              group.sessions.length === 0 &&
+                              group.status === "ready"
+                            }
+                          >
+                            <button
+                              type="button"
+                              class="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              onClick={() =>
+                                props.onCreateTaskInWorkspace(workspace().id)
+                              }
+                              disabled={props.newTaskDisabled}
+                            >
+                              <span class="group-hover/empty:hidden">
+                                No tasks yet.
+                              </span>
+                              <span class="hidden group-hover/empty:inline font-medium">
+                                + New task
+                              </span>
+                            </button>
+                          </Show>
+
+                          <Show
+                            when={
+                              getRootSessions(group.sessions).length >
+                              previewCount(workspace().id)
+                            }
+                          >
+                            <button
+                              type="button"
+                              class="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              onClick={() =>
+                                showMoreSessions(
+                                  workspace().id,
+                                  getRootSessions(group.sessions).length,
+                                )
+                              }
+                            >
+                              {showMoreLabel(
+                                workspace().id,
+                                getRootSessions(group.sessions).length,
+                              )}
+                            </button>
+                          </Show>
+                        </Show>
+                      }
+                    >
+                      <div class="w-full rounded-[15px] px-3 py-2.5 text-left text-[11px] text-gray-10">
+                        Loading tasks...
+                      </div>
+                    </Show>
+                  </Show>
                   </div>
-                </Show>
+                </div>
               </div>
             );
           }}
@@ -845,7 +895,7 @@ export default function WorkspaceSessionList(props: Props) {
           onClick={props.onOpenCreateWorkspace}
         >
           <Plus size={14} />
-          {t("workspace_list.add_workspace")}
+          Add workspace
         </button>
       </div>
     </div>

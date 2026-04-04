@@ -2,7 +2,6 @@ import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { Download, RefreshCw, UploadCloud } from "lucide-solid";
 
 import { getOpenWorkDeployment } from "../../lib/openwork-deployment";
-import { t } from "../../../i18n";
 import type { OpenworkInboxItem, OpenworkServerClient } from "../../lib/openwork-server";
 import WebUnavailableSurface from "../web-unavailable-surface";
 import { formatBytes, formatRelativeTime } from "../../utils";
@@ -49,7 +48,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   });
 
   const connected = createMemo(() => Boolean(props.client && (props.workspaceId ?? "").trim()));
-  const helperText = () => t("inbox_panel.helper_text");
+  const helperText = "Share files with this worker from the app.";
 
   const visibleItems = createMemo(() => (items() ?? []).slice(0, maxPreview()));
   const hiddenCount = createMemo(() => Math.max(0, (items() ?? []).length - visibleItems().length));
@@ -73,7 +72,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       setItems(result.items ?? []);
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : t("inbox_panel.load_failed");
+        err instanceof Error ? err.message : "Failed to load shared folder";
       setError(message);
       setItems([]);
     } finally {
@@ -85,7 +84,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast(t("inbox_panel.upload_needs_worker"));
+      toast("Connect to a worker to upload files to the shared folder.");
       return;
     }
     if (!files.length) return;
@@ -94,15 +93,15 @@ export default function InboxPanel(props: InboxPanelProps) {
     setError(null);
     try {
       const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
-      toast(t("inbox_panel.uploading_label", undefined, { label }));
+      toast(`Uploading ${label}...`);
       for (const file of files) {
         await client.uploadInbox(workspaceId, file);
       }
-      toast(t("inbox_panel.upload_success"));
+      toast("Uploaded to the shared folder.");
       await refresh();
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : t("inbox_panel.upload_failed");
+        err instanceof Error ? err.message : "Shared folder upload failed";
       setError(message);
       toast(message);
     } finally {
@@ -114,9 +113,9 @@ export default function InboxPanel(props: InboxPanelProps) {
     const path = toInboxWorkspacePath(item);
     try {
       await navigator.clipboard.writeText(path);
-      toast(t("inbox_panel.copied_path", undefined, { path }));
+      toast(`Copied: ${path}`);
     } catch {
-      toast(t("inbox_panel.copy_failed"));
+      toast("Copy failed. Your browser may block clipboard access.");
     }
   };
 
@@ -124,12 +123,12 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast(t("inbox_panel.connect_to_download"));
+      toast("Connect to a worker to download shared files.");
       return;
     }
     const id = String(item.id ?? "").trim();
     if (!id) {
-      toast(t("inbox_panel.missing_file_id"));
+      toast("Missing shared file id.");
       return;
     }
 
@@ -145,7 +144,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("inbox_panel.download_failed");
+      const message = err instanceof Error ? err.message : "Download failed";
       toast(message);
     }
   };
@@ -161,7 +160,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     <WebUnavailableSurface unavailable={webDeployment()} compact>
       <div id={props.id}>
         <div class="flex items-center justify-between px-2 mb-3">
-          <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">{t("inbox_panel.shared_folder")}</span>
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Shared folder</span>
           <div class="flex items-center gap-2">
             <Show when={(items() ?? []).length > 0}>
               <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
@@ -172,8 +171,8 @@ export default function InboxPanel(props: InboxPanelProps) {
               type="button"
               class="rounded-md p-1 text-gray-9 hover:text-gray-11 hover:bg-gray-3 transition-colors"
               onClick={() => void refresh()}
-              title={t("inbox_panel.refresh_tooltip")}
-              aria-label={t("inbox_panel.refresh_tooltip")}
+              title="Refresh shared folder"
+              aria-label="Refresh shared folder"
               disabled={!connected() || loading()}
             >
               <RefreshCw size={14} class={loading() ? "animate-spin" : ""} />
@@ -215,14 +214,14 @@ export default function InboxPanel(props: InboxPanelProps) {
             if (files.length) void uploadFiles(files);
           }}
           disabled={uploading()}
-             title={connected() ? t("inbox_panel.drop_to_upload") : t("inbox_panel.connect_to_upload")}
+             title={connected() ? "Drop files here to upload" : "Connect to a worker to upload"}
           >
           <div class="flex flex-col items-center justify-center text-center">
             <UploadCloud size={18} class="text-gray-9 mb-2" />
             <span class="text-[13px] font-medium text-gray-11">
-              {uploading() ? t("inbox_panel.uploading") : t("inbox_panel.upload_prompt")}
+              {uploading() ? "Uploading..." : "Drop files or click to upload"}
             </span>
-            <span class="mt-0.5 text-[11px] text-gray-9">{helperText()}</span>
+            <span class="mt-0.5 text-[11px] text-gray-9">{helperText}</span>
           </div>
         </button>
 
@@ -235,8 +234,8 @@ export default function InboxPanel(props: InboxPanelProps) {
             when={visibleItems().length > 0}
             fallback={
               <div class="text-xs text-gray-10 px-1 py-1">
-                <Show when={connected()} fallback={t("inbox_panel.connect_to_see")}>
-                  {t("inbox_panel.no_files")}
+                <Show when={connected()} fallback={"Connect to see shared files."}>
+                  No shared files yet.
                 </Show>
               </div>
             }
@@ -276,8 +275,8 @@ export default function InboxPanel(props: InboxPanelProps) {
                       type="button"
                       class="shrink-0 rounded-md p-1 text-gray-9 opacity-0 group-hover:opacity-100 hover:text-gray-11 hover:bg-gray-3"
                       onClick={() => void downloadItem(item)}
-                      title={t("inbox_panel.download")}
-                      aria-label={t("inbox_panel.download")}
+                      title="Download"
+                      aria-label="Download"
                       disabled={!connected()}
                     >
                       <Download size={14} />
@@ -289,7 +288,7 @@ export default function InboxPanel(props: InboxPanelProps) {
           </Show>
 
           <Show when={hiddenCount() > 0}>
-            <div class="text-[11px] text-gray-10 px-1 py-1">{t("inbox_panel.showing_first", undefined, { count: maxPreview() })}</div>
+            <div class="text-[11px] text-gray-10 px-1 py-1">Showing first {maxPreview()}.</div>
           </Show>
         </div>
       </div>

@@ -7,6 +7,7 @@ import {
   type Accessor,
 } from "solid-js";
 
+import { t } from "../../i18n";
 
 import {
   publishSkillsSetBundleFromWorkspace,
@@ -28,7 +29,6 @@ import type {
   WorkspaceInfo,
 } from "../lib/tauri";
 import type { OpenworkServerSettings } from "../lib/openwork-server";
-import { t } from "../../i18n";
 import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
 
 export type ShareWorkspaceState = ReturnType<typeof createShareWorkspaceState>;
@@ -199,28 +199,28 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
           label: t("session.share_worker_url"),
           value: url,
           placeholder: !isTauriRuntime()
-            ? t("session.share_desktop_app_required")
+            ? t("session.share_desktop_required")
             : t("session.share_starting_server"),
           hint: mountedUrl
-            ? t("session.share_worker_url_phones_hint")
+            ? t("session.share_url_worker_hint")
             : hostUrl
-              ? t("session.share_worker_url_resolving_hint")
+              ? t("session.share_url_resolving_hint")
               : undefined,
         },
         {
           label: t("session.share_password"),
           value: ownerToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
+          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_required"),
           hint: mountedUrl
-            ? t("session.share_worker_url_phones_hint")
-            : t("session.share_owner_permission_hint"),
+            ? t("session.share_url_worker_hint")
+            : t("session.share_password_owner_hint"),
         },
         {
-          label: t("session.share_collaborator_label"),
+          label: t("session.share_collaborator_token"),
           value: collaboratorToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
+          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_required"),
           hint: mountedUrl
             ? t("session.share_collaborator_hint")
             : t("session.share_collaborator_host_hint"),
