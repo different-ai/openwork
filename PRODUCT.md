@@ -44,6 +44,8 @@ Where are workflow hosted:
 
 - Organizations can publish shared skill hubs so members discover approved skills from one managed place instead of collecting local-only installs by hand.
 - Org admins can now manage teams directly in the hosted dashboard and grant each skill hub to the exact teams that should inherit it.
+- Team members install those approved skills from the desktop Skills page through the OpenWork Cloud catalog instead of importing local files manually.
+- Power users can also share an installed desktop skill back to the org hub or publish a public install link from the same Skills page.
 
 ## Actors
 Bob IT guy makes the config.
