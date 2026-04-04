@@ -15,14 +15,6 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import ModelPickerModal from "./components/model-picker-modal";
-import ConfirmModal from "./components/confirm-modal";
-import ResetModal from "./components/reset-modal";
-import SkillDestinationModal from "./bundles/skill-destination-modal";
-import BundleImportModal from "./bundles/import-modal";
-import BundleStartModal from "./bundles/start-modal";
-import RenameWorkspaceModal from "./components/rename-workspace-modal";
-import ConnectionsModals from "./connections/modals";
 import { OpenworkServerProvider } from "./connections/openwork-server-provider";
 import { createOpenworkServerStore } from "./connections/openwork-server-store";
 import { ConnectionsProvider } from "./connections/provider";
@@ -32,12 +24,7 @@ import { SessionActionsProvider } from "./session/actions-provider";
 import { createSessionActionsStore } from "./session/actions-store";
 import { createDeepLinksController } from "./shell/deep-links";
 import SettingsShell from "./shell/settings-shell";
-import TopRightNotifications from "./shell/top-right-notifications";
 import { createStatusToastsStore, StatusToastsProvider } from "./shell/status-toasts";
-import {
-  CreateRemoteWorkspaceModal,
-  CreateWorkspaceModal,
-} from "./workspace";
 import SessionView from "./pages/session";
 import { clearDevLogs, recordDevLog } from "./lib/dev-log";
 import { unwrap } from "./lib/opencode";
@@ -93,10 +80,7 @@ import { createProvidersStore } from "./context/providers";
 import { ModelControlsProvider } from "./app-settings/model-controls-provider";
 import { createModelControlsStore } from "./app-settings/model-controls-store";
 import { useSessionDisplayPreferences } from "./app-settings/session-display-preferences";
-import {
-  describeDirectoryScope,
-  shouldRedirectMissingSessionAfterScopedLoad,
-} from "./lib/session-scope";
+import { describeDirectoryScope } from "./lib/session-scope";
 import { createExtensionsStore } from "./context/extensions";
 import { createConnectionsStore } from "./connections/store";
 import { createAutomationsStore } from "./context/automations";
@@ -134,6 +118,11 @@ import {
   stripBundleQuery,
 } from "./bundles";
 import { createBundlesStore } from "./bundles/store";
+import { createBootstrapCoordinator } from "./shell/bootstrap-coordinator";
+import ModalHost from "./shell/modal-host";
+import { syncShellRoute } from "./shell/route-sync";
+import { buildSessionSurface } from "./shell/session-surface";
+import { buildSettingsSurface } from "./shell/settings-surface";
 
 type SettingsReturnTarget = {
   view: View;
@@ -436,9 +425,7 @@ export default function App() {
     globalSync.set("provider", "connected", value);
   };
 
-  let workspaceStore!: ReturnType<typeof createWorkspaceStore>;
-  let sessionStore!: ReturnType<typeof createSessionStore>;
-  let openworkServerStore!: ReturnType<typeof createOpenworkServerStore>;
+  const bootstrapCoordinator = createBootstrapCoordinator();
 
   const modelConfig = createModelConfigStore({
     client,
@@ -447,14 +434,16 @@ export default function App() {
     providers,
     providerDefaults,
     providerConnectedIds,
-    selectedWorkspaceId: () => workspaceStore?.selectedWorkspaceId?.() ?? "",
+    selectedWorkspaceId: () => bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceId?.() ?? "",
     selectedWorkspaceDisplay: () =>
-      workspaceStore?.selectedWorkspaceDisplay?.() ?? ({ workspaceType: "local" } as WorkspaceDisplay),
-    selectedWorkspacePath: () => workspaceStore?.selectedWorkspacePath?.() ?? "",
-    openworkServerClient: () => openworkServerStore?.openworkServerClient?.() ?? null,
-    openworkServerStatus: () => openworkServerStore?.openworkServerStatus?.() ?? "disconnected",
-    openworkServerCapabilities: () => openworkServerStore?.openworkServerCapabilities?.() ?? null,
-    runtimeWorkspaceId: () => workspaceStore?.runtimeWorkspaceId?.() ?? null,
+      bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceDisplay?.() ??
+      ({ workspaceType: "local" } as WorkspaceDisplay),
+    selectedWorkspacePath: () => bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspacePath?.() ?? "",
+    openworkServerClient: () => bootstrapCoordinator.peekOpenworkServerStore()?.openworkServerClient?.() ?? null,
+    openworkServerStatus: () => bootstrapCoordinator.peekOpenworkServerStore()?.openworkServerStatus?.() ?? "disconnected",
+    openworkServerCapabilities: () =>
+      bootstrapCoordinator.peekOpenworkServerStore()?.openworkServerCapabilities?.() ?? null,
+    runtimeWorkspaceId: () => bootstrapCoordinator.peekWorkspaceStore()?.runtimeWorkspaceId?.() ?? null,
     focusSessionPromptSoon: () => focusSessionPromptSoon(),
     setError,
     setLastKnownConfigSnapshot,
@@ -496,33 +485,12 @@ export default function App() {
     goToSettings(nextTab);
   };
 
-  const mapLegacySurfaceToSettingsTab = (surface: string): SettingsTab => {
-    switch (surface) {
-      case "scheduled":
-        return "automations";
-      case "skills":
-        return "skills";
-      case "plugins":
-      case "mcp":
-        return "extensions";
-      case "identities":
-        return "messaging";
-      case "config":
-        return "advanced";
-      case "settings":
-      default:
-        return "general";
-    }
-  };
+  const markReloadRequired = bootstrapCoordinator.markReloadRequired;
 
-  let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
-  const markReloadRequired = (reason: ReloadReason, trigger?: ReloadTrigger) => {
-    markReloadRequiredHandler?.(reason, trigger);
-  };
-
-  sessionStore = createSessionStore({
+  const sessionStore = bootstrapCoordinator.setSessionStore(createSessionStore({
     client,
-    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot().trim(),
+    selectedWorkspaceRoot: () =>
+      bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceRoot?.().trim() ?? "",
     selectedSessionId,
     setSelectedSessionId,
     setPrompt,
@@ -538,7 +506,7 @@ export default function App() {
       void refreshPlugins(pluginScope());
       void refreshMcpServers();
     },
-  });
+  }));
 
   const {
     sessions,
@@ -639,18 +607,19 @@ export default function App() {
     await respondPermission(requestID, reply);
   }
 
-  openworkServerStore = createOpenworkServerStore({
+  const openworkServerStore = bootstrapCoordinator.setOpenworkServerStore(createOpenworkServerStore({
     startupPreference,
     documentVisible,
     developerMode,
-    runtimeWorkspaceId: () => workspaceStore?.runtimeWorkspaceId?.() ?? null,
+    runtimeWorkspaceId: () => bootstrapCoordinator.peekWorkspaceStore()?.runtimeWorkspaceId?.() ?? null,
     activeClient: client,
     selectedWorkspaceDisplay: () =>
-      workspaceStore?.selectedWorkspaceDisplay?.() ?? ({ workspaceType: "local" } as WorkspaceDisplay),
+      bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceDisplay?.() ??
+      ({ workspaceType: "local" } as WorkspaceDisplay),
     restartLocalServer,
     createRemoteWorkspaceFlow: async (input) =>
-      (await workspaceStore?.createRemoteWorkspaceFlow?.(input)) ?? false,
-  });
+      (await bootstrapCoordinator.peekWorkspaceStore()?.createRemoteWorkspaceFlow?.(input)) ?? false,
+  }));
 
   const {
     openworkServerSettings,
@@ -687,11 +656,12 @@ export default function App() {
   const extensionsStore = createExtensionsStore({
     client,
     projectDir: () => workspaceProjectDir(),
-    selectedWorkspaceId: () => workspaceStore?.selectedWorkspaceId?.() ?? "",
-    selectedWorkspaceRoot: () => workspaceStore?.selectedWorkspaceRoot?.() ?? "",
-    workspaceType: () => workspaceStore?.selectedWorkspaceDisplay?.().workspaceType ?? "local",
+    selectedWorkspaceId: () => bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceId?.() ?? "",
+    selectedWorkspaceRoot: () => bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceRoot?.() ?? "",
+    workspaceType: () =>
+      bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceDisplay?.().workspaceType ?? "local",
     openworkServer: openworkServerStore,
-    runtimeWorkspaceId: () => workspaceStore?.runtimeWorkspaceId?.() ?? null,
+    runtimeWorkspaceId: () => bootstrapCoordinator.peekWorkspaceStore()?.runtimeWorkspaceId?.() ?? null,
     setBusy,
     setBusyLabel,
     setBusyStartedAt,
@@ -717,13 +687,15 @@ export default function App() {
     client,
     setClient,
     projectDir: () => workspaceProjectDir(),
-    selectedWorkspaceId: () => workspaceStore?.selectedWorkspaceId?.() ?? "",
-    selectedWorkspaceRoot: () => workspaceStore?.selectedWorkspaceRoot?.() ?? "",
-    workspaceType: () => workspaceStore?.selectedWorkspaceDisplay?.().workspaceType ?? "local",
+    selectedWorkspaceId: () => bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceId?.() ?? "",
+    selectedWorkspaceRoot: () => bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceRoot?.() ?? "",
+    workspaceType: () =>
+      bootstrapCoordinator.peekWorkspaceStore()?.selectedWorkspaceDisplay?.().workspaceType ?? "local",
     openworkServer: openworkServerStore,
-    runtimeWorkspaceId: () => workspaceStore?.runtimeWorkspaceId?.() ?? null,
-    ensureRuntimeWorkspaceId: () => workspaceStore?.ensureRuntimeWorkspaceId?.(),
-    setProjectDir: (value: string) => workspaceStore?.setProjectDir?.(value),
+    runtimeWorkspaceId: () => bootstrapCoordinator.peekWorkspaceStore()?.runtimeWorkspaceId?.() ?? null,
+    ensureRuntimeWorkspaceId: async () =>
+      await bootstrapCoordinator.peekWorkspaceStore()?.ensureRuntimeWorkspaceId?.(),
+    setProjectDir: (value: string) => bootstrapCoordinator.peekWorkspaceStore()?.setProjectDir?.(value),
     developerMode,
     markReloadRequired,
   });
@@ -761,7 +733,7 @@ export default function App() {
     autoCompactContextSaving,
   } = modelConfig;
 
-  workspaceStore = createWorkspaceStore({
+  const workspaceStore = bootstrapCoordinator.setWorkspaceStore(createWorkspaceStore({
     startupPreference,
     setStartupPreference,
     onboardingStep,
@@ -817,7 +789,7 @@ export default function App() {
     developerMode,
     pendingInitialSessionSelection,
     setPendingInitialSessionSelection,
-  });
+  }));
 
   const {
     providerAuthModalOpen,
@@ -1250,7 +1222,7 @@ export default function App() {
     anyActiveRuns,
   } = systemState;
 
-  markReloadRequiredHandler = systemState.markReloadRequired;
+  bootstrapCoordinator.setReloadHandler(systemState.markReloadRequired);
 
   const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
@@ -1912,7 +1884,7 @@ export default function App() {
     editDefaultModelVariant: openDefaultModelPicker,
   });
 
-  const settingsShellProps = () => {
+  const settingsSurface = createMemo(() => {
     const workspaceType = selectedWorkspaceDisplay().workspaceType;
     const isRemoteWorkspace = workspaceType === "remote";
     const openworkStatus = openworkServerStatus();
@@ -1943,7 +1915,7 @@ export default function App() {
             : t("app.plugins_hint_readonly")
       : null;
 
-    return {
+    return buildSettingsSurface({
       settingsTab: settingsTab(),
       setSettingsTab,
       providers: providers(),
@@ -2017,7 +1989,6 @@ export default function App() {
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-      pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
       openTeamBundle: bundlesStore.openTeamBundle,
@@ -2025,10 +1996,6 @@ export default function App() {
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
       exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
-      createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
-      setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
-      createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
-      pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
       workspaceSessionGroups: sidebarWorkspaceGroups(),
       selectedSessionId: activeSessionId(),
       openRenameWorkspace: workspaceStore.openRenameWorkspace,
@@ -2109,10 +2076,10 @@ export default function App() {
       openDebugDeepLink: deepLinks.openDebugDeepLink,
       language: currentLocale(),
       setLanguage: setLocale,
-    };
-  };
+    });
+  });
 
-  const sessionProps = () => ({
+  const sessionSurface = createMemo(() => buildSessionSurface({
     providerAuthWorkerType: providerAuthWorkerType(),
     selectedSessionId: activeSessionId(),
     setView,
@@ -2215,122 +2182,25 @@ export default function App() {
     sessionErrorTurns: selectedSessionErrorTurns(),
     sessionStatus: selectedSessionStatus(),
     error: error(),
-  });
+  }));
 
-  const settingsTabs = new Set<SettingsTab>([
-    "general",
-    "den",
-    "model",
-    "automations",
-    "skills",
-    "extensions",
-    "messaging",
-    "advanced",
-    "appearance",
-    "updates",
-    "recovery",
-    "debug",
-  ]);
-
-  const resolveSettingsTab = (value?: string | null) => {
-    const normalized = value?.trim().toLowerCase() ?? "";
-    if (settingsTabs.has(normalized as SettingsTab)) {
-      return normalized as SettingsTab;
-    }
-    return "general";
-  };
-
-  const initialRoute = () => {
-    if (typeof window === "undefined") return "/session";
-    return "/session";
-  };
-
-  createEffect(() => {
-    const rawPath = location.pathname.trim();
-    const path = rawPath.toLowerCase();
-
-    if (path === "" || path === "/") {
-      navigate(initialRoute(), { replace: true });
-      return;
-    }
-
-    if (path.startsWith("/dashboard")) {
-      const [, , tabSegment] = path.split("/");
-      goToSettings(mapLegacySurfaceToSettingsTab(tabSegment ?? "settings"), { replace: true });
-      return;
-    }
-
-    if (path.startsWith("/settings")) {
-      const [, , tabSegment] = path.split("/");
-      const resolvedTab = resolveSettingsTab(tabSegment);
-
-      if (resolvedTab !== settingsTab()) {
-        setSettingsTabState(resolvedTab);
-      }
-      if (!tabSegment || tabSegment !== resolvedTab) {
-        goToSettings(resolvedTab, { replace: true });
-      }
-      return;
-    }
-
-    if (path.startsWith("/session")) {
-      const [, , sessionSegment] = rawPath.split("/");
-      const id = (sessionSegment ?? "").trim();
-
-      if (!id) {
-        if (selectedSessionId()) {
-          workspaceStore.clearSelectedSessionSurface();
-        }
-        return;
-      }
-
-      // If the URL points at a session that no longer exists (e.g. after deletion),
-      // route back to /session so the app can fall back safely.
-      const pendingInitialSelection = pendingInitialSessionSelection();
-      const selectedWorkspaceRoot = normalizeDirectoryPath(workspaceStore.selectedWorkspaceRoot().trim());
-      const matchingSession = sessions().find((session) => session.id === id) ?? null;
-      const hasMatchingSessionInScope = matchingSession
-        ? !selectedWorkspaceRoot || normalizeDirectoryPath(matchingSession.directory) === selectedWorkspaceRoot
-        : false;
-      if (
-        sessionsLoaded() &&
-        !pendingInitialSelection &&
-        shouldRedirectMissingSessionAfterScopedLoad({
-          loadedScopeRoot: loadedSessionScopeRoot(),
-          workspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-          hasMatchingSession: hasMatchingSessionInScope,
-        })
-      ) {
-        if (selectedSessionId() === id) {
-          setSelectedSessionId(null);
-        }
-        navigate("/session", { replace: true });
-        return;
-      }
-
-      if (selectedSessionId() !== id) {
-        setSelectedSessionId(id);
-        void selectSession(id);
-      }
-      return;
-    }
-
-    if (path.startsWith("/proto-v1-ux") || path.startsWith("/proto")) {
-      if (isTauriRuntime()) {
-        navigate("/settings/automations", { replace: true });
-        return;
-      }
-
-      navigate("/settings/automations", { replace: true });
-      return;
-    }
-
-    const fallback = activeSessionId();
-    if (fallback) {
-      goToSession(fallback, { replace: true });
-      return;
-    }
-    navigate("/session", { replace: true });
+  syncShellRoute({
+    pathname: () => location.pathname,
+    navigate,
+    settingsTab,
+    setSettingsTabState,
+    setSelectedSessionId,
+    selectedSessionId,
+    selectSession,
+    pendingInitialSessionSelection,
+    sessions,
+    sessionsLoaded,
+    loadedSessionScopeRoot,
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot(),
+    clearSelectedSessionSurface: workspaceStore.clearSelectedSessionSurface,
+    activeSessionId,
+    goToSettings,
+    goToSession,
   });
 
   return (
@@ -2341,291 +2211,51 @@ export default function App() {
             <ExtensionsProvider store={extensionsStore}>
               <AutomationsProvider store={automationsStore}>
                 <StatusToastsProvider store={statusToastsStore}>
-            <Switch>
-              <Match when={currentView() === "session"}>
-                <SessionView {...sessionProps()} />
-              </Match>
-              <Match when={true}>
-                <SettingsShell {...settingsShellProps()} />
-              </Match>
-            </Switch>
-
-      <ModelPickerModal
-        open={modelPickerOpen()}
-        options={modelOptions()}
-        filteredOptions={filteredModelOptions()}
-        query={modelPickerQuery()}
-        setQuery={setModelPickerQuery}
-        target={modelPickerTarget()}
-        current={modelPickerCurrent()}
-        onSelect={applyModelSelection}
-        onBehaviorChange={setModelPickerBehavior}
-        onOpenSettings={openSettingsFromModelPicker}
-        onClose={closeModelPicker}
-      />
-
-      <ResetModal
-        open={resetModalOpen()}
-        mode={resetModalMode()}
-        text={resetModalText()}
-        busy={resetModalBusy()}
-        canReset={
-          !resetModalBusy() &&
-          !anyActiveRuns() &&
-          resetModalText().trim().toUpperCase() === "RESET"
-        }
-        hasActiveRuns={anyActiveRuns()}
-        language={currentLocale()}
-        onClose={() => setResetModalOpen(false)}
-        onConfirm={confirmReset}
-        onTextChange={setResetModalText}
-      />
-
-      <ConnectionsModals
-        client={client()}
-        projectDir={workspaceProjectDir()}
-        language={currentLocale()}
-        reloadBlocked={activeReloadBlockingSessions().length > 0}
-        activeSessions={activeReloadBlockingSessions()}
-        isRemoteWorkspace={selectedWorkspaceDisplay().workspaceType === "remote"}
-        onForceStopSession={(sessionID) => abortSession(sessionID)}
-        onReloadEngine={() => reloadWorkspaceEngineAndResume()}
-      />
-
-      <BundleImportModal
-        open={Boolean(bundlesStore.bundleImportChoice())}
-        title={bundlesStore.bundleImportSummary()?.title ?? t("app.import_shared_bundle")}
-        description={bundlesStore.bundleImportSummary()?.description ?? t("app.import_bundle_desc")}
-        items={bundlesStore.bundleImportSummary()?.items ?? []}
-        workers={bundlesStore.bundleWorkerOptions()}
-        busy={bundlesStore.bundleImportBusy()}
-        error={bundlesStore.bundleImportError()}
-        onClose={bundlesStore.closeBundleImportChoice}
-        onCreateNewWorker={() => {
-          void bundlesStore.openCreateWorkspaceFromChoice();
-        }}
-        onSelectWorker={(workspaceId) => {
-          void bundlesStore.importBundleIntoExistingWorkspace(workspaceId);
-        }}
-      />
-
-      <ConfirmModal
-        open={Boolean(bundlesStore.untrustedBundleWarning())}
-        title="Import from an untrusted bundle link?"
-        message={(() => {
-          const warning = bundlesStore.untrustedBundleWarning();
-          const actualOrigin = warning?.actualOrigin?.trim() || "an unknown origin";
-          const configuredOrigin = warning?.configuredOrigin?.trim() || "the configured OpenWork share service";
-          return `This link points to ${actualOrigin}, but OpenWork only auto-imports bundles from ${configuredOrigin}. Untrusted bundles can contain malicious instructions or settings. Only continue if you trust the sender and expect this import.`;
-        })()}
-        confirmLabel="Import anyway"
-        cancelLabel="Cancel"
-        variant="warning"
-        onConfirm={() => {
-          void bundlesStore.confirmUntrustedBundleWarning();
-        }}
-        onCancel={bundlesStore.dismissUntrustedBundleWarning}
-      />
-
-      <BundleStartModal
-        open={Boolean(bundlesStore.bundleStartRequest())}
-        templateName={bundlesStore.bundleStartRequest()?.bundle.name?.trim() || "this template"}
-        description={bundlesStore.bundleStartRequest()?.bundle.description ?? ""}
-        items={bundlesStore.bundleStartItems()}
-        busy={bundlesStore.bundleStartBusy()}
-        onClose={() => {
-          bundlesStore.clearBundleStartRequest();
-        }}
-        onPickFolder={workspaceStore.pickWorkspaceFolder}
-        onConfirm={(folder) => {
-          void bundlesStore.startWorkspaceFromBundle(folder);
-        }}
-      />
-
-      <CreateWorkspaceModal
-        open={workspaceStore.createWorkspaceOpen()}
-        onClose={() => {
-          workspaceStore.setCreateWorkspaceOpen(false);
-          workspaceStore.clearSandboxCreateProgress?.();
-          bundlesStore.clearCreateWorkspaceRequest();
-        }}
-        onPickFolder={workspaceStore.pickWorkspaceFolder}
-        onImportConfig={isTauriRuntime() ? workspaceStore.importWorkspaceConfig : undefined}
-        importingConfig={workspaceStore.importingWorkspaceConfig()}
-        defaultPreset={bundlesStore.createWorkspaceDefaultPreset()}
-        onConfirmRemote={(input) => workspaceStore.createRemoteWorkspaceFlow(input)}
-        onConfirmTemplate={(template, preset, folder) =>
-          bundlesStore.startWorkspaceFromTeamTemplate({
-            name: template.name,
-            templateData: template.templateData,
-            folder,
-            preset,
-          })
-        }
-        onConfirm={bundlesStore.handleCreateWorkspaceConfirm}
-        onConfirmWorker={
-          isTauriRuntime()
-            ? bundlesStore.handleCreateSandboxConfirm
-            : undefined
-        }
-        workerDisabled={(() => {
-          if (!isTauriRuntime()) return true;
-          if (workspaceStore.sandboxDoctorBusy?.()) return true;
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor) return false;
-          return !doctor?.ready;
-        })()}
-        workerDisabledReason={(() => {
-          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
-          if (workspaceStore.sandboxDoctorBusy?.()) {
-            return t("dashboard.sandbox_checking_docker", currentLocale());
-          }
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor || doctor.ready) return null;
-          const message = doctor?.error?.trim();
-          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
-        })()}
-        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
-        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
-        onWorkerCta={async () => {
-          const url = "https://www.docker.com/products/docker-desktop/";
-          if (isTauriRuntime()) {
-            const { openUrl } = await import("@tauri-apps/plugin-opener");
-            await openUrl(url);
-          } else {
-            window.open(url, "_blank", "noopener,noreferrer");
-          }
-        }}
-        workerRetryLabel={t("common.retry", currentLocale())}
-        workerDebugLines={(() => {
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          const lines: string[] = [];
-          if (!doctor?.debug) return lines;
-          const selected = doctor.debug.selectedBin?.trim();
-          if (selected) lines.push(`selected: ${selected}`);
-          if (doctor.debug.candidates?.length) {
-            lines.push(`candidates: ${doctor.debug.candidates.join(", ")}`);
-          }
-          if (doctor.debug.versionCommand) {
-            const cmd = doctor.debug.versionCommand;
-            lines.push(`docker --version exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker --version stderr: ${cmd.stderr.trim()}`);
-          }
-          if (doctor.debug.infoCommand) {
-            const cmd = doctor.debug.infoCommand;
-            lines.push(`docker info exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker info stderr: ${cmd.stderr.trim()}`);
-          }
-          return lines;
-        })()}
-        onWorkerRetry={() => {
-          void workspaceStore.refreshSandboxDoctor?.();
-        }}
-        workerSubmitting={workspaceStore.sandboxPreflightBusy?.() ?? false}
-        localDisabled={!isTauriRuntime()}
-        localDisabledReason={
-          !isTauriRuntime()
-            ? t("app.local_disabled_reason")
-            : null
-        }
-        remoteSubmitting={busy() && busyLabel() === "status.connecting"}
-        remoteError={busyLabel() === "status.connecting" ? error() : null}
-        submitting={(() => {
-          const phase = workspaceStore.sandboxCreatePhase?.() ?? "idle";
-          if (phase === "provisioning" || phase === "finalizing") return true;
-          return busy() && busyLabel() === "status.creating_workspace";
-        })()}
-        submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
-      />
-
-      <SkillDestinationModal
-        open={
-          Boolean(bundlesStore.skillDestinationRequest()) &&
-          !workspaceStore.createWorkspaceOpen() &&
-          !workspaceStore.createRemoteWorkspaceOpen()
-        }
-        skill={(() => {
-          const request = bundlesStore.skillDestinationRequest();
-          if (!request) return null;
-          return {
-            name: request.bundle.name,
-            description: request.bundle.description ?? null,
-            trigger: request.bundle.trigger ?? null,
-          };
-        })()}
-        workspaces={bundlesStore.skillDestinationWorkspaces()}
-        selectedWorkspaceId={workspaceStore.selectedWorkspaceId()}
-        busyWorkspaceId={bundlesStore.skillDestinationBusyId()}
-        onClose={() => {
-          bundlesStore.clearSkillDestinationRequest();
-        }}
-        onSubmitWorkspace={bundlesStore.importSkillIntoWorkspace}
-        onCreateWorker={
-          isTauriRuntime()
-            ? bundlesStore.openCreateWorkspaceFromSkillDestination
-            : undefined
-        }
-        onConnectRemote={() => {
-          bundlesStore.openRemoteConnectFromSkillDestination();
-        }}
-      />
-
-            <CreateRemoteWorkspaceModal
-              open={workspaceStore.createRemoteWorkspaceOpen()}
-              onClose={() => {
-                workspaceStore.setCreateRemoteWorkspaceOpen(false);
-                deepLinks.clearDeepLinkRemoteWorkspaceDefaults();
-              }}
-              onConfirm={(input) => workspaceStore.createRemoteWorkspaceFlow(input)}
-              initialValues={deepLinks.deepLinkRemoteWorkspaceDefaults() ?? undefined}
-              submitting={
-                busy() &&
-                (busyLabel() === "status.creating_workspace" || busyLabel() === "status.connecting")
-              }
-            />
-
-      <TopRightNotifications
-        reloadOpen={reloadRequired("config", "mcp", "plugin", "skill", "agent", "command")}
-        reloadTitle={reloadCopy().title}
-        reloadDescription={reloadCopy().body}
-        reloadTrigger={reloadTrigger()}
-        reloadError={reloadError()}
-        reloadLabel={activeReloadBlockingSessions().length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")}
-        dismissLabel={t("app.reload_later")}
-        reloadBusy={reloadBusy()}
-        canReload={canReloadWorkspace()}
-        hasActiveRuns={activeReloadBlockingSessions().length > 0}
-        onReload={() => {
-          void (activeReloadBlockingSessions().length > 0
-            ? forceStopActiveSessionsAndReload()
-            : reloadWorkspaceEngineAndResume());
-        }}
-        onDismissReload={clearReloadRequired}
-      />
-
-      <RenameWorkspaceModal
-        open={workspaceStore.renameWorkspaceOpen()}
-        title={workspaceStore.renameWorkspaceName()}
-        busy={workspaceStore.renameWorkspaceBusy()}
-        canSave={workspaceStore.renameWorkspaceName().trim().length > 0 && !workspaceStore.renameWorkspaceBusy()}
-        onClose={workspaceStore.closeRenameWorkspace}
-        onSave={workspaceStore.saveRenameWorkspace}
-        onTitleChange={workspaceStore.setRenameWorkspaceName}
-      />
-
-      <CreateRemoteWorkspaceModal
-        open={workspaceStore.editRemoteWorkspaceOpen()}
-        onClose={workspaceStore.closeWorkspaceConnectionSettings}
-        onConfirm={(input) => {
-          void workspaceStore.saveWorkspaceConnectionSettings(input);
-        }}
-        initialValues={workspaceStore.editRemoteWorkspaceDefaults() ?? undefined}
-        submitting={busy() && busyLabel() === "status.connecting"}
-        error={workspaceStore.editRemoteWorkspaceError()}
-        title={t("dashboard.edit_remote_workspace_title", currentLocale())}
-        subtitle={t("dashboard.edit_remote_workspace_subtitle", currentLocale())}
-        confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
-      />
+                  <Switch>
+                    <Match when={currentView() === "session"}>
+                      <SessionView {...sessionSurface()} />
+                    </Match>
+                    <Match when={true}>
+                      <SettingsShell {...settingsSurface()} />
+                    </Match>
+                  </Switch>
+                  <ModalHost
+                    modelConfig={modelConfig}
+                    workspaceStore={workspaceStore}
+                    bundlesStore={bundlesStore}
+                    client={client}
+                    workspaceProjectDir={workspaceProjectDir}
+                    resetModalOpen={resetModalOpen}
+                    resetModalMode={resetModalMode}
+                    resetModalText={resetModalText}
+                    resetModalBusy={resetModalBusy}
+                    setResetModalOpen={setResetModalOpen}
+                    confirmReset={confirmReset}
+                    setResetModalText={setResetModalText}
+                    openSettingsFromModelPicker={openSettingsFromModelPicker}
+                    anyActiveRuns={anyActiveRuns}
+                    activeReloadBlockingSessions={activeReloadBlockingSessions}
+                    abortSession={abortSession}
+                    reloadWorkspaceEngineAndResume={reloadWorkspaceEngineAndResume}
+                    busy={busy}
+                    busyLabel={busyLabel}
+                    error={error}
+                    reloadOpen={() =>
+                      reloadRequired("config", "mcp", "plugin", "skill", "agent", "command")
+                    }
+                    reloadTitle={() => reloadCopy().title}
+                    reloadDescription={() => reloadCopy().body}
+                    reloadTrigger={() => reloadTrigger() ?? undefined}
+                    reloadError={reloadError}
+                    reloadBusy={reloadBusy}
+                    canReloadWorkspace={canReloadWorkspace}
+                    clearReloadRequired={clearReloadRequired}
+                    forceStopActiveSessionsAndReload={forceStopActiveSessionsAndReload}
+                    deepLinkRemoteWorkspaceDefaults={deepLinks.deepLinkRemoteWorkspaceDefaults}
+                    clearDeepLinkRemoteWorkspaceDefaults={
+                      deepLinks.clearDeepLinkRemoteWorkspaceDefaults
+                    }
+                  />
                 </StatusToastsProvider>
               </AutomationsProvider>
             </ExtensionsProvider>

@@ -67,6 +67,7 @@ import {
 } from "lucide-solid";
 import type { Language } from "../../i18n";
 import { t } from "../../i18n";
+import ReactSettingsShellHost from "./react-settings-shell-host";
 
 export type SettingsShellProps = {
   settingsTab: SettingsTab;
@@ -259,6 +260,7 @@ export type SettingsShellProps = {
   dockerCleanupResult: string | null;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   openDebugDeepLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
+  hideShellHeader?: boolean;
 };
 
 export default function SettingsShell(props: SettingsShellProps) {
@@ -1088,59 +1090,9 @@ export default function SettingsShell(props: SettingsShellProps) {
 
       <main class="min-w-0 flex-1 flex flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
         <div class="flex-1 overflow-y-auto">
-        <header class="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-dls-border bg-dls-surface px-4 md:px-6">
-          <div class="flex min-w-0 items-center gap-3">
-            <Show when={showUpdatePill()}>
-              <button
-                type="button"
-                class={`md:hidden flex items-center gap-1.5 rounded-full border bg-dls-surface px-2.5 py-1 text-xs font-medium shadow-sm transition-colors active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
-                onClick={handleUpdatePillClick}
-                title={updatePillTitle()}
-                aria-label={updatePillTitle()}
-              >
-                <Show
-                  when={props.updateStatus?.state === "downloading"}
-                  fallback={
-                    <ArrowDownToLine
-                      size={12}
-                      class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "animate-pulse" : ""}`}
-                      style={props.updateStatus?.state === "available" ? { "animation-duration": "3.5s" } : undefined}
-                    />
-                  }
-                >
-                  <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
-                </Show>
-                <span class="text-[11px]">{updatePillLabel()}</span>
-                <Show when={props.updateStatus?.version}>
-                  {(version) => (
-                    <span class={`hidden sm:inline font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
-                  )}
-                </Show>
-              </button>
-            </Show>
-            <h1 class="truncate text-[15px] font-semibold text-dls-text">{title()}</h1>
-            <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
-              {workspaceLabel(props.selectedWorkspaceDisplay)}
-            </span>
-            <Show when={props.developerMode}>
-              <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.headerStatus}</span>
-            </Show>
-            <Show when={props.busyHint}>
-              <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.busyHint}</span>
-            </Show>
-          </div>
-          <div class="flex items-center text-gray-10">
-            <button
-              type="button"
-              class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
-              onClick={props.toggleSettings}
-              title={t("dashboard.close_settings")}
-              aria-label={t("dashboard.close_settings")}
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </header>
+        <Show when={!props.hideShellHeader}>
+          <ReactSettingsShellHost {...props} />
+        </Show>
 
         <div class="w-full space-y-10 p-6 md:p-10">
           <SettingsView
