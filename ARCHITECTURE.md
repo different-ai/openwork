@@ -440,10 +440,12 @@ This is intentional for now: predictable scoping beats clever cross-root auto-ro
 ## Cloud Worker Connect Flow (Canonical)
 
 1. Authenticate in OpenWork Cloud control surface.
-2. Launch worker (with checkout/paywall when needed).
-3. Wait for provisioning and health.
-4. Generate/retrieve connect credentials.
-5. Connect in OpenWork app via deep link or manual URL + token.
+2. Create or join the target organization.
+3. Complete checkout when hosted onboarding or worker launch requires billing.
+4. Resume the cloud flow with any saved org draft restored.
+5. Launch worker and wait for provisioning/health.
+6. Generate/retrieve connect credentials.
+7. Connect in OpenWork app via deep link or manual URL + token.
 
 Technical note:
 

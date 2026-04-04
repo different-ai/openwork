@@ -37,12 +37,13 @@ Where are workflow hosted:
 
 - Users can sign in with the standard web auth providers or accept an org invite through the hosted join flow.
 - Invite signup keeps the invited email fixed, verifies the user by email code, and then drops them into the org join path.
-- Cloud workers are a paid flow: users complete checkout before they can launch hosted workers.
+- First-org setup and hosted workers are paid flows when billing is required: users can be sent to checkout during org creation, then returned to the app with their draft organization restored.
 - After a worker is ready, the user connects from the OpenWork app with `Add a worker` -> `Connect remote`, or opens the generated deep link directly.
 
 ## Team distribution
 
 - Organizations can publish shared skill hubs so members discover approved skills from one managed place instead of collecting local-only installs by hand.
+- Skill hub entries are stored as full `SKILL.md` documents, and the shared title/summary come from YAML frontmatter such as `name` and `description`.
 
 ## Actors
 Bob IT guy makes the config.
