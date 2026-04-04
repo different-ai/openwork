@@ -15,7 +15,7 @@ set -euo pipefail
 # - This script auto-generates a Better Auth secret per run.
 # - It also uses a premade dev-only DB encryption key unless you override
 #   DEN_DB_ENCRYPTION_KEY yourself.
-# - Generate a replacement with: openssl rand -base64 32
+# - Generate a replacement with: openssl rand -base64 128
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/packaging/docker/docker-compose.den-dev.yml"
