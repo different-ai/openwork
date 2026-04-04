@@ -9,6 +9,7 @@ import {
   untrack,
 } from "solid-js";
 import type { JSX } from "solid-js";
+import { createElement } from "react";
 
 import { useLocation, useNavigate } from "@solidjs/router";
 
@@ -27,6 +28,7 @@ import { createDeepLinksController } from "./shell/deep-links";
 import SettingsShell from "./shell/settings-shell";
 import { createStatusToastsStore, StatusToastsProvider } from "./shell/status-toasts";
 import SessionView from "./pages/session";
+import ReactSessionViewV2 from "./session-v2/react-session-view-v2";
 import { clearDevLogs, recordDevLog } from "./lib/dev-log";
 import { unwrap } from "./lib/opencode";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
@@ -176,6 +178,13 @@ export default function App() {
 
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil] = createSignal(0);
+  const reactSessionV2KillSwitch =
+    typeof import.meta.env?.VITE_OPENWORK_REACT_SESSION_V2 === "string"
+      ? import.meta.env.VITE_OPENWORK_REACT_SESSION_V2 !== "0"
+      : true;
+  const preferReactSessionV2 = createMemo(
+    () => reactSessionV2KillSwitch && local.prefs.reactSessionV2,
+  );
   const currentView = createMemo<View>(() => {
     const path = location.pathname.toLowerCase();
     if (path.startsWith("/session")) return "session";
@@ -2250,8 +2259,14 @@ export default function App() {
                 <StatusToastsProvider store={statusToastsStore}>
                   <ReactShellHost
                     currentView={currentView()}
+                    preferReactSession={preferReactSessionV2()}
                     renderSession={() =>
                       renderReactOwnedSurface(() => <SessionView {...sessionSurface()} />)
+                    }
+                    renderSessionReact={() =>
+                      createElement(ReactSessionViewV2, {
+                        legacySurface: sessionSurface(),
+                      })
                     }
                     renderSettings={() =>
                       renderReactOwnedSurface(() => <SettingsShell {...settingsSurface()} />)

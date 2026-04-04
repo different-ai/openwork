@@ -11,6 +11,8 @@ export default function ReactShellHost(props: ReactAppShellProps) {
   createEffect(() => {
     const currentView = props.currentView;
     const renderSession = props.renderSession;
+    const renderSessionReact = props.renderSessionReact;
+    const preferReactSession = props.preferReactSession;
     const renderSettings = props.renderSettings;
     const renderOverlays = props.renderOverlays;
 
@@ -23,6 +25,8 @@ export default function ReactShellHost(props: ReactAppShellProps) {
       createElement(ReactAppShell, {
         currentView,
         renderSession,
+        renderSessionReact,
+        preferReactSession,
         renderSettings,
         renderOverlays,
       }),
