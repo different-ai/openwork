@@ -22,15 +22,12 @@ export function SessionRail() {
 
   const items = useMemo(
     () =>
-      sessions.map((session) => {
-        const lastUpdated = session.time?.updated ?? session.time?.created ?? null;
-        return {
-          id: session.id,
-          title: session.title?.trim() || `Task ${session.id.slice(0, 8)}`,
-          lastUpdated,
-          status: sessionStatusById[session.id] ?? "idle",
-        };
-      }),
+      sessions.map((session) => ({
+        id: session.id,
+        title: session.title?.trim() || `Task ${session.id.slice(0, 8)}`,
+        lastUpdated: session.time?.updated ?? session.time?.created ?? null,
+        status: sessionStatusById[session.id] ?? "idle",
+      })),
     [sessionStatusById, sessions],
   );
 
@@ -42,60 +39,48 @@ export function SessionRail() {
   };
 
   return (
-    <aside className="ow-card flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-4">
+    <aside className="ow-soft-shell flex h-full flex-col overflow-hidden px-3 py-3">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-1 pb-3">
         <div>
-          <div className="text-xs uppercase tracking-[0.22em] text-slate-300/55">Sessions</div>
-          <div className="mt-2 text-lg font-semibold text-slate-50">Task history</div>
+          <div className="ow-kicker">Sessions</div>
+          <div className="mt-2 text-lg font-semibold text-slate-900">Task history</div>
         </div>
         <div className="flex gap-2">
-          <button className="ow-button-secondary px-3 py-2" onClick={() => void refreshSessions(activeWorkspaceId)} type="button">
+          <button className="ow-button-secondary h-11 px-3" onClick={() => void refreshSessions(activeWorkspaceId)} type="button">
             {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           </button>
-          <button className="ow-button-secondary px-3 py-2" disabled={!activeWorkspaceId} onClick={() => void handleCreateSession()} type="button">
+          <button className="ow-button-secondary h-11 px-3" disabled={!activeWorkspaceId} onClick={() => void handleCreateSession()} type="button">
             <Plus className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      <div className="px-4 py-3 text-sm text-slate-300/72">
-        {activeWorkspaceId ? "Scoped to the active workspace. New tasks open here and stream directly into the transcript." : "Select a workspace to load sessions."}
+      <div className="px-1 py-3 text-sm leading-6 text-slate-500">
+        {activeWorkspaceId ? "Scoped to the active workspace. Create and revisit tasks here." : "Select a workspace to load its task history."}
       </div>
 
-      <div className="ow-scroller flex-1 space-y-2 px-3 pb-3">
+      <div className="ow-scroller flex-1 space-y-2 px-1 pb-1">
         {items.length ? (
           items.map((item) => {
             const active = item.id === selectedSessionId && !isSettingsRoute;
             return (
-              <div
-                className={[
-                  "group flex items-start gap-3 rounded-[24px] border px-3 py-3 transition duration-200",
-                  active
-                    ? "border-amber-300/35 bg-amber-300/12 shadow-[0_20px_50px_rgba(245,158,11,0.12)]"
-                    : "border-white/8 bg-white/5 hover:border-white/15 hover:bg-white/8",
-                ].join(" ")}
-                key={item.id}
-              >
+              <div className={active ? "ow-session-item ow-session-item-active" : "ow-session-item"} key={item.id}>
                 <Link className="min-w-0 flex-1" to={`/session/${item.id}`}>
-                  <div className="truncate text-sm font-medium text-slate-50">{item.title}</div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-400">
+                  <div className="truncate text-sm font-medium text-slate-900">{item.title}</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
                     <span>{item.status}</span>
                     {item.lastUpdated ? <span>{formatRelativeTime(item.lastUpdated)}</span> : null}
                   </div>
                 </Link>
-                <button
-                  className="rounded-full p-2 text-slate-400 opacity-0 transition hover:bg-white/8 hover:text-rose-200 group-hover:opacity-100"
-                  onClick={() => void deleteSession(item.id)}
-                  type="button"
-                >
+                <button className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-rose-600" onClick={() => void deleteSession(item.id)} type="button">
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>
             );
           })
         ) : (
-          <div className="rounded-[24px] border border-dashed border-white/12 bg-black/12 px-4 py-6 text-sm leading-6 text-slate-300/72">
-            No sessions yet. Create one from the plus button to start testing the new React transcript surface.
+          <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm leading-6 text-slate-500">
+            No sessions yet. Create one once a workspace is connected.
           </div>
         )}
       </div>

@@ -23,6 +23,7 @@ import {
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
 import { createClient, unwrap } from "../../app/lib/opencode";
+import { abortSession as abortSessionInClient } from "../../app/lib/opencode-session";
 import { resolveScopedClientDirectory } from "../../app/lib/session-scope";
 import {
   normalizeEvent,
@@ -56,6 +57,9 @@ type OpenworkStore = {
   selectedSessionId: string | null;
   messagesBySessionId: Record<string, MessageWithParts[]>;
   todosBySessionId: Record<string, TodoItem[]>;
+  messageLimitBySessionId: Record<string, number>;
+  sessionCompleteById: Record<string, boolean>;
+  loadingMoreBySessionId: Record<string, boolean>;
   sessionStatusById: Record<string, string>;
   pendingPermissions: PendingPermission[];
   pendingQuestions: PendingQuestion[];
@@ -73,7 +77,12 @@ type OpenworkStore = {
   createSession: (initialPrompt?: string) => Promise<string | null>;
   sendPrompt: (prompt: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
+  abortSession: (sessionId?: string | null) => Promise<void>;
+  renameSession: (sessionId: string, title: string) => Promise<void>;
+  loadEarlierMessages: (sessionId: string) => Promise<void>;
   replyPermission: (requestId: string, reply: "once" | "always" | "reject") => Promise<void>;
+  replyQuestion: (requestId: string, answers: string[][]) => Promise<void>;
+  rejectQuestion: (requestId: string) => Promise<void>;
   clearErrorBanner: () => void;
 };
 
@@ -377,6 +386,14 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
           ...current.todosBySessionId,
           [trimmed]: Array.isArray(nextTodos) ? nextTodos : [],
         },
+        messageLimitBySessionId: {
+          ...current.messageLimitBySessionId,
+          [trimmed]: 160,
+        },
+        sessionCompleteById: {
+          ...current.sessionCompleteById,
+          [trimmed]: (Array.isArray(nextMessages) ? nextMessages.length : 0) < 160,
+        },
       }));
 
       await Promise.allSettled([refreshPendingPermissions(), refreshPendingQuestions()]);
@@ -656,6 +673,9 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
     selectedSessionId: null,
     messagesBySessionId: {},
     todosBySessionId: {},
+    messageLimitBySessionId: {},
+    sessionCompleteById: {},
+    loadingMoreBySessionId: {},
     sessionStatusById: {},
     pendingPermissions: [],
     pendingQuestions: [],
@@ -722,6 +742,9 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
           sessions: [],
           activeWorkspaceId: null,
           selectedSessionId: null,
+          messageLimitBySessionId: {},
+          sessionCompleteById: {},
+          loadingMoreBySessionId: {},
         }));
         return;
       }
@@ -819,6 +842,9 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
         selectedSessionId: null,
         messagesBySessionId: {},
         todosBySessionId: {},
+        messageLimitBySessionId: {},
+        sessionCompleteById: {},
+        loadingMoreBySessionId: {},
         sessionStatusById: {},
       });
 
@@ -935,6 +961,15 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
             todosBySessionId: Object.fromEntries(
               Object.entries(current.todosBySessionId).filter(([key]) => key !== trimmed),
             ),
+            messageLimitBySessionId: Object.fromEntries(
+              Object.entries(current.messageLimitBySessionId).filter(([key]) => key !== trimmed),
+            ),
+            sessionCompleteById: Object.fromEntries(
+              Object.entries(current.sessionCompleteById).filter(([key]) => key !== trimmed),
+            ),
+            loadingMoreBySessionId: Object.fromEntries(
+              Object.entries(current.loadingMoreBySessionId).filter(([key]) => key !== trimmed),
+            ),
           };
         });
         if (state.activeWorkspaceId) {
@@ -944,12 +979,114 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
         set({ errorBanner: summarizeError(error) });
       }
     },
+    abortSession: async (sessionId) => {
+      const targetId = sessionId?.trim() || get().selectedSessionId;
+      if (!targetId) return;
+      const client = createWorkspaceClient(get());
+      if (!client) return;
+      try {
+        await abortSessionInClient(client, targetId);
+        set((state) => ({
+          sessionStatusById: {
+            ...state.sessionStatusById,
+            [targetId]: "idle",
+          },
+        }));
+      } catch (error) {
+        set({ errorBanner: summarizeError(error) });
+      }
+    },
+    renameSession: async (sessionId, title) => {
+      const trimmedId = sessionId.trim();
+      const trimmedTitle = title.trim();
+      if (!trimmedId || !trimmedTitle) return;
+      const client = createWorkspaceClient(get());
+      if (!client) return;
+      try {
+        const next = unwrap(await client.session.update({ sessionID: trimmedId, title: trimmedTitle }));
+        set((state) => ({
+          sessions: sortSessions(
+            state.sessions.some((session) => session.id === trimmedId)
+              ? state.sessions.map((session) => (session.id === trimmedId ? next : session))
+              : [...state.sessions, next],
+          ),
+        }));
+      } catch (error) {
+        set({ errorBanner: summarizeError(error) });
+      }
+    },
+    loadEarlierMessages: async (sessionId) => {
+      const trimmedId = sessionId.trim();
+      if (!trimmedId) return;
+      const state = get();
+      if (state.loadingMoreBySessionId[trimmedId]) return;
+      if (state.sessionCompleteById[trimmedId]) return;
+      const client = createWorkspaceClient(state);
+      if (!client) return;
+
+      const currentCount = state.messagesBySessionId[trimmedId]?.length ?? 0;
+      const nextLimit = Math.max(160, state.messageLimitBySessionId[trimmedId] ?? currentCount, currentCount) + 120;
+
+      set((current) => ({
+        loadingMoreBySessionId: {
+          ...current.loadingMoreBySessionId,
+          [trimmedId]: true,
+        },
+      }));
+
+      try {
+        const messages = unwrap(await client.session.messages({ sessionID: trimmedId, limit: nextLimit }));
+        set((current) => ({
+          messagesBySessionId: {
+            ...current.messagesBySessionId,
+            [trimmedId]: sortMessages(Array.isArray(messages) ? messages : []),
+          },
+          messageLimitBySessionId: {
+            ...current.messageLimitBySessionId,
+            [trimmedId]: nextLimit,
+          },
+          sessionCompleteById: {
+            ...current.sessionCompleteById,
+            [trimmedId]: (Array.isArray(messages) ? messages.length : 0) < nextLimit,
+          },
+        }));
+      } catch (error) {
+        set({ errorBanner: summarizeError(error) });
+      } finally {
+        set((current) => ({
+          loadingMoreBySessionId: {
+            ...current.loadingMoreBySessionId,
+            [trimmedId]: false,
+          },
+        }));
+      }
+    },
     replyPermission: async (requestId, reply) => {
       const client = createWorkspaceClient(get());
       if (!client || !(client.permission as any)?.reply) return;
       try {
         unwrap(await (client.permission as any).reply({ requestID: requestId, reply }));
         await refreshPendingPermissions();
+      } catch (error) {
+        set({ errorBanner: summarizeError(error) });
+      }
+    },
+    replyQuestion: async (requestId, answers) => {
+      const client = createWorkspaceClient(get());
+      if (!client || !(client.question as any)?.reply) return;
+      try {
+        unwrap(await (client.question as any).reply({ requestID: requestId, answers }));
+        await refreshPendingQuestions();
+      } catch (error) {
+        set({ errorBanner: summarizeError(error) });
+      }
+    },
+    rejectQuestion: async (requestId) => {
+      const client = createWorkspaceClient(get());
+      if (!client || !(client.question as any)?.reject) return;
+      try {
+        unwrap(await (client.question as any).reject({ requestID: requestId }));
+        await refreshPendingQuestions();
       } catch (error) {
         set({ errorBanner: summarizeError(error) });
       }
@@ -969,6 +1106,12 @@ export const selectSelectedMessages = (state: OpenworkStore) =>
 export const selectSelectedTodos = (state: OpenworkStore) =>
   state.selectedSessionId ? state.todosBySessionId[state.selectedSessionId] ?? EMPTY_TODOS : EMPTY_TODOS;
 
+export const selectSelectedHasEarlierMessages = (state: OpenworkStore) =>
+  state.selectedSessionId ? !state.sessionCompleteById[state.selectedSessionId] : false;
+
+export const selectSelectedLoadingEarlierMessages = (state: OpenworkStore) =>
+  state.selectedSessionId ? Boolean(state.loadingMoreBySessionId[state.selectedSessionId]) : false;
+
 export const selectSelectedStatus = (state: OpenworkStore) =>
   state.selectedSessionId ? state.sessionStatusById[state.selectedSessionId] ?? "idle" : "idle";
 
@@ -977,6 +1120,12 @@ export const selectScopedPermissions = (state: OpenworkStore) => {
   if (!sessionId) return state.pendingPermissions.length ? state.pendingPermissions : EMPTY_PERMISSIONS;
   const scoped = state.pendingPermissions.filter((item) => item.sessionID === sessionId);
   return scoped.length ? scoped : EMPTY_PERMISSIONS;
+};
+
+export const selectScopedQuestions = (state: OpenworkStore) => {
+  const sessionId = state.selectedSessionId;
+  if (!sessionId) return state.pendingQuestions;
+  return state.pendingQuestions.filter((item) => item.sessionID === sessionId);
 };
 
 export const selectServerHostLabel = (state: OpenworkStore) => {
