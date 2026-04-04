@@ -43,10 +43,6 @@
     "@codemirror/view": "^6.38.0",
     "@opencode-ai/sdk": "^1.1.31",
     "@radix-ui/colors": "^3.0.0",
-    "@solid-primitives/event-bus": "^1.1.2",
-    "@solid-primitives/storage": "^4.3.3",
-    "@solidjs/router": "^0.15.4",
-    "@tanstack/solid-virtual": "^3.13.19",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-deep-link": "^2.4.7",
     "@tauri-apps/plugin-dialog": "~2.6.0",
@@ -56,16 +52,21 @@
     "@tauri-apps/plugin-updater": "~2.9.0",
     "fuzzysort": "^3.1.0",
     "jsonc-parser": "^3.2.1",
-    "lucide-solid": "^0.562.0",
-    "marked": "^17.0.1",
-    "solid-js": "^1.9.0"
+    "lucide-react": "^0.525.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.9.4",
+    "streamdown": "^2.5.0",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
     "@tailwindcss/vite": "^4.1.18",
+    "@vitejs/plugin-react": "^5.1.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.6.3",
-    "vite": "^6.0.1",
-    "vite-plugin-solid": "^2.11.0"
+    "vite": "^6.0.1"
   },
   "packageManager": "pnpm@10.27.0"
 }

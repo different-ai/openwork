@@ -1,0 +1,286 @@
+@import "tailwindcss";
+@source "../../../../node_modules/streamdown/dist/*.js";
+
+:root {
+  color-scheme: dark;
+  --background: oklch(0.16 0.025 252);
+  --foreground: oklch(0.96 0.01 82);
+  --card: oklch(0.2 0.024 252);
+  --card-foreground: oklch(0.96 0.01 82);
+  --muted: oklch(0.26 0.03 252);
+  --muted-foreground: oklch(0.8 0.02 75);
+  --border: oklch(0.34 0.03 250);
+  --input: oklch(0.34 0.03 250);
+  --primary: oklch(0.8 0.12 70);
+  --primary-foreground: oklch(0.16 0.025 252);
+  --radius: 1rem;
+  --ow-bg: #07121d;
+  --ow-panel: rgba(10, 21, 36, 0.74);
+  --ow-panel-strong: rgba(7, 16, 28, 0.92);
+  --ow-border: rgba(255, 255, 255, 0.1);
+  --ow-text: #eef4fb;
+  --ow-muted: rgba(224, 232, 245, 0.72);
+  --ow-accent: #f3b85c;
+  --ow-accent-soft: rgba(243, 184, 92, 0.17);
+  --ow-accent-deep: #f59e0b;
+  --ow-cool: #56b6ff;
+  --ow-cool-soft: rgba(86, 182, 255, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(243, 184, 92, 0.16), transparent 28%),
+    radial-gradient(circle at top right, rgba(86, 182, 255, 0.14), transparent 24%),
+    linear-gradient(180deg, #07121d 0%, #091724 45%, #0b1827 100%);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ow-text);
+  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(243, 184, 92, 0.13), transparent 26%),
+    radial-gradient(circle at 90% 12%, rgba(86, 182, 255, 0.13), transparent 24%),
+    linear-gradient(180deg, rgba(7, 18, 29, 0.96), rgba(8, 18, 29, 0.98));
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(circle at center, black, transparent 82%);
+  opacity: 0.26;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+#root {
+  position: relative;
+  min-height: 100vh;
+}
+
+.ow-shell-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 1280px) {
+  .ow-shell-grid {
+    grid-template-columns: 280px 320px minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.ow-card {
+  border: 1px solid var(--ow-border);
+  border-radius: 1.75rem;
+  background: linear-gradient(180deg, rgba(16, 27, 42, 0.9), rgba(10, 19, 31, 0.8));
+  box-shadow:
+    0 28px 90px rgba(3, 9, 18, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(18px);
+}
+
+.ow-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 0.45rem 0.7rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(241, 245, 249, 0.86);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.ow-button,
+.ow-button-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.82rem 1.2rem;
+  font-size: 0.94rem;
+  font-weight: 600;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.ow-button:hover,
+.ow-button-secondary:hover {
+  transform: translateY(-1px);
+}
+
+.ow-button:disabled,
+.ow-button-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.ow-button {
+  background: linear-gradient(135deg, var(--ow-accent) 0%, var(--ow-accent-deep) 100%);
+  color: #1c1100;
+  box-shadow: 0 16px 32px rgba(245, 158, 11, 0.2);
+}
+
+.ow-button-secondary {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(241, 245, 249, 0.9);
+}
+
+.ow-input,
+.ow-textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.2rem;
+  background: rgba(2, 6, 12, 0.34);
+  color: var(--ow-text);
+  padding: 0.95rem 1rem;
+  outline: none;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.ow-input::placeholder,
+.ow-textarea::placeholder {
+  color: rgba(226, 232, 240, 0.42);
+}
+
+.ow-input:focus,
+.ow-textarea:focus {
+  border-color: rgba(243, 184, 92, 0.42);
+  box-shadow: 0 0 0 4px rgba(243, 184, 92, 0.1);
+  background: rgba(4, 9, 16, 0.5);
+}
+
+.ow-textarea {
+  resize: vertical;
+  line-height: 1.7;
+}
+
+.ow-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.62rem 0.95rem;
+  color: rgba(226, 232, 240, 0.76);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.ow-nav-link:hover,
+.ow-nav-link-active {
+  border-color: rgba(243, 184, 92, 0.22);
+  background: rgba(243, 184, 92, 0.08);
+  color: #fff3d7;
+}
+
+.ow-scroller {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(243, 184, 92, 0.28) transparent;
+}
+
+.ow-scroller::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ow-scroller::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(243, 184, 92, 0.24);
+  background-clip: padding-box;
+}
+
+.ow-markdown,
+.ow-user-markdown {
+  font-size: 0.98rem;
+  line-height: 1.75;
+}
+
+.ow-markdown :where(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4) {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.ow-markdown :where(h1, h2, h3, h4),
+.ow-user-markdown :where(h1, h2, h3, h4) {
+  color: #fff4db;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.ow-markdown :where(code, pre),
+.ow-user-markdown :where(code, pre) {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+.ow-markdown :where(pre),
+.ow-user-markdown :where(pre) {
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  background: rgba(2, 6, 12, 0.5);
+  padding: 1rem;
+}
+
+.ow-markdown :where(code):not(pre code),
+.ow-user-markdown :where(code):not(pre code) {
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.12rem 0.38rem;
+}
+
+.ow-markdown :where(blockquote),
+.ow-user-markdown :where(blockquote) {
+  border-left: 3px solid rgba(243, 184, 92, 0.45);
+  padding-left: 1rem;
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.ow-markdown :where(a),
+.ow-user-markdown :where(a) {
+  color: #8dcfff;
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+}
+
+.ow-user-markdown {
+  color: #eef8ff;
+}

@@ -1,7 +1,7 @@
 import os from "node:os";
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
-import solid from "vite-plugin-solid";
+import react from "@vitejs/plugin-react";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -24,7 +24,7 @@ if (shortHostname && shortHostname !== hostname) {
 }
 
 export default defineConfig({
-  plugins: [tailwindcss(), solid()],
+  plugins: [tailwindcss(), react()],
   server: {
     port: devPort,
     strictPort: true,
