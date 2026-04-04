@@ -9,8 +9,6 @@ import {
   Shield,
 } from "lucide-solid";
 
-import { t } from "../../i18n";
-
 import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import {
@@ -219,15 +217,15 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
   const serverReady = createMemo(() => props.openworkServerStatus === "connected" && Boolean(openworkServerClient()));
   const scopedWorkspaceReady = createMemo(() => Boolean(workspaceId()));
-  const defaultRoutingDirectory = createMemo(() => props.selectedWorkspaceRoot.trim() || t("identities.not_set"));
+  const defaultRoutingDirectory = createMemo(() => props.selectedWorkspaceRoot.trim() || "Not set");
 
   let lastResetKey = "";
 
   const statusLabel = createMemo(() => {
-    if (healthError()) return t("identities.health_unavailable");
+    if (healthError()) return "Unavailable";
     const snapshot = health();
-    if (!snapshot) return t("identities.health_unknown");
-    return snapshot.ok ? t("identities.health_running") : t("identities.health_offline");
+    if (!snapshot) return "Unknown";
+    return snapshot.ok ? "Running" : "Offline";
   });
 
   const isWorkerOnline = createMemo(() => {
@@ -268,13 +266,13 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     const ts = lastActivityAt();
     if (!ts) return "\u2014";
     const elapsedMs = Math.max(0, Date.now() - ts);
-    if (elapsedMs < 60_000) return t("identities.just_now");
+    if (elapsedMs < 60_000) return "Just now";
     const minutes = Math.floor(elapsedMs / 60_000);
-    if (minutes < 60) return t("identities.minutes_ago", undefined, { minutes });
+    if (minutes < 60) return `${minutes}m ago`;
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return t("identities.hours_ago", undefined, { hours });
+    if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    return t("identities.days_ago", undefined, { days });
+    return `${days}d ago`;
   });
 
   const workspaceAgentStatus = createMemo(() => {
@@ -304,7 +302,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     const id = workspaceId();
     if (!id) {
       resetAgentState();
-      setAgentError(t("identities.agent_worker_scope_unavailable"));
+      setAgentError("Worker scope unavailable.");
       return;
     }
     const client = openworkServerClient();
@@ -353,7 +351,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setAgentContent(OPENCODE_ROUTER_AGENT_FILE_TEMPLATE);
       setAgentDraft(OPENCODE_ROUTER_AGENT_FILE_TEMPLATE);
       setAgentBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
-      setAgentStatus(t("identities.agent_created"));
+      setAgentStatus("Created default messaging agent file.");
     } catch (error) {
       setAgentError(formatRequestError(error));
     } finally {
@@ -381,10 +379,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setAgentExists(true);
       setAgentContent(agentDraft());
       setAgentBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
-      setAgentStatus(t("identities.agent_saved"));
+      setAgentStatus("Saved messaging behavior.");
     } catch (error) {
       if (error instanceof OpenworkServerError && error.status === 409) {
-        setAgentError(t("identities.agent_file_changed"));
+        setAgentError("File changed remotely. Reload and save again.");
       } else {
         setAgentError(formatRequestError(error));
       }
@@ -416,7 +414,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         ...(sendAutoBind() ? { autoBind: true } : {}),
       });
       setSendResult(result);
-      const base = t("identities.dispatched_messages", undefined, { sent: result.sent, attempted: result.attempted });
+      const base = `Dispatched ${result.sent}/${result.attempted} messages.`;
       setSendStatus(result.reason?.trim() ? `${base} ${result.reason.trim()}` : base);
     } catch (error) {
       setSendError(formatRequestError(error));
@@ -445,9 +443,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
         setSlackIdentities([]);
-        setHealthError(t("identities.worker_scope_unavailable_detail"));
-        setTelegramIdentitiesError(t("identities.worker_scope_unavailable"));
-        setSlackIdentitiesError(t("identities.worker_scope_unavailable"));
+        setHealthError("Worker scope unavailable. Reconnect using a worker URL or switch to a known worker.");
+        setTelegramIdentitiesError("Worker scope unavailable.");
+        setSlackIdentitiesError("Worker scope unavailable.");
         resetAgentState();
         setSendStatus(null);
         setSendError(null);
@@ -493,7 +491,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const message =
             (healthRes.json && typeof (healthRes.json as any).message === "string")
               ? String((healthRes.json as any).message)
-              : t("identities.health_unavailable_status", undefined, { status: healthRes.status });
+              : `OpenCodeRouter health unavailable (${healthRes.status})`;
           setHealthError(message);
         }
         setMessagingRestartRequired(true);
@@ -507,14 +505,14 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       } else {
         setTelegramIdentities([]);
         setTelegramPairingCode(null);
-        setTelegramIdentitiesError(t("identities.telegram_unavailable"));
+        setTelegramIdentitiesError("Telegram identities unavailable.");
       }
 
       if (isOpenCodeRouterIdentities(slackRes)) {
         setSlackIdentities(slackRes.items ?? []);
       } else {
         setSlackIdentities([]);
-        setSlackIdentitiesError(t("identities.slack_unavailable"));
+        setSlackIdentitiesError("Slack identities unavailable.");
       }
 
       if (!agentDirty() && !agentSaving()) {
@@ -544,13 +542,13 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
     const ok = await props.reconnectOpenworkServer();
     if (!ok) {
-      setReconnectError(t("identities.reconnect_failed"));
+      setReconnectError("Reconnect failed. Check OpenWork URL/token and try again.");
       return;
     }
 
-    setReconnectStatus(t("identities.reconnected_refreshing"));
+    setReconnectStatus("Reconnected. Refreshing worker state...");
     await refreshAll({ force: true });
-    setReconnectStatus(t("identities.reconnected"));
+    setReconnectStatus("Reconnected.");
   };
 
   const enableMessagingModule = async () => {
@@ -577,7 +575,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setMessagingRiskOpen(false);
       setMessagingRestartAction("enable");
       setMessagingRestartPromptOpen(true);
-      setMessagingStatus(t("identities.messaging_enabled_restart"));
+      setMessagingStatus("Messaging enabled. Restart this worker to apply before configuring channels.");
       await refreshAll({ force: true });
     } catch (error) {
       setMessagingError(formatRequestError(error));
@@ -610,7 +608,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setMessagingRestartRequired(true);
       setMessagingRestartAction("disable");
       setMessagingRestartPromptOpen(true);
-      setMessagingStatus(t("identities.messaging_disabled_restart"));
+      setMessagingStatus("Messaging disabled. Restart this worker to stop the messaging sidecar.");
       await refreshAll({ force: true });
     } catch (error) {
       setMessagingError(formatRequestError(error));
@@ -627,14 +625,14 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     try {
       const ok = await props.restartLocalServer();
       if (!ok) {
-      setMessagingError(t("identities.restart_failed"));
+      setMessagingError("Restart failed. Please restart the worker from Settings and try again.");
       return;
     }
       setMessagingRestartPromptOpen(false);
       setMessagingRestartRequired(false);
-      setMessagingStatus(t("identities.worker_restarted_refreshing"));
+      setMessagingStatus("Worker restarted. Refreshing messaging status...");
       await refreshAll({ force: true });
-      setMessagingStatus(t("identities.worker_restarted"));
+      setMessagingStatus("Worker restarted.");
     } catch (error) {
       setMessagingError(formatRequestError(error));
     } finally {
@@ -666,7 +664,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         const pairingCode = typeof result.telegram?.pairingCode === "string" ? result.telegram.pairingCode.trim() : "";
         if (access === "private" && pairingCode) {
           setTelegramPairingCode(pairingCode);
-          setTelegramStatus(t("identities.telegram_private_saved_pair", undefined, { code: pairingCode }));
+          setTelegramStatus(`Private bot saved. Pair via /pair ${pairingCode}`);
         } else {
           setTelegramPairingCode(null);
         }
@@ -675,15 +673,15 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const normalized = String(username).trim().replace(/^@+/, "");
           setTelegramBotUsername(normalized || null);
           if (access !== "private" || !pairingCode) {
-            setTelegramStatus(t("identities.telegram_saved_username", undefined, { username: normalized || String(username) }));
+            setTelegramStatus(`Saved (@${normalized || String(username)})`);
           }
         } else {
           if (access !== "private" || !pairingCode) {
-            setTelegramStatus(result.applied === false ? t("identities.telegram_saved_pending") : t("identities.telegram_saved"));
+            setTelegramStatus(result.applied === false ? "Saved (pending apply)." : "Saved.");
           }
         }
       } else {
-        setTelegramError(t("identities.telegram_save_failed"));
+        setTelegramError("Failed to save.");
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setTelegramError(result.applyError.trim());
@@ -714,9 +712,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       if (result.ok) {
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
-        setTelegramStatus(result.applied === false ? t("identities.telegram_deleted_pending") : t("identities.telegram_deleted"));
+        setTelegramStatus(result.applied === false ? "Deleted (pending apply)." : "Deleted.");
       } else {
-        setTelegramError(t("identities.telegram_delete_failed"));
+        setTelegramError("Failed to delete.");
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setTelegramError(result.applyError.trim());
@@ -734,9 +732,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!code) return;
     try {
       await navigator.clipboard.writeText(code);
-      setTelegramStatus(t("identities.pairing_code_copied"));
+      setTelegramStatus("Pairing code copied.");
     } catch {
-      setTelegramError(t("identities.pairing_code_copy_failed"));
+      setTelegramError("Could not copy pairing code. Copy it manually.");
     }
   };
 
@@ -758,9 +756,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     try {
       const result = await client.upsertOpenCodeRouterSlackIdentity(id, { botToken, appToken, enabled: slackEnabled() });
       if (result.ok) {
-        setSlackStatus(result.applied === false ? t("identities.telegram_saved_pending") : t("identities.telegram_saved"));
+        setSlackStatus(result.applied === false ? "Saved (pending apply)." : "Saved.");
       } else {
-        setSlackError(t("identities.telegram_save_failed"));
+        setSlackError("Failed to save.");
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setSlackError(result.applyError.trim());
@@ -790,9 +788,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     try {
       const result = await client.deleteOpenCodeRouterSlackIdentity(id, identityId);
       if (result.ok) {
-        setSlackStatus(result.applied === false ? t("identities.telegram_deleted_pending") : t("identities.telegram_deleted"));
+        setSlackStatus(result.applied === false ? "Deleted (pending apply)." : "Deleted.");
       } else {
-        setSlackError(t("identities.telegram_delete_failed"));
+        setSlackError("Failed to delete.");
       }
       if (typeof result.applyError === "string" && result.applyError.trim()) {
         setSlackError(result.applyError.trim());
@@ -857,7 +855,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       <div>
         <div class="flex items-center justify-between mb-1.5">
           <Show when={props.showHeader !== false}>
-            <h1 class="text-lg font-bold text-gray-12 tracking-tight">{t("identities.title")}</h1>
+            <h1 class="text-lg font-bold text-gray-12 tracking-tight">Messaging channels</h1>
           </Show>
           <div class="flex items-center gap-2">
             <Button
@@ -867,7 +865,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               disabled={props.busy || props.openworkReconnectBusy}
             >
               <RefreshCcw size={14} class={props.openworkReconnectBusy ? "animate-spin" : ""} />
-              <span class="ml-1.5">{t("identities.repair_reconnect")}</span>
+              <span class="ml-1.5">Repair & reconnect</span>
             </Button>
             <Button
               variant="outline"
@@ -876,17 +874,18 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               disabled={!serverReady() || refreshing()}
             >
               <RefreshCcw size={14} class={refreshing() ? "animate-spin" : ""} />
-              <span class="ml-1.5">{t("common.refresh")}</span>
+              <span class="ml-1.5">Refresh</span>
             </Button>
           </div>
         </div>
         <Show when={props.showHeader !== false}>
           <p class="text-sm text-gray-9 leading-relaxed">
-            {t("identities.subtitle")}
+            Let people reach your worker through messaging apps. Connect a channel and
+            your worker will automatically read and respond to messages.
           </p>
         </Show>
         <div class="mt-1.5 text-[11px] text-gray-8 font-mono break-all">
-          {t("identities.workspace_scope_prefix")} {scopedOpenworkBaseUrl().trim() || props.openworkServerUrl.trim() || t("identities.not_set")}
+          Workspace scope: {scopedOpenworkBaseUrl().trim() || props.openworkServerUrl.trim() || "Not set"}
         </div>
         <Show when={reconnectStatus()}>
           {(value) => <div class="mt-1 text-[11px] text-gray-9">{value()}</div>}
@@ -905,9 +904,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       {/* ---- Not connected to server ---- */}
       <Show when={!serverReady()}>
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-5">
-          <div class="text-sm font-semibold text-gray-12">{t("identities.connect_server_title")}</div>
+          <div class="text-sm font-semibold text-gray-12">Connect to an OpenWork server</div>
           <div class="mt-1 text-xs text-gray-10">
-            {t("identities.connect_server_desc")}
+            Identities are available when you are connected to an OpenWork host (<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">openwork</code>).
           </div>
         </div>
       </Show>
@@ -915,7 +914,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       <Show when={serverReady()}>
         <Show when={!scopedWorkspaceReady()}>
           <div class="rounded-xl border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
-            {t("identities.workspace_id_required")}
+            Workspace ID is required to manage identities. Reconnect with a workspace URL (for example: <code class="text-[11px]">/w/&lt;workspace-id&gt;</code>) or select a workspace mapped on this host.
           </div>
         </Show>
 
@@ -930,7 +929,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 }`}
                 onClick={() => setActiveTab("general")}
               >
-                {t("identities.tab_general")}
+                General
               </button>
               <button
                 class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
@@ -940,7 +939,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 }`}
                 onClick={() => setActiveTab("advanced")}
               >
-                {t("settings.tab_advanced")}
+                Advanced
               </button>
             </div>
             <Button
@@ -949,19 +948,21 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               disabled={messagingSaving()}
               onClick={() => setMessagingDisableConfirmOpen(true)}
             >
-              {t("identities.disable_messaging")}
+              Disable messaging
             </Button>
           </div>
         </Show>
 
         <Show when={!messagingEnabled()}>
           <div class="rounded-xl border border-gray-4 bg-gray-1 px-4 py-4 space-y-3">
-            <div class="text-sm font-semibold text-gray-12">{t("identities.messaging_disabled_title")}</div>
+            <div class="text-sm font-semibold text-gray-12">Messaging is disabled by default</div>
             <p class="text-xs text-gray-10 leading-relaxed">
-              {t("identities.messaging_disabled_risk")}
+              Messaging bots can execute actions against your local worker. If exposed publicly, they may allow access
+              to files, credentials, and API keys available to this worker.
             </p>
             <p class="text-xs text-gray-10 leading-relaxed">
-              {t("identities.messaging_disabled_hint")}
+              Enable messaging only if you understand the risk and plan to secure access (for example, private Telegram
+              pairing).
             </p>
             <div class="flex flex-wrap items-center gap-2">
               <Button
@@ -970,7 +971,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 disabled={messagingSaving() || !workspaceId()}
                 onClick={() => setMessagingRiskOpen(true)}
               >
-                {messagingSaving() ? t("identities.enabling") : t("identities.enable_messaging")}
+                {messagingSaving() ? "Enabling..." : "Enable messaging"}
               </Button>
             </div>
           </div>
@@ -980,7 +981,8 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
         <Show when={messagingRestartRequired()}>
           <div class="rounded-xl border border-gray-4 bg-gray-1 px-4 py-3 text-xs text-gray-10 leading-relaxed">
-            {t("identities.messaging_sidecar_not_running")}
+            Messaging is enabled in this workspace, but the messaging sidecar is not running yet. Restart this worker,
+            then return to Messaging settings to connect Telegram or Slack.
             <div class="mt-3">
               <Button
                 variant="primary"
@@ -988,7 +990,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 disabled={messagingRestartBusy()}
                 onClick={() => void restartMessagingWorker()}
               >
-                {messagingRestartBusy() ? t("identities.restarting") : t("identities.restart_worker")}
+                {messagingRestartBusy() ? "Restarting..." : "Restart worker"}
               </Button>
             </div>
           </div>
@@ -1007,7 +1009,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 <div class="w-2.5 h-2.5 rounded-full bg-emerald-9 animate-pulse" />
               </Show>
               <span class="text-[15px] font-semibold text-gray-12">
-                {isWorkerOnline() ? t("identities.worker_online") : healthError() ? t("identities.worker_unavailable") : t("identities.worker_offline")}
+                {isWorkerOnline() ? "Worker online" : healthError() ? "Worker unavailable" : "Worker offline"}
               </span>
             </div>
             <span
@@ -1031,17 +1033,17 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
           <div class="flex gap-3">
             <StatusPill
-              label={t("identities.channels_label")}
-              value={`${connectedChannelCount()} ${t("identities.channels_connected")}`}
+              label="Channels"
+              value={`${connectedChannelCount()} connected`}
               ok={connectedChannelCount() > 0}
             />
             <StatusPill
-              label={t("identities.messages_today")}
+              label="Messages today"
               value={messagesToday() == null ? "\u2014" : String(messagesToday())}
               ok={(messagesToday() ?? 0) > 0}
             />
             <StatusPill
-              label={t("identities.last_activity")}
+              label="Last activity"
               value={lastActivityLabel()}
               ok={Boolean(lastActivityAt())}
             />
@@ -1051,7 +1053,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         {/* ---- Available channels ---- */}
         <div>
           <div class="text-[11px] font-semibold text-gray-9 uppercase tracking-wider mb-3">
-            {t("identities.available_channels")}
+            Available channels
           </div>
 
           <div class="flex flex-col gap-2.5">
@@ -1075,12 +1077,12 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     <span class="text-[15px] font-semibold text-gray-12">Telegram</span>
                     <Show when={hasTelegramConnected()}>
                       <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-1/40 text-emerald-11">
-                        {t("identities.connected_badge")}
+                        Connected
                       </span>
                     </Show>
                   </div>
                   <div class="text-[13px] text-gray-9 mt-0.5 leading-snug">
-                    {t("identities.telegram_desc")}
+                    Connect a Telegram bot in public mode (open inbox) or private mode (pairing code required).
                   </div>
                 </div>
                 <ChevronRight
@@ -1114,7 +1116,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 </span>
                               </div>
                               <div class="text-[11px] text-gray-9 mt-0.5 pl-3.5">
-                                {item.enabled ? t("identities.enabled_label") : t("identities.disabled_label")} · {item.running ? t("identities.running_label") : t("identities.stopped_label")} · {item.access === "private" ? t("identities.private_label") : t("identities.public_label")}
+                                {item.enabled ? "Enabled" : "Disabled"} · {item.running ? "Running" : "Stopped"} · {item.access === "private" ? "Private" : "Public"}
                               </div>
                             </div>
                             <div class="flex items-center gap-2 flex-shrink-0">
@@ -1124,7 +1126,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 disabled={telegramSaving() || item.id === "env" || !workspaceId()}
                                 onClick={() => void deleteTelegram(item.id)}
                               >
-                                {t("identities.disconnect")}
+                                Disconnect
                               </Button>
                             </div>
                           </div>
@@ -1135,7 +1137,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     {/* Connected stats summary */}
                     <div class="flex gap-2.5">
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">{t("identities.status_label")}</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">Status</div>
                         <div class="flex items-center gap-1.5">
                           <div class={`w-1.5 h-1.5 rounded-full ${
                             telegramIdentities().some((i) => i.running) ? "bg-emerald-9" : "bg-gray-8"
@@ -1143,18 +1145,18 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           <span class={`text-[13px] font-semibold ${
                             telegramIdentities().some((i) => i.running) ? "text-emerald-11" : "text-gray-10"
                           }`}>
-                            {telegramIdentities().some((i) => i.running) ? t("identities.status_active") : t("identities.status_stopped")}
+                            {telegramIdentities().some((i) => i.running) ? "Active" : "Stopped"}
                           </span>
                         </div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">{t("identities.identities_label")}</div>
-                        <div class="text-[13px] font-semibold text-gray-12">{telegramIdentities().length} {t("identities.configured_suffix")}</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">Identities</div>
+                        <div class="text-[13px] font-semibold text-gray-12">{telegramIdentities().length} configured</div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">{t("identities.channel_label")}</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">Channel</div>
                         <div class="text-[13px] font-semibold text-gray-12">
-                          {health()?.channels.telegram ? t("common.on") : t("common.off")}
+                          {health()?.channels.telegram ? "On" : "Off"}
                         </div>
                       </div>
                     </div>
@@ -1171,31 +1173,31 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                   <div class="space-y-2.5">
                     <Show when={telegramIdentities().length === 0}>
                       <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3.5 py-3 space-y-2.5">
-                        <div class="text-[12px] font-semibold text-gray-12">{t("identities.quick_setup")}</div>
+                        <div class="text-[12px] font-semibold text-gray-12">Quick setup</div>
                         <ol class="space-y-2 text-[12px] text-gray-10 leading-relaxed">
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">1</span>
                             <span>
-                              {t("identities.botfather_step1_open")} <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" class="font-medium text-gray-12 underline">@BotFather</a> {t("identities.botfather_step1_run")} <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/newbot</code>.
+                              Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" class="font-medium text-gray-12 underline">@BotFather</a> and run <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/newbot</code>.
                             </span>
                           </li>
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">2</span>
-                            <span>{t("identities.copy_bot_token_hint")}</span>
+                            <span>Copy the bot token and paste it below.</span>
                           </li>
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">3</span>
-                            <span>{t("identities.botfather_step3_choose")} <span class="font-medium text-gray-12">{t("identities.botfather_step3_public")}</span> {t("identities.botfather_step3_or_private")} <span class="font-medium text-gray-12">{t("identities.botfather_step3_private")}</span> {t("identities.botfather_step3_to_require")} <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/pair &lt;code&gt;</code>.</span>
+                            <span>Choose <span class="font-medium text-gray-12">Public</span> for open inbox or <span class="font-medium text-gray-12">Private</span> to require <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/pair &lt;code&gt;</code>.</span>
                           </li>
                         </ol>
                       </div>
                     </Show>
 
                     <div>
-                      <label class="text-[12px] text-gray-9 block mb-1">{t("identities.bot_token_label")}</label>
+                      <label class="text-[12px] text-gray-9 block mb-1">Bot token</label>
                       <input
                         class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
-                        placeholder={t("identities.bot_token_placeholder")}
+                        placeholder="Paste Telegram bot token from @BotFather"
                         type="password"
                         value={telegramToken()}
                         onInput={(e) => setTelegramToken(e.currentTarget.value)}
@@ -1208,11 +1210,11 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         checked={telegramEnabled()}
                         onChange={(e) => setTelegramEnabled(e.currentTarget.checked)}
                       />
-                      {t("identities.enabled_label")}
+                      Enabled
                     </label>
 
                     <div class="rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[11px] text-gray-10 leading-relaxed">
-                      {t("identities.telegram_bot_access_desc")}
+                      Public bot: first Telegram chat auto-links. Private bot: requires a pairing code before any messages run tools.
                     </div>
 
                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1233,7 +1235,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         >
                           <Link size={15} />
                         </Show>
-                        {telegramSaving() ? t("identities.connecting") : t("identities.create_public_bot")}
+                        {telegramSaving() ? "Connecting..." : "Create public bot"}
                       </button>
 
                       <button
@@ -1254,27 +1256,27 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         >
                           <Shield size={15} />
                         </Show>
-                        {telegramSaving() ? t("identities.connecting") : t("identities.create_private_bot")}
+                        {telegramSaving() ? "Connecting..." : "Create private bot"}
                       </button>
                     </div>
 
                     <Show when={telegramPairingCode()}>
                       {(code) => (
                         <div class="rounded-xl border border-sky-7/25 bg-sky-1/40 px-3.5 py-3 space-y-2">
-                          <div class="text-[12px] font-semibold text-sky-11">{t("identities.private_pairing_code")}</div>
+                          <div class="text-[12px] font-semibold text-sky-11">Private pairing code</div>
                           <div class="rounded-md border border-sky-7/20 bg-sky-2/80 px-3 py-2 font-mono text-[13px] tracking-[0.08em] text-sky-12">
                             {code()}
                           </div>
                           <div class="text-[11px] text-sky-11/90 leading-relaxed">
-                            {t("identities.pairing_code_instruction_prefix")} <code class="rounded bg-sky-3/60 px-1 py-0.5 font-mono text-[10px]">/pair {code()}</code>.
+                            In Telegram, open the chat that should control this worker and send <code class="rounded bg-sky-3/60 px-1 py-0.5 font-mono text-[10px]">/pair {code()}</code>.
                           </div>
                           <div class="flex items-center gap-2">
                             <Button variant="outline" class="h-7 px-2.5 text-[11px]" onClick={() => void copyTelegramPairingCode()}>
                               <Copy size={12} />
-                              <span class="ml-1">{t("identities.copy_code")}</span>
+                              <span class="ml-1">Copy code</span>
                             </Button>
                             <Button variant="outline" class="h-7 px-2.5 text-[11px]" onClick={() => setTelegramPairingCode(null)}>
-                              {t("common.hide")}
+                              Hide
                             </Button>
                           </div>
                         </div>
@@ -1290,7 +1292,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           class="inline-flex items-center gap-2 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[12px] font-medium text-gray-11 hover:bg-gray-2"
                         >
                           <Link size={14} />
-                          {t("identities.open_bot_link", undefined, { username: telegramBotUsername() ?? "" })}
+                          Open @{telegramBotUsername()} in Telegram
                         </a>
                       )}
                     </Show>
@@ -1327,12 +1329,12 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     <span class="text-[15px] font-semibold text-gray-12">Slack</span>
                     <Show when={hasSlackConnected()}>
                       <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-1/40 text-emerald-11">
-                        {t("identities.connected_badge")}
+                        Connected
                       </span>
                     </Show>
                   </div>
                   <div class="text-[13px] text-gray-9 mt-0.5 leading-snug">
-                    {t("identities.slack_desc")}
+                    Your worker appears as a bot in Slack channels. Team members can message it directly or mention it in threads.
                   </div>
                 </div>
                 <ChevronRight
@@ -1366,7 +1368,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 </span>
                               </div>
                               <div class="text-[11px] text-gray-9 mt-0.5 pl-3.5">
-                                {item.enabled ? t("identities.enabled_label") : t("identities.disabled_label")} · {item.running ? t("identities.running_label") : t("identities.stopped_label")}
+                                {item.enabled ? "Enabled" : "Disabled"} · {item.running ? "Running" : "Stopped"}
                               </div>
                             </div>
                             <div class="flex items-center gap-2 flex-shrink-0">
@@ -1376,7 +1378,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 disabled={slackSaving() || item.id === "env" || !workspaceId()}
                                 onClick={() => void deleteSlack(item.id)}
                               >
-                                {t("identities.disconnect")}
+                                Disconnect
                               </Button>
                             </div>
                           </div>
@@ -1387,7 +1389,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     {/* Connected stats summary */}
                     <div class="flex gap-2.5">
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">{t("identities.status_label")}</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">Status</div>
                         <div class="flex items-center gap-1.5">
                           <div class={`w-1.5 h-1.5 rounded-full ${
                             slackIdentities().some((i) => i.running) ? "bg-emerald-9" : "bg-gray-8"
@@ -1395,18 +1397,18 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           <span class={`text-[13px] font-semibold ${
                             slackIdentities().some((i) => i.running) ? "text-emerald-11" : "text-gray-10"
                           }`}>
-                            {slackIdentities().some((i) => i.running) ? t("identities.status_active") : t("identities.status_stopped")}
+                            {slackIdentities().some((i) => i.running) ? "Active" : "Stopped"}
                           </span>
                         </div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">{t("identities.identities_label")}</div>
-                        <div class="text-[13px] font-semibold text-gray-12">{slackIdentities().length} {t("identities.configured_suffix")}</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">Identities</div>
+                        <div class="text-[13px] font-semibold text-gray-12">{slackIdentities().length} configured</div>
                       </div>
                       <div class="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                        <div class="text-[11px] text-gray-9 mb-0.5">{t("identities.channel_label")}</div>
+                        <div class="text-[11px] text-gray-9 mb-0.5">Channel</div>
                         <div class="text-[13px] font-semibold text-gray-12">
-                          {health()?.channels.slack ? t("common.on") : t("common.off")}
+                          {health()?.channels.slack ? "On" : "Off"}
                         </div>
                       </div>
                     </div>
@@ -1423,13 +1425,13 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                   <div class="space-y-2.5">
                     <Show when={slackIdentities().length === 0}>
                       <p class="text-[13px] text-gray-10 leading-relaxed">
-                        {t("identities.slack_intro")}
+                        Connect your Slack workspace to let team members interact with this worker in channels and DMs.
                       </p>
                     </Show>
 
                     <div class="space-y-2">
                       <div>
-                        <label class="text-[12px] text-gray-9 block mb-1">{t("identities.bot_token_label")}</label>
+                        <label class="text-[12px] text-gray-9 block mb-1">Bot token</label>
                         <input
                           class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
                           placeholder="xoxb-..."
@@ -1439,7 +1441,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         />
                       </div>
                       <div>
-                        <label class="text-[12px] text-gray-9 block mb-1">{t("identities.app_token_label")}</label>
+                        <label class="text-[12px] text-gray-9 block mb-1">App token</label>
                         <input
                           class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
                           placeholder="xapp-..."
@@ -1456,7 +1458,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                         checked={slackEnabled()}
                         onChange={(e) => setSlackEnabled(e.currentTarget.checked)}
                       />
-                      {t("identities.enabled_label")}
+                      Enabled
                     </label>
 
                     <button
@@ -1477,7 +1479,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                       >
                         <Link size={15} />
                       </Show>
-                      {slackSaving() ? t("identities.connecting") : t("identities.connect_slack")}
+                      {slackSaving() ? "Connecting..." : "Connect Slack"}
                     </button>
 
                     <Show when={slackIdentities().length === 0}>
@@ -1502,20 +1504,21 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         {/* ---- Message routing ---- */}
         <div>
           <div class="text-[11px] font-semibold text-gray-9 uppercase tracking-wider mb-2">
-            {t("identities.message_routing_title")}
+            Message routing
           </div>
           <p class="text-[13px] text-gray-9 leading-relaxed mb-3">
-            {t("identities.message_routing_desc")}
+            Control which conversations go to which workspace folder. Messages are
+            routed to the worker's default folder unless you set up rules here.
           </p>
 
           <div class="rounded-xl border border-gray-4 bg-gray-2/50 px-4 py-3.5 space-y-3">
             <div class="flex items-center gap-2">
               <Shield size={16} class="text-gray-9" />
-              <span class="text-[13px] font-medium text-gray-11">{t("identities.default_routing")}</span>
+              <span class="text-[13px] font-medium text-gray-11">Default routing</span>
             </div>
             <div class="flex items-center gap-2 pl-6">
               <span class="rounded-md bg-gray-4 px-2.5 py-1 text-[12px] font-medium text-gray-11">
-                {t("identities.all_channels")}
+                All channels
               </span>
               <ArrowRight size={14} class="text-gray-8" />
               <span class="rounded-md bg-dls-accent/10 px-2.5 py-1 text-[12px] font-medium text-dls-accent">
@@ -1525,7 +1528,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           </div>
 
           <div class="text-xs text-gray-10 mt-2.5">
-            {t("identities.routing_override_prefix")} <code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">/dir &lt;path&gt;</code> {t("identities.routing_override_suffix")}
+            Advanced: reply with <code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">/dir &lt;path&gt;</code> in Slack/Telegram to override the directory for a specific chat (limited to this workspace root).
           </div>
         </div>
 
@@ -1533,9 +1536,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-4 space-y-3">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-[13px] font-semibold text-gray-12">{t("identities.agent_behavior_title")}</div>
+              <div class="text-[13px] font-semibold text-gray-12">Messaging agent behavior</div>
               <div class="text-[12px] text-gray-9 mt-0.5">
-                {t("identities.agent_behavior_desc")}
+                One file per workspace. Add optional first line <code class="font-mono">@agent &lt;id&gt;</code> to route via a specific OpenCode agent.
               </div>
             </div>
             <span class="rounded-md border border-gray-4 bg-gray-2/50 px-2 py-1 text-[11px] font-mono text-gray-10">
@@ -1546,24 +1549,24 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           <Show when={workspaceAgentStatus()}>
             {(value) => (
               <div class="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10">
-                {t("identities.agent_scope_status", undefined, { status: value().loaded ? t("identities.agent_status_loaded") : t("identities.agent_status_missing"), agent: value().selected || t("identities.agent_none") })}
+                Active scope: workspace · status: {value().loaded ? "loaded" : "missing"} · selected agent: {value().selected || "(none)"}
               </div>
             )}
           </Show>
 
           <Show when={agentLoading()}>
-            <div class="text-[11px] text-gray-9">{t("identities.agent_loading")}</div>
+            <div class="text-[11px] text-gray-9">Loading agent file…</div>
           </Show>
 
           <Show when={!agentExists() && !agentLoading()}>
             <div class="rounded-lg border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
-              {t("identities.agent_not_found")}
+              Agent file not found in this workspace yet.
             </div>
           </Show>
 
           <textarea
             class="min-h-[220px] w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-[13px] font-mono text-gray-12 placeholder:text-gray-8"
-            placeholder={t("identities.agent_placeholder")}
+            placeholder="Add messaging behavior instructions for opencodeRouter here..."
             value={agentDraft()}
             onInput={(e) => setAgentDraft(e.currentTarget.value)}
           />
@@ -1575,7 +1578,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               onClick={() => void loadAgentFile()}
               disabled={agentLoading() || !workspaceId()}
             >
-              {t("identities.reload")}
+              Reload
             </Button>
             <Show when={!agentExists()}>
               <Button
@@ -1584,7 +1587,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 onClick={() => void createDefaultAgentFile()}
                 disabled={agentSaving() || !workspaceId()}
               >
-                {t("identities.create_default_file")}
+                Create default file
               </Button>
             </Show>
             <Button
@@ -1593,10 +1596,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               onClick={() => void saveAgentFile()}
               disabled={agentSaving() || !workspaceId() || !agentDirty()}
             >
-              {agentSaving() ? t("identities.saving") : t("identities.save_behavior")}
+              {agentSaving() ? "Saving..." : "Save behavior"}
             </Button>
             <Show when={agentDirty() && !agentSaving()}>
-              <span class="text-[11px] text-gray-9">{t("identities.unsaved_changes")}</span>
+              <span class="text-[11px] text-gray-9">Unsaved changes</span>
             </Show>
           </div>
 
@@ -1611,15 +1614,15 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         {/* ---- Outbound send test ---- */}
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-4 space-y-3">
           <div>
-            <div class="text-[13px] font-semibold text-gray-12">{t("identities.send_test_title")}</div>
+            <div class="text-[13px] font-semibold text-gray-12">Send test message</div>
             <div class="text-[12px] text-gray-9 mt-0.5">
-              {t("identities.send_test_desc")}
+              Validate outbound wiring. Use a peer ID for direct send, or leave peer ID empty to fan out by bindings in a directory.
             </div>
           </div>
 
           <div class="grid gap-2 sm:grid-cols-2">
             <div>
-              <label class="text-[12px] text-gray-9 block mb-1">{t("identities.channel_label")}</label>
+              <label class="text-[12px] text-gray-9 block mb-1">Channel</label>
               <select
                 class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12"
                 value={sendChannel()}
@@ -1630,10 +1633,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               </select>
             </div>
             <div>
-              <label class="text-[12px] text-gray-9 block mb-1">{t("identities.peer_id_label")}</label>
+              <label class="text-[12px] text-gray-9 block mb-1">Peer ID (optional)</label>
               <input
                 class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
-                placeholder={sendChannel() === "telegram" ? t("identities.peer_id_placeholder_telegram") : t("identities.peer_id_placeholder_slack")}
+                placeholder={sendChannel() === "telegram" ? "Telegram chat id (e.g. 123456789)" : "Slack peer id (e.g. D12345678|thread_ts)"}
                 value={sendPeerId()}
                 onInput={(e) => setSendPeerId(e.currentTarget.value)}
               />
@@ -1642,7 +1645,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
           <div class="grid gap-2 sm:grid-cols-2">
             <div>
-              <label class="text-[12px] text-gray-9 block mb-1">{t("identities.directory_label")}</label>
+              <label class="text-[12px] text-gray-9 block mb-1">Directory (optional)</label>
               <input
                 class="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
                 placeholder={defaultRoutingDirectory()}
@@ -1657,16 +1660,16 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                   checked={sendAutoBind()}
                   onChange={(e) => setSendAutoBind(e.currentTarget.checked)}
                 />
-                {t("identities.auto_bind_label")}
+                Auto-bind peer to directory on direct send
               </label>
             </div>
           </div>
 
           <div>
-            <label class="text-[12px] text-gray-9 block mb-1">{t("identities.message_label")}</label>
+            <label class="text-[12px] text-gray-9 block mb-1">Message</label>
             <textarea
               class="min-h-[90px] w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
-              placeholder={t("identities.send_test_button")}
+              placeholder="Test message content"
               value={sendText()}
               onInput={(e) => setSendText(e.currentTarget.value)}
             />
@@ -1679,7 +1682,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               onClick={() => void sendTestMessage()}
               disabled={sendBusy() || !workspaceId() || !sendText().trim()}
             >
-              {sendBusy() ? t("identities.sending") : t("identities.send_test_button")}
+              {sendBusy() ? "Sending..." : "Send test message"}
             </Button>
             <Show when={sendStatus()}>
               {(value) => <span class="text-[11px] text-gray-9">{value()}</span>}
@@ -1719,10 +1722,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
         <ConfirmModal
           open={messagingRiskOpen()}
-          title={t("identities.enable_messaging_title")}
-          message={t("identities.enable_messaging_risk")}
-          confirmLabel={messagingSaving() ? t("identities.enabling") : t("identities.enable_messaging")}
-          cancelLabel={t("common.cancel")}
+          title="Enable messaging for this worker?"
+          message="Messaging can expose this worker to remote commands. If a bot is public or compromised, it can access files, credentials, and API keys available to this worker."
+          confirmLabel={messagingSaving() ? "Enabling..." : "Enable messaging"}
+          cancelLabel="Cancel"
           variant="danger"
           onCancel={() => {
             if (messagingSaving()) return;
@@ -1735,14 +1738,14 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
         <ConfirmModal
           open={messagingRestartPromptOpen()}
-          title={t("identities.restart_worker_title")}
+          title="Restart worker now?"
           message={
             messagingRestartAction() === "enable"
-              ? t("identities.restart_to_enable_messaging")
-              : t("identities.restart_to_disable_messaging")
+              ? "Messaging was enabled for this workspace. Restart the worker now to start the messaging sidecar and unlock Telegram and Slack setup."
+              : "Messaging was disabled for this workspace. Restart the worker now to stop the messaging sidecar."
           }
-          confirmLabel={messagingRestartBusy() ? t("identities.restarting") : t("identities.restart_worker")}
-          cancelLabel={t("identities.later")}
+          confirmLabel={messagingRestartBusy() ? "Restarting..." : "Restart worker"}
+          cancelLabel="Later"
           onCancel={() => {
             if (messagingRestartBusy()) return;
             setMessagingRestartPromptOpen(false);
@@ -1754,10 +1757,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
         <ConfirmModal
           open={messagingDisableConfirmOpen()}
-          title={t("identities.disable_messaging_title")}
-          message={t("identities.disable_messaging_message")}
-          confirmLabel={messagingSaving() ? t("identities.disabling") : t("identities.disable_messaging")}
-          cancelLabel={t("common.cancel")}
+          title="Disable messaging for this worker?"
+          message="This will turn off messaging for this workspace. Telegram and Slack setup will be hidden until messaging is enabled again, and you will need to restart the worker to fully stop the messaging sidecar."
+          confirmLabel={messagingSaving() ? "Disabling..." : "Disable messaging"}
+          cancelLabel="Cancel"
           onCancel={() => {
             if (messagingSaving()) return;
             setMessagingDisableConfirmOpen(false);
@@ -1769,10 +1772,17 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
         <ConfirmModal
           open={publicTelegramWarningOpen()}
-          title={t("identities.public_bot_warning_title")}
-          message={t("identities.public_bot_warning_message")}
-          confirmLabel={t("identities.public_bot_confirm")}
-          cancelLabel={t("common.cancel")}
+          title="Make this bot public?"
+          message={
+            <>
+              Your bot will be accessible to the public and anyone who gets access to your bot will be able to have
+              full access to your local worker including any files or API keys that you've given it. If you create a
+              private bot, you can limit who can access it by requiring a pairing token. Are you sure you want to make
+              your bot public?
+            </>
+          }
+          confirmLabel="Yes I understand the risk"
+          cancelLabel="Cancel"
           variant="danger"
           confirmButtonVariant="danger"
           cancelButtonVariant="primary"
