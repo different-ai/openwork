@@ -73,6 +73,15 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
     ? searchHits[Math.max(0, Math.min(searchIndex, searchHits.length - 1))]
     : null;
 
+  const openSessionFromWorkspace = async (workspaceId: string, sessionId: string) => {
+    const wid = workspaceId.trim();
+    const sid = sessionId.trim();
+    if (!wid || !sid) return;
+    const ready = await Promise.resolve(surface.switchWorkspace(wid));
+    if (!ready) return;
+    surface.setView("session", sid);
+  };
+
   const paletteItems = useMemo(() => {
     const base = [
       {
@@ -101,7 +110,7 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
           meta: "session",
           action: () => {
             setPaletteOpen(false);
-            surface.setView("session", session.id);
+            void openSessionFromWorkspace(group.workspace.id, session.id);
           },
         })),
       ),
@@ -233,7 +242,9 @@ export default function ReactSessionViewV2(props: ReactSessionViewV2Props) {
             selectedSessionId: surface.selectedSessionId,
             sessionStatusById: surface.sessionStatusById,
             onSelectWorkspace: surface.selectWorkspace,
-            onOpenSession: (sessionId: string) => surface.setView("session", sessionId),
+            onOpenSession: (workspaceId: string, sessionId: string) => {
+              void openSessionFromWorkspace(workspaceId, sessionId);
+            },
           }),
         ),
         createElement(

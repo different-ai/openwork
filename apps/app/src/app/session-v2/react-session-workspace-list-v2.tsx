@@ -9,7 +9,7 @@ type ReactSessionWorkspaceListV2Props = {
   selectedSessionId: string | null;
   sessionStatusById: Record<string, string>;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (workspaceId: string, sessionId: string) => void;
 };
 
 const sessionTitle = (raw: string | null | undefined) =>
@@ -70,7 +70,7 @@ export default function ReactSessionWorkspaceListV2(
                     ? "bg-dls-active text-dls-text"
                     : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
                 }`,
-                onClick: () => props.onOpenSession(session.id),
+                onClick: () => props.onOpenSession(workspace.id, session.id),
               },
               createElement("span", { className: "truncate" }, sessionTitle(session.title)),
               status && status !== "idle"

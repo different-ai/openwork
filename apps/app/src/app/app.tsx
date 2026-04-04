@@ -2215,6 +2215,19 @@ export default function App() {
   const sendReactSessionPrompt = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    let workspaceId = workspaceStore.selectedWorkspaceId().trim();
+    if (!workspaceId) {
+      const fallbackWorkspaceId =
+        sidebarWorkspaceGroups()[0]?.workspace.id?.trim() ||
+        workspaceStore.workspaces()[0]?.id?.trim() ||
+        "";
+      if (fallbackWorkspaceId) {
+        const ready = await Promise.resolve(workspaceStore.switchWorkspace(fallbackWorkspaceId));
+        if (!ready) return;
+        workspaceId = workspaceStore.selectedWorkspaceId().trim();
+      }
+    }
+    if (!workspaceId) return;
     const draft: ComposerDraft = {
       mode: "prompt",
       text: trimmed,
