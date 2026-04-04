@@ -46,13 +46,10 @@ import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 
 import {
   ArrowDownToLine,
-  Check,
   FolderOpen,
   HardDrive,
-  ListTodo,
   Loader2,
   Menu,
-  Minimize2,
   RefreshCcw,
   Redo2,
   Search,
@@ -109,6 +106,7 @@ import { createShareWorkspaceState } from "../session/share-workspace";
 import ReactSessionHeaderHost from "../session/react-session-header-host";
 import ReactSessionSearchPanelHost from "../session/react-session-search-panel-host";
 import ReactSessionSidebarShellHost from "../session/react-session-sidebar-shell-host";
+import ReactSessionTodoPanelHost from "../session/react-session-todo-panel-host";
 import { latestSessionErrorTurnTime, shouldResetRunState } from "../session/run-state";
 import {
   getSessionDraft,
@@ -3233,73 +3231,6 @@ export default function SessionView(props: SessionViewProps) {
       </Show>
     </>
   );
-  const renderTodoPanel = () => (
-    <div class="mx-auto w-full max-w-[800px] px-4">
-      <div class="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
-        <button
-          type="button"
-          class="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
-          onClick={() => setTodoExpanded((prev) => !prev)}
-        >
-          <div class="flex items-center gap-2">
-            <ListTodo size={14} class="text-gray-8" />
-            <span class="text-gray-11 font-medium">{todoLabel()}</span>
-          </div>
-          <Minimize2
-            size={12}
-            class={`text-gray-8 transition-transform ${todoExpanded() ? "" : "rotate-180"}`}
-          />
-        </button>
-        <Show when={todoExpanded()}>
-          <div class="max-h-60 overflow-auto border-t border-dls-border px-4 pb-3 space-y-2.5">
-            <For each={todoList()}>
-              {(todo, index) => {
-                const done = () => todo.status === "completed";
-                const cancelled = () => todo.status === "cancelled";
-                const active = () => todo.status === "in_progress";
-                return (
-                  <div class="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
-                    <div class="flex items-center gap-1.5 pt-0.5">
-                      <div
-                        class={`h-4.5 w-4.5 rounded-full border flex items-center justify-center ${
-                          done()
-                            ? "border-green-6 bg-green-2 text-green-11"
-                            : active()
-                              ? "border-amber-6 bg-amber-2 text-amber-11"
-                              : cancelled()
-                                ? "border-gray-6 bg-gray-2 text-gray-8"
-                                : "border-gray-6 bg-gray-1 text-gray-8"
-                        }`}
-                      >
-                        <Show when={done()}>
-                          <Check size={10} />
-                        </Show>
-                        <Show when={!done() && active()}>
-                          <span class="h-1.5 w-1.5 rounded-full bg-amber-9" />
-                        </Show>
-                      </div>
-                    </div>
-                    <div
-                      class={`flex-1 text-sm leading-relaxed ${
-                        cancelled()
-                          ? "text-gray-9 line-through"
-                          : "text-gray-12"
-                      }`}
-                    >
-                      <span class="text-gray-9 mr-1.5">
-                        {index() + 1}.
-                      </span>
-                      {todo.content}
-                    </div>
-                  </div>
-                );
-              }}
-            </For>
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
   const renderComposerPanel = () => (
     <Composer
       prompt={props.prompt}
@@ -3406,7 +3337,14 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </div>
 
-          <Show when={todoCount() > 0}>{renderTodoPanel()}</Show>
+          <Show when={todoCount() > 0}>
+            <ReactSessionTodoPanelHost
+              items={todoList()}
+              expanded={todoExpanded()}
+              label={todoLabel()}
+              onToggleExpanded={() => setTodoExpanded((prev) => !prev)}
+            />
+          </Show>
           <Show when={!showWorkspaceSetupEmptyState()}>{renderComposerPanel()}</Show>
 
           <StatusBar
