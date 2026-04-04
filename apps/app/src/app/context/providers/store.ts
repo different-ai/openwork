@@ -2,7 +2,7 @@ import { createMemo, createSignal, type Accessor } from "solid-js";
 
 import type { ProviderAuthAuthorization, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
-import { t } from "../../../i18n";
+import { t, currentLocale } from "../../../i18n";
 import { unwrap, waitForHealthy } from "../../lib/opencode";
 import type { Client, ProviderListItem, WorkspaceDisplay } from "../../types";
 import { safeStringify } from "../../utils";
@@ -70,7 +70,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
   const assertNoClientError = (result: unknown) => {
     const maybe = result as { error?: unknown } | null | undefined;
     if (!maybe || maybe.error === undefined) return;
-    throw new Error(describeProviderError(maybe.error, t("providers.request_failed")));
+    throw new Error(describeProviderError(maybe.error, t("app.error_request_failed", currentLocale())));
   };
 
   const describeProviderError = (error: unknown, fallback: string) => {
@@ -125,9 +125,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
     const generic = raw && /^unknown\s+error$/i.test(raw);
     const heading = (() => {
-      if (status === 401 || status === 403) return t("providers.auth_failed");
-      if (status === 429) return t("providers.rate_limit_exceeded");
-      if (provider) return t("providers.provider_error", undefined, { provider });
+      if (status === 401 || status === 403) return t("app.error_auth_failed", currentLocale());
+      if (status === 429) return t("app.error_rate_limit", currentLocale());
+      if (provider) return `Provider error (${provider})`;
       return fallback;
     })();
 
@@ -167,7 +167,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
       const existing = merged[id] ?? [];
       if (existing.some((method) => method.type === "api")) continue;
-      merged[id] = [...existing, { type: "api", label: t("providers.api_key_label") }];
+      merged[id] = [...existing, { type: "api", label: "API key" }];
     }
     for (const [id, providerMethods] of Object.entries(merged)) {
       const provider = availableProviders.find((item) => item.id === id);
@@ -188,7 +188,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
   const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
     const methods = unwrap(await c.provider.auth());
     return buildProviderAuthMethods(
@@ -205,7 +205,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
     try {
       const cachedMethods = providerAuthMethods();
@@ -214,17 +214,17 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         : await loadProviderAuthMethods(providerAuthWorkerType());
       const providerIds = Object.keys(authMethods).sort();
       if (!providerIds.length) {
-        throw new Error(t("providers.no_providers_available"));
+        throw new Error("No providers available");
       }
 
       const resolved = providerId?.trim() ?? "";
       if (!resolved) {
-        throw new Error(t("providers.provider_id_required"));
+        throw new Error("Provider ID is required");
       }
 
       const methods = authMethods[resolved];
       if (!methods || !methods.length) {
-        throw new Error(`${t("providers.unknown_provider")}: ${resolved}`);
+        throw new Error(`Unknown provider: ${resolved}`);
       }
 
       const oauthIndex =
@@ -232,12 +232,12 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
           ? methodIndex
           : methods.find((method) => method.type === "oauth")?.methodIndex ?? -1;
       if (oauthIndex === -1) {
-        throw new Error(`${t("providers.no_oauth_prefix")} ${resolved}. ${t("providers.use_api_key_suffix")}`);
+        throw new Error(`No OAuth flow available for ${resolved}. Use an API key instead.`);
       }
 
       const selectedMethod = methods.find((method) => method.methodIndex === oauthIndex);
       if (!selectedMethod || selectedMethod.type !== "oauth") {
-        throw new Error(`${t("providers.not_oauth_flow_prefix")} ${resolved}.`);
+        throw new Error(`Selected auth method is not an OAuth flow for ${resolved}.`);
       }
 
       const auth = unwrap(await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }));
@@ -246,7 +246,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         authorization: auth,
       };
     } catch (error) {
-      const message = describeProviderError(error, t("providers.connect_failed"));
+      const message = describeProviderError(error, "Failed to connect provider");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -310,16 +310,16 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const resolved = providerId?.trim();
     if (!resolved) {
-      throw new Error(t("providers.provider_id_required"));
+      throw new Error("Provider ID is required");
     }
 
     if (!Number.isInteger(methodIndex) || methodIndex < 0) {
-      throw new Error(t("providers.oauth_method_required"));
+      throw new Error("OAuth method is required");
     }
 
     const waitForProviderConnection = async (timeoutMs = 15_000, pollMs = 2_000) => {
@@ -354,26 +354,26 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       const updated = await refreshProviders({ dispose: true });
       const connectedNow = Array.isArray(updated?.connected) && updated.connected.includes(resolved);
       if (connectedNow) {
-        return { connected: true, message: `${t("status.connected")} ${resolved}` };
+        return { connected: true, message: `Connected ${resolved}` };
       }
       const connected = await waitForProviderConnection();
       if (connected) {
-        return { connected: true, message: `${t("status.connected")} ${resolved}` };
+        return { connected: true, message: `Connected ${resolved}` };
       }
       return { connected: false, pending: true };
     } catch (error) {
       if (isPendingOauthError(error)) {
         const updated = await refreshProviders({ dispose: true });
         if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-          return { connected: true, message: `${t("status.connected")} ${resolved}` };
+          return { connected: true, message: `Connected ${resolved}` };
         }
         const connected = await waitForProviderConnection();
         if (connected) {
-          return { connected: true, message: `${t("status.connected")} ${resolved}` };
+          return { connected: true, message: `Connected ${resolved}` };
         }
         return { connected: false, pending: true };
       }
-      const message = describeProviderError(error, t("providers.oauth_failed"));
+      const message = describeProviderError(error, "Failed to complete OAuth");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -383,12 +383,12 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const trimmed = apiKey.trim();
     if (!trimmed) {
-      throw new Error(t("providers.api_key_required"));
+      throw new Error("API key is required");
     }
 
     try {
@@ -397,9 +397,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         auth: { type: "api", key: trimmed },
       });
       await refreshProviders({ dispose: true });
-      return `${t("status.connected")} ${providerId}`;
+      return `Connected ${providerId}`;
     } catch (error) {
-      const message = describeProviderError(error, t("providers.save_api_key_failed"));
+      const message = describeProviderError(error, "Failed to save API key");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -409,12 +409,12 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     setProviderAuthError(null);
     const c = options.client();
     if (!c) {
-      throw new Error(t("providers.not_connected"));
+      throw new Error(t("app.error_not_connected", currentLocale()));
     }
 
     const resolved = providerId.trim();
     if (!resolved) {
-      throw new Error(t("providers.provider_id_required"));
+      throw new Error("Provider ID is required");
     }
 
     const provider = options.providers().find((entry) => entry.id === resolved) as
@@ -447,7 +447,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         return;
       }
 
-      throw new Error(t("providers.removal_unsupported"));
+      throw new Error("Provider auth removal is not supported by this client.");
     };
 
     const disableProvider = async () => {
@@ -492,18 +492,18 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         }
         if (!Array.isArray(updated?.connected) || !updated.connected.includes(resolved)) {
           return disabled
-            ? `${t("providers.disconnected_prefix")} ${resolved} ${t("providers.disabled_in_config_suffix")}`
-            : `${t("providers.disconnected_prefix")} ${resolved}.`;
+            ? `Disconnected ${resolved} and disabled it in OpenCode config.`
+            : `Disconnected ${resolved}.`;
         }
       }
 
       if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-        return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
+        return `Removed stored credentials for ${resolved}, but the worker still reports it as connected. Clear any remaining API key or OAuth credentials and restart the worker to fully disconnect.`;
       }
       removeProviderFromState(resolved);
-      return `${t("providers.disconnected_prefix")} ${resolved}`;
+      return `Disconnected ${resolved}`;
     } catch (error) {
-      const message = describeProviderError(error, t("providers.disconnect_failed"));
+      const message = describeProviderError(error, "Failed to disconnect provider");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -524,7 +524,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     } catch (error) {
       setProviderAuthPreferredProviderId(null);
       setProviderAuthReturnFocusTarget("none");
-      const message = describeProviderError(error, t("providers.load_failed"));
+      const message = describeProviderError(error, "Failed to load providers");
       setProviderAuthError(message);
       throw error;
     } finally {

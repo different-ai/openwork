@@ -5,7 +5,6 @@ import { schedulerDeleteJob, schedulerListJobs } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
 import { createWorkspaceContextKey } from "./workspace-context";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
-import { t } from "../../i18n";
 
 export type AutomationsStore = ReturnType<typeof createAutomationsStore>;
 
@@ -34,10 +33,10 @@ const buildCreateAutomationPrompt = (
   const schedule = input.schedule.trim();
   const prompt = normalizeSentence(input.prompt);
   if (!schedule) {
-    return { ok: false, error: t("automations.schedule_required") };
+    return { ok: false, error: "Schedule is required." };
   }
   if (!prompt) {
-    return { ok: false, error: t("automations.prompt_required") };
+    return { ok: false, error: "Prompt is required." };
   }
   const workdir = (input.workdir ?? "").trim();
   const nameSegment = name ? ` named \"${name}\"` : "";
@@ -59,7 +58,7 @@ const buildRunAutomationPrompt = (
   if (job.run?.prompt || job.prompt) {
     const promptBody = (job.run?.prompt ?? job.prompt ?? "").trim();
     if (!promptBody) {
-      return { ok: false, error: t("automations.prompt_empty") };
+      return { ok: false, error: "Automation prompt is empty." };
     }
     return {
       ok: true,
@@ -137,10 +136,10 @@ export function createAutomationsStore(options: {
         if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const status =
           options.openworkServer.openworkServerStatus() === "disconnected"
-            ? t("automations.server_unavailable")
+            ? "OpenWork server unavailable. Connect to sync scheduled tasks."
             : options.openworkServer.openworkServerStatus() === "limited"
-              ? t("automations.server_needs_token")
-              : t("automations.server_not_ready");
+              ? "OpenWork server needs a token to load scheduled tasks."
+              : "OpenWork server not ready.";
         setScheduledJobsStatus(status);
         return "unavailable";
       }
@@ -156,7 +155,7 @@ export function createAutomationsStore(options: {
       } catch (error) {
         if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const message = error instanceof Error ? error.message : String(error);
-        setScheduledJobsStatus(message || t("automations.failed_to_load"));
+        setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
         return "error";
       } finally {
         setScheduledJobsBusy(false);
@@ -181,7 +180,7 @@ export function createAutomationsStore(options: {
     } catch (error) {
       if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
       const message = error instanceof Error ? error.message : String(error);
-      setScheduledJobsStatus(message || t("automations.failed_to_load"));
+      setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
       return "error";
     } finally {
       setScheduledJobsBusy(false);
@@ -193,7 +192,7 @@ export function createAutomationsStore(options: {
       const client = options.openworkServer.openworkServerClient();
       const workspaceId = (options.runtimeWorkspaceId() ?? "").trim();
       if (!client || !workspaceId) {
-        throw new Error(t("automations.server_unavailable"));
+        throw new Error("OpenWork server unavailable. Connect to sync scheduled tasks.");
       }
       const response = await client.deleteScheduledJob(workspaceId, name);
       setScheduledJobs((current) => current.filter((entry) => entry.slug !== response.job.slug));
@@ -201,7 +200,7 @@ export function createAutomationsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      throw new Error(t("automations.desktop_required"));
+      throw new Error("Scheduled tasks require the desktop app.");
     }
     const root = options.selectedWorkspaceRoot().trim();
     const job = await schedulerDeleteJob(name, root || undefined);

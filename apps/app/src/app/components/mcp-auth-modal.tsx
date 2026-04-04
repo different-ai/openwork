@@ -168,7 +168,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     statusPoll = window.setInterval(async () => {
       if (Date.now() - startedAt >= MCP_AUTH_TIMEOUT_MS) {
         stopStatusPolling();
-        setError(translate("mcp.auth.request_timed_out"));
+        setError("Request timed out.");
         return;
       }
 
@@ -694,7 +694,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <CheckCircle2 size={24} class="text-green-11" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.already_connected")}</p>
+                    <p class="text-sm font-medium text-gray-12">Already Connected</p>
                     <p class="text-xs text-gray-11">
                         {translate("mcp.auth.already_connected_description", { server: serverName() })}
                     </p>
@@ -804,7 +804,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 </div>
                 <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2 flex items-center gap-3">
                   <div class="flex-1 min-w-0">
-                    <div class="text-[10px] uppercase tracking-wide text-gray-8">{translate("mcp.auth.authorization_link")}</div>
+                    <div class="text-[10px] uppercase tracking-wide text-gray-8">Authorization link</div>
                     <div class="text-[11px] text-gray-11 font-mono truncate">
                       {authorizationUrl()}
                     </div>
@@ -814,7 +814,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     class="text-xs"
                     onClick={handleCopyAuthorizationUrl}
                   >
-                    {authUrlCopied() ? translate("mcp.auth.copied") : translate("mcp.auth.copy_link")}
+                    {authUrlCopied() ? "Copied" : "Copy link"}
                   </Button>
                 </div>
                 <TextInput
@@ -851,7 +851,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     1
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step1_title")}</p>
+                    <p class="text-sm font-medium text-gray-12">Opening your browser</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step1_description", { server: serverName() })}
                     </p>
@@ -863,7 +863,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     2
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step2_title")}</p>
+                    <p class="text-sm font-medium text-gray-12">Authorize OpenWork</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step2_description")}
                     </p>
@@ -875,7 +875,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     3
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step3_title")}</p>
+                    <p class="text-sm font-medium text-gray-12">Return here when you're done</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step3_description")}
                     </p>
