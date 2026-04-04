@@ -42,7 +42,7 @@ export function LocalProvider(props: ParentProps) {
       showThinking: false,
       modelVariant: null,
       defaultModel: null,
-      reactSessionV2: false,
+      reactSessionV2: true,
     }),
   );
 
