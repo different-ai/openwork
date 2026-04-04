@@ -151,17 +151,13 @@ function toEntry(release, prevVersion) {
 function renderEntry(entry) {
   const lines = []
 
-  // Date + tag line
-  lines.push(`${entry.date} \`${entry.tag}\``)
-  lines.push("")
+  // Version description with optional compare link
+  const description = entry.compareUrl
+    ? `[${entry.version}](${entry.compareUrl})`
+    : entry.version
 
-  // Version heading with optional compare link
-  if (entry.compareUrl) {
-    lines.push(`## [${entry.version}](${entry.compareUrl})`)
-  } else {
-    lines.push(`## ${entry.version}`)
-  }
-
+  // Open <Update> with date label, version description, and tag
+  lines.push(`<Update label="${entry.date}" description="${description}" tags={["${entry.tag}"]}>`)
   lines.push("")
 
   // Body: major → bullet points, minor → one-liner
@@ -170,6 +166,9 @@ function renderEntry(entry) {
   } else {
     lines.push(entry.oneLiner)
   }
+
+  lines.push("")
+  lines.push("</Update>")
 
   return lines.join("\n")
 }
@@ -186,7 +185,7 @@ function renderChangelog(entries) {
     .filter((e) => e.date !== null) // skip unparseable dates
     .reverse() // newest first
     .map(renderEntry)
-    .join("\n\n---\n\n")
+    .join("\n\n")
 
   return header + body + "\n"
 }
