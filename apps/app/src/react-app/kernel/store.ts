@@ -46,9 +46,22 @@ type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 
 type SessionLoadStatus = "idle" | "loading" | "ready" | "error";
 
+export type WorkerProfile = {
+  id: string;
+  displayName: string;
+  hostUrl: string;
+  token: string;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  directory?: string | null;
+  source: "manual" | "cloud";
+};
+
 type OpenworkStore = {
   bootstrapping: boolean;
   server: ServerState;
+  workerProfiles: WorkerProfile[];
+  activeWorkerProfileId: string | null;
   workspaces: OpenworkWorkspaceInfo[];
   workspacesStatus: WorkspaceStatus;
   sessions: Session[];
@@ -69,6 +82,16 @@ type OpenworkStore = {
   logs: string[];
   bootstrap: () => Promise<void>;
   connectToServer: (input: { url: string; token?: string }) => Promise<void>;
+  connectRemoteWorkspace: (input: {
+    openworkHostUrl: string;
+    openworkToken: string;
+    directory?: string | null;
+    displayName?: string | null;
+    workspaceId?: string | null;
+    source?: WorkerProfile["source"];
+  }) => Promise<boolean>;
+  connectWorkerProfile: (profileId: string) => Promise<boolean>;
+  removeWorkerProfile: (profileId: string) => void;
   refreshServer: () => Promise<void>;
   selectWorkspace: (workspaceId: string, options?: { skipActivation?: boolean }) => Promise<void>;
   refreshSessions: (workspaceId?: string | null) => Promise<void>;
@@ -88,11 +111,37 @@ type OpenworkStore = {
 
 const ACTIVE_WORKSPACE_KEY = "openwork.react.activeWorkspace";
 const SESSION_BY_WORKSPACE_KEY = "openwork.react.sessionByWorkspace";
+const WORKER_PROFILES_KEY = "openwork.react.workerProfiles";
 
 let eventAbortController: AbortController | null = null;
 const EMPTY_MESSAGES: MessageWithParts[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
 const EMPTY_PERMISSIONS: PendingPermission[] = [];
+
+const readStoredWorkerProfiles = () => {
+  if (typeof window === "undefined") return [] as WorkerProfile[];
+  try {
+    const raw = window.localStorage.getItem(WORKER_PROFILES_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    if (!Array.isArray(parsed)) return [] as WorkerProfile[];
+    return parsed.filter((item): item is WorkerProfile => {
+      if (!item || typeof item !== "object") return false;
+      const record = item as Record<string, unknown>;
+      return typeof record.id === "string" && typeof record.displayName === "string" && typeof record.hostUrl === "string" && typeof record.token === "string";
+    });
+  } catch {
+    return [] as WorkerProfile[];
+  }
+};
+
+const writeStoredWorkerProfiles = (profiles: WorkerProfile[]) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(WORKER_PROFILES_KEY, JSON.stringify(profiles));
+  } catch {
+    // ignore
+  }
+};
 
 const now = () => Date.now();
 
@@ -191,6 +240,74 @@ const normalizeWorkspaceItems = (payload: unknown): { items: OpenworkWorkspaceIn
         ? record.selectedId
         : null;
   return { items, activeId };
+};
+
+const resolveOpenworkHost = async (input: {
+  hostUrl: string;
+  token?: string | null;
+  workspaceId?: string | null;
+  directoryHint?: string | null;
+}) => {
+  let normalizedHostUrl = normalizeOpenworkServerUrl(input.hostUrl) ?? "";
+  if (!normalizedHostUrl) {
+    throw new Error("OpenWork host URL is required.");
+  }
+
+  let inferredWorkspaceId: string | null = null;
+  try {
+    const url = new URL(normalizedHostUrl);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1] ?? "";
+    const prev = segments[segments.length - 2] ?? "";
+    if (prev === "w" && last) {
+      inferredWorkspaceId = decodeURIComponent(last);
+      const baseSegments = segments.slice(0, -2);
+      url.pathname = `/${baseSegments.join("/")}`;
+      normalizedHostUrl = url.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    // ignore
+  }
+
+  const trimmedToken = input.token?.trim() ?? "";
+  if (!trimmedToken) {
+    throw new Error("Access token required for OpenWork server.");
+  }
+
+  const requestedWorkspaceId = (input.workspaceId?.trim() || inferredWorkspaceId || "").trim();
+  const workspaceBaseUrl = buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, requestedWorkspaceId) ?? normalizedHostUrl;
+  const client = createOpenworkServerClient({ baseUrl: workspaceBaseUrl, token: trimmedToken });
+
+  const health = await client.health();
+  if (!health?.ok) {
+    throw new Error("OpenWork server unavailable. Check the URL and token.");
+  }
+
+  const response = await client.listWorkspaces();
+  const items = Array.isArray(response.items) ? response.items : [];
+  const hint = normalizeDirectoryPath(input.directoryHint ?? "");
+  const workspaceById = requestedWorkspaceId ? items.find((item) => item.id === requestedWorkspaceId) : undefined;
+  if (requestedWorkspaceId && !workspaceById) {
+    throw new Error("OpenWork worker not found on that host.");
+  }
+
+  const workspaceByHint = hint
+    ? items.find((item) => {
+        const entryPath = normalizeDirectoryPath((item.opencode?.directory as string | undefined) ?? item.path ?? "");
+        return Boolean(entryPath && entryPath === hint);
+      })
+    : undefined;
+
+  const workspace = workspaceById ?? workspaceByHint ?? items[0];
+  if (!workspace?.id) {
+    throw new Error("OpenWork server did not return a worker.");
+  }
+
+  return {
+    hostUrl: normalizedHostUrl,
+    workspace,
+    directory: workspace.opencode?.directory?.trim() ?? workspace.directory?.trim() ?? input.directoryHint?.trim() ?? "",
+  };
 };
 
 const createPlaceholderMessage = (part: Part): MessageWithParts => ({
@@ -665,6 +782,8 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
       capabilities: null,
       diagnostics: null,
     },
+    workerProfiles: readStoredWorkerProfiles(),
+    activeWorkerProfileId: null,
     workspaces: [],
     workspacesStatus: "idle",
     sessions: [],
@@ -694,9 +813,77 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
       });
       set((state) => ({
         server: { ...state.server, url: normalized, token: trimmedToken, status: normalized ? "connecting" : "idle", error: null },
+        activeWorkerProfileId: null,
         bootstrapping: false,
       }));
       await get().refreshServer();
+    },
+    connectRemoteWorkspace: async (input) => {
+      const hostUrl = input.openworkHostUrl.trim();
+      const token = input.openworkToken.trim();
+      if (!hostUrl || !token) {
+        set({ errorBanner: "Worker URL and token are required." });
+        return false;
+      }
+
+      try {
+        const resolved = await resolveOpenworkHost({
+          hostUrl,
+          token,
+          workspaceId: input.workspaceId,
+          directoryHint: input.directory,
+        });
+
+        const nextProfile: WorkerProfile = {
+          id: `remote:${resolved.hostUrl}:${resolved.workspace.id}:${resolved.directory || ""}`,
+          displayName: input.displayName?.trim() || resolved.workspace.name || resolved.hostUrl,
+          hostUrl: resolved.hostUrl,
+          token,
+          workspaceId: resolved.workspace.id,
+          workspaceName: resolved.workspace.name,
+          directory: resolved.directory || null,
+          source: input.source ?? "manual",
+        };
+
+        const nextProfiles = [
+          nextProfile,
+          ...get().workerProfiles.filter((profile) => profile.id !== nextProfile.id),
+        ];
+        writeStoredWorkerProfiles(nextProfiles);
+        set({ workerProfiles: nextProfiles, activeWorkerProfileId: nextProfile.id });
+
+        await get().connectToServer({ url: resolved.hostUrl, token });
+        await get().selectWorkspace(resolved.workspace.id, { skipActivation: false });
+        set({ activeWorkerProfileId: nextProfile.id });
+        return true;
+      } catch (error) {
+        set({ errorBanner: summarizeError(error) });
+        return false;
+      }
+    },
+    connectWorkerProfile: async (profileId) => {
+      const profile = get().workerProfiles.find((item) => item.id === profileId) ?? null;
+      if (!profile) return false;
+      const ok = await get().connectRemoteWorkspace({
+        openworkHostUrl: profile.hostUrl,
+        openworkToken: profile.token,
+        directory: profile.directory,
+        displayName: profile.displayName,
+        workspaceId: profile.workspaceId,
+        source: profile.source,
+      });
+      if (ok) {
+        set({ activeWorkerProfileId: profile.id });
+      }
+      return ok;
+    },
+    removeWorkerProfile: (profileId) => {
+      const next = get().workerProfiles.filter((profile) => profile.id !== profileId);
+      writeStoredWorkerProfiles(next);
+      set((state) => ({
+        workerProfiles: next,
+        activeWorkerProfileId: state.activeWorkerProfileId === profileId ? null : state.activeWorkerProfileId,
+      }));
     },
     bootstrap: async () => {
       hydrateOpenworkServerSettingsFromEnv();

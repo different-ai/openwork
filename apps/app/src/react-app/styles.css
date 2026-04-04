@@ -1,81 +1,10 @@
-@import "tailwindcss";
+@import "../app/index.css";
 @source "../../../../node_modules/streamdown/dist/*.js";
-
-:root {
-  color-scheme: light;
-  --dls-surface: #ffffff;
-  --dls-sidebar: #f9fafb;
-  --dls-app-bg: #f6f9fc;
-  --dls-border: #eceef1;
-  --dls-accent: #011627;
-  --dls-accent-hover: #000000;
-  --dls-accent-rgb: 1 22 39;
-  --dls-text-primary: #111827;
-  --dls-text-secondary: #6b7280;
-  --dls-hover: #f3f4f6;
-  --dls-active: #eef2f7;
-  --dls-radius: 16px;
-  --dls-radius-lg: 28px;
-  --dls-shell-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
-  --dls-card-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-  --background: #ffffff;
-  --foreground: #111827;
-  --card: #ffffff;
-  --card-foreground: #111827;
-  --muted: #f8fafc;
-  --muted-foreground: #6b7280;
-  --border: #eceef1;
-  --input: #eceef1;
-  --primary: #011627;
-  --primary-foreground: #ffffff;
-  --radius: 1rem;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  min-height: 100%;
-}
-
-body {
-  margin: 0;
-  font-family:
-    "IBM Plex Sans",
-    Geist,
-    "Avenir Next",
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--dls-text-primary);
-  background: linear-gradient(180deg, #f9fbfd 0%, #f4f7fb 100%);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-button,
-input,
-textarea {
-  font: inherit;
-}
 
 .ow-page-shell {
   min-height: 100vh;
   padding: 1rem;
+  background: var(--dls-app-bg);
 }
 
 @media (min-width: 1024px) {
@@ -96,149 +25,6 @@ textarea {
   }
 }
 
-.ow-soft-shell {
-  border: 1px solid var(--dls-border);
-  background: var(--dls-surface);
-  border-radius: 2rem;
-  box-shadow: var(--dls-shell-shadow);
-}
-
-.ow-soft-card {
-  border: 1px solid var(--dls-border);
-  background: var(--dls-surface);
-  border-radius: 1.5rem;
-  box-shadow: var(--dls-card-shadow);
-}
-
-.ow-soft-card-quiet {
-  border: 1px solid var(--dls-border);
-  background: var(--dls-sidebar);
-  border-radius: 1.5rem;
-}
-
-.ow-button-primary,
-.ow-button-secondary {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: center;
-  gap: 0.55rem;
-  border-radius: 9999px;
-  padding: 0.75rem 1.1rem;
-  font-size: 13px;
-  font-weight: 600;
-  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease, opacity 150ms ease;
-}
-
-.ow-button-primary {
-  border: 1px solid var(--dls-accent);
-  background: var(--dls-accent);
-  color: #ffffff;
-  box-shadow: 0 8px 20px -16px rgba(var(--dls-accent-rgb), 0.45);
-}
-
-.ow-button-primary:hover:not(:disabled) {
-  background: var(--dls-accent-hover);
-}
-
-.ow-button-secondary {
-  border: 1px solid var(--dls-border);
-  background: var(--dls-surface);
-  color: var(--dls-text-primary);
-}
-
-.ow-button-secondary:hover:not(:disabled) {
-  background: var(--dls-hover);
-}
-
-.ow-button-primary:active:not(:disabled),
-.ow-button-secondary:active:not(:disabled) {
-  transform: scale(0.99);
-}
-
-.ow-button-primary:disabled,
-.ow-button-secondary:disabled {
-  opacity: 0.55;
-}
-
-.ow-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  padding: 0.25rem 0.625rem;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.ow-status-pill-positive {
-  border: 1px solid rgba(16, 185, 129, 0.16);
-  background: #ecfdf5;
-  color: #047857;
-}
-
-.ow-status-pill-warning {
-  border: 1px solid rgba(245, 158, 11, 0.16);
-  background: #fffbeb;
-  color: #b45309;
-}
-
-.ow-status-pill-neutral {
-  border: 1px solid #e5e7eb;
-  background: #f9fafb;
-  color: #6b7280;
-}
-
-.ow-icon-tile {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.9rem;
-  background: #f4f6f8;
-}
-
-.ow-input,
-.ow-title-input {
-  appearance: none;
-  width: 100%;
-  border: 0;
-  border-radius: 0.95rem;
-  background: #fbfbfc;
-  box-shadow: inset 0 0 0 1px #eceef1;
-  color: var(--dls-text-primary);
-}
-
-.ow-input {
-  padding: 0.875rem 1rem;
-}
-
-.ow-title-input {
-  padding: 0;
-  background: transparent;
-  box-shadow: none;
-  font-size: clamp(1.6rem, 2vw, 2rem);
-  line-height: 1.2;
-  font-weight: 650;
-}
-
-.ow-input::placeholder,
-.ow-title-input::placeholder {
-  color: #9ca3af;
-}
-
-.ow-input:focus,
-.ow-title-input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px rgba(var(--dls-accent-rgb), 0.22), 0 0 0 3px rgba(var(--dls-accent-rgb), 0.08);
-}
-
-.ow-title-input:focus {
-  background: #fbfbfc;
-  padding: 0.5rem 0.75rem;
-}
-
 .ow-kicker,
 .ow-panel-heading {
   display: inline-flex;
@@ -248,94 +34,79 @@ textarea {
   font-weight: 700;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--dls-text-secondary);
 }
 
-.ow-panel-heading {
-  color: #475569;
+.ow-title-input {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--dls-text-primary);
+  font-size: clamp(1.5rem, 2vw, 1.9rem);
+  line-height: 1.2;
+  font-weight: 600;
 }
 
-.ow-nav-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  border-radius: 9999px;
-  border: 1px solid var(--dls-border);
-  background: var(--dls-surface);
-  padding: 0.62rem 0.95rem;
-  color: #64748b;
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+.ow-title-input::placeholder {
+  color: #9ca3af;
 }
 
-.ow-nav-link:hover,
-.ow-nav-link-active {
-  border-color: #d7dde4;
-  background: #f8fafc;
-  color: #0f172a;
-}
-
-.ow-scroller {
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(100, 116, 139, 0.28) transparent;
-}
-
-.ow-scroller::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-.ow-scroller::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.35);
-  background-clip: padding-box;
+.ow-title-input:focus {
+  outline: none;
 }
 
 .ow-message {
-  max-width: 56rem;
+  max-width: 50rem;
   border: 1px solid var(--dls-border);
-  border-radius: 1.75rem;
+  border-radius: 1.5rem;
   padding: 1rem 1.1rem;
+  background: var(--dls-surface);
+  box-shadow: var(--dls-card-shadow);
 }
 
 .ow-message-user {
   margin-left: auto;
-  background: #f8fafc;
+  background: var(--dls-active);
+  box-shadow: none;
 }
 
 .ow-message-assistant {
-  background: #ffffff;
+  background: var(--dls-surface);
 }
 
 .ow-session-item,
-.ow-settings-tab {
+.ow-settings-tab,
+.ow-worker-item {
   width: 100%;
   border: 1px solid var(--dls-border);
-  border-radius: 1.5rem;
+  border-radius: 1.25rem;
   background: var(--dls-surface);
   padding: 0.95rem 1rem;
-  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .ow-session-item:hover,
-.ow-settings-tab:hover {
-  border-color: #d7dde4;
-  background: #fafcff;
+.ow-settings-tab:hover,
+.ow-worker-item:hover {
+  background: var(--dls-hover);
 }
 
 .ow-session-item-active,
-.ow-settings-tab-active {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+.ow-settings-tab-active,
+.ow-worker-item-active {
+  background: var(--dls-active);
+  border-color: #d7dde4;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
 }
 
 .ow-markdown,
 .ow-user-markdown {
   font-size: 0.98rem;
   line-height: 1.75;
-  color: #0f172a;
+  color: var(--dls-text-primary);
 }
 
 .ow-markdown :where(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4),
@@ -346,8 +117,8 @@ textarea {
 
 .ow-markdown :where(h1, h2, h3, h4),
 .ow-user-markdown :where(h1, h2, h3, h4) {
-  color: #0f172a;
-  font-weight: 650;
+  color: var(--dls-text-primary);
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
@@ -359,7 +130,7 @@ textarea {
 .ow-markdown :where(pre),
 .ow-user-markdown :where(pre) {
   overflow: auto;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--dls-border);
   border-radius: 1rem;
   background: #f8fafc;
   padding: 1rem;
@@ -367,39 +138,21 @@ textarea {
 
 .ow-markdown :where(code):not(pre code),
 .ow-user-markdown :where(code):not(pre code) {
-  border-radius: 0.6rem;
+  border-radius: 0.5rem;
   background: #f1f5f9;
   padding: 0.12rem 0.38rem;
 }
 
 .ow-markdown :where(blockquote),
 .ow-user-markdown :where(blockquote) {
-  border-left: 3px solid #cbd5e1;
+  border-left: 3px solid #d7dde4;
   padding-left: 1rem;
-  color: #475569;
+  color: var(--dls-text-secondary);
 }
 
 .ow-markdown :where(a),
 .ow-user-markdown :where(a) {
-  color: #0f172a;
+  color: var(--dls-accent);
   text-decoration: underline;
   text-underline-offset: 0.22em;
-}
-
-button,
-[role="button"],
-a,
-input[type="submit"],
-input[type="button"],
-input[type="checkbox"],
-input[type="radio"],
-select {
-  cursor: pointer;
-}
-
-button:disabled,
-[role="button"][aria-disabled="true"],
-input:disabled,
-select:disabled {
-  cursor: not-allowed;
 }

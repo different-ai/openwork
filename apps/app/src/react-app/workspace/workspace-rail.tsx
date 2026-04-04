@@ -1,14 +1,18 @@
-import { LoaderCircle, RefreshCw, Server } from "lucide-react";
+import { LoaderCircle, RefreshCw, Server, Trash2 } from "lucide-react";
 
 import { selectActiveWorkspace, selectServerHostLabel, selectWorkspaceScopeLabel, useOpenworkStore } from "../kernel/store";
 
 export function WorkspaceRail() {
   const server = useOpenworkStore((state) => state.server);
   const workspaces = useOpenworkStore((state) => state.workspaces);
+  const workerProfiles = useOpenworkStore((state) => state.workerProfiles);
+  const activeWorkerProfileId = useOpenworkStore((state) => state.activeWorkerProfileId);
   const activeWorkspace = useOpenworkStore(selectActiveWorkspace);
   const serverHost = useOpenworkStore(selectServerHostLabel);
   const workspacesStatus = useOpenworkStore((state) => state.workspacesStatus);
   const selectWorkspace = useOpenworkStore((state) => state.selectWorkspace);
+  const connectWorkerProfile = useOpenworkStore((state) => state.connectWorkerProfile);
+  const removeWorkerProfile = useOpenworkStore((state) => state.removeWorkerProfile);
   const refreshServer = useOpenworkStore((state) => state.refreshServer);
   const connectedToEvents = useOpenworkStore((state) => state.connectedToEvents);
 
@@ -39,6 +43,34 @@ export function WorkspaceRail() {
       </div>
 
       <div className="ow-scroller flex-1 space-y-2 px-1 py-3">
+        {workerProfiles.length ? (
+          <div className="space-y-2 pb-3">
+            <div className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Saved workers</div>
+            {workerProfiles.map((profile) => {
+              const activeProfile = profile.id === activeWorkerProfileId;
+              return (
+                <div className={activeProfile ? "ow-worker-item ow-worker-item-active" : "ow-worker-item"} key={profile.id}>
+                  <button className="w-full text-left" onClick={() => void connectWorkerProfile(profile.id)} type="button">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-900">{profile.displayName}</div>
+                        <div className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{profile.source}</div>
+                      </div>
+                      <span className="ow-status-pill ow-status-pill-neutral">remote</span>
+                    </div>
+                    <div className="mt-3 line-clamp-2 text-sm leading-6 text-slate-500">{profile.hostUrl}</div>
+                  </button>
+                  <div className="mt-3 flex justify-end">
+                    <button className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-rose-600" onClick={() => removeWorkerProfile(profile.id)} type="button">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
         {workspaces.length ? (
           workspaces.map((workspace) => {
             const active = workspace.id === activeWorkspace?.id;

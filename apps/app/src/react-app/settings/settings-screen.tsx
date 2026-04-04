@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, PlugZap, RefreshCw, RotateCcw, Sparkles, Wrench } from "lucide-react";
 
+import {
+  buildDenAuthUrl,
+  createDenClient,
+  DEFAULT_DEN_BASE_URL,
+  readDenSettings,
+  writeDenSettings,
+  type DenOrgSummary,
+  type DenUser,
+  type DenWorkerSummary,
+} from "../../app/lib/den";
 import type { ScheduledJob } from "../../app/lib/tauri";
 import {
   createOpenworkServerClient,
@@ -16,8 +26,12 @@ import {
 } from "../../app/lib/openwork-server";
 import { formatRelativeTime } from "../../app/utils";
 import { selectActiveWorkspace, selectServerHostLabel, selectWorkspaceScopeLabel, useOpenworkStore } from "../kernel/store";
+import { CardQuiet, CardShell } from "../ui/card";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 
-type SettingsTab = "general" | "skills" | "extensions" | "automations" | "messaging" | "debug";
+type SettingsTab = "general" | "cloud" | "skills" | "extensions" | "automations" | "messaging" | "debug";
 
 type ResourceState = {
   skills: OpenworkSkillItem[];
@@ -45,6 +59,7 @@ const EMPTY_RESOURCES: ResourceState = {
 
 const TABS: Array<{ id: SettingsTab; label: string; description: string }> = [
   { id: "general", label: "General", description: "Connection, runtime, and workspace overview" },
+  { id: "cloud", label: "Cloud", description: "Hosted workers, orgs, and remote connect" },
   { id: "skills", label: "Skills", description: "Installed skills and hub install surface" },
   { id: "extensions", label: "Extensions", description: "Plugins, MCP servers, and commands" },
   { id: "automations", label: "Automations", description: "Scheduled jobs and recurring flows" },
@@ -77,6 +92,10 @@ export function SettingsScreen() {
   const workspacesStatus = useOpenworkStore((state) => state.workspacesStatus);
   const refreshServer = useOpenworkStore((state) => state.refreshServer);
   const connectToServer = useOpenworkStore((state) => state.connectToServer);
+  const connectRemoteWorkspace = useOpenworkStore((state) => state.connectRemoteWorkspace);
+  const workerProfiles = useOpenworkStore((state) => state.workerProfiles);
+  const activeWorkerProfileId = useOpenworkStore((state) => state.activeWorkerProfileId);
+  const removeWorkerProfile = useOpenworkStore((state) => state.removeWorkerProfile);
   const activeWorkspace = useOpenworkStore(selectActiveWorkspace);
   const serverHost = useOpenworkStore(selectServerHostLabel);
   const logs = useOpenworkStore((state) => state.logs);
@@ -89,6 +108,22 @@ export function SettingsScreen() {
   const [loadingResources, setLoadingResources] = useState(false);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const supportsRouter = server.capabilities?.proxy?.opencodeRouter === true;
+  const [remoteHostUrl, setRemoteHostUrl] = useState("");
+  const [remoteToken, setRemoteToken] = useState("");
+  const [remoteDirectory, setRemoteDirectory] = useState("");
+  const [remoteName, setRemoteName] = useState("");
+  const [remoteConnectBusy, setRemoteConnectBusy] = useState(false);
+
+  const denSettings = useMemo(() => readDenSettings(), []);
+  const [cloudBaseUrl, setCloudBaseUrl] = useState(denSettings.baseUrl || DEFAULT_DEN_BASE_URL);
+  const [cloudToken, setCloudToken] = useState(denSettings.authToken?.trim() || "");
+  const [cloudUser, setCloudUser] = useState<DenUser | null>(null);
+  const [cloudOrgs, setCloudOrgs] = useState<DenOrgSummary[]>([]);
+  const [cloudOrgId, setCloudOrgId] = useState(denSettings.activeOrgId?.trim() || "");
+  const [cloudWorkers, setCloudWorkers] = useState<DenWorkerSummary[]>([]);
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [openingCloudWorkerId, setOpeningCloudWorkerId] = useState<string | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
 
   useEffect(() => {
     setUrl(server.url);
@@ -104,6 +139,63 @@ export function SettingsScreen() {
       token: server.token.trim() || undefined,
     });
   }, [server.token, server.url]);
+
+  const cloudClient = useMemo(
+    () => createDenClient({ baseUrl: cloudBaseUrl, token: cloudToken }),
+    [cloudBaseUrl, cloudToken],
+  );
+
+  useEffect(() => {
+    writeDenSettings({
+      baseUrl: cloudBaseUrl,
+      authToken: cloudToken || null,
+      activeOrgId: cloudOrgId || null,
+      activeOrgSlug: denSettings.activeOrgSlug ?? null,
+      activeOrgName: denSettings.activeOrgName ?? null,
+    });
+  }, [cloudBaseUrl, cloudOrgId, cloudToken, denSettings.activeOrgName, denSettings.activeOrgSlug]);
+
+  const refreshCloud = useCallback(async () => {
+    if (!cloudToken.trim()) {
+      setCloudUser(null);
+      setCloudOrgs([]);
+      setCloudWorkers([]);
+      setCloudError(null);
+      return;
+    }
+
+    setCloudBusy(true);
+    setCloudError(null);
+    try {
+      const user = await cloudClient.getSession();
+      const orgResponse = await cloudClient.listOrgs();
+      const orgs = orgResponse.orgs;
+      const nextOrgId = orgs.some((org) => org.id === cloudOrgId)
+        ? cloudOrgId
+        : orgResponse.defaultOrgId ?? orgs[0]?.id ?? "";
+
+      setCloudUser(user);
+      setCloudOrgs(orgs);
+      setCloudOrgId(nextOrgId);
+
+      if (nextOrgId) {
+        const workers = await cloudClient.listWorkers(nextOrgId, 20);
+        setCloudWorkers(workers);
+      } else {
+        setCloudWorkers([]);
+      }
+    } catch (error) {
+      setCloudUser(null);
+      setCloudWorkers([]);
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCloudBusy(false);
+    }
+  }, [cloudClient, cloudOrgId, cloudToken]);
+
+  useEffect(() => {
+    void refreshCloud();
+  }, [refreshCloud]);
 
   const refreshResources = useCallback(async () => {
     if (!serverClient || !workspaceId) {
@@ -217,8 +309,60 @@ export function SettingsScreen() {
     }
   };
 
+  const handleManualRemoteConnect = async () => {
+    if (!remoteHostUrl.trim() || !remoteToken.trim()) {
+      setResourceError("Remote worker URL and token are required.");
+      return;
+    }
+    setRemoteConnectBusy(true);
+    setResourceError(null);
+    try {
+      const ok = await connectRemoteWorkspace({
+        openworkHostUrl: remoteHostUrl.trim(),
+        openworkToken: remoteToken.trim(),
+        directory: remoteDirectory.trim() || null,
+        displayName: remoteName.trim() || null,
+        source: "manual",
+      });
+      if (ok) {
+        setRemoteDirectory("");
+        setRemoteName("");
+      }
+    } finally {
+      setRemoteConnectBusy(false);
+    }
+  };
+
+  const handleOpenCloudWorker = async (worker: DenWorkerSummary) => {
+    const orgId = cloudOrgId.trim();
+    if (!orgId) return;
+    setOpeningCloudWorkerId(worker.workerId);
+    setCloudError(null);
+    try {
+      const tokens = await cloudClient.getWorkerTokens(worker.workerId, orgId);
+      const openworkUrl = tokens.openworkUrl?.trim() ?? "";
+      const accessToken = tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
+      if (!openworkUrl || !accessToken) {
+        throw new Error("Worker is not ready for remote connection yet.");
+      }
+
+      await connectRemoteWorkspace({
+        openworkHostUrl: openworkUrl,
+        openworkToken: accessToken,
+        directory: null,
+        displayName: worker.workerName,
+        workspaceId: tokens.workspaceId?.trim() || null,
+        source: "cloud",
+      });
+    } catch (error) {
+      setCloudError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOpeningCloudWorkerId(null);
+    }
+  };
+
   const renderTab = () => {
-    if (!activeWorkspace || !workspaceId) {
+    if (activeTab !== "cloud" && !activeWorkspace && activeTab !== "general") {
       return <EmptyPanel body="Choose a workspace to inspect skills, plugins, scheduler jobs, router state, and audit events." title="No workspace selected" />;
     }
 
@@ -230,7 +374,7 @@ export function SettingsScreen() {
               <DetailCard hint="Browser-facing OpenWork endpoint" label="Server" value={serverHost} />
               <DetailCard hint="Workspace registry from the OpenWork host" label="Workspaces" value={String(workspaces.length)} />
               <DetailCard hint="Capabilities exposed by the server" label="Capabilities" value={String(server.capabilities ? Object.keys(server.capabilities).length : 0)} />
-              <DetailCard hint="Current active scope" label="Workspace" value={activeWorkspace.displayName || activeWorkspace.name} />
+              <DetailCard hint="Current active scope" label="Workspace" value={activeWorkspace ? activeWorkspace.displayName || activeWorkspace.name : "Not selected"} />
             </div>
 
             <div className="ow-soft-card-quiet px-4 py-4 text-sm leading-7 text-slate-600">
@@ -245,6 +389,106 @@ export function SettingsScreen() {
                   <RefreshCw className="h-4 w-4" />
                   Refresh workspace data
                 </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="ow-soft-card-quiet px-4 py-4">
+                <div className="ow-panel-heading">Connect remote</div>
+                <div className="mt-4 space-y-3">
+                  <Input id="openwork-remote-host-url" name="openworkRemoteHostUrl" onChange={(event) => setRemoteHostUrl(event.target.value)} placeholder="OpenWork worker URL" value={remoteHostUrl} />
+                  <Input id="openwork-remote-token" name="openworkRemoteToken" onChange={(event) => setRemoteToken(event.target.value)} placeholder="Access token" value={remoteToken} />
+                  <Input id="openwork-remote-name" name="openworkRemoteName" onChange={(event) => setRemoteName(event.target.value)} placeholder="Display name (optional)" value={remoteName} />
+                  <Input id="openwork-remote-directory" name="openworkRemoteDirectory" onChange={(event) => setRemoteDirectory(event.target.value)} placeholder="Directory hint (optional)" value={remoteDirectory} />
+                  <button className="ow-button-secondary" disabled={remoteConnectBusy} onClick={() => void handleManualRemoteConnect()} type="button">
+                    <PlugZap className="h-4 w-4" />
+                    {remoteConnectBusy ? "Connecting..." : "Connect remote"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="ow-soft-card-quiet px-4 py-4">
+                <div className="ow-panel-heading">Saved workers</div>
+                <div className="mt-4 space-y-2">
+                  {workerProfiles.length ? workerProfiles.map((profile) => (
+                    <div className={profile.id === activeWorkerProfileId ? "ow-worker-item ow-worker-item-active" : "ow-worker-item"} key={profile.id}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-slate-900">{profile.displayName}</div>
+                          <div className="mt-1 text-sm leading-6 text-slate-500">{profile.hostUrl}</div>
+                        </div>
+                        <button className="ow-button-secondary" onClick={() => removeWorkerProfile(profile.id)} type="button">
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  )) : <EmptyPanel body="Remote workers you connect manually or from Cloud will be saved here for quick switching." title="No saved workers" />}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case "cloud":
+        return (
+          <div className="space-y-4">
+            <div className="ow-soft-card-quiet px-4 py-4">
+              <div className="ow-panel-heading">OpenWork Cloud</div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input id="openwork-cloud-base-url" name="openworkCloudBaseUrl" onChange={(event) => setCloudBaseUrl(event.target.value)} placeholder={DEFAULT_DEN_BASE_URL} value={cloudBaseUrl} />
+                  <Input id="openwork-cloud-token" name="openworkCloudToken" onChange={(event) => setCloudToken(event.target.value)} placeholder="Cloud auth token" value={cloudToken} />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="ow-button-secondary" onClick={() => window.open(buildDenAuthUrl(cloudBaseUrl, "sign-in"), "_blank")} type="button">
+                    Sign in
+                  </button>
+                  <button className="ow-button-secondary" onClick={() => void refreshCloud()} type="button">
+                    <RefreshCw className="h-4 w-4" />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              {cloudError ? <div className="mt-4 text-sm text-rose-700">{cloudError}</div> : null}
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="ow-soft-card-quiet px-4 py-4">
+                <div className="ow-panel-heading">Session</div>
+                {cloudUser ? (
+                  <div className="mt-4 space-y-3 text-sm text-slate-600">
+                    <DetailCard hint="Signed-in cloud account" label="User" value={cloudUser.email} />
+                    <div>
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Organization</div>
+                      <select className="ow-input" id="openwork-cloud-org" name="openworkCloudOrg" onChange={(event) => setCloudOrgId(event.target.value)} value={cloudOrgId}>
+                        {cloudOrgs.map((org) => (
+                          <option key={org.id} value={org.id}>{org.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyPanel body="Sign in to OpenWork Cloud and provide a token to load hosted workers and org data." title="Not signed in" />
+                )}
+              </div>
+
+              <div className="ow-soft-card-quiet px-4 py-4">
+                <div className="ow-panel-heading">Hosted workers</div>
+                <div className="mt-4 space-y-2">
+                  {cloudWorkers.length ? cloudWorkers.map((worker) => (
+                    <div className="ow-worker-item" key={worker.workerId}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-slate-900">{worker.workerName}</div>
+                          <div className="mt-1 text-sm text-slate-500">{worker.status} · {worker.instanceUrl || worker.provider || "No URL yet"}</div>
+                        </div>
+                        <button className="ow-button-secondary" disabled={openingCloudWorkerId === worker.workerId || !worker.instanceUrl} onClick={() => void handleOpenCloudWorker(worker)} type="button">
+                          {openingCloudWorkerId === worker.workerId ? "Opening..." : "Open worker"}
+                        </button>
+                      </div>
+                    </div>
+                  )) : <EmptyPanel body={cloudBusy ? "Loading workers..." : "No cloud workers are available for the selected org yet."} title="No hosted workers" />}
+                </div>
               </div>
             </div>
           </div>
@@ -438,7 +682,7 @@ export function SettingsScreen() {
 
   return (
     <section className="space-y-4">
-      <div className="ow-soft-shell px-5 py-5 lg:px-6 lg:py-6">
+      <CardShell className="px-5 py-5 lg:px-6 lg:py-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-3">
             <div className="ow-kicker">
@@ -453,14 +697,14 @@ export function SettingsScreen() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="ow-button-secondary" onClick={() => void refreshServer()} type="button">
+            <Button variant="secondary" onClick={() => void refreshServer()} type="button">
               <RefreshCw className="h-4 w-4" />
               Re-check server
-            </button>
-            <button className="ow-button-secondary" onClick={() => void refreshResources()} type="button">
+            </Button>
+            <Button variant="secondary" onClick={() => void refreshResources()} type="button">
               <Wrench className="h-4 w-4" />
               Refresh workspace data
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -474,24 +718,24 @@ export function SettingsScreen() {
           <div className="grid gap-4 lg:grid-cols-2">
             <label className="space-y-2 text-sm text-slate-700" htmlFor="openwork-server-url">
               <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Server URL</span>
-              <input className="ow-input" id="openwork-server-url" name="openworkServerUrl" onChange={(event) => setUrl(event.target.value)} placeholder="http://localhost:8787" value={url} />
+              <Input id="openwork-server-url" name="openworkServerUrl" onChange={(event) => setUrl(event.target.value)} placeholder="http://localhost:8787" value={url} />
             </label>
             <label className="space-y-2 text-sm text-slate-700" htmlFor="openwork-server-token">
               <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Client token</span>
-              <input className="ow-input" id="openwork-server-token" name="openworkServerToken" onChange={(event) => setToken(event.target.value)} placeholder="paste the OpenWork client token" value={token} />
+              <Input id="openwork-server-token" name="openworkServerToken" onChange={(event) => setToken(event.target.value)} placeholder="paste the OpenWork client token" value={token} />
             </label>
           </div>
           <div className="flex flex-wrap gap-3">
-            <button className="ow-button-primary" type="submit">
+            <Button type="submit">
               <PlugZap className="h-4 w-4" />
               Connect
-            </button>
+            </Button>
             <span className={server.status === "connected" ? "ow-status-pill ow-status-pill-positive" : "ow-status-pill ow-status-pill-neutral"}>{server.status}</span>
             <span className="ow-status-pill ow-status-pill-neutral">{server.version ? `v${server.version}` : "version pending"}</span>
             <span className="ow-status-pill ow-status-pill-neutral">{workspacesStatus}</span>
           </div>
         </form>
-      </div>
+      </CardShell>
 
       {resourceError ? (
         <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -499,21 +743,19 @@ export function SettingsScreen() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="ow-soft-shell overflow-hidden px-3 py-3">
-          <div className="space-y-2">
-            {TABS.map((tab) => {
-              const active = activeTab === tab.id;
-              return (
-                <button className={active ? "ow-settings-tab ow-settings-tab-active" : "ow-settings-tab"} key={tab.id} onClick={() => setActiveTab(tab.id)} type="button">
+      <Tabs className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]" onValueChange={(value) => setActiveTab(value as SettingsTab)} value={activeTab}>
+        <aside>
+          <CardShell className="overflow-hidden px-3 py-3">
+            <TabsList className="space-y-2">
+              {TABS.map((tab) => (
+                <TabsTrigger key={tab.id} value={tab.id}>
                   <div className="font-medium text-slate-900">{tab.label}</div>
                   <div className="mt-1 text-sm leading-6 text-slate-500">{tab.description}</div>
-                </button>
-              );
-            })}
-          </div>
+                </TabsTrigger>
+              ))}
+            </TabsList>
 
-          <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-600">
+            <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-600">
             {activeWorkspace ? (
               <>
                 <div className="flex items-center gap-2 font-medium text-slate-900">
@@ -525,19 +767,20 @@ export function SettingsScreen() {
             ) : (
               <div>No active workspace selected yet.</div>
             )}
-          </div>
+            </div>
+          </CardShell>
         </aside>
 
-        <div className="space-y-4">
+        <TabsContent value={activeTab} className="space-y-4">
           {loadingResources ? (
-            <div className="ow-soft-shell flex items-center gap-3 px-4 py-4 text-sm text-slate-600">
+            <CardShell className="flex items-center gap-3 px-4 py-4 text-sm text-slate-600">
               <LoaderState />
               Loading workspace capability data...
-            </div>
+            </CardShell>
           ) : null}
           {renderTab()}
-        </div>
-      </div>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }
