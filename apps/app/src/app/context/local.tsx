@@ -16,7 +16,7 @@ type LocalPreferences = {
   defaultModel: ModelRef | null;
 };
 
-type LocalContextValue = {
+export type LocalContextValue = {
   ui: Store<LocalUIState>;
   setUi: SetStoreFunction<LocalUIState>;
   prefs: Store<LocalPreferences>;
@@ -78,6 +78,16 @@ export function LocalProvider(props: ParentProps) {
   };
 
   return <LocalContext.Provider value={value}>{props.children}</LocalContext.Provider>;
+}
+
+export function LocalValueProvider(
+  props: ParentProps<{ value: LocalContextValue }>,
+) {
+  return (
+    <LocalContext.Provider value={props.value}>
+      {props.children}
+    </LocalContext.Provider>
+  );
 }
 
 export function useLocal() {

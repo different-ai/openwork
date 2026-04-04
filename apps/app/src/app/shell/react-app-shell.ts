@@ -7,7 +7,7 @@ export type ReactAppShellProps = {
   currentView: "session" | "settings";
   renderSession: () => JSX.Element;
   renderSettings: () => JSX.Element;
-  renderOverlays: () => JSX.Element;
+  renderOverlays?: () => JSX.Element;
 };
 
 export default function ReactAppShell(props: ReactAppShellProps) {
@@ -23,9 +23,11 @@ export default function ReactAppShell(props: ReactAppShellProps) {
           slotId: "settings-surface",
           renderContent: props.renderSettings,
         }),
-    createElement(SolidSlot, {
-      slotId: "shell-overlays",
-      renderContent: props.renderOverlays,
-    }),
+    props.renderOverlays
+      ? createElement(SolidSlot, {
+          slotId: "shell-overlays",
+          renderContent: props.renderOverlays,
+        })
+      : null,
   );
 }

@@ -8,6 +8,7 @@ import {
   onMount,
   untrack,
 } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { useLocation, useNavigate } from "@solidjs/router";
 
@@ -85,7 +86,11 @@ import { createExtensionsStore } from "./context/extensions";
 import { createConnectionsStore } from "./connections/store";
 import { createAutomationsStore } from "./context/automations";
 import { createSidebarSessionsStore } from "./context/sidebar-sessions";
+import { useGlobalSDK } from "./context/global-sdk";
 import { useGlobalSync } from "./context/global-sync";
+import { useLocal } from "./context/local";
+import { usePlatform } from "./context/platform";
+import { useServer } from "./context/server";
 import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
@@ -120,9 +125,11 @@ import {
 import { createBundlesStore } from "./bundles/store";
 import { createBootstrapCoordinator } from "./shell/bootstrap-coordinator";
 import ModalHost from "./shell/modal-host";
+import ReactShellHost from "./shell/react-shell-host";
 import { syncShellRoute } from "./shell/route-sync";
 import { buildSessionSurface } from "./shell/session-surface";
 import { buildSettingsSurface } from "./shell/settings-surface";
+import SolidContextBridge from "./shell/solid-context-bridge";
 
 type SettingsReturnTarget = {
   view: View;
@@ -162,6 +169,10 @@ export default function App() {
   };
   const location = useLocation();
   const navigate = useNavigate();
+  const platform = usePlatform();
+  const server = useServer();
+  const globalSDK = useGlobalSDK();
+  const local = useLocal();
 
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil] = createSignal(0);
@@ -2203,6 +2214,32 @@ export default function App() {
     goToSession,
   });
 
+  const renderReactOwnedSurface = (content: () => JSX.Element) => (
+    <SolidContextBridge
+      platform={platform}
+      server={server}
+      globalSDK={globalSDK}
+      globalSync={globalSync}
+      local={local}
+    >
+      <OpenworkServerProvider store={openworkServerStore}>
+        <ModelControlsProvider store={modelControlsStore}>
+          <SessionActionsProvider store={sessionActionsStore}>
+            <ConnectionsProvider store={connectionsStore}>
+              <ExtensionsProvider store={extensionsStore}>
+                <AutomationsProvider store={automationsStore}>
+                  <StatusToastsProvider store={statusToastsStore}>
+                    {content()}
+                  </StatusToastsProvider>
+                </AutomationsProvider>
+              </ExtensionsProvider>
+            </ConnectionsProvider>
+          </SessionActionsProvider>
+        </ModelControlsProvider>
+      </OpenworkServerProvider>
+    </SolidContextBridge>
+  );
+
   return (
     <OpenworkServerProvider store={openworkServerStore}>
       <ModelControlsProvider store={modelControlsStore}>
@@ -2211,14 +2248,15 @@ export default function App() {
             <ExtensionsProvider store={extensionsStore}>
               <AutomationsProvider store={automationsStore}>
                 <StatusToastsProvider store={statusToastsStore}>
-                  <Switch>
-                    <Match when={currentView() === "session"}>
-                      <SessionView {...sessionSurface()} />
-                    </Match>
-                    <Match when={true}>
-                      <SettingsShell {...settingsSurface()} />
-                    </Match>
-                  </Switch>
+                  <ReactShellHost
+                    currentView={currentView()}
+                    renderSession={() =>
+                      renderReactOwnedSurface(() => <SessionView {...sessionSurface()} />)
+                    }
+                    renderSettings={() =>
+                      renderReactOwnedSurface(() => <SettingsShell {...settingsSurface()} />)
+                    }
+                  />
                   <ModalHost
                     modelConfig={modelConfig}
                     workspaceStore={workspaceStore}
