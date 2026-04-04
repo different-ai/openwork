@@ -7,6 +7,7 @@ Use this directory to build and install the AMD64 OpenWork package locally on Ar
 - Targets `x86_64` Arch Linux.
 - Downloads the published GitHub release asset `openwork-desktop-linux-amd64.deb`.
 - Repackages the `.deb` contents into an Arch package with `makepkg`.
+- Removes the bundled `/usr/bin/opencode` file so the package does not conflict with `opencode-bin`.
 
 ## Prerequisites
 
@@ -35,6 +36,14 @@ That will:
 1. download the AMD64 `.deb` pinned in `PKGBUILD`
 2. build an Arch package such as `openwork-<version>-1-x86_64.pkg.tar.zst`
 3. install it locally with `pacman`
+
+After install, `openwork` is available as the desktop launcher. If you also want the standalone OpenCode CLI, install `opencode-bin` separately.
+
+## OpenCode CLI conflict note
+
+Recent `.deb` builds include `/usr/bin/opencode`, but the AUR package intentionally strips that file during repackaging.
+
+That keeps OpenWork compatible with systems that already install the OpenCode CLI from `opencode-bin`, which should remain the owner of the global `opencode` command.
 
 ## Update the package to a newer release
 
