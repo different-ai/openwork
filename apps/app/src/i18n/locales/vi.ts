@@ -505,7 +505,7 @@ export default {
   "mcp.auth.reload_engine_retry": "Áp dụng thay đổi và thử lại",
   "mcp.auth.retry_now": "Thử lại ngay",
   "mcp.auth.retry": "Thử lại",
-  "mcp.auth.reload_failed": "Khởi động lại worker trước khi đăng nhập thất bại.",
+  "mcp.auth.reload_failed": "Tải lại worker trước khi đăng nhập thất bại.",
   "mcp.auth.applying_changes_title": "Đang áp dụng thay đổi trước khi đăng nhập",
   "mcp.auth.applying_changes_body": "Chúng tôi đang khởi động lại worker để MCP mới sẵn sàng xác thực.",
   "mcp.auth.waiting_for_conversation_title": "Đang đợi cuộc hội thoại hoàn tất",

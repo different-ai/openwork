@@ -1205,7 +1205,7 @@ export default {
   "den.status_opened_worker": "เปิด {name} ใน OpenWork แล้ว",
   "den.status_opened_template": "เปิด {name} จาก {org} แล้ว",
   "den.status_opened_template_fallback": "เปิด {name} จากเทมเพลตทีมแล้ว",
-  "den.signing_in": "กำลังเข้าสู่ระบบ OpenWork Cloud...",
+  "den.signing_in": "กำลังดำเนินการเข้าสู่ระบบ OpenWork Cloud ให้เสร็จสิ้น...",
   "den.org_switched": "สลับไปยัง {name} แล้ว",
   "den.org_owner_suffix": "(เจ้าของ)",
   "den.org_member_suffix": "(สมาชิก)",
