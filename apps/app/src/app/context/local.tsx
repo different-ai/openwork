@@ -15,6 +15,7 @@ type LocalPreferences = {
   modelVariant: string | null;
   defaultModel: ModelRef | null;
   reactSessionV2: boolean;
+  reactSettingsV2: boolean;
 };
 
 export type LocalContextValue = {
@@ -43,6 +44,7 @@ export function LocalProvider(props: ParentProps) {
       modelVariant: null,
       defaultModel: null,
       reactSessionV2: true,
+      reactSettingsV2: true,
     }),
   );
 

@@ -29,6 +29,7 @@ import SettingsShell from "./shell/settings-shell";
 import { createStatusToastsStore, StatusToastsProvider } from "./shell/status-toasts";
 import SessionView from "./pages/session";
 import ReactSessionViewV2 from "./session-v2/react-session-view-v2";
+import ReactSettingsViewV2 from "./settings-v2/react-settings-view-v2";
 import { clearDevLogs, recordDevLog } from "./lib/dev-log";
 import { unwrap } from "./lib/opencode";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
@@ -184,6 +185,13 @@ export default function App() {
       : true;
   const preferReactSessionV2 = createMemo(
     () => reactSessionV2KillSwitch && local.prefs.reactSessionV2,
+  );
+  const reactSettingsV2KillSwitch =
+    typeof import.meta.env?.VITE_OPENWORK_REACT_SETTINGS_V2 === "string"
+      ? import.meta.env.VITE_OPENWORK_REACT_SETTINGS_V2 !== "0"
+      : true;
+  const preferReactSettingsV2 = createMemo(
+    () => reactSettingsV2KillSwitch && local.prefs.reactSettingsV2,
   );
   const currentView = createMemo<View>(() => {
     const path = location.pathname.toLowerCase();
@@ -2285,6 +2293,7 @@ export default function App() {
                   <ReactShellHost
                     currentView={currentView()}
                     preferReactSession={preferReactSessionV2()}
+                    preferReactSettings={preferReactSettingsV2()}
                     renderSession={() =>
                       renderReactOwnedSurface(() => <SessionView {...sessionSurface()} />)
                     }
@@ -2299,6 +2308,11 @@ export default function App() {
                     }
                     renderSettings={() =>
                       renderReactOwnedSurface(() => <SettingsShell {...settingsSurface()} />)
+                    }
+                    renderSettingsReact={() =>
+                      createElement(ReactSettingsViewV2, {
+                        legacySurface: settingsSurface(),
+                      })
                     }
                   />
                   <ModalHost
