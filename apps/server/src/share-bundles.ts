@@ -67,7 +67,6 @@ export function resolveTrustedSharedBundleFetchUrl(bundleUrl: unknown): URL {
   const bundleId = extractBundleId(inputUrl);
   trustedBaseUrl.pathname = `/b/${bundleId}/data`;
   trustedBaseUrl.search = "";
-  trustedBaseUrl.searchParams.set("format", "json");
   return trustedBaseUrl;
 }
 
