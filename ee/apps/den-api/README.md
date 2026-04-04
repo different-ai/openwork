@@ -19,9 +19,9 @@ pnpm --filter @openwork-ee/den-api dev:local
 - Better Auth mount at `/api/auth/*`
 - desktop handoff routes under `/v1/auth/*`
 - current user routes under `/v1/me*`
-- organization routes under `/v1/orgs*`, including org setup, invitations, members, roles, teams, and shared skill hub management
+- organization routes under `/v1/orgs*`
 - admin routes under `/v1/admin*`
-- worker lifecycle and billing routes under `/v1/workers*`, including checkout redirects and org limit enforcement
+- worker lifecycle and billing routes under `/v1/workers*`
 
 ## Folder map
 

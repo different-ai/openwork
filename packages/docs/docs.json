@@ -40,11 +40,16 @@
           },
           {
             "group": "Tutorials",
-            "pages": ["how-to-connect-a-custom-provider", "importing-a-skill"]
+            "pages": [
+              "how-to-connect-a-custom-provider",
+              "importing-a-skill"
+            ]
           },
           {
             "group": "Improve this doc",
-            "pages": ["missing-docs"]
+            "pages": [
+              "missing-docs"
+            ]
           }
         ]
       }

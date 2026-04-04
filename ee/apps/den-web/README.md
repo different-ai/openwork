@@ -6,12 +6,8 @@ Frontend for `app.openworklabs.com`.
 
 - Signs up / signs in users against Den service auth.
 - Handles invited-org signup flows where the invited email stays locked and the user verifies access before joining.
-- Lets org admins manage members, teams, roles, invitations, and shared skill hubs from the hosted dashboard.
-- Saves pending org-creation drafts across checkout so a user can finish setup without re-entering the org name after billing.
 - Launches cloud workers via `POST /v1/workers`.
-- Handles paywall responses (`402 payment_required`), routes users through Polar checkout during org setup or worker launch, restores saved org drafts after purchase, and only enables worker launch after purchase.
-- Surfaces org limit states before launch so users know when a plan upgrade or seat change is required.
-- Preserves full `SKILL.md` frontmatter and body when shared skills are saved so the desktop app sees the same title, description, and install payload that admins authored.
+- Handles paywall responses (`402 payment_required`), routes users through Polar checkout during org setup or worker launch, and resumes the flow after purchase.
 - Offers desktop handoff actions so users can open the generated worker directly in OpenWork or copy the connect credentials manually.
 - Uses a Next.js proxy route (`/api/den/*`) to reach `api.openworklabs.com` without browser CORS issues.
 - Uses a same-origin auth proxy (`/api/auth/*`) so GitHub OAuth callbacks can land on `app.openworklabs.com`.
@@ -19,11 +15,10 @@ Frontend for `app.openworklabs.com`.
 ## Current hosted user flow
 
 1. Sign in with a standard provider or accept an org invite.
-2. Create or join an organization; if that org requires billing, complete checkout before continuing.
-3. If checkout interrupts org creation, the dashboard restores the saved org draft when the user returns.
-4. Optional admin step: manage members, teams, and shared skill hubs from the org dashboard, then publish skills that appear in the desktop Skills page for signed-in org members.
-5. Launch the worker from the cloud dashboard.
-6. Open the worker in the desktop app with the provided deep link, or copy the URL/token into `Connect remote` manually.
+2. Create or join an organization.
+3. If billing is required, complete checkout and return to the app with the saved org draft restored.
+4. Launch the worker from the cloud dashboard.
+5. Open the worker in the desktop app with the provided deep link, or copy the URL/token into `Connect remote` manually.
 
 ## Skill authoring
 
