@@ -26,10 +26,17 @@ import { createClient, unwrap } from "../../app/lib/opencode";
 import { abortSession as abortSessionInClient } from "../../app/lib/opencode-session";
 import { resolveScopedClientDirectory } from "../../app/lib/session-scope";
 import {
+  resolveWorkspaceListSelectedId,
+  workspaceCreate,
+  workspaceSetRuntimeActive,
+  workspaceSetSelected,
+} from "../../app/lib/tauri";
+import {
   normalizeEvent,
   normalizeSessionStatus,
   normalizeDirectoryPath,
   safeStringify,
+  isTauriRuntime,
 } from "../../app/utils";
 
 type ServerState = {
@@ -62,6 +69,7 @@ type OpenworkStore = {
   server: ServerState;
   workerProfiles: WorkerProfile[];
   activeWorkerProfileId: string | null;
+  createWorkspaceOpen: boolean;
   workspaces: OpenworkWorkspaceInfo[];
   workspacesStatus: WorkspaceStatus;
   sessions: Session[];
@@ -92,6 +100,8 @@ type OpenworkStore = {
   }) => Promise<boolean>;
   connectWorkerProfile: (profileId: string) => Promise<boolean>;
   removeWorkerProfile: (profileId: string) => void;
+  setCreateWorkspaceOpen: (open: boolean) => void;
+  createLocalWorkspace: (input: { folderPath: string; name: string; preset?: string }) => Promise<boolean>;
   refreshServer: () => Promise<void>;
   selectWorkspace: (workspaceId: string, options?: { skipActivation?: boolean }) => Promise<void>;
   refreshSessions: (workspaceId?: string | null) => Promise<void>;
@@ -784,6 +794,7 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
     },
     workerProfiles: readStoredWorkerProfiles(),
     activeWorkerProfileId: null,
+    createWorkspaceOpen: false,
     workspaces: [],
     workspacesStatus: "idle",
     sessions: [],
@@ -803,6 +814,7 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
     errorBanner: null,
     logs: [],
     clearErrorBanner: () => set({ errorBanner: null }),
+    setCreateWorkspaceOpen: (open) => set({ createWorkspaceOpen: open }),
     connectToServer: async ({ url, token }) => {
       const normalized = normalizeOpenworkServerUrl(url) ?? "";
       const trimmedToken = token?.trim() ?? "";
@@ -884,6 +896,38 @@ export const useOpenworkStore = create<OpenworkStore>((set, get) => {
         workerProfiles: next,
         activeWorkerProfileId: state.activeWorkerProfileId === profileId ? null : state.activeWorkerProfileId,
       }));
+    },
+    createLocalWorkspace: async (input) => {
+      if (!isTauriRuntime()) {
+        set({ errorBanner: "Local workspace creation is available in the desktop app." });
+        return false;
+      }
+
+      const folderPath = input.folderPath.trim();
+      const name = input.name.trim();
+      if (!folderPath || !name) {
+        set({ errorBanner: "Workspace folder and name are required." });
+        return false;
+      }
+
+      try {
+        const result = await workspaceCreate({
+          folderPath,
+          name,
+          preset: input.preset ?? "starter",
+        });
+        const selectedId = resolveWorkspaceListSelectedId(result);
+        if (selectedId) {
+          await workspaceSetSelected(selectedId).catch(() => undefined);
+          await workspaceSetRuntimeActive(selectedId).catch(() => undefined);
+        }
+        set({ createWorkspaceOpen: false });
+        await get().refreshServer();
+        return true;
+      } catch (error) {
+        set({ errorBanner: summarizeError(error) });
+        return false;
+      }
     },
     bootstrap: async () => {
       hydrateOpenworkServerSettingsFromEnv();

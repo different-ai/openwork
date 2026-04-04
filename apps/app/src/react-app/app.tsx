@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { Orbit, Settings2, Workflow } from "lucide-react";
+import { Orbit, Settings2 } from "lucide-react";
 
 import { deepLinkBridgeEvent } from "../app/lib/deep-link-bridge";
 import { readOpenworkConnectInviteFromSearch } from "../app/lib/openwork-server";
@@ -8,6 +8,7 @@ import { selectServerHostLabel, useOpenworkStore } from "./kernel/store";
 import { SettingsScreen } from "./settings/settings-screen";
 import { ChatPanel } from "./session/chat-panel";
 import { SessionRail } from "./session/session-rail";
+import { CreateWorkspaceDialog } from "./workspace/create-workspace-dialog";
 import { WorkspaceRail } from "./workspace/workspace-rail";
 
 function HeaderNavLink({ href, label }: { href: string; label: string }) {
@@ -74,30 +75,16 @@ function Shell() {
   return (
     <div className="ow-page-shell">
       <header className="ow-soft-shell px-5 py-4 lg:px-6 lg:py-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-2">
-            <div className="ow-kicker">
-              <Workflow className="h-3.5 w-3.5" />
-              OpenWork app rewrite
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">React orchestration surface</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-                React owns the shell, Zustand owns the live runtime state, and Streamdown renders the assistant transcript as tokens arrive.
-              </p>
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="truncate text-[15px] font-semibold text-dls-text">OpenWork</h1>
           </div>
-
-          <div className="flex flex-col items-start gap-3 lg:items-end">
-            <div className="flex flex-wrap gap-2">
-              <HeaderNavLink href="/session" label="Session" />
-              <HeaderNavLink href="/settings" label="Settings" />
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-              <span className={server.status === "connected" ? "ow-status-pill ow-status-pill-positive" : "ow-status-pill ow-status-pill-neutral"}>{server.status}</span>
-              <span className="ow-status-pill ow-status-pill-neutral">{serverHost}</span>
-              <span className="ow-status-pill ow-status-pill-neutral">{workspaces.length} workspaces</span>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <HeaderNavLink href="/session" label="Session" />
+            <HeaderNavLink href="/settings" label="Settings" />
+            <span className={server.status === "connected" ? "ow-status-pill ow-status-pill-positive" : "ow-status-pill ow-status-pill-neutral"}>{server.status}</span>
+            <span className="ow-status-pill ow-status-pill-neutral">{serverHost}</span>
+            <span className="ow-status-pill ow-status-pill-neutral">{workspaces.length} workspaces</span>
           </div>
         </div>
       </header>
@@ -115,13 +102,14 @@ function Shell() {
         </main>
       </div>
 
-      <footer className="mt-5 flex flex-wrap items-center justify-between gap-3 px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-        <span>OpenWork runtime: React + Zustand + Streamdown</span>
+      <footer className="mt-4 flex justify-end">
         <Link className="ow-nav-link" to="/settings">
           <Settings2 className="h-3.5 w-3.5" />
-          Connection settings
+          Settings
         </Link>
       </footer>
+
+      <CreateWorkspaceDialog />
     </div>
   );
 }

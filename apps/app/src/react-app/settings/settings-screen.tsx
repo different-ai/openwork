@@ -58,7 +58,7 @@ const EMPTY_RESOURCES: ResourceState = {
 };
 
 const TABS: Array<{ id: SettingsTab; label: string; description: string }> = [
-  { id: "general", label: "General", description: "Connection, runtime, and workspace overview" },
+  { id: "general", label: "General", description: "Workspace and connection overview" },
   { id: "cloud", label: "Cloud", description: "Hosted workers, orgs, and remote connect" },
   { id: "skills", label: "Skills", description: "Installed skills and hub install surface" },
   { id: "extensions", label: "Extensions", description: "Plugins, MCP servers, and commands" },
@@ -370,25 +370,24 @@ export function SettingsScreen() {
       case "general":
         return (
           <div className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <DetailCard hint="Browser-facing OpenWork endpoint" label="Server" value={serverHost} />
-              <DetailCard hint="Workspace registry from the OpenWork host" label="Workspaces" value={String(workspaces.length)} />
-              <DetailCard hint="Capabilities exposed by the server" label="Capabilities" value={String(server.capabilities ? Object.keys(server.capabilities).length : 0)} />
-              <DetailCard hint="Current active scope" label="Workspace" value={activeWorkspace ? activeWorkspace.displayName || activeWorkspace.name : "Not selected"} />
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <DetailCard hint="Current worker destination" label="Connected worker" value={server.status === "connected" ? serverHost : "Not connected"} />
+              <DetailCard hint="Saved and discovered workspaces" label="Available workspaces" value={String(workspaces.length)} />
+              <DetailCard hint="Current selection" label="Current workspace" value={activeWorkspace ? activeWorkspace.displayName || activeWorkspace.name : "Not selected"} />
             </div>
 
             <div className="ow-soft-card-quiet px-4 py-4 text-sm leading-7 text-slate-600">
-              <div className="font-medium text-slate-900">Workspace scope</div>
-              <div className="mt-2">{selectWorkspaceScopeLabel(activeWorkspace)}</div>
+              <div className="font-medium text-slate-900">Connection summary</div>
+              <div className="mt-2">{activeWorkspace ? selectWorkspaceScopeLabel(activeWorkspace) : "Choose a workspace to start a task or change settings for that worker."}</div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button className="ow-button-secondary" onClick={() => void handleReloadEngine()} type="button">
+                <Button variant="secondary" onClick={() => void handleReloadEngine()} type="button">
                   <RotateCcw className="h-4 w-4" />
                   Reload engine
-                </button>
-                <button className="ow-button-secondary" onClick={() => void refreshResources()} type="button">
+                </Button>
+                <Button variant="secondary" onClick={() => void refreshResources()} type="button">
                   <RefreshCw className="h-4 w-4" />
                   Refresh workspace data
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -400,10 +399,10 @@ export function SettingsScreen() {
                   <Input id="openwork-remote-token" name="openworkRemoteToken" onChange={(event) => setRemoteToken(event.target.value)} placeholder="Access token" value={remoteToken} />
                   <Input id="openwork-remote-name" name="openworkRemoteName" onChange={(event) => setRemoteName(event.target.value)} placeholder="Display name (optional)" value={remoteName} />
                   <Input id="openwork-remote-directory" name="openworkRemoteDirectory" onChange={(event) => setRemoteDirectory(event.target.value)} placeholder="Directory hint (optional)" value={remoteDirectory} />
-                  <button className="ow-button-secondary" disabled={remoteConnectBusy} onClick={() => void handleManualRemoteConnect()} type="button">
+                  <Button disabled={remoteConnectBusy} variant="secondary" onClick={() => void handleManualRemoteConnect()} type="button">
                     <PlugZap className="h-4 w-4" />
                     {remoteConnectBusy ? "Connecting..." : "Connect remote"}
-                  </button>
+                  </Button>
                 </div>
               </div>
 
@@ -417,9 +416,9 @@ export function SettingsScreen() {
                           <div className="font-medium text-slate-900">{profile.displayName}</div>
                           <div className="mt-1 text-sm leading-6 text-slate-500">{profile.hostUrl}</div>
                         </div>
-                        <button className="ow-button-secondary" onClick={() => removeWorkerProfile(profile.id)} type="button">
+                        <Button variant="secondary" onClick={() => removeWorkerProfile(profile.id)} type="button">
                           Remove
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   )) : <EmptyPanel body="Remote workers you connect manually or from Cloud will be saved here for quick switching." title="No saved workers" />}
@@ -687,12 +686,12 @@ export function SettingsScreen() {
           <div className="space-y-3">
             <div className="ow-kicker">
               <Sparkles className="h-3.5 w-3.5" />
-              OpenWork controls
+              Settings
             </div>
             <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Server, skills, extensions, and automations</h1>
+              <h1 className="text-2xl font-semibold text-slate-900">Workspaces, cloud, and connected tools</h1>
               <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-                This React settings surface now reaches beyond connection setup and exposes the core OpenWork capability buckets that the earlier rewrite skipped.
+                Manage how OpenWork connects to workers, where your workspaces live, and which tools are available inside them.
               </p>
             </div>
           </div>

@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"]
+  },
+  "include": [
+    "src/index.react.tsx",
+    "src/react-app/**/*.ts",
+    "src/react-app/**/*.tsx",
+    "src/app/constants.ts",
+    "src/app/mcp.ts",
+    "src/app/types.ts",
+    "src/app/utils/index.ts",
+    "src/app/lib/deep-link-bridge.ts",
+    "src/app/lib/den.ts",
+    "src/app/lib/opencode.ts",
+    "src/app/lib/opencode-session.ts",
+    "src/app/lib/openwork-deployment.ts",
+    "src/app/lib/openwork-server.ts",
+    "src/app/lib/session-scope.ts",
+    "src/app/lib/tauri.ts",
+    "vite.config.ts"
+  ]
+}

@@ -90,6 +90,7 @@ export function ChatPanel() {
   const abortSession = useOpenworkStore((state) => state.abortSession);
   const renameSession = useOpenworkStore((state) => state.renameSession);
   const loadEarlierMessages = useOpenworkStore((state) => state.loadEarlierMessages);
+  const setCreateWorkspaceOpen = useOpenworkStore((state) => state.setCreateWorkspaceOpen);
 
   const [draft, setDraft] = useState("");
   const [titleDraft, setTitleDraft] = useState("");
@@ -148,10 +149,10 @@ export function ChatPanel() {
   const emptyState = useMemo(() => {
     if (!activeWorkspace) {
       return {
-        title: "Connect a worker to start",
-        body: "Point the app at an OpenWork server, choose a workspace, and the full React session shell can run against the existing OpenCode proxy.",
-        actionLabel: "Open settings",
-        href: "/settings",
+        title: "Create or connect a workspace",
+        body: "Start with a native workspace on this device, or connect to an existing remote worker and open a session from there.",
+        actionLabel: "Add workspace",
+        href: null,
       };
     }
     if (!selectedSession) {
@@ -212,7 +213,7 @@ export function ChatPanel() {
           <div className="min-w-0 flex-1 space-y-3">
             <div className="ow-kicker">
               <Sparkles className="h-3.5 w-3.5" />
-              Session workspace
+              Session
             </div>
             <div className="space-y-3">
               <input
@@ -224,7 +225,7 @@ export function ChatPanel() {
                 value={titleDraft}
               />
               <p className="max-w-3xl text-sm leading-7 text-slate-600">
-                Streamed markdown, working files, TODO snapshots, permissions, and interactive questions all route through the same OpenWork session transport.
+                Review the transcript, keep context visible, and continue work in the current workspace.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
@@ -320,7 +321,17 @@ export function ChatPanel() {
                   {emptyState.actionLabel}
                 </Link>
               ) : (
-                <button className="ow-button-primary" onClick={() => void handleCreateSession()} type="button">
+                <button
+                  className="ow-button-primary"
+                  onClick={() => {
+                    if (!activeWorkspace) {
+                      setCreateWorkspaceOpen(true);
+                      return;
+                    }
+                    void handleCreateSession();
+                  }}
+                  type="button"
+                >
                   {emptyState.actionLabel}
                 </button>
               )}

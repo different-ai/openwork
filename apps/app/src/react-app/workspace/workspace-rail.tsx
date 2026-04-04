@@ -1,4 +1,4 @@
-import { LoaderCircle, RefreshCw, Server, Trash2 } from "lucide-react";
+import { FolderPlus, LoaderCircle, RefreshCw, Server, Trash2 } from "lucide-react";
 
 import { selectActiveWorkspace, selectServerHostLabel, selectWorkspaceScopeLabel, useOpenworkStore } from "../kernel/store";
 
@@ -13,6 +13,7 @@ export function WorkspaceRail() {
   const selectWorkspace = useOpenworkStore((state) => state.selectWorkspace);
   const connectWorkerProfile = useOpenworkStore((state) => state.connectWorkerProfile);
   const removeWorkerProfile = useOpenworkStore((state) => state.removeWorkerProfile);
+  const setCreateWorkspaceOpen = useOpenworkStore((state) => state.setCreateWorkspaceOpen);
   const refreshServer = useOpenworkStore((state) => state.refreshServer);
   const connectedToEvents = useOpenworkStore((state) => state.connectedToEvents);
 
@@ -21,12 +22,17 @@ export function WorkspaceRail() {
       <div className="border-b border-slate-100 px-1 pb-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="ow-kicker">Worker graph</div>
-            <div className="mt-2 text-lg font-semibold text-slate-900">Connected hosts</div>
+            <div className="ow-kicker">Workspaces</div>
+            <div className="mt-2 text-lg font-semibold text-slate-900">Your workers</div>
           </div>
-          <button className="ow-button-secondary h-11 px-3" onClick={() => void refreshServer()} type="button">
-            {server.status === "connecting" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          </button>
+          <div className="flex gap-2">
+            <button className="ow-button-secondary h-11 px-3" onClick={() => setCreateWorkspaceOpen(true)} type="button">
+              <FolderPlus className="h-4 w-4" />
+            </button>
+            <button className="ow-button-secondary h-11 px-3" onClick={() => void refreshServer()} type="button">
+              {server.status === "connecting" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
@@ -45,7 +51,7 @@ export function WorkspaceRail() {
       <div className="ow-scroller flex-1 space-y-2 px-1 py-3">
         {workerProfiles.length ? (
           <div className="space-y-2 pb-3">
-            <div className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Saved workers</div>
+            <div className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Saved remote workers</div>
             {workerProfiles.map((profile) => {
               const activeProfile = profile.id === activeWorkerProfileId;
               return (
@@ -89,7 +95,7 @@ export function WorkspaceRail() {
           })
         ) : (
           <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm leading-6 text-slate-500">
-            No workspaces discovered yet. Connect to a server that exposes `/workspaces` or start the Docker dev stack.
+            Add a workspace to start locally, or connect a remote worker.
           </div>
         )}
       </div>
