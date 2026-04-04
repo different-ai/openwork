@@ -69,7 +69,7 @@ export function DashboardOverviewScreen() {
       tint: "bg-orange-50 text-orange-500 group-hover:bg-orange-100",
     },
     {
-      label: "Custom LLMs",
+      label: "LLM Providers",
       icon: Cpu,
       href: getCustomLlmProvidersRoute(orgSlug),
       tint: "bg-lime-50 text-lime-600 group-hover:bg-lime-100",

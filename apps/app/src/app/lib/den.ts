@@ -81,6 +81,29 @@ export type DenTemplate = {
   creator: DenTemplateCreator | null;
 };
 
+export type DenOrgLlmProviderModel = {
+  id: string;
+  name: string;
+  config: Record<string, unknown>;
+  createdAt: string | null;
+};
+
+export type DenOrgLlmProvider = {
+  id: string;
+  source: "models_dev" | "custom";
+  providerId: string;
+  name: string;
+  providerConfig: Record<string, unknown>;
+  hasApiKey: boolean;
+  models: DenOrgLlmProviderModel[];
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
+  apiKey: string | null;
+};
+
 export type DenBillingPrice = {
   amount: number | null;
   currency: string | null;
@@ -554,6 +577,71 @@ function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHubParsed[]
     .filter((e): e is DenOrgSkillHubParsed => e !== null);
 }
 
+function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    config: isRecord(value.config) ? value.config : {},
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+  };
+}
+
+function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.providerId !== "string" ||
+    typeof value.name !== "string" ||
+    (value.source !== "models_dev" && value.source !== "custom")
+  ) {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    source: value.source,
+    providerId: value.providerId,
+    name: value.name,
+    providerConfig: isRecord(value.providerConfig) ? value.providerConfig : {},
+    hasApiKey: value.hasApiKey === true,
+    models: Array.isArray(value.models)
+      ? value.models.map(parseDenOrgLlmProviderModel).filter((entry): entry is DenOrgLlmProviderModel => entry !== null)
+      : [],
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+  };
+}
+
+function getDenOrgLlmProviders(payload: unknown): DenOrgLlmProvider[] {
+  if (!isRecord(payload) || !Array.isArray(payload.llmProviders)) {
+    return [];
+  }
+
+  return payload.llmProviders
+    .map(parseDenOrgLlmProvider)
+    .filter((entry): entry is DenOrgLlmProvider => entry !== null);
+}
+
+function getDenOrgLlmProviderConnection(payload: unknown): DenOrgLlmProviderConnection | null {
+  if (!isRecord(payload) || !payload.llmProvider) {
+    return null;
+  }
+
+  const provider = parseDenOrgLlmProvider(payload.llmProvider);
+  if (!provider || !isRecord(payload.llmProvider)) {
+    return null;
+  }
+
+  return {
+    ...provider,
+    apiKey: typeof payload.llmProvider.apiKey === "string" ? payload.llmProvider.apiKey : null,
+  };
+}
+
 function getBillingPrice(value: unknown): DenBillingPrice | null {
   if (!isRecord(value)) {
     return null;
@@ -944,6 +1032,30 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
           body: { skillId },
         },
       );
+    },
+
+    async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers`, {
+        method: "GET",
+        token,
+      });
+      return getDenOrgLlmProviders(payload);
+    },
+
+    async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers/${encodeURIComponent(llmProviderId)}/connect`,
+        {
+          method: "GET",
+          token,
+        },
+      );
+      const provider = getDenOrgLlmProviderConnection(payload);
+      if (!provider) {
+        throw new DenApiError(500, "invalid_llm_provider_payload", "LLM provider response was missing connection details.");
+      }
+      return provider;
     },
 
     async getBillingStatus(options: { includeCheckout?: boolean; includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {

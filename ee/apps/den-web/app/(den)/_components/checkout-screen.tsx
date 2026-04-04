@@ -255,7 +255,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Share setup across your team and org</div>
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background agents in alpha for selected workflows</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers for teams, coming soon</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers with team access controls</div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
@@ -266,9 +266,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                   </p>
                 </div>
                 <div className="den-frame-inset rounded-[1.5rem] p-4">
-                  <p className="den-stat-label">Custom LLM providers</p>
+                  <p className="den-stat-label">LLM providers</p>
                   <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
-                    Standardize provider access for your team. Coming soon.
+                    Standardize provider access, model selection, and team rollout.
                   </p>
                 </div>
               </div>

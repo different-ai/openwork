@@ -100,7 +100,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Shared Workspaces";
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
-    return "Custom LLMs";
+    return "LLM Providers";
   }
   if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
     return "Skill Hubs";
@@ -149,12 +149,12 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       icon: Bot,
       badge: "Alpha",
     },
-    {
-      href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
-      label: "Custom LLMs",
-      icon: Cpu,
-      badge: "Soon",
-    },
+      {
+        href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
+        label: "LLM Providers",
+        icon: Cpu,
+        badge: "New",
+      },
     {
       href: activeOrg ? getSkillHubsRoute(activeOrg.slug) : "#",
       label: "Skill Hubs",

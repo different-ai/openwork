@@ -1,19 +1,30 @@
-import { createMemo, createSignal, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 
-import type { ProviderAuthAuthorization, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
+import type { ProviderAuthAuthorization, ProviderConfig, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import { t } from "../../../i18n";
+import { createDenClient, readDenSettings, type DenOrgLlmProvider, type DenOrgLlmProviderConnection } from "../../lib/den";
 import { unwrap, waitForHealthy } from "../../lib/opencode";
 import type { Client, ProviderListItem, WorkspaceDisplay } from "../../types";
 import { safeStringify } from "../../utils";
-import { filterProviderList, mapConfigProvidersToList } from "../../utils/providers";
+import { compareProviders, filterProviderList, mapConfigProvidersToList } from "../../utils/providers";
 
 type ProviderReturnFocusTarget = "none" | "composer";
 
 export type ProviderAuthMethod = {
-  type: "oauth" | "api";
+  type: "oauth" | "api" | "cloud";
   label: string;
   methodIndex?: number;
+  cloudProviderId?: string;
+  description?: string;
+  env?: string[];
+  modelCount?: number;
+};
+
+export type ProviderAuthProvider = {
+  id: string;
+  name: string;
+  env: string[];
 };
 
 export type ProviderOAuthStartResult = {
@@ -44,10 +55,182 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
   const [providerAuthPreferredProviderId, setProviderAuthPreferredProviderId] = createSignal<string | null>(null);
   const [providerAuthReturnFocusTarget, setProviderAuthReturnFocusTarget] =
     createSignal<ProviderReturnFocusTarget>("none");
+  const [cloudOrgProviders, setCloudOrgProviders] = createSignal<DenOrgLlmProvider[]>([]);
+
+  let cloudOrgProvidersLoadKey = "";
+
+  const getStringList = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+
+  const getCloudProviderEnv = (config: Record<string, unknown>) => getStringList(config.env);
+
+  const buildCloudProviderMethod = (provider: DenOrgLlmProvider): ProviderAuthMethod => ({
+    type: "cloud",
+    label:
+      provider.name.trim().toLowerCase() === provider.providerId.trim().toLowerCase()
+        ? "Use organization provider"
+        : `Use ${provider.name}`,
+    cloudProviderId: provider.id,
+    description:
+      provider.models.length > 0
+        ? `${provider.models.length} curated model${provider.models.length === 1 ? "" : "s"} managed by your organization.`
+        : "Use the provider and credential managed by your organization.",
+    env: getCloudProviderEnv(provider.providerConfig),
+    modelCount: provider.models.length,
+  });
+
+  const buildCloudProviderConfig = (
+    provider: DenOrgLlmProviderConnection,
+  ): ProviderConfig => {
+    const models = Object.fromEntries(
+      provider.models.map((model) => {
+        const next: NonNullable<ProviderConfig["models"]>[string] = {
+          id: model.id,
+          name: model.name,
+        };
+        const raw = model.config;
+        for (const key of [
+          "family",
+          "release_date",
+          "attachment",
+          "reasoning",
+          "temperature",
+          "tool_call",
+          "interleaved",
+          "cost",
+          "limit",
+          "modalities",
+          "status",
+          "options",
+          "headers",
+          "provider",
+          "variants",
+        ] as const) {
+          const value = raw[key];
+          if (value !== undefined) {
+            (next as Record<string, unknown>)[key] = value;
+          }
+        }
+        return [model.id, next];
+      }),
+    );
+
+    const next: ProviderConfig = {
+      id: provider.providerId,
+      name: provider.name,
+      env: getCloudProviderEnv(provider.providerConfig),
+      models,
+    };
+
+    if (typeof provider.providerConfig.npm === "string" && provider.providerConfig.npm.trim()) {
+      next.npm = provider.providerConfig.npm;
+    }
+    if (typeof provider.providerConfig.api === "string" && provider.providerConfig.api.trim()) {
+      next.api = provider.providerConfig.api;
+    }
+    if (provider.providerConfig.options && typeof provider.providerConfig.options === "object") {
+      next.options = provider.providerConfig.options as Record<string, unknown>;
+    }
+    if (Array.isArray(provider.providerConfig.whitelist)) {
+      next.whitelist = getStringList(provider.providerConfig.whitelist);
+    }
+    if (Array.isArray(provider.providerConfig.blacklist)) {
+      next.blacklist = getStringList(provider.providerConfig.blacklist);
+    }
+
+    return next;
+  };
 
   const providerAuthWorkerType = createMemo<"local" | "remote">(() =>
     options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local",
   );
+
+  const providerAuthProviders = createMemo<ProviderAuthProvider[]>(() => {
+    const merged = new Map<string, ProviderAuthProvider>();
+
+    for (const provider of options.providers()) {
+      const id = provider.id?.trim();
+      if (!id) continue;
+      merged.set(id, {
+        id,
+        name: provider.name?.trim() || id,
+        env: Array.isArray(provider.env) ? provider.env : [],
+      });
+    }
+
+    for (const provider of cloudOrgProviders()) {
+      const id = provider.providerId.trim();
+      if (!id || merged.has(id)) continue;
+      merged.set(id, {
+        id,
+        name: provider.name.trim() || id,
+        env: getCloudProviderEnv(provider.providerConfig),
+      });
+    }
+
+    return [...merged.values()].sort(compareProviders);
+  });
+
+  const getCloudOrgProvidersKey = () => {
+    const settings = readDenSettings();
+    return [
+      settings.baseUrl,
+      settings.apiBaseUrl ?? "",
+      settings.activeOrgId?.trim() ?? "",
+      settings.authToken?.trim() ?? "",
+    ].join("::");
+  };
+
+  const refreshCloudOrgProviders = async (optionsArg?: { force?: boolean }) => {
+    const settings = readDenSettings();
+    const loadKey = getCloudOrgProvidersKey();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+
+    if (!optionsArg?.force && cloudOrgProvidersLoadKey === loadKey) {
+      return cloudOrgProviders();
+    }
+
+    if (!token || !orgId) {
+      setCloudOrgProviders([]);
+      cloudOrgProvidersLoadKey = loadKey;
+      return [];
+    }
+
+    const client = createDenClient({
+      baseUrl: settings.baseUrl,
+      token,
+    });
+    try {
+      const providers = await client.listOrgLlmProviders(orgId);
+      setCloudOrgProviders(providers);
+      cloudOrgProvidersLoadKey = loadKey;
+      return providers;
+    } catch (error) {
+      setCloudOrgProviders([]);
+      cloudOrgProvidersLoadKey = "";
+      throw error;
+    }
+  };
+
+  createEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleDenSessionUpdate = () => {
+      cloudOrgProvidersLoadKey = "";
+      setCloudOrgProviders([]);
+      setProviderAuthMethods({});
+    };
+
+    window.addEventListener("openwork-den-session-updated", handleDenSessionUpdate as EventListener);
+    onCleanup(() => {
+      window.removeEventListener("openwork-den-session-updated", handleDenSessionUpdate as EventListener);
+    });
+  });
 
   const applyProviderListState = (value: ProviderListResponse) => {
     options.setProviders(value.all ?? []);
@@ -149,8 +332,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
   const buildProviderAuthMethods = (
     methods: Record<string, ProviderAuthMethod[]>,
-    availableProviders: ProviderListItem[],
+    availableProviders: ProviderAuthProvider[],
     workerType: "local" | "remote",
+    cloudProviders: DenOrgLlmProvider[],
   ) => {
     const merged = Object.fromEntries(
       Object.entries(methods ?? {}).map(([id, providerMethods]) => [
@@ -182,6 +366,17 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         return workerType === "remote" ? isHeadless : !isHeadless;
       });
     }
+
+    for (const provider of cloudProviders) {
+      const id = provider.providerId.trim();
+      if (!id) continue;
+      const existing = merged[id] ?? [];
+      if (existing.some((method) => method.type === "cloud" && method.cloudProviderId === provider.id)) {
+        continue;
+      }
+      merged[id] = [...existing, buildCloudProviderMethod(provider)];
+    }
+
     return merged;
   };
 
@@ -191,10 +386,14 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       throw new Error(t("providers.not_connected"));
     }
     const methods = unwrap(await c.provider.auth());
+    const cloudProviders = await refreshCloudOrgProviders().catch(
+      () => [] as DenOrgLlmProvider[],
+    );
     return buildProviderAuthMethods(
       methods as Record<string, ProviderAuthMethod[]>,
-      options.providers(),
+      providerAuthProviders(),
       workerType,
+      cloudProviders,
     );
   };
 
@@ -405,6 +604,69 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     }
   }
 
+  async function connectCloudProvider(cloudProviderId: string) {
+    setProviderAuthError(null);
+    const c = options.client();
+    if (!c) {
+      throw new Error(t("providers.not_connected"));
+    }
+
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    if (!token || !orgId) {
+      throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
+    }
+
+    try {
+      const den = createDenClient({
+        baseUrl: settings.baseUrl,
+        token,
+      });
+      const provider = await den.getOrgLlmProviderConnection(orgId, cloudProviderId);
+      const apiKey = provider.apiKey?.trim() ?? "";
+      const env = getCloudProviderEnv(provider.providerConfig);
+      if (!apiKey && env.length > 0) {
+        throw new Error(`${provider.name} does not have a stored organization credential yet.`);
+      }
+
+      if (apiKey) {
+        await c.auth.set({
+          providerID: provider.providerId,
+          auth: {
+            type: "api",
+            key: apiKey,
+          },
+        });
+      }
+
+      const config = unwrap(await c.config.get());
+      const disabledProviders = Array.isArray(config.disabled_providers)
+        ? config.disabled_providers
+        : [];
+      const nextDisabledProviders = disabledProviders.filter((id) => id !== provider.providerId);
+
+      await c.config.update({
+        config: {
+          ...config,
+          disabled_providers: nextDisabledProviders,
+          provider: {
+            ...(config.provider ?? {}),
+            [provider.providerId]: buildCloudProviderConfig(provider),
+          },
+        },
+      });
+
+      options.setDisabledProviders(nextDisabledProviders);
+      await refreshProviders({ dispose: true });
+      return `${t("status.connected")} ${provider.name}`;
+    } catch (error) {
+      const message = describeProviderError(error, "Failed to connect organization provider.");
+      setProviderAuthError(message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
   async function disconnectProvider(providerId: string) {
     setProviderAuthError(null);
     const c = options.client();
@@ -552,10 +814,12 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     providerAuthMethods,
     providerAuthPreferredProviderId,
     providerAuthWorkerType,
+    providerAuthProviders,
     startProviderAuth,
     refreshProviders,
     completeProviderAuthOAuth,
     submitProviderApiKey,
+    connectCloudProvider,
     disconnectProvider,
     openProviderAuthModal,
     closeProviderAuthModal,

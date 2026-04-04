@@ -49,6 +49,7 @@ import Button from "../components/button";
 import SettingsView from "../pages/settings";
 import StatusBar from "../components/status-bar";
 import { ProviderAuthModal,
+  type ProviderAuthProvider,
   type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../context/providers";
@@ -77,6 +78,7 @@ export type SettingsShellProps = {
   providerAuthModalOpen: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
+  providerAuthProviders: ProviderAuthProvider[];
   providerAuthPreferredProviderId: string | null;
   providerAuthWorkerType: "local" | "remote";
   openProviderAuthModal: (options?: {
@@ -92,6 +94,7 @@ export type SettingsShellProps = {
     code?: string
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   refreshProviders: () => Promise<unknown>;
   setView: (view: View, sessionId?: string) => void;
   toggleSettings: () => void;
@@ -375,6 +378,19 @@ export default function SettingsShell(props: SettingsShellProps) {
     setProviderAuthActionBusy(true);
     try {
       await props.submitProviderApiKey(providerId, apiKey);
+      props.closeProviderAuthModal();
+    } catch {
+      // Errors are surfaced in the modal.
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
+  const handleCloudProviderConnect = async (cloudProviderId: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      await props.connectCloudProvider(cloudProviderId);
       props.closeProviderAuthModal();
     } catch {
       // Errors are surfaced in the modal.
@@ -1267,11 +1283,12 @@ export default function SettingsShell(props: SettingsShellProps) {
           error={props.providerAuthError}
           preferredProviderId={props.providerAuthPreferredProviderId}
           workerType={props.providerAuthWorkerType}
-          providers={props.providers}
+          providers={props.providerAuthProviders}
           connectedProviderIds={props.providerConnectedIds}
           authMethods={props.providerAuthMethods}
           onSelect={handleProviderAuthSelect}
           onSubmitApiKey={handleProviderAuthApiKey}
+          onConnectCloudProvider={handleCloudProviderConnect}
           onSubmitOAuth={handleProviderAuthOAuth}
           onRefreshProviders={props.refreshProviders}
           onClose={() => props.closeProviderAuthModal()}

@@ -66,6 +66,7 @@ import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import { ProviderAuthModal,
+  type ProviderAuthProvider,
   type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../context/providers";
@@ -219,6 +220,7 @@ export type SessionViewProps = {
     providerId: string,
     apiKey: string,
   ) => Promise<string | void>;
+  connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   refreshProviders: () => Promise<unknown>;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
@@ -229,6 +231,7 @@ export type SessionViewProps = {
   providerAuthBusy: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
+  providerAuthProviders: ProviderAuthProvider[];
   providerAuthPreferredProviderId: string | null;
   providerAuthWorkerType: "local" | "remote";
   providers: ProviderListItem[];
@@ -2456,6 +2459,21 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
+  const handleCloudProviderConnect = async (cloudProviderId: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      const message = await props.connectCloudProvider(cloudProviderId);
+      showStatusToast(message || t("session.provider_connected"), "success");
+      props.closeProviderAuthModal();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to connect organization provider";
+      showStatusToast(message, "error");
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
   const handleSendPrompt = (draft: ComposerDraft) => {
     suppressJumpControlsTemporarily();
     sessionScroll.scrollToBottom();
@@ -3726,11 +3744,12 @@ export default function SessionView(props: SessionViewProps) {
         error={props.providerAuthError}
         preferredProviderId={props.providerAuthPreferredProviderId}
         workerType={props.providerAuthWorkerType}
-        providers={props.providers}
+        providers={props.providerAuthProviders}
         connectedProviderIds={props.providerConnectedIds}
         authMethods={props.providerAuthMethods}
         onSelect={handleProviderAuthSelect}
         onSubmitApiKey={handleProviderAuthApiKey}
+        onConnectCloudProvider={handleCloudProviderConnect}
         onSubmitOAuth={handleProviderAuthOAuth}
         onRefreshProviders={props.refreshProviders}
         onClose={() => props.closeProviderAuthModal()}

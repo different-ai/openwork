@@ -200,6 +200,22 @@ export function getCustomLlmProvidersRoute(orgSlug: string): string {
   return `${getOrgDashboardRoute(orgSlug)}/custom-llm-providers`;
 }
 
+export function getLlmProvidersRoute(orgSlug: string): string {
+  return getCustomLlmProvidersRoute(orgSlug);
+}
+
+export function getLlmProviderRoute(orgSlug: string, llmProviderId: string): string {
+  return `${getLlmProvidersRoute(orgSlug)}/${encodeURIComponent(llmProviderId)}`;
+}
+
+export function getEditLlmProviderRoute(orgSlug: string, llmProviderId: string): string {
+  return `${getLlmProviderRoute(orgSlug, llmProviderId)}/edit`;
+}
+
+export function getNewLlmProviderRoute(orgSlug: string): string {
+  return `${getLlmProvidersRoute(orgSlug)}/new`;
+}
+
 export function getBillingRoute(orgSlug: string): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }

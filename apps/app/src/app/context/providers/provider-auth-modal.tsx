@@ -1,13 +1,12 @@
 import { CheckCircle2, Loader2, X, Search, ChevronRight } from "lucide-solid";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
-import type { ProviderListItem } from "../../types";
 import { isTauriRuntime } from "../../utils";
 import { compareProviders } from "../../utils/providers";
 import Button from "../../components/button";
 import ProviderIcon from "../../components/provider-icon";
 import TextInput from "../../components/text-input";
-import type { ProviderAuthMethod, ProviderOAuthStartResult } from "./store";
+import type { ProviderAuthMethod, ProviderAuthProvider, ProviderOAuthStartResult } from "./store";
 
 type ProviderAuthEntry = {
   id: string;
@@ -37,11 +36,12 @@ export type ProviderAuthModalProps = {
   error: string | null;
   preferredProviderId?: string | null;
   workerType?: "local" | "remote";
-  providers: ProviderListItem[];
+  providers: ProviderAuthProvider[];
   connectedProviderIds: string[];
   authMethods: Record<string, ProviderAuthMethod[]>;
   onSelect: (providerId: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  onConnectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   onSubmitOAuth: (
     providerId: string,
     methodIndex: number,
@@ -121,8 +121,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const actionDisabled = () => props.loading || props.submitting;
 
-  const [view, setView] = createSignal<"list" | "method" | "api" | "oauth-code" | "oauth-auto">("list");
+  const [view, setView] = createSignal<"list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto">("list");
   const [selectedProviderId, setSelectedProviderId] = createSignal<string | null>(null);
+  const [selectedCloudMethod, setSelectedCloudMethod] = createSignal<ProviderAuthMethod | null>(null);
   const [apiKeyInput, setApiKeyInput] = createSignal("");
   const [oauthCodeInput, setOauthCodeInput] = createSignal("");
   const [oauthSession, setOauthSession] = createSignal<ProviderOAuthSession | null>(null);
@@ -187,6 +188,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
     setView("list");
     setSelectedProviderId(null);
+    setSelectedCloudMethod(null);
     setApiKeyInput("");
     setOauthCodeInput("");
     setOauthSession(null);
@@ -462,9 +464,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const entry = selectedEntry();
     if (!entry || actionDisabled()) return;
     setLocalError(null);
+    setSelectedCloudMethod(null);
 
     if (method.type === "oauth") {
       await startOauth(entry, method.methodIndex);
+      return;
+    }
+
+    if (method.type === "cloud") {
+      setSelectedCloudMethod(method);
+      setView("cloud");
       return;
     }
 
@@ -486,6 +495,19 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       await props.onSubmitApiKey(entry.id, trimmed);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save API key";
+      setLocalError(message);
+    }
+  };
+
+  const handleCloudSubmit = async () => {
+    const method = selectedCloudMethod();
+    if (!method?.cloudProviderId || actionDisabled()) return;
+
+    setLocalError(null);
+    try {
+      await props.onConnectCloudProvider(method.cloudProviderId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to connect organization provider";
       setLocalError(message);
     }
   };
@@ -521,7 +543,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
     if (resolvedView() === "api" && (selectedEntry()?.methods.length ?? 0) > 1) {
       setView("method");
+      setSelectedCloudMethod(null);
       setApiKeyInput("");
+      setLocalError(null);
+      return;
+    }
+    if (resolvedView() === "cloud" && (selectedEntry()?.methods.length ?? 0) > 1) {
+      setView("method");
+      setSelectedCloudMethod(null);
       setLocalError(null);
       return;
     }
@@ -531,6 +560,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const submittingLabel = () => {
     if (!props.submitting) return null;
     if (resolvedView() === "api") return "Saving API key...";
+    if (resolvedView() === "cloud") return "Connecting organization provider...";
     if (resolvedView() === "oauth-code") return "Verifying authorization code...";
     if (resolvedView() === "oauth-auto") return "Waiting for OAuth confirmation...";
     return "Opening authentication...";
@@ -584,6 +614,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (method.type === "oauth") {
       return "Continue in the browser and let OpenWork finish the connection automatically.";
     }
+    if (method.type === "cloud") {
+      return method.description ?? "Use the provider and credential managed by your organization.";
+    }
     return "Paste a secret key that OpenWork stores locally on this device.";
   };
 
@@ -594,7 +627,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           <div class="px-6 pt-6 pb-4 border-b border-gray-6/50 flex items-start justify-between gap-4">
             <div>
               <h3 class="text-lg font-semibold text-gray-12">Connect providers</h3>
-              <p class="text-sm text-gray-11 mt-1">Sign in to services you want OpenWork to use.</p>
+              <p class="text-sm text-gray-11 mt-1">Sign in to services or use providers managed by your organization.</p>
             </div>
             <Button
               variant="ghost"
@@ -704,6 +737,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                                         class={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${
                                           method.type === "oauth"
                                             ? "bg-indigo-3/30 text-indigo-11 border-indigo-5/30"
+                                            : method.type === "cloud"
+                                              ? "bg-emerald-3/30 text-emerald-11 border-emerald-5/30"
                                             : "bg-gray-3/40 text-gray-11 border-gray-6/40"
                                         }`}
                                       >
@@ -796,6 +831,41 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         disabled={actionDisabled() || !apiKeyInput().trim()}
                       >
                         {props.submitting ? "Saving..." : "Save key"}
+                      </Button>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={resolvedView() === "cloud" && selectedEntry() && selectedCloudMethod()}>
+                  <div class="rounded-xl border border-gray-6/40 bg-gray-2/50 shadow-sm p-5 space-y-4">
+                    <div class="flex items-center justify-between gap-4">
+                      <div>
+                        <div class="text-sm font-medium text-gray-12">{selectedEntry()!.name}</div>
+                        <div class="text-xs text-gray-10 mt-1">Connect with the provider managed by your organization.</div>
+                      </div>
+                      <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
+                        Back
+                      </Button>
+                    </div>
+                    <div class="text-xs text-gray-9">
+                      {selectedCloudMethod()!.description ?? "Use the provider and credential managed by your organization."}
+                    </div>
+                    <Show when={(selectedCloudMethod()!.modelCount ?? 0) > 0}>
+                      <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-9">
+                        {(selectedCloudMethod()!.modelCount ?? 0)} curated model{(selectedCloudMethod()!.modelCount ?? 0) === 1 ? "" : "s"} will be added to this workspace.
+                      </div>
+                    </Show>
+                    <Show when={(selectedCloudMethod()!.env?.length ?? 0) > 0}>
+                      <div class="text-[11px] text-gray-9">
+                        Env vars: <span class="font-mono">{selectedCloudMethod()!.env!.join(", ")}</span>
+                      </div>
+                    </Show>
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="text-[11px] text-gray-9">
+                        OpenWork will install the provider config and use the credential stored for your org.
+                      </div>
+                      <Button variant="secondary" onClick={handleCloudSubmit} disabled={actionDisabled()}>
+                        {props.submitting ? "Connecting..." : "Connect provider"}
                       </Button>
                     </div>
                   </div>
