@@ -82,6 +82,9 @@ importers:
       jsonc-parser:
         specifier: ^3.2.1
         version: 3.3.1
+      lucide-react:
+        specifier: ^0.577.0
+        version: 0.577.0(react@19.2.4)
       lucide-solid:
         specifier: ^0.562.0
         version: 0.562.0(solid-js@1.9.9)

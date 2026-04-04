@@ -1,6 +1,8 @@
 import { Fragment, createElement } from "react";
 
-import { SolidSlot } from "../shell/solid-slot";
+import ReactWorkspaceSessionList, {
+  type ReactWorkspaceSessionListProps,
+} from "./react-workspace-session-list";
 
 export type ReactSessionSidebarShellProps = {
   leftSidebarWidth: number;
@@ -10,7 +12,7 @@ export type ReactSessionSidebarShellProps = {
   updateVersion?: string | null;
   onUpdatePillClick: () => void;
   onStartResize: (event: any) => void;
-  renderSidebar: () => any;
+  sidebarProps: ReactWorkspaceSessionListProps;
 };
 
 export default function ReactSessionSidebarShell(
@@ -64,10 +66,7 @@ export default function ReactSessionSidebarShell(
       createElement(
         "div",
         { className: "flex min-h-0 flex-1" },
-        createElement(SolidSlot, {
-          slotId: "session-sidebar-shell-slot",
-          renderContent: props.renderSidebar,
-        }),
+        createElement(ReactWorkspaceSessionList, props.sidebarProps),
       ),
       createElement("div", {
         className:

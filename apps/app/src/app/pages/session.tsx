@@ -97,7 +97,6 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerNotice } from "../components/session/composer-notice";
 import { createSessionScrollController } from "../components/session/scroll-controller";
-import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
@@ -2916,37 +2915,6 @@ export default function SessionView(props: SessionViewProps) {
       t("session.workspace_fallback"),
   );
 
-  const renderSessionSidebar = () => (
-    <WorkspaceSessionList
-      workspaceSessionGroups={props.workspaceSessionGroups}
-      selectedWorkspaceId={props.selectedWorkspaceId}
-      developerMode={props.developerMode}
-      selectedSessionId={props.selectedSessionId}
-      showSessionActions
-      sessionStatusById={props.sessionStatusById}
-      connectingWorkspaceId={props.connectingWorkspaceId}
-      workspaceConnectionStateById={props.workspaceConnectionStateById}
-      newTaskDisabled={props.newTaskDisabled}
-      onSelectWorkspace={props.selectWorkspace}
-      onOpenSession={openSessionFromList}
-      onPrefetchSession={(workspaceId, sessionId) => {
-        if (workspaceId !== props.selectedWorkspaceId) return;
-        void props.ensureSessionLoaded(sessionId);
-      }}
-      onCreateTaskInWorkspace={createTaskInWorkspace}
-      onOpenRenameSession={openRenameModal}
-      onOpenDeleteSession={openDeleteSessionModal}
-      onOpenRenameWorkspace={props.openRenameWorkspace}
-      onShareWorkspace={shareWorkspaceState.openShareWorkspace}
-      onRevealWorkspace={revealWorkspaceInFinder}
-      onRecoverWorkspace={props.recoverWorkspace}
-      onTestWorkspaceConnection={props.testWorkspaceConnection}
-      onEditWorkspaceConnection={props.editWorkspaceConnection}
-      onForgetWorkspace={props.forgetWorkspace}
-      onOpenCreateWorkspace={props.openCreateWorkspace}
-    />
-  );
-
   const renderSessionHeaderActions = () => (
     <>
       <button
@@ -3033,7 +3001,34 @@ export default function SessionView(props: SessionViewProps) {
           updateVersion={props.updateStatus?.version ?? null}
           onUpdatePillClick={handleUpdatePillClick}
           onStartResize={startLeftSidebarResize}
-          renderSidebar={renderSessionSidebar}
+          sidebarProps={{
+            workspaceSessionGroups: props.workspaceSessionGroups,
+            selectedWorkspaceId: props.selectedWorkspaceId,
+            developerMode: props.developerMode,
+            selectedSessionId: props.selectedSessionId,
+            showSessionActions: true,
+            sessionStatusById: props.sessionStatusById,
+            connectingWorkspaceId: props.connectingWorkspaceId,
+            workspaceConnectionStateById: props.workspaceConnectionStateById,
+            newTaskDisabled: props.newTaskDisabled,
+            onSelectWorkspace: props.selectWorkspace,
+            onOpenSession: openSessionFromList,
+            onPrefetchSession: (workspaceId, sessionId) => {
+              if (workspaceId !== props.selectedWorkspaceId) return;
+              void props.ensureSessionLoaded(sessionId);
+            },
+            onCreateTaskInWorkspace: createTaskInWorkspace,
+            onOpenRenameSession: openRenameModal,
+            onOpenDeleteSession: openDeleteSessionModal,
+            onOpenRenameWorkspace: props.openRenameWorkspace,
+            onShareWorkspace: shareWorkspaceState.openShareWorkspace,
+            onRevealWorkspace: revealWorkspaceInFinder,
+            onRecoverWorkspace: props.recoverWorkspace,
+            onTestWorkspaceConnection: props.testWorkspaceConnection,
+            onEditWorkspaceConnection: props.editWorkspaceConnection,
+            onForgetWorkspace: props.forgetWorkspace,
+            onOpenCreateWorkspace: props.openCreateWorkspace,
+          }}
         />
 
         <main class="min-w-0 flex-1 flex flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
