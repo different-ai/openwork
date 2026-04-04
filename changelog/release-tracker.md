@@ -22,6 +22,14 @@ Stops long prompts from disappearing while typing, making the session composer r
 - Hardened draft retention so typed text stays stable during longer session inputs.
 - Shipped the fix in the `0.11.100` release with the usual package and metadata refresh.
 
+#### Lines of code changed since previous release
+
+98 lines changed since `v0.11.99` (58 insertions, 40 deletions).
+
+#### Release importance
+
+Minor release: restores composer draft stability so long prompts no longer disappear while typing.
+
 #### Major improvements
 
 False
@@ -85,6 +93,14 @@ Improves local session reliability first, then adds clearer Soul controls and cl
 - Added a local recovery flow for broken OpenCode database migrations so local startup can repair itself.
 - Improved Soul starter observability and steering so users can inspect and guide Soul behavior more clearly.
 - Refreshed compact action buttons across settings and sidebars to make update and connection controls easier to scan.
+
+#### Lines of code changed since previous release
+
+1248 lines changed since `v0.11.100` (933 insertions, 315 deletions).
+
+#### Release importance
+
+Minor release: improves local recovery, Soul steering, and interface clarity without changing the product's core architecture.
 
 #### Major improvements
 
