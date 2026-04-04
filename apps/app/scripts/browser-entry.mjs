@@ -117,6 +117,7 @@ let tmpdir;
 let mock;
 let opencode;
 let sawChromeQuickstartPrompt = false;
+const mockSockets = new Set();
 
 try {
   tmpdir = await mkdtemp(path.join(os.tmpdir(), "openwork-browser-entry-"));
@@ -182,6 +183,12 @@ try {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("not found");
     });
+    mock.on("connection", (socket) => {
+      mockSockets.add(socket);
+      socket.on("close", () => {
+        mockSockets.delete(socket);
+      });
+    });
 
     await new Promise((resolve) => mock.listen(mockPort, "127.0.0.1", resolve));
     return { baseURL };
@@ -246,6 +253,7 @@ try {
 
   await step("assert.no-tool-errors", async () => {
     const start = Date.now();
+    // Keep this internal polling window short: the test should wait up to 12 seconds for the assistant response before failing
     while (Date.now() - start < 12_000) {
       const msgs = await client.session.messages({ sessionID: sessionId, limit: 50 });
       const parts = msgs.flatMap((m) => m.parts ?? []);
@@ -285,7 +293,12 @@ try {
     // ignore
   }
   try {
-    if (mock) await new Promise((resolve) => mock.close(() => resolve()));
+    if (mock) {
+      for (const socket of mockSockets) {
+        socket.destroy();
+      }
+      await new Promise((resolve) => mock.close(() => resolve()));
+    }
   } catch {
     // ignore
   }
