@@ -104,6 +104,7 @@ import {
 } from "../shell/status-toasts";
 import { createShareWorkspaceState } from "../session/share-workspace";
 import ReactSessionHeaderHost from "../session/react-session-header-host";
+import ReactSessionCommandPaletteHost from "../session/react-session-command-palette-host";
 import ReactSessionSearchPanelHost from "../session/react-session-search-panel-host";
 import ReactSessionSidebarShellHost from "../session/react-session-sidebar-shell-host";
 import ReactSessionTodoPanelHost from "../session/react-session-todo-panel-host";
@@ -3372,107 +3373,30 @@ export default function SessionView(props: SessionViewProps) {
       </div>
 
       <Show when={commandPaletteOpen()}>
-        <div
-          class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
-          onClick={closeCommandPalette}
-        >
-          <div
-            class="w-full max-w-2xl mt-12 rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div class="border-b border-dls-border px-4 py-3 space-y-2">
-              <div class="flex items-center gap-2">
-                <Show when={commandPaletteMode() !== "root"}>
-                  <button
-                    type="button"
-                    class="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
-                    onClick={returnToCommandRoot}
-                  >
-                    {t("session.back")}
-                  </button>
-                </Show>
-                <Search size={14} class="text-dls-secondary shrink-0" />
-                <input
-                  ref={(el) => (commandPaletteInputEl = el)}
-                  type="text"
-                  value={commandPaletteQuery()}
-                  onInput={(event) =>
-                    setCommandPaletteQuery(event.currentTarget.value)
-                  }
-                  placeholder={commandPalettePlaceholder()}
-                  class="min-w-0 flex-1 bg-transparent text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
-                  aria-label={commandPaletteTitle()}
-                />
-                <button
-                  type="button"
-                  class="h-8 w-8 flex items-center justify-center rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
-                  onClick={closeCommandPalette}
-                  aria-label={t("session.close_quick_actions")}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <div class="text-[11px] text-dls-secondary">
-                {commandPaletteTitle()}
-              </div>
-            </div>
-
-            <div class="max-h-[56vh] overflow-y-auto p-2">
-              <Show
-                when={commandPaletteItems().length > 0}
-                fallback={
-                  <div class="px-3 py-6 text-sm text-dls-secondary text-center">
-                    {t("session.no_matches_command")}
-                  </div>
-                }
-              >
-                <For each={commandPaletteItems()}>
-                  {(item, index) => {
-                    const idx = () => index();
-                    return (
-                      <button
-                        ref={(el) => {
-                          commandPaletteOptionRefs[idx()] = el;
-                        }}
-                        type="button"
-                        class={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${
-                          idx() === commandPaletteActiveIndex()
-                            ? "bg-dls-active text-dls-text"
-                            : "text-dls-text hover:bg-dls-hover"
-                        }`}
-                        onMouseEnter={() => setCommandPaletteActiveIndex(idx())}
-                        onClick={item.action}
-                      >
-                        <div class="flex items-start justify-between gap-3">
-                          <div class="min-w-0">
-                            <div class="text-sm font-medium truncate">
-                              {item.title}
-                            </div>
-                            <Show when={item.detail}>
-                              <div class="text-xs text-dls-secondary mt-1 truncate">
-                                {item.detail}
-                              </div>
-                            </Show>
-                          </div>
-                          <Show when={item.meta}>
-                            <span class="text-[10px] uppercase tracking-wide text-dls-secondary shrink-0">
-                              {item.meta}
-                            </span>
-                          </Show>
-                        </div>
-                      </button>
-                    );
-                  }}
-                </For>
-              </Show>
-            </div>
-
-            <div class="border-t border-dls-border px-3 py-2 text-[11px] text-dls-secondary flex items-center justify-between gap-2">
-              <span>{t("session.palette_hint_navigate")}</span>
-              <span>{t("session.palette_hint_run")}</span>
-            </div>
-          </div>
-        </div>
+        <ReactSessionCommandPaletteHost
+          mode={commandPaletteMode()}
+          query={commandPaletteQuery()}
+          title={commandPaletteTitle()}
+          placeholder={commandPalettePlaceholder()}
+          items={commandPaletteItems()}
+          activeIndex={commandPaletteActiveIndex()}
+          noMatchesLabel={t("session.no_matches_command")}
+          backLabel={t("session.back")}
+          closeLabel={t("session.close_quick_actions")}
+          hintNavigateLabel={t("session.palette_hint_navigate")}
+          hintRunLabel={t("session.palette_hint_run")}
+          setInputRef={(element) => {
+            commandPaletteInputEl = element ?? undefined;
+          }}
+          setOptionRef={(index, element) => {
+            if (!element) return;
+            commandPaletteOptionRefs[index] = element;
+          }}
+          onClose={closeCommandPalette}
+          onBack={returnToCommandRoot}
+          onQueryChange={setCommandPaletteQuery}
+          onHoverIndex={setCommandPaletteActiveIndex}
+        />
       </Show>
 
       <ProviderAuthModal
