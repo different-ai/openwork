@@ -4,19 +4,18 @@ import ja from "./locales/ja";
 import zh from "./locales/zh";
 import vi from "./locales/vi";
 import ptBR from "./locales/pt-BR";
-import th from "./locales/th";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR"];
 
 /**
  * Language options for UI - single source of truth
@@ -27,7 +26,6 @@ export const LANGUAGE_OPTIONS = [
   { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
   { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
   { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
-  { value: "th" as Language, label: "ไทย", nativeName: "ไทย" },
 ] as const;
 
 /**
@@ -39,7 +37,6 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   zh,
   vi,
     "pt-BR": ptBR,
-  th,
 };
 
 /**
