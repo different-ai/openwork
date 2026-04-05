@@ -2,6 +2,7 @@ import os from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import devtools from "solid-devtools/vite";
 import solid from "vite-plugin-solid";
@@ -26,6 +27,7 @@ if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const reactFiles = /\.react\.[tj]sx?$/;
 
 export default defineConfig({
   plugins: [
@@ -39,6 +41,7 @@ export default defineConfig({
       },
     },
     tailwindcss(),
+    react({ include: reactFiles }),
     devtools({
       autoname: true,
       // jsxLocation is required for in-page locator: map DOM → Solid components (hold Option/Alt while hovering).
@@ -48,7 +51,7 @@ export default defineConfig({
         componentLocation: true,
       },
     }),
-    solid(),
+    solid({ exclude: [reactFiles] }),
   ],
   server: {
     port: devPort,
