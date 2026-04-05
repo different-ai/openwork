@@ -1,4 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import { isTauriRuntime } from "../utils";
 import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./tauri";
 
@@ -103,6 +104,21 @@ export type OpenworkWorkspaceList = {
   items: OpenworkWorkspaceInfo[];
   workspaces?: WorkspaceInfo[];
   activeId?: string | null;
+};
+
+export type OpenworkSessionMessage = {
+  info: Message;
+  parts: Part[];
+};
+
+export type OpenworkSessionSnapshot = {
+  session: Session;
+  messages: OpenworkSessionMessage[];
+  todos: Todo[];
+  status:
+    | { type: "idle" }
+    | { type: "busy" }
+    | { type: "retry"; attempt: number; message: string; next: number };
 };
 
 export type OpenworkPluginItem = {
@@ -912,6 +928,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     activateWorkspace: 10_000,
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
+    sessionRead: 12_000,
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
@@ -985,6 +1002,48 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
+    listSessions: (
+      workspaceId: string,
+      options?: { roots?: boolean; start?: number; search?: string; limit?: number },
+    ) => {
+      const query = new URLSearchParams();
+      if (typeof options?.roots === "boolean") query.set("roots", String(options.roots));
+      if (typeof options?.start === "number") query.set("start", String(options.start));
+      if (options?.search?.trim()) query.set("search", options.search.trim());
+      if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<{ items: Session[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions${suffix}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      );
+    },
+    getSession: (workspaceId: string, sessionId: string) =>
+      requestJson<{ item: Session }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+    getSessionMessages: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
+      const query = new URLSearchParams();
+      if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<{ items: OpenworkSessionMessage[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      );
+    },
+    getSessionSnapshot: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
+      const query = new URLSearchParams();
+      if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      const suffix = query.size ? `?${query.toString()}` : "";
+      return requestJson<{ item: OpenworkSessionSnapshot }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/snapshot${suffix}`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      );
+    },
     exportWorkspace: (
       workspaceId: string,
       options?: { sensitiveMode?: OpenworkWorkspaceExportSensitiveMode },
