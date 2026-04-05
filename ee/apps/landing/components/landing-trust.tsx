@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, ChevronLeft } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { LandingBackground } from "./landing-background";
@@ -73,13 +73,7 @@ function TopicRailItem({
   );
 }
 
-function TopicPanel({
-  topic,
-  callHref
-}: {
-  topic: TrustTopic;
-  callHref: string;
-}) {
+function TopicPanel({ topic, callHref }: { topic: TrustTopic; callHref: string }) {
   const Icon = topic.icon;
 
   return (
@@ -117,12 +111,18 @@ function TopicPanel({
       </div>
 
       <div className="mt-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-        <Link href={`/trust/${topic.slug}`} className="secondary-button text-sm">
-          Open full page <ArrowRight size={15} />
-        </Link>
         <a href={callHref} className="doc-button text-sm" {...externalLinkProps(callHref)}>
           Book a call
         </a>
+        {topic.slug === "status-page-access" ? (
+          <a
+            href={statusPageRequestHref}
+            className="secondary-button text-sm"
+            {...externalLinkProps(statusPageRequestHref)}
+          >
+            Request status page
+          </a>
+        ) : null}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-3 text-[13px] text-slate-500">
@@ -152,49 +152,6 @@ function TopicPanel({
   );
 }
 
-function QuickFactCard({
-  topic,
-  onPreview
-}: {
-  topic: TrustTopic;
-  onPreview: (slug: string) => void;
-}) {
-  const Icon = topic.icon;
-
-  return (
-    <div className="landing-shell rounded-[1.5rem] p-4 md:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-[15px] font-medium tracking-tight text-[#011627]">
-            {topic.label}
-          </h3>
-          <p className="mt-2 text-[13px] leading-relaxed text-slate-600">
-            {topic.cardSummary}
-          </p>
-        </div>
-        <div
-          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${topic.toneClassName}`}
-        >
-          <Icon size={16} />
-        </div>
-      </div>
-
-      <div className="mt-4 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => onPreview(topic.slug)}
-          className="text-[13px] font-medium text-[#011627] transition-colors hover:text-slate-700"
-        >
-          Preview
-        </button>
-        <Link href={`/trust/${topic.slug}`} className="text-[13px] font-medium text-[#011627] transition-colors hover:text-slate-700">
-          Open
-        </Link>
-      </div>
-    </div>
-  );
-}
-
 export function LandingTrustOverview(props: SharedProps) {
   const callHref = props.calUrl || "/enterprise#book";
   const [activeSlug, setActiveSlug] = useState(defaultTrustTopicSlug);
@@ -202,11 +159,6 @@ export function LandingTrustOverview(props: SharedProps) {
   const activeTopic = useMemo(
     () => getTrustTopic(activeSlug) ?? trustTopics[0],
     [activeSlug]
-  );
-
-  const quickTopics = useMemo(
-    () => trustTopics.filter((topic) => topic.slug !== activeTopic.slug),
-    [activeTopic.slug]
   );
 
   return (
@@ -253,8 +205,8 @@ export function LandingTrustOverview(props: SharedProps) {
             </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)] xl:grid-rows-[auto_auto]">
-            <div className="landing-shell rounded-[1.75rem] p-4 xl:row-span-2 xl:p-5">
+          <section className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="landing-shell rounded-[1.75rem] p-4 xl:p-5">
               <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                 Topics
               </div>
@@ -271,16 +223,6 @@ export function LandingTrustOverview(props: SharedProps) {
             </div>
 
             <TopicPanel topic={activeTopic} callHref={callHref} />
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {quickTopics.map((topic) => (
-                <QuickFactCard
-                  key={topic.slug}
-                  topic={topic}
-                  onPreview={setActiveSlug}
-                />
-              ))}
-            </div>
           </section>
 
           <TrustFooterBar />

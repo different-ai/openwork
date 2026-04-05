@@ -21,10 +21,8 @@ export type TrustTopic = {
   slug: string;
   label: string;
   title: string;
-  summary: string;
   panelIntro: string;
   bullets: string[];
-  cardSummary: string;
   icon: LucideIcon;
   toneClassName: string;
   links: TrustLink[];
@@ -35,8 +33,6 @@ export const trustTopics: TrustTopic[] = [
     slug: "self-hosted-deployment",
     label: "Self-hosted deployment",
     title: "Run OpenWork in infrastructure your team controls.",
-    summary:
-      "OpenWork supports self-hosted paths when infrastructure ownership, internal governance, or customer-managed residency matters.",
     panelIntro:
       "Run OpenWork in your own environment when infrastructure ownership, internal governance, or customer-managed residency matters.",
     bullets: [
@@ -45,8 +41,6 @@ export const trustTopics: TrustTopic[] = [
       "Your team keeps infrastructure ownership when you deploy in your own environment.",
       "Enterprise review does not require adopting a hosted-only control plane."
     ],
-    cardSummary:
-      "Run OpenWork in your own environment when infrastructure ownership matters.",
     icon: Building2,
     toneClassName: "bg-blue-50 text-blue-700",
     links: [
@@ -62,8 +56,6 @@ export const trustTopics: TrustTopic[] = [
     slug: "local-first-workflows",
     label: "Local-first workflows",
     title: "Keep workflow boundaries understandable from the start.",
-    summary:
-      "OpenWork stays open, local-first, and standards-based rather than forcing everything through a single hosted black box.",
     panelIntro:
       "OpenWork is designed around a local-first, cloud-ready model so teams can review where work starts and how remote behavior is introduced.",
     bullets: [
@@ -72,8 +64,6 @@ export const trustTopics: TrustTopic[] = [
       "OpenWork stays open, local-first, and standards-based in the product vision.",
       "Runtime boundaries stay legible enough for enterprise review."
     ],
-    cardSummary:
-      "OpenWork stays open, local-first, and standards-based rather than forcing a hosted default.",
     icon: HardDrive,
     toneClassName: "bg-emerald-50 text-emerald-700",
     links: [
@@ -93,8 +83,6 @@ export const trustTopics: TrustTopic[] = [
     slug: "provider-and-key-control",
     label: "Provider and key control",
     title: "Use your own providers and your own keys.",
-    summary:
-      "OpenWork supports bring-your-own-key setups and does not treat your chosen model providers as OpenWork subprocessors when you connect directly.",
     panelIntro:
       "Use your own keys and existing provider relationships instead of adopting a closed default stack.",
     bullets: [
@@ -103,8 +91,6 @@ export const trustTopics: TrustTopic[] = [
       "Third-party model providers connected with your own credentials are governed by their own terms.",
       "OpenWork does not present your chosen model providers as OpenWork subprocessors when you connect directly."
     ],
-    cardSummary:
-      "Bring your own keys and use your approved provider stack instead of a closed default.",
     icon: KeyRound,
     toneClassName: "bg-violet-50 text-violet-700",
     links: [
@@ -116,8 +102,6 @@ export const trustTopics: TrustTopic[] = [
     slug: "data-residency-controls",
     label: "Data residency controls",
     title: "Residency follows how and where you deploy OpenWork.",
-    summary:
-      "For self-hosted deployments, data residency follows the environment you choose rather than a hidden managed default.",
     panelIntro:
       "Data residency follows your deployment model. In self-hosted environments, infrastructure location stays under customer control.",
     bullets: [
@@ -126,8 +110,6 @@ export const trustTopics: TrustTopic[] = [
       "OpenWork avoids forcing a cloud-only lock-in model for teams that need residency control.",
       "Provider choice and deployment choice stay separate for cleaner review."
     ],
-    cardSummary:
-      "For self-hosted deployments, residency follows where you choose to run OpenWork.",
     icon: Database,
     toneClassName: "bg-cyan-50 text-cyan-700",
     links: [
@@ -143,8 +125,6 @@ export const trustTopics: TrustTopic[] = [
     slug: "incident-response",
     label: "Incident response",
     title: "Security reports have a documented private path.",
-    summary:
-      "OpenWork publishes a private vulnerability reporting path with acknowledgement within 3 business days and initial triage within 7 business days.",
     panelIntro:
       "OpenWork provides a documented path for reporting vulnerabilities and sets response expectations in the public security policy.",
     bullets: [
@@ -153,8 +133,6 @@ export const trustTopics: TrustTopic[] = [
       "OpenWork commits to acknowledge receipt within 3 business days.",
       "OpenWork commits to share an initial triage status within 7 business days."
     ],
-    cardSummary:
-      "Private security reports follow a documented process with published acknowledgement and triage timing.",
     icon: ShieldCheck,
     toneClassName: "bg-amber-50 text-amber-700",
     links: [
@@ -174,8 +152,6 @@ export const trustTopics: TrustTopic[] = [
     slug: "status-page-access",
     label: "Status page access",
     title: "Status information is available during enterprise review.",
-    summary:
-      "Status page access is available on request for enterprise conversations. It is not presented here as a formal SLA.",
     panelIntro:
       "Status page access is available on request for enterprise teams that want more operational transparency during review.",
     bullets: [
@@ -184,8 +160,6 @@ export const trustTopics: TrustTopic[] = [
       "Operational review can happen without padded uptime claims.",
       "The same team inbox handles status page requests from enterprise prospects."
     ],
-    cardSummary:
-      "Status page access is available on request as part of enterprise conversations.",
     icon: LifeBuoy,
     toneClassName: "bg-rose-50 text-rose-700",
     links: [
@@ -197,8 +171,6 @@ export const trustTopics: TrustTopic[] = [
     slug: "subprocessors",
     label: "Subprocessors",
     title: "Current subprocessors are already listed publicly.",
-    summary:
-      "The public privacy policy lists PostHog, Polar, Google, GitHub, and Daytona as current subprocessors.",
     panelIntro:
       "OpenWork already publishes its current subprocessors in the privacy policy for procurement and security review.",
     bullets: [
@@ -207,8 +179,6 @@ export const trustTopics: TrustTopic[] = [
       "Google and GitHub provide OAuth sign-in services.",
       "Daytona provides virtual sandbox infrastructure for the Cloud Service."
     ],
-    cardSummary:
-      "Current public subprocessors: PostHog, Polar, Google, GitHub, and Daytona.",
     icon: ShieldCheck,
     toneClassName: "bg-slate-100 text-slate-700",
     links: [
