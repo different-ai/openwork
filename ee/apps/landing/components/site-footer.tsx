@@ -36,6 +36,9 @@ export function SiteFooter() {
           <Link href="/privacy" className="transition-colors hover:text-gray-800">
             Privacy
           </Link>
+          <Link href="/terms" className="transition-colors hover:text-gray-800">
+            Terms
+          </Link>
           <div>© 2026 OpenWork Project.</div>
         </div>
       </div>

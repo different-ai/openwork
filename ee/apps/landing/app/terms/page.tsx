@@ -8,17 +8,17 @@ import { getGithubData } from "../../lib/github";
 import { parseLegalDoc, renderBlocks } from "../../lib/parse-legal-doc";
 
 export const metadata = {
-  title: "OpenWork — Privacy Policy",
+  title: "OpenWork — Terms of Use",
   description:
-    "Privacy policy for Different AI, doing business as OpenWork."
+    "Terms of use for Different AI, doing business as OpenWork."
 };
 
-export default async function PrivacyPage() {
+export default async function TermsPage() {
   const github = await getGithubData();
   const callUrl = process.env.NEXT_PUBLIC_CAL_URL || "/enterprise#book";
 
   const raw = fs.readFileSync(
-    path.join(process.cwd(), "app/privacy/privacy-policy.txt"),
+    path.join(process.cwd(), "app/terms/terms-of-use.txt"),
     "utf-8"
   );
   const doc = parseLegalDoc(raw);
