@@ -51,9 +51,9 @@ function formatDate(raw) {
  */
 function resolveTags(features, bugs, deprecated) {
   const tags = []
-  if (features > 0) tags.push("New releases")
-  if (bugs > 0) tags.push("Improvements")
-  if (deprecated > 0) tags.push("Deprecations")
+  if (features > 0) tags.push("🚀 New Features")
+  if (bugs > 0) tags.push("🐛 Bug Fixes")
+  if (deprecated > 0) tags.push("🏗️ Refactoring")
   return tags.length > 0 ? tags : ["Misc"]
 }
 
