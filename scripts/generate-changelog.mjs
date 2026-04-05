@@ -54,7 +54,7 @@ function resolveTags(features, bugs, deprecated) {
   if (features > 0) tags.push("🚀 New Features")
   if (bugs > 0) tags.push("🐛 Bug Fixes")
   if (deprecated > 0) tags.push("🏗️ Refactoring")
-  return tags.length > 0 ? tags : ["Misc"]
+  return tags.length > 0 ? tags : ["🔧 Misc"]
 }
 
 // ---------------------------------------------------------------------------
@@ -142,15 +142,11 @@ function toEntry(release, prevVersion) {
 // Renderer
 // ---------------------------------------------------------------------------
 
-function renderEntry(entry) {
+/**
+ * Render a single version block (used inside a grouped day).
+ */
+function renderVersionBlock(entry) {
   const lines = []
-
-  // Tags array as JSX
-  const tagsJsx = entry.tags.map((t) => `"${t}"`).join(", ")
-
-  // Open <Update> with date label and tags (no description)
-  lines.push(`<Update label="${entry.date}" tags={[${tagsJsx}]}>`)
-  lines.push("")
 
   // Version as the section heading, linked to compare URL
   if (entry.compareUrl) {
@@ -163,7 +159,6 @@ function renderEntry(entry) {
 
   // Body: major → bullet points, minor → one-liner
   if (entry.isMajor && entry.mainChanges) {
-    // Indent each line 2 spaces to match Mintlify convention
     const indented = entry.mainChanges
       .split("\n")
       .map((l) => `  ${l}`)
@@ -171,6 +166,31 @@ function renderEntry(entry) {
     lines.push(indented)
   } else {
     lines.push(`  ${entry.oneLiner}`)
+  }
+
+  return lines.join("\n")
+}
+
+/**
+ * Group entries by date and render each group as a single <Update>.
+ * Tags are unioned across all entries in the day.
+ * "🔧 Misc" is dropped if any real tag exists.
+ */
+function renderDayGroup(dayEntries) {
+  // Union tags, dedup, drop Misc if real tags exist
+  const allTags = [...new Set(dayEntries.flatMap((e) => e.tags))]
+  const filtered = allTags.filter((t) => t !== "🔧 Misc")
+  const tags = filtered.length > 0 ? filtered : ["🔧 Misc"]
+
+  const tagsJsx = tags.map((t) => `"${t}"`).join(", ")
+  const date = dayEntries[0].date
+
+  const lines = []
+  lines.push(`<Update label="${date}" tags={[${tagsJsx}]}>`)
+
+  for (const entry of dayEntries) {
+    lines.push("")
+    lines.push(renderVersionBlock(entry))
   }
 
   lines.push("")
@@ -187,10 +207,20 @@ function renderChangelog(entries) {
     "",
   ].join("\n")
 
-  const body = entries
-    .filter((e) => e.date !== null) // skip unparseable dates
-    .reverse() // newest first
-    .map(renderEntry)
+  // Filter, reverse (newest first), then group by date
+  const valid = entries.filter((e) => e.date !== null).reverse()
+  const grouped = []
+  for (const entry of valid) {
+    const last = grouped[grouped.length - 1]
+    if (last && last[0].date === entry.date) {
+      last.push(entry)
+    } else {
+      grouped.push([entry])
+    }
+  }
+
+  const body = grouped
+    .map(renderDayGroup)
     .join("\n\n")
 
   return header + body + "\n"
