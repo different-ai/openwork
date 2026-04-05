@@ -210,7 +210,7 @@ Either you or OpenWork may assert claims, if they qualify, in small claims court
 
 ### Opt-out
 
-You have the right to opt out of the provisions of this Section by sending written notice of your decision to opt out to the following address: 700 Alabama St, San Francisco, CA 94110, United States postmarked within thirty (30) days of first accepting these Terms. You must include (i) your name and residence address, (ii) the email address and/or telephone number associated with your account, and (iii) a clear statement that you want to opt out of these Terms' arbitration agreement.
+You have the right to opt out of the provisions of this Section by sending written notice of your decision to opt out to the following address: 28 Geary St STE 650 Suite #188, San Francisco, California 94108, United States postmarked within thirty (30) days of first accepting these Terms. You must include (i) your name and residence address, (ii) the email address and/or telephone number associated with your account, and (iii) a clear statement that you want to opt out of these Terms' arbitration agreement.
 
 ### Exclusive Venue
 
