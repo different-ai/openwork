@@ -52,12 +52,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.152
 
 #### Commit
@@ -107,12 +101,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
 
 ## v0.11.153
 
@@ -167,12 +155,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-False
-
-#### Published in docs
-False
-
 ## v0.11.154
 
 #### Commit
@@ -222,12 +204,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
 
 ## v0.11.155
 
@@ -279,12 +255,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.156
 
 #### Commit
@@ -334,12 +304,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
 
 ## v0.11.157
 
@@ -395,12 +359,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-False
-
-#### Published in docs
-False
-
 ## v0.11.158
 
 #### Commit
@@ -450,12 +408,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
 
 ## v0.11.159
 
@@ -509,12 +461,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.160
 
@@ -570,12 +516,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.161
 
 #### Commit
@@ -625,12 +565,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
 
 ## v0.11.162
 
@@ -683,12 +617,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.163
 
@@ -744,12 +672,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.164
 
 #### Commit
@@ -804,12 +726,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.165
 
@@ -867,12 +783,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.166
 
 #### Commit
@@ -926,12 +836,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.167
 
 #### Commit
@@ -981,12 +885,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
 
 ## v0.11.168
 
@@ -1038,12 +936,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.169
 
@@ -1104,12 +996,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.170
 
 #### Commit
@@ -1167,12 +1053,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.171
 
 #### Commit
@@ -1226,12 +1106,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-False
-
-#### Published in docs
-False
-
 ## v0.11.172
 
 #### Commit
@@ -1284,12 +1158,6 @@ True
 #### Deprecated details
 - Replaced prior published server package references with the standardized `openwork-server` naming.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.173
 
 #### Commit
@@ -1341,12 +1209,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.174
 
@@ -1401,12 +1263,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
 
 ## v0.11.175
 
@@ -1466,9 +1322,3 @@ True
 
 #### Deprecated details
 - Removed the session sidebar artifacts rail in favor of a cleaner sidebar flow.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False

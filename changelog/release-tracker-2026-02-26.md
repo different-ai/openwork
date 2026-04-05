@@ -55,12 +55,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.126
 
 #### Commit
@@ -113,12 +107,6 @@ True
 #### Deprecated details
 - Replaced the in-app artifact markdown editor with a simpler read-only artifact action flow.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.127
 
 #### Commit
@@ -170,12 +158,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.128
 
@@ -233,12 +215,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.129
 
 #### Commit
@@ -291,12 +267,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.130
 
@@ -351,12 +321,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.131
 
@@ -415,12 +379,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.132
 
 #### Commit
@@ -476,12 +434,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.133
 
 #### Commit
@@ -535,12 +487,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.134
 
@@ -596,12 +542,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.135
 
 #### Commit
@@ -651,12 +591,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.136
 
@@ -714,12 +648,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.137
 
 #### Commit
@@ -773,12 +701,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.138
 
 #### Commit
@@ -828,12 +750,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.140
 
@@ -887,12 +803,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.141
 
@@ -950,12 +860,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.142
 
 #### Commit
@@ -1005,12 +909,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.143
 
@@ -1072,12 +970,6 @@ True
 #### Deprecated details
 - Removed remaining Soul mode surfaces from the app.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.144
 
 #### Commit
@@ -1131,12 +1023,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.145
 
@@ -1192,12 +1078,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.146
 
 #### Commit
@@ -1251,12 +1131,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.147
 
@@ -1317,12 +1191,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.148
 
 #### Commit
@@ -1378,12 +1246,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.149
 
 #### Commit
@@ -1437,12 +1299,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.150
 
@@ -1498,9 +1354,3 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False

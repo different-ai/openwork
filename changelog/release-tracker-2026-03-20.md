@@ -55,12 +55,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-False
-
-#### Published in docs
-False
-
 ## v0.11.177
 
 #### Commit
@@ -117,12 +111,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.178
 
 #### Commit
@@ -178,12 +166,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.179
 
 #### Commit
@@ -237,12 +219,6 @@ True
 #### Deprecated details
 - Removed desktop tray support from the app.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.180
 
 #### Commit
@@ -293,12 +269,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-False
-
-#### Published in docs
-False
-
 ## v0.11.181
 
 #### Commit
@@ -348,12 +318,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.182
 
@@ -408,12 +372,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.183
 
 #### Commit
@@ -466,12 +424,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.184
 
 #### Commit
@@ -521,12 +473,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.185
 
@@ -580,12 +526,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.186
 
 #### Commit
@@ -636,12 +576,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.187
 
@@ -695,12 +629,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.188
 
 #### Commit
@@ -751,12 +679,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.189
 
 #### Commit
@@ -806,12 +728,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.190
 
@@ -864,12 +780,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.191
 
 #### Commit
@@ -920,12 +830,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.192
 
@@ -981,12 +885,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.193
 
 #### Commit
@@ -1039,12 +937,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.194
 
@@ -1100,12 +992,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.195
 
 #### Commit
@@ -1160,12 +1046,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.196
 
 #### Commit
@@ -1219,12 +1099,6 @@ True
 
 #### Deprecated details
 - Removed the old dashboard-first app concept in favor of session-first navigation and settings-owned tool surfaces.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.197
 
@@ -1281,12 +1155,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.198
 
 #### Commit
@@ -1336,12 +1204,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.199
 
@@ -1399,12 +1261,6 @@ True
 #### Deprecated details
 - Removed the legacy `opkg` CLI integration as part of the release cleanup.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.200
 
 #### Commit
@@ -1458,9 +1314,3 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False

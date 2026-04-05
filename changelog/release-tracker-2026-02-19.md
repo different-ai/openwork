@@ -53,12 +53,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.101
 
 #### Commit
@@ -114,12 +108,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.102
 
 #### Commit
@@ -170,12 +158,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.103
 
@@ -229,12 +211,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.104
 
 #### Commit
@@ -285,12 +261,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.105
 
@@ -343,12 +313,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.106
 
 #### Commit
@@ -398,12 +362,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.107
 
@@ -455,12 +413,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.108
 
@@ -515,12 +467,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.109
 
 #### Commit
@@ -574,12 +520,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.110
 
 #### Commit
@@ -630,12 +570,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.111
 
 #### Commit
@@ -685,12 +619,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.112
 
@@ -743,12 +671,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.113
 
 #### Commit
@@ -800,12 +722,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.114
 
@@ -870,12 +786,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.115
 
 #### Commit
@@ -926,12 +836,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.116
 
@@ -985,12 +889,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.117
 
@@ -1049,12 +947,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.118
 
 #### Commit
@@ -1109,12 +1001,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.119
 
 #### Commit
@@ -1164,12 +1050,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.120
 
@@ -1222,12 +1102,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.121
 
 #### Commit
@@ -1279,12 +1153,6 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False
 
 ## v0.11.122
 
@@ -1350,12 +1218,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.123
 
 #### Commit
@@ -1409,12 +1271,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.124
 
 #### Commit
@@ -1464,9 +1320,3 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-True
-
-#### Published in docs
-False

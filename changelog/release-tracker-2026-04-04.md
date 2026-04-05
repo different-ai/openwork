@@ -56,12 +56,6 @@ False
 #### Deprecated details
 None.
 
-#### Published in changelog page
-True
-
-#### Published in docs
-False
-
 ## v0.11.202
 
 #### Commit
@@ -119,9 +113,3 @@ False
 
 #### Deprecated details
 None.
-
-#### Published in changelog page
-False
-
-#### Published in docs
-False
