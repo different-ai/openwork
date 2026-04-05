@@ -1,8 +1,18 @@
+"use client";
+
 import Link from "next/link";
+import { ArrowRight, ChevronLeft } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { LandingBackground } from "./landing-background";
 import { SiteNav } from "./site-nav";
-import { statusPageRequestHref, trustSections } from "./trust-content";
+import {
+  defaultTrustTopicSlug,
+  getTrustTopic,
+  statusPageRequestHref,
+  trustTopics,
+  type TrustTopic
+} from "./trust-content";
 
 type SharedProps = {
   stars: string;
@@ -19,7 +29,10 @@ function externalLinkProps(href: string) {
 function TrustFooterBar() {
   return (
     <div className="flex flex-col gap-3 border-t border-slate-200/70 pt-3 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
-      <div>OpenWork app is the experience layer. OpenWork server is the control/API layer. OpenWork worker is the runtime destination.</div>
+      <div>
+        OpenWork app is the experience layer. OpenWork server is the control
+        and API layer. OpenWork worker is the runtime destination.
+      </div>
       <div className="flex flex-wrap items-center gap-4">
         <Link href="/privacy" className="transition-colors hover:text-[#011627]">
           Privacy
@@ -35,45 +48,148 @@ function TrustFooterBar() {
   );
 }
 
-function TrustSummaryCard({
-  section
+function TopicRailItem({
+  topic,
+  active,
+  onSelect
 }: {
-  section: (typeof trustSections)[number];
+  topic: TrustTopic;
+  active: boolean;
+  onSelect: (slug: string) => void;
 }) {
-  const Icon = section.icon;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(topic.slug)}
+      className={`w-full rounded-[1.2rem] border px-4 py-3 text-left transition-all ${
+        active
+          ? "border-[#011627] bg-[#011627] text-white shadow-[0_14px_32px_-18px_rgba(1,22,39,0.55)]"
+          : "border-slate-200/80 bg-white/80 text-slate-600 hover:border-slate-300 hover:text-[#011627]"
+      }`}
+      aria-pressed={active}
+    >
+      <div className="text-[14px] font-medium tracking-tight">{topic.label}</div>
+    </button>
+  );
+}
+
+function TopicPanel({
+  topic,
+  callHref
+}: {
+  topic: TrustTopic;
+  callHref: string;
+}) {
+  const Icon = topic.icon;
 
   return (
     <div className="landing-shell flex h-full flex-col rounded-[1.75rem] p-5 md:p-6">
-      <div className="mb-4 flex items-center gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <ChevronLeft size={12} className="rotate-180" />
+            Active topic
+          </div>
+          <h2 className="max-w-2xl text-[1.45rem] font-medium tracking-tight text-[#011627] md:text-[1.65rem]">
+            {topic.title}
+          </h2>
+          <p className="mt-3 max-w-2xl text-[14px] leading-relaxed text-slate-600 md:text-[15px]">
+            {topic.panelIntro}
+          </p>
+        </div>
+
         <div
-          className={`flex h-10 w-10 items-center justify-center rounded-2xl ${section.tileClassName}`}
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${topic.toneClassName}`}
         >
           <Icon size={18} />
         </div>
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-          {section.eyebrow}
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {topic.bullets.map((bullet) => (
+          <div
+            key={bullet}
+            className="rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-3 text-[13px] leading-relaxed text-slate-600"
+          >
+            {bullet}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+        <Link href={`/trust/${topic.slug}`} className="secondary-button text-sm">
+          Open full page <ArrowRight size={15} />
+        </Link>
+        <a href={callHref} className="doc-button text-sm" {...externalLinkProps(callHref)}>
+          Book a call
+        </a>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-3 text-[13px] text-slate-500">
+        {topic.links.map((link) =>
+          link.external ? (
+            <a
+              key={link.label}
+              href={link.href}
+              className="transition-colors hover:text-[#011627]"
+              rel="noreferrer"
+              target="_blank"
+            >
+              {link.label}
+            </a>
+          ) : (
+            <Link
+              key={link.label}
+              href={link.href}
+              className="transition-colors hover:text-[#011627]"
+            >
+              {link.label}
+            </Link>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QuickFactCard({
+  topic,
+  onPreview
+}: {
+  topic: TrustTopic;
+  onPreview: (slug: string) => void;
+}) {
+  const Icon = topic.icon;
+
+  return (
+    <div className="landing-shell rounded-[1.5rem] p-4 md:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-[15px] font-medium tracking-tight text-[#011627]">
+            {topic.label}
+          </h3>
+          <p className="mt-2 text-[13px] leading-relaxed text-slate-600">
+            {topic.cardSummary}
+          </p>
+        </div>
+        <div
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${topic.toneClassName}`}
+        >
+          <Icon size={16} />
         </div>
       </div>
 
-      <h2 className="text-[1.08rem] font-medium tracking-tight text-[#011627]">
-        {section.title}
-      </h2>
-
-      <p className="mt-3 text-[14px] leading-relaxed text-slate-600">
-        {section.description}
-      </p>
-
-      <div className="mt-5 space-y-3">
-        {section.lines.map((line) => (
-          <div key={line.label} className="rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-              {line.label}
-            </div>
-            <p className="mt-1 text-[13px] leading-relaxed text-slate-600">
-              {line.value}
-            </p>
-          </div>
-        ))}
+      <div className="mt-4 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => onPreview(topic.slug)}
+          className="text-[13px] font-medium text-[#011627] transition-colors hover:text-slate-700"
+        >
+          Preview
+        </button>
+        <Link href={`/trust/${topic.slug}`} className="text-[13px] font-medium text-[#011627] transition-colors hover:text-slate-700">
+          Open
+        </Link>
       </div>
     </div>
   );
@@ -81,6 +197,17 @@ function TrustSummaryCard({
 
 export function LandingTrustOverview(props: SharedProps) {
   const callHref = props.calUrl || "/enterprise#book";
+  const [activeSlug, setActiveSlug] = useState(defaultTrustTopicSlug);
+
+  const activeTopic = useMemo(
+    () => getTrustTopic(activeSlug) ?? trustTopics[0],
+    [activeSlug]
+  );
+
+  const quickTopics = useMemo(
+    () => trustTopics.filter((topic) => topic.slug !== activeTopic.slug),
+    [activeTopic.slug]
+  );
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -96,28 +223,24 @@ export function LandingTrustOverview(props: SharedProps) {
           />
         </div>
 
-        <main className="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-5xl flex-1 flex-col justify-between gap-4 px-6 pb-6 md:gap-4 md:px-8 md:pb-8">
+        <main className="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-5xl flex-1 flex-col justify-between gap-4 px-6 pb-6 md:px-8 md:pb-8">
           <section className="max-w-4xl pt-2 md:pt-3">
             <div className="landing-chip mb-3 inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-              OpenWork Trust
+              Trust Center
             </div>
 
             <h1 className="max-w-4xl text-4xl font-medium leading-[1.05] tracking-tight md:text-[2.7rem] lg:text-[3rem]">
-              Clear boundaries. Real control. No trust theater.
+              Enterprise trust starts with controllable architecture.
             </h1>
 
             <p className="mt-3 max-w-3xl text-[15px] leading-relaxed text-slate-600 md:text-[16px]">
-              The essentials for enterprise champions and decision-makers:
-              where OpenWork runs, who controls providers and data, and how we
-              handle operational follow-through.
+              OpenWork is built for enterprises that want AI workflows without
+              giving up deployment control, provider choice, or operational
+              clarity.
             </p>
 
             <div className="mt-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <a
-                href={callHref}
-                className="doc-button"
-                {...externalLinkProps(callHref)}
-              >
+              <a href={callHref} className="doc-button" {...externalLinkProps(callHref)}>
                 Book a call
               </a>
               <a
@@ -130,10 +253,34 @@ export function LandingTrustOverview(props: SharedProps) {
             </div>
           </section>
 
-          <section className="grid gap-4 md:grid-cols-3 md:[grid-auto-rows:1fr]">
-            {trustSections.map((section) => (
-              <TrustSummaryCard key={section.title} section={section} />
-            ))}
+          <section className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)] xl:grid-rows-[auto_auto]">
+            <div className="landing-shell rounded-[1.75rem] p-4 xl:row-span-2 xl:p-5">
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Topics
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                {trustTopics.map((topic) => (
+                  <TopicRailItem
+                    key={topic.slug}
+                    topic={topic}
+                    active={topic.slug === activeTopic.slug}
+                    onSelect={setActiveSlug}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <TopicPanel topic={activeTopic} callHref={callHref} />
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {quickTopics.map((topic) => (
+                <QuickFactCard
+                  key={topic.slug}
+                  topic={topic}
+                  onPreview={setActiveSlug}
+                />
+              ))}
+            </div>
           </section>
 
           <TrustFooterBar />
