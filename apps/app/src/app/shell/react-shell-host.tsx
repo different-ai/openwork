@@ -12,9 +12,11 @@ export default function ReactShellHost(props: ReactAppShellProps) {
     const currentView = props.currentView;
     const renderSession = props.renderSession;
     const renderSessionReact = props.renderSessionReact;
+    const sessionReactSurface = props.sessionReactSurface;
     const preferReactSession = props.preferReactSession;
     const renderSettings = props.renderSettings;
     const renderSettingsReact = props.renderSettingsReact;
+    const settingsReactSurface = props.settingsReactSurface;
     const preferReactSettings = props.preferReactSettings;
     const renderOverlays = props.renderOverlays;
 
@@ -28,9 +30,11 @@ export default function ReactShellHost(props: ReactAppShellProps) {
         currentView,
         renderSession,
         renderSessionReact,
+        sessionReactSurface,
         preferReactSession,
         renderSettings,
         renderSettingsReact,
+        settingsReactSurface,
         preferReactSettings,
         renderOverlays,
       }),

@@ -2307,12 +2307,14 @@ export default function App() {
                     currentView={currentView()}
                     preferReactSession={preferReactSessionV2()}
                     preferReactSettings={preferReactSettingsV2()}
+                    sessionReactSurface={sessionSurface()}
+                    settingsReactSurface={settingsSurface()}
                     renderSession={() =>
                       renderReactOwnedSurface(() => <SessionView {...sessionSurface()} />)
                     }
-                    renderSessionReact={() =>
+                    renderSessionReact={(surface) =>
                       createElement(ReactSessionViewV2, {
-                        legacySurface: sessionSurface(),
+                        legacySurface: surface ?? sessionSurface(),
                         sendPrompt: sendReactSessionPrompt,
                         abortPrompt: abortReactSessionPrompt,
                         undoLastMessage: undoReactSessionMessage,
@@ -2322,9 +2324,9 @@ export default function App() {
                     renderSettings={() =>
                       renderReactOwnedSurface(() => <SettingsShell {...settingsSurface()} />)
                     }
-                    renderSettingsReact={() =>
+                    renderSettingsReact={(surface) =>
                       createElement(ReactSettingsViewV2, {
-                        legacySurface: settingsSurface(),
+                        legacySurface: surface ?? settingsSurface(),
                       })
                     }
                   />
