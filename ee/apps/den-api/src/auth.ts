@@ -2,10 +2,16 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { sendDenOrganizationInvitationEmail, sendDenVerificationEmail } from "./email.js"
 import { syncDenSignupContact } from "./loops.js"
+import {
+  DEN_API_KEY_DEFAULT_PREFIX,
+  DEN_API_KEY_RATE_LIMIT_MAX,
+  DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
+} from "./api-keys.js"
 import { denOrganizationAccess, denOrganizationStaticRoles } from "./organization-access.js"
 import { seedDefaultOrganizationRoles } from "./orgs.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import * as schema from "@openwork-ee/den-db/schema"
+import { apiKey } from "@better-auth/api-key"
 import { APIError } from "better-call"
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
@@ -71,6 +77,9 @@ export const auth = betterAuth({
             return createDenTypeId("account")
           case "verification":
             return createDenTypeId("verification")
+          case "apikey":
+          case "apiKey":
+            return createDenTypeId("apiKey")
           case "rateLimit":
             return createDenTypeId("rateLimit")
           case "organization":
@@ -199,6 +208,19 @@ export const auth = betterAuth({
             })
           }
         },
+      },
+    }),
+    apiKey({
+      defaultPrefix: DEN_API_KEY_DEFAULT_PREFIX,
+      enableMetadata: true,
+      enableSessionForAPIKeys: true,
+      maximumNameLength: 64,
+      requireName: true,
+      storage: "database",
+      rateLimit: {
+        enabled: true,
+        maxRequests: DEN_API_KEY_RATE_LIMIT_MAX,
+        timeWindow: DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
       },
     }),
   ],

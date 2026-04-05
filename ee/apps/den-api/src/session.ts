@@ -2,6 +2,7 @@ import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
+import { DEN_API_KEY_HEADER, getApiKeySessionById, type DenApiKeySession } from "./api-keys.js"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
 
@@ -11,6 +12,7 @@ type AuthSessionValue = NonNullable<AuthSessionLike>
 export type AuthContextVariables = {
   user: AuthSessionValue["user"] | null
   session: AuthSessionValue["session"] | null
+  apiKey: DenApiKeySession | null
 }
 
 function readBearerToken(headers: Headers): string | null {
@@ -73,7 +75,13 @@ async function getSessionFromBearerToken(token: string): Promise<AuthSessionLike
 }
 
 export async function getRequestSession(headers: Headers): Promise<AuthSessionLike> {
-  const cookieSession = await auth.api.getSession({ headers })
+  let cookieSession: AuthSessionLike
+  try {
+    cookieSession = await auth.api.getSession({ headers })
+  } catch {
+    return null
+  }
+
   if (cookieSession?.user?.id) {
     return {
       ...cookieSession,
@@ -92,9 +100,19 @@ export async function getRequestSession(headers: Headers): Promise<AuthSessionLi
   return getSessionFromBearerToken(bearerToken)
 }
 
+async function getRequestApiKeySession(headers: Headers, session: AuthSessionLike): Promise<DenApiKeySession | null> {
+  if (!headers.has(DEN_API_KEY_HEADER) || !session?.session?.id) {
+    return null
+  }
+
+  return getApiKeySessionById(session.session.id)
+}
+
 export const sessionMiddleware: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
   const resolved = await getRequestSession(c.req.raw.headers)
+  const apiKey = await getRequestApiKeySession(c.req.raw.headers, resolved)
   c.set("user", resolved?.user ?? null)
   c.set("session", resolved?.session ?? null)
+  c.set("apiKey", apiKey)
   await next()
 }

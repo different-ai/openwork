@@ -24,8 +24,27 @@ const acceptInvitationSchema = z.object({
   id: z.string().trim().min(1),
 })
 
+function getStoredSessionId(session: { id?: string | null } | null) {
+  if (!session?.id) {
+    return null
+  }
+
+  try {
+    return normalizeDenTypeId("session", session.id)
+  } catch {
+    return null
+  }
+}
+
 export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post("/v1/orgs", requireUserMiddleware, jsonValidator(createOrganizationSchema), async (c) => {
+    if (c.get("apiKey")) {
+      return c.json({
+        error: "forbidden",
+        message: "API keys cannot create organizations.",
+      }, 403)
+    }
+
     const user = c.get("user")
     const session = c.get("session")
     const input = c.req.valid("json")
@@ -58,8 +77,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       name: input.name,
     })
 
-    if (session?.id) {
-      await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), organizationId)
+    const sessionId = getStoredSessionId(session)
+    if (sessionId) {
+      await setSessionActiveOrganization(sessionId, organizationId)
     }
 
     const organization = await db
@@ -83,6 +103,13 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
   })
 
   app.post("/v1/orgs/invitations/accept", requireUserMiddleware, jsonValidator(acceptInvitationSchema), async (c) => {
+    if (c.get("apiKey")) {
+      return c.json({
+        error: "forbidden",
+        message: "API keys cannot accept organization invitations.",
+      }, 403)
+    }
+
     const user = c.get("user")
     const session = c.get("session")
     const input = c.req.valid("json")
@@ -102,8 +129,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
-    if (session?.id) {
-      await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), accepted.member.organizationId)
+    const sessionId = getStoredSessionId(session)
+    if (sessionId) {
+      await setSessionActiveOrganization(sessionId, accepted.member.organizationId)
     }
 
     const orgRows = await db

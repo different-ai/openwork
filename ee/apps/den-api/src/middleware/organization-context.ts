@@ -1,5 +1,6 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
+import { isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, type OrganizationContext } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
 
@@ -35,6 +36,21 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
 
   if (!context) {
     return c.json({ error: "organization_not_found" }, 404) as never
+  }
+
+  const apiKey = c.get("apiKey")
+  if (apiKey && !isScopedApiKeyForOrganization({ apiKey, organizationId })) {
+    return c.json({
+      error: "forbidden",
+      message: "This API key is scoped to a different organization.",
+    }, 403) as never
+  }
+
+  if (apiKey?.metadata?.orgMembershipId && apiKey.metadata.orgMembershipId !== context.currentMember.id) {
+    return c.json({
+      error: "forbidden",
+      message: "This API key is no longer valid for the current organization member.",
+    }, 403) as never
   }
 
   c.set("organizationContext", context)

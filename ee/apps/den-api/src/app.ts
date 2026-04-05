@@ -32,13 +32,13 @@ app.use("*", async (c, next) => {
 if (env.corsOrigins.length > 0) {
   app.use(
     "*",
-    cors({
-      origin: env.corsOrigins,
-      credentials: true,
-      allowHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
-      allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-      exposeHeaders: ["Content-Length", "X-Request-Id"],
-      maxAge: 600,
+      cors({
+        origin: env.corsOrigins,
+        credentials: true,
+        allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id"],
+        allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        exposeHeaders: ["Content-Length", "X-Request-Id"],
+        maxAge: 600,
     }),
   )
 }

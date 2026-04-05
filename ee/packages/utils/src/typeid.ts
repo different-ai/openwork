@@ -6,6 +6,7 @@ export const denTypeIdPrefixes = {
   session: "ses",
   account: "acc",
   verification: "ver",
+  apiKey: "apk",
   rateLimit: "rli",
   org: "org",
   organization: "org",

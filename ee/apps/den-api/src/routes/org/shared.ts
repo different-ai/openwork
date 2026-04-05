@@ -128,6 +128,30 @@ export function ensureTeamManager(c: { get: (key: "organizationContext") => OrgR
   }
 }
 
+export function ensureApiKeyManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only organization owners and admins can manage API keys.",
+    },
+  }
+}
+
 export function createInvitationId() {
   return createDenTypeId("invitation")
 }

@@ -6,11 +6,11 @@ import { useMemo, useState } from "react";
 import {
   BookOpen,
   Bot,
-  ChevronDown,
   CreditCard,
   Cpu,
   FileText,
   Home,
+  KeyRound,
   LogOut,
   MessageSquare,
   Share2,
@@ -20,8 +20,10 @@ import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import {
   formatRoleLabel,
   getBackgroundAgentsRoute,
+  getApiKeysRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getOrgAccessFlags,
   getMembersRoute,
   getOrgDashboardRoute,
   getSharedSetupsRoute,
@@ -96,6 +98,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getMembersRoute(orgSlug))) {
     return "Members";
   }
+  if (pathname.startsWith(getApiKeysRoute(orgSlug))) {
+    return "API Keys";
+  }
   if (pathname.startsWith(getBackgroundAgentsRoute(orgSlug))) {
     return "Shared Workspaces";
   }
@@ -118,13 +123,17 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const {
     activeOrg,
     orgDirectory,
+    orgContext,
     orgBusy,
     orgError,
-    mutationBusy,
-    createOrganization,
     switchOrganization,
   } = useOrgDashboard();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+  );
 
   const pageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
   const feedbackHref = buildDenFeedbackUrl({
@@ -166,6 +175,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       label: "Members",
       icon: Users,
     },
+    ...(access.canManageApiKeys
+      ? [{
+          href: activeOrg ? getApiKeysRoute(activeOrg.slug) : "#",
+          label: "API Keys",
+          icon: KeyRound,
+        }]
+      : []),
     {
       href: activeOrg ? getBillingRoute(activeOrg.slug) : "/checkout",
       label: "Billing",

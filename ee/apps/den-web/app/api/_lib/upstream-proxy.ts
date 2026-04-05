@@ -133,6 +133,7 @@ function buildHeaders(request: NextRequest, contentType: string | null): Headers
     "cookie",
     "user-agent",
     "x-requested-with",
+    "x-api-key",
     "origin",
     "x-forwarded-for",
   ];

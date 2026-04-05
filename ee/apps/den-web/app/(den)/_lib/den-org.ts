@@ -77,6 +77,29 @@ export type DenOrgRole = {
   updatedAt: string | null;
 };
 
+export type DenOrgApiKey = {
+  id: string;
+  configId: string;
+  name: string | null;
+  start: string | null;
+  prefix: string | null;
+  enabled: boolean;
+  rateLimitEnabled: boolean;
+  rateLimitMax: number | null;
+  rateLimitTimeWindow: number | null;
+  lastRequest: string | null;
+  expiresAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  owner: {
+    userId: string;
+    memberId: string;
+    name: string;
+    email: string;
+    image: string | null;
+  };
+};
+
 export type DenOrgContext = {
   organization: {
     id: string;
@@ -161,6 +184,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean) {
     canManageMembers: isOwner,
     canManageRoles: isOwner,
     canManageTeams: isAdmin,
+    canManageApiKeys: isAdmin,
   };
 }
 
@@ -218,6 +242,10 @@ export function getNewLlmProviderRoute(orgSlug: string): string {
 
 export function getBillingRoute(orgSlug: string): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
+}
+
+export function getApiKeysRoute(orgSlug: string): string {
+  return `${getOrgDashboardRoute(orgSlug)}/api-keys`;
 }
 
 export function getSkillHubsRoute(orgSlug: string): string {
@@ -508,4 +536,53 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
       slug: organizationSlug,
     },
   };
+}
+
+export function parseOrgApiKeysPayload(payload: unknown): DenOrgApiKey[] {
+  if (!isRecord(payload) || !Array.isArray(payload.apiKeys)) {
+    return [];
+  }
+
+  return payload.apiKeys
+    .map((entry) => {
+      if (!isRecord(entry) || !isRecord(entry.owner)) {
+        return null;
+      }
+
+      const id = asString(entry.id);
+      const configId = asString(entry.configId);
+      const owner = entry.owner;
+      const ownerUserId = asString(owner.userId);
+      const ownerMemberId = asString(owner.memberId);
+      const ownerName = asString(owner.name);
+      const ownerEmail = asString(owner.email);
+
+      if (!id || !configId || !ownerUserId || !ownerMemberId || !ownerName || !ownerEmail) {
+        return null;
+      }
+
+      return {
+        id,
+        configId,
+        name: asString(entry.name),
+        start: asString(entry.start),
+        prefix: asString(entry.prefix),
+        enabled: asBoolean(entry.enabled),
+        rateLimitEnabled: asBoolean(entry.rateLimitEnabled),
+        rateLimitMax: typeof entry.rateLimitMax === "number" ? entry.rateLimitMax : null,
+        rateLimitTimeWindow: typeof entry.rateLimitTimeWindow === "number" ? entry.rateLimitTimeWindow : null,
+        lastRequest: asIsoString(entry.lastRequest),
+        expiresAt: asIsoString(entry.expiresAt),
+        createdAt: asIsoString(entry.createdAt),
+        updatedAt: asIsoString(entry.updatedAt),
+        owner: {
+          userId: ownerUserId,
+          memberId: ownerMemberId,
+          name: ownerName,
+          email: ownerEmail,
+          image: asString(owner.image),
+        },
+      } satisfies DenOrgApiKey;
+    })
+    .filter((entry): entry is DenOrgApiKey => entry !== null);
 }

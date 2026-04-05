@@ -178,6 +178,12 @@ export function serializePermissionRecord(value: Record<string, string[]>) {
   return JSON.stringify(value)
 }
 
+function clonePermissionRecord(value: Record<string, readonly string[]>) {
+  return Object.fromEntries(
+    Object.entries(value).map(([resource, actions]) => [resource, [...actions]]),
+  ) as Record<string, string[]>
+}
+
 async function listMembershipRows(userId: UserId) {
   return db
     .select()
@@ -213,17 +219,18 @@ async function getInvitationById(invitationIdRaw: string) {
 
 async function ensureDefaultDynamicRoles(orgId: OrgId) {
   for (const [role, permission] of Object.entries(denDefaultDynamicOrganizationRoles)) {
+    const serializedPermission = serializePermissionRecord(clonePermissionRecord(permission))
     await db
       .insert(OrganizationRoleTable)
       .values({
         id: createDenTypeId("organizationRole"),
         organizationId: orgId,
         role,
-        permission: serializePermissionRecord(permission),
+        permission: serializedPermission,
       })
       .onDuplicateKeyUpdate({
         set: {
-          permission: serializePermissionRecord(permission),
+          permission: serializedPermission,
         },
       })
   }
@@ -656,7 +663,7 @@ export async function getOrganizationContextForUser(input: {
       {
         id: "builtin-owner",
         role: "owner",
-        permission: denOrganizationStaticRoles.owner.statements,
+        permission: clonePermissionRecord(denOrganizationStaticRoles.owner.statements),
         builtIn: true,
         protected: true,
         createdAt: null,

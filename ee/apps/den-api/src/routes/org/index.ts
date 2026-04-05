@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { registerOrgApiKeyRoutes } from "./api-keys.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
@@ -11,6 +12,7 @@ import { registerOrgTemplateRoutes } from "./templates.js"
 
 export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
+  registerOrgApiKeyRoutes(app)
   registerOrgInvitationRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgMemberRoutes(app)
