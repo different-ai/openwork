@@ -6,9 +6,10 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, "..")
-const TRACKER_PATH = resolve(ROOT, "changelog/release-tracker.md")
+const TRACKER_DIR = resolve(ROOT, "changelog")
 const OUTPUT_PATH = resolve(ROOT, "packages/docs/changelog.mdx")
 const COMPARE_BASE = "https://github.com/different-ai/openwork/compare"
+const TRACKER_FILE_PATTERN = /^release-tracker-\d{4}-\d{2}-\d{2}\.md$/
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,7 +63,7 @@ function resolveTags(features, bugs, deprecated) {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse release-tracker.md into structured release objects.
+ * Parse a release-tracker file into structured release objects.
  *
  * Splits on `## v` headings, then extracts `#### ` subsections inside each.
  */
@@ -115,6 +116,7 @@ function toEntry(release, prevVersion) {
 
   const oneLiner = s["One-line summary"]?.trim() || ""
   const mainChanges = s["Main changes"]?.trim() || ""
+  const title = s["Title"]?.trim() || ""
 
   const features = parseInt(s["Number of major improvements"] || "0", 10)
   const bugs = parseInt(s["Number of major bugs resolved"] || "0", 10)
@@ -132,6 +134,7 @@ function toEntry(release, prevVersion) {
     date,
     isMajor,
     tags,
+    title,
     oneLiner,
     mainChanges,
     compareUrl,
@@ -147,12 +150,15 @@ function toEntry(release, prevVersion) {
  */
 function renderVersionBlock(entry) {
   const lines = []
+  const combinedTitle = entry.title
+    ? `${entry.version} - ${entry.title}`
+    : entry.version
 
-  // Version as the section heading, linked to compare URL
+  // Version + title as the section heading, linked to compare URL
   if (entry.compareUrl) {
-    lines.push(`  ## [${entry.version}](${entry.compareUrl})`)
+    lines.push(`  ## [${combinedTitle}](${entry.compareUrl})`)
   } else {
-    lines.push(`  ## ${entry.version}`)
+    lines.push(`  ## ${combinedTitle}`)
   }
 
   lines.push("")
@@ -161,7 +167,7 @@ function renderVersionBlock(entry) {
   if (entry.isMajor && entry.mainChanges) {
     const indented = entry.mainChanges
       .split("\n")
-      .map((l) => `  ${l}`)
+      .map((l) => (l.length > 0 ? `  ${l}` : ""))
       .join("\n")
     lines.push(indented)
   } else {
@@ -230,14 +236,33 @@ function renderChangelog(entries) {
 // Main
 // ---------------------------------------------------------------------------
 
+async function loadTrackerReleases() {
+  const entries = await fs.readdir(TRACKER_DIR, { withFileTypes: true })
+  const trackerFiles = entries
+    .filter((entry) => entry.isFile() && TRACKER_FILE_PATTERN.test(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+
+  if (trackerFiles.length === 0) {
+    throw new Error(`No tracker files found in ${TRACKER_DIR}`)
+  }
+
+  const releases = []
+  for (const fileName of trackerFiles) {
+    const raw = await fs.readFile(resolve(TRACKER_DIR, fileName), "utf-8")
+    releases.push(...parseTracker(raw))
+  }
+
+  return { trackerFiles, releases }
+}
+
 async function main() {
-  const raw = await fs.readFile(TRACKER_PATH, "utf-8")
-  const releases = parseTracker(raw)
+  const { trackerFiles, releases } = await loadTrackerReleases()
   const entries = releases.map((r, i) => toEntry(r, i > 0 ? releases[i - 1].version : null))
   const output = renderChangelog(entries)
 
   await fs.writeFile(OUTPUT_PATH, output, "utf-8")
-  console.log(`Wrote ${entries.length} entries to ${OUTPUT_PATH}`)
+  console.log(`Wrote ${entries.length} entries from ${trackerFiles.length} tracker files to ${OUTPUT_PATH}`)
 }
 
 main().catch((err) => {
