@@ -8,9 +8,9 @@
     "dark": "/logo/dark.svg"
   },
   "colors": {
-    "primary": "#0F766E",
-    "light": "#14B8A6",
-    "dark": "#0F766E"
+    "primary": "#011627",
+    "light": "#3b82f6",
+    "dark": "#011627"
   },
   "navigation": {
     "tabs": [
