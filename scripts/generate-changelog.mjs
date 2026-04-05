@@ -44,23 +44,17 @@ function formatDate(raw) {
 }
 
 /**
- * Determine the tag for a release.
+ * Build an array of applicable tags for a release.
  *
- * Pick the category with the highest count.
- * Ties are broken by priority: Feature > Bug > Deprecated.
- * If all counts are 0, return "Misc".
- *
- * Returns exactly one of: "New" | "Improved" | "Adjusted" | "Misc"
+ * Returns all categories that have count > 0.
+ * If none apply, returns ["Misc"].
  */
-function resolveTag(features, bugs, deprecated) {
-  if (features === 0 && bugs === 0 && deprecated === 0) return "Misc"
-
-  const max = Math.max(features, bugs, deprecated)
-
-  // Priority order: features first, then bugs, then deprecated
-  if (features >= max) return "New"
-  if (bugs >= max) return "Improved"
-  return "Adjusted"
+function resolveTags(features, bugs, deprecated) {
+  const tags = []
+  if (features > 0) tags.push("New releases")
+  if (bugs > 0) tags.push("Improvements")
+  if (deprecated > 0) tags.push("Deprecations")
+  return tags.length > 0 ? tags : ["Misc"]
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +120,7 @@ function toEntry(release, prevVersion) {
   const bugs = parseInt(s["Number of major bugs resolved"] || "0", 10)
   const deprecated = parseInt(s["Number of deprecated features"] || "0", 10)
 
-  const tag = resolveTag(features, bugs, deprecated)
+  const tags = resolveTags(features, bugs, deprecated)
 
   // Build compare URL from consecutive versions: v0.11.200...v0.11.201
   const compareUrl = prevVersion
@@ -137,7 +131,7 @@ function toEntry(release, prevVersion) {
     version: release.version,
     date,
     isMajor,
-    tag,
+    tags,
     oneLiner,
     mainChanges,
     compareUrl,
@@ -151,21 +145,32 @@ function toEntry(release, prevVersion) {
 function renderEntry(entry) {
   const lines = []
 
-  // Open <Update> with date label, plain version description, and tag
-  lines.push(`<Update label="${entry.date}" description="${entry.version}" tags={["${entry.tag}"]}>`)
+  // Tags array as JSX
+  const tagsJsx = entry.tags.map((t) => `"${t}"`).join(", ")
+
+  // Open <Update> with date label and tags (no description)
+  lines.push(`<Update label="${entry.date}" tags={[${tagsJsx}]}>`)
+  lines.push("")
+
+  // Version as the section heading, linked to compare URL
+  if (entry.compareUrl) {
+    lines.push(`  ## [${entry.version}](${entry.compareUrl})`)
+  } else {
+    lines.push(`  ## ${entry.version}`)
+  }
+
   lines.push("")
 
   // Body: major → bullet points, minor → one-liner
   if (entry.isMajor && entry.mainChanges) {
-    lines.push(entry.mainChanges)
+    // Indent each line 2 spaces to match Mintlify convention
+    const indented = entry.mainChanges
+      .split("\n")
+      .map((l) => `  ${l}`)
+      .join("\n")
+    lines.push(indented)
   } else {
-    lines.push(entry.oneLiner)
-  }
-
-  // Compare link at the end
-  if (entry.compareUrl) {
-    lines.push("")
-    lines.push(`[View changes](${entry.compareUrl})`)
+    lines.push(`  ${entry.oneLiner}`)
   }
 
   lines.push("")
