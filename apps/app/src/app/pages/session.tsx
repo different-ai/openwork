@@ -3309,6 +3309,7 @@ export default function SessionView(props: SessionViewProps) {
                             sessionId: props.selectedSessionId!,
                             opencodeBaseUrl: reactSessionOpencodeBaseUrl(),
                             openworkToken: reactSessionToken(),
+                            developerMode: props.developerMode,
                           }}
                         />
                       }

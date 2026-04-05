@@ -1,10 +1,12 @@
 /** @jsxImportSource react */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { createClient, unwrap } from "../../app/lib/opencode";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import type { OpenworkServerClient, OpenworkSessionMessage, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
+import { SessionDebugPanel } from "./debug-panel.react";
+import { deriveSessionRenderModel } from "./transition-controller";
 
 type SessionSurfaceProps = {
   client: OpenworkServerClient;
@@ -12,6 +14,7 @@ type SessionSurfaceProps = {
   sessionId: string;
   opencodeBaseUrl: string;
   openworkToken: string;
+  developerMode: boolean;
 };
 
 function partText(part: Record<string, unknown>) {
@@ -66,6 +69,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rendered, setRendered] = useState<{
+    sessionId: string;
+    snapshot: OpenworkSessionSnapshot;
+  } | null>(null);
 
   const opencodeClient = useMemo(
     () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
@@ -85,6 +92,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
       actionBusy || current.state.data?.status.type === "busy" || current.state.data?.status.type === "retry"
         ? 800
         : false,
+  });
+
+  useEffect(() => {
+    if (!query.data) return;
+    setRendered({ sessionId: props.sessionId, snapshot: query.data });
+  }, [props.sessionId, query.data]);
+
+  const snapshot = query.data ?? rendered?.snapshot ?? null;
+  const model = deriveSessionRenderModel({
+    intendedSessionId: props.sessionId,
+    renderedSessionId: query.data ? props.sessionId : rendered?.sessionId ?? null,
+    hasSnapshot: Boolean(snapshot),
+    isFetching: query.isFetching,
+    isError: query.isError,
   });
 
   const handleSend = async () => {
@@ -131,19 +152,27 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   return (
     <div className="space-y-5 pb-4">
-      {query.isLoading ? (
+      {model.transitionState === "switching" ? (
+        <div className="flex justify-center px-6">
+          <div className="rounded-full border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary">
+            {model.renderSource === "cache" ? "Switching session from cache..." : "Switching session..."}
+          </div>
+        </div>
+      ) : null}
+
+      {!snapshot && query.isLoading ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
             <div className="text-sm text-dls-secondary">Loading React session view...</div>
           </div>
         </div>
-      ) : query.isError || !query.data ? (
+      ) : query.isError && !snapshot ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
             {query.error instanceof Error ? query.error.message : "Failed to load React session view."}
           </div>
         </div>
-      ) : query.data.messages.length === 0 ? (
+      ) : snapshot && snapshot.messages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
             <div className="text-sm text-dls-secondary">No transcript yet.</div>
@@ -151,7 +180,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : (
         <div className="space-y-4">
-          {query.data.messages.map((message) => (
+          {snapshot?.messages.map((message) => (
             <MessageCard key={message.info.id} message={message} />
           ))}
         </div>
@@ -166,17 +195,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
             rows={5}
             placeholder="Describe your task..."
             className="min-h-[180px] w-full resize-none bg-transparent px-6 py-5 text-base text-dls-text outline-none placeholder:text-dls-secondary"
+            disabled={model.transitionState !== "idle"}
           />
           <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
             <div className="text-xs text-dls-secondary">
-              {statusLabel(query.data, actionBusy)}
+              {statusLabel(snapshot ?? undefined, actionBusy)}
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 className="rounded-full border border-dls-border px-4 py-2 text-sm text-dls-secondary transition-colors hover:bg-dls-hover disabled:opacity-50"
                 onClick={handleAbort}
-                disabled={actionBusy || query.data?.status.type !== "busy"}
+                disabled={actionBusy || snapshot?.status.type !== "busy"}
               >
                 Stop
               </button>
@@ -184,7 +214,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 type="button"
                 className="rounded-full bg-[var(--dls-accent)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)] disabled:opacity-50"
                 onClick={handleSend}
-                disabled={actionBusy || !draft.trim()}
+                disabled={actionBusy || !draft.trim() || model.transitionState !== "idle"}
               >
                 Run task
               </button>
@@ -195,6 +225,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           ) : null}
         </div>
       </div>
+      {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
     </div>
   );
 }
