@@ -58,6 +58,16 @@ function resolveTags(features, bugs, deprecated) {
   return tags.length > 0 ? tags : ["🔧 Misc"]
 }
 
+function inferPreviousVersion(version) {
+  const match = version.match(/^v(\d+)\.(\d+)\.(\d+)$/)
+  if (!match) return null
+
+  const [major, minor, patch] = match.slice(1).map(Number)
+  if (patch <= 0) return null
+
+  return `v${major}.${minor}.${patch - 1}`
+}
+
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
@@ -125,8 +135,9 @@ function toEntry(release, prevVersion) {
   const tags = resolveTags(features, bugs, deprecated)
 
   // Build compare URL from consecutive versions: v0.11.200...v0.11.201
-  const compareUrl = prevVersion
-    ? `${COMPARE_BASE}/${prevVersion}...${release.version}`
+  const compareBaseVersion = prevVersion || inferPreviousVersion(release.version)
+  const compareUrl = compareBaseVersion
+    ? `${COMPARE_BASE}/${compareBaseVersion}...${release.version}`
     : ""
 
   return {
@@ -150,15 +161,16 @@ function toEntry(release, prevVersion) {
  */
 function renderVersionBlock(entry) {
   const lines = []
-  const combinedTitle = entry.title
-    ? `${entry.version} - ${entry.title}`
-    : entry.version
 
-  // Version + title as the section heading, linked to compare URL
+  // Version is the linked heading; title is appended after it.
   if (entry.compareUrl) {
-    lines.push(`  ## [${combinedTitle}](${entry.compareUrl})`)
+    lines.push(
+      entry.title
+        ? `  ## [${entry.version}](${entry.compareUrl}): ${entry.title}`
+        : `  ## [${entry.version}](${entry.compareUrl})`,
+    )
   } else {
-    lines.push(`  ## ${combinedTitle}`)
+    lines.push(entry.title ? `  ## ${entry.version}: ${entry.title}` : `  ## ${entry.version}`)
   }
 
   lines.push("")
