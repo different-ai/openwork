@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { useMemo, useState } from "react";
+import { type Subprocessor, subprocessors } from "./trust-content";
+
+import { SiteFooter } from "./site-footer";
 
 import { LandingBackground } from "./landing-background";
 import { SiteNav } from "./site-nav";
@@ -14,6 +17,51 @@ import {
   type TrustTopic
 } from "./trust-content";
 
+const categoryColors: Record<string, string> = {
+  Analytics: "bg-orange-50 text-orange-700",
+  Payments: "bg-violet-50 text-violet-700",
+  Authentication: "bg-blue-50 text-blue-700",
+  Infrastructure: "bg-cyan-50 text-cyan-700"
+};
+
+function SubprocessorRows() {
+  return (
+    <div className="mt-5 flex flex-col divide-y divide-slate-200/70 overflow-hidden rounded-2xl border border-slate-200/70 bg-white/85">
+      {subprocessors.map((sp) => (
+        <a
+          key={sp.name}
+          href={sp.href}
+          rel="noreferrer"
+          target="_blank"
+          className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-slate-50/80"
+        >
+          <div
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold tracking-wide"
+            style={{ backgroundColor: sp.brandColor, color: sp.textColor }}
+          >
+            {sp.initial}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] leading-relaxed text-slate-500">
+              <span className="font-semibold text-[#011627]">{sp.name}</span>
+              {": "}
+              {sp.purpose}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${categoryColors[sp.category] ?? "bg-slate-100 text-slate-600"}`}
+            >
+              {sp.category}
+            </span>
+            <span className="text-[11px] text-slate-400">{sp.location} Region</span>
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 type SharedProps = {
   stars: string;
   downloadHref: string;
@@ -24,28 +72,6 @@ function externalLinkProps(href: string) {
   return /^https?:\/\//.test(href) || href.startsWith("mailto:")
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
-}
-
-function TrustFooterBar() {
-  return (
-    <div className="flex flex-col gap-3 border-t border-slate-200/70 pt-3 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
-      <div>
-        OpenWork app is the experience layer. OpenWork server is the control
-        and API layer. OpenWork worker is the runtime destination.
-      </div>
-      <div className="flex flex-wrap items-center gap-4">
-        <Link href="/privacy" className="transition-colors hover:text-[#011627]">
-          Privacy
-        </Link>
-        <Link href="/terms" className="transition-colors hover:text-[#011627]">
-          Terms
-        </Link>
-        <Link href="/enterprise" className="transition-colors hover:text-[#011627]">
-          Enterprise
-        </Link>
-      </div>
-    </div>
-  );
 }
 
 function TopicRailItem({
@@ -77,75 +103,51 @@ function TopicPanel({ topic, callHref }: { topic: TrustTopic; callHref: string }
   const Icon = topic.icon;
 
   return (
-    <div className="landing-shell flex h-full flex-col rounded-[1.75rem] p-5 md:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200/70 bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-            <ChevronLeft size={12} className="rotate-180" />
-            Active topic
+    <div className="landing-shell flex h-full flex-col justify-between rounded-[1.75rem] p-5 md:p-6">
+      <div>
+        <div className="flex items-center gap-3">
+          <div
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${topic.toneClassName}`}
+          >
+            <Icon size={16} />
           </div>
-          <h2 className="max-w-2xl text-[1.45rem] font-medium tracking-tight text-[#011627] md:text-[1.65rem]">
+          <h2 className="max-w-2xl text-[1.2rem] font-medium tracking-tight text-[#011627] md:text-[1.35rem]">
             {topic.title}
           </h2>
-          <p className="mt-3 max-w-2xl text-[14px] leading-relaxed text-slate-600 md:text-[15px]">
-            {topic.panelIntro}
-          </p>
         </div>
-
-        <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${topic.toneClassName}`}
-        >
-          <Icon size={18} />
-        </div>
+        <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-slate-600 md:text-[14px]">
+          {topic.panelIntro}
+        </p>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2">
-        {topic.bullets.map((bullet) => (
-          <div
-            key={bullet}
-            className="rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-3 text-[13px] leading-relaxed text-slate-600"
-          >
-            {bullet}
-          </div>
-        ))}
-      </div>
+      {topic.slug === "subprocessors" ? (
+        <SubprocessorRows />
+      ) : (
+        <div className="mt-3 grid gap-2">
+          {topic.bullets.map((bullet) => (
+            <div
+              key={bullet}
+              className="rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-2 text-[13px] leading-relaxed text-slate-600"
+            >
+              {bullet}
+            </div>
+          ))}
+        </div>
+      )}
 
-      <div className="mt-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-        <a href={callHref} className="doc-button text-sm" {...externalLinkProps(callHref)}>
-          Book a call
-        </a>
+      <div className="mt-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
         {topic.slug === "status-page-access" ? (
           <a
             href={statusPageRequestHref}
-            className="secondary-button text-sm"
+            className="doc-button text-sm"
             {...externalLinkProps(statusPageRequestHref)}
           >
             Request status page
           </a>
-        ) : null}
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-3 text-[13px] text-slate-500">
-        {topic.links.map((link) =>
-          link.external ? (
-            <a
-              key={link.label}
-              href={link.href}
-              className="transition-colors hover:text-[#011627]"
-              rel="noreferrer"
-              target="_blank"
-            >
-              {link.label}
-            </a>
-          ) : (
-            <Link
-              key={link.label}
-              href={link.href}
-              className="transition-colors hover:text-[#011627]"
-            >
-              {link.label}
-            </Link>
-          )
+        ) : topic.slug === "subprocessors" ? null : (
+          <a href={callHref} className="doc-button text-sm" {...externalLinkProps(callHref)}>
+            Book a call
+          </a>
         )}
       </div>
     </div>
@@ -177,32 +179,17 @@ export function LandingTrustOverview(props: SharedProps) {
 
         <main className="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-5xl flex-1 flex-col justify-between gap-4 px-6 pb-6 md:px-8 md:pb-8">
           <section className="max-w-4xl pt-2 md:pt-3">
-            <div className="landing-chip mb-3 inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-              Trust Center
-            </div>
-
             <h1 className="max-w-4xl text-4xl font-medium leading-[1.05] tracking-tight md:text-[2.7rem] lg:text-[3rem]">
-              Enterprise trust starts with controllable architecture.
+              Openwork's Trust Center
             </h1>
 
-            <p className="mt-3 max-w-3xl text-[15px] leading-relaxed text-slate-600 md:text-[16px]">
-              OpenWork is built for enterprises that want AI workflows without
-              giving up deployment control, provider choice, or operational
-              clarity.
+            <p className="mt-3 max-w-4xl text-[15px] leading-relaxed text-slate-600 md:text-[16px]">
+              Moving at startup speed without compromising on enterprise protection.
+              We treat security not as an afterthought, but as a foundational pillar of everything we build.
+              This mindset drives our development processes, infrastructure decisions, and organizational policies.
+              We treat the data entrusted to us with the utmost care and responsibility.
+              By being Open Source, we welcome verification and feedback on how we can do even better.
             </p>
-
-            <div className="mt-5 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <a href={callHref} className="doc-button" {...externalLinkProps(callHref)}>
-                Book a call
-              </a>
-              <a
-                href={statusPageRequestHref}
-                className="secondary-button"
-                {...externalLinkProps(statusPageRequestHref)}
-              >
-                Request status page
-              </a>
-            </div>
           </section>
 
           <section className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)]">
@@ -225,7 +212,8 @@ export function LandingTrustOverview(props: SharedProps) {
             <TopicPanel topic={activeTopic} callHref={callHref} />
           </section>
 
-          <TrustFooterBar />
+          <SiteFooter />
+
         </main>
       </div>
     </div>
