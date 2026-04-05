@@ -328,14 +328,23 @@ title: "Changelog"
 
 <Update label="March 10th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136): Improved model picker, OpenWork Share and MCP auth
+  ## [v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136): Improved model picker, OW Share and MCP auth
 
-  - The model picker is now split by enabled/not-enabled providers. Clicking on a not-enabled provider will take you to its settings page.
-    ![Model picker grouped by enabled and not-enabled providers](/images/10thMarch-model-picker.gif)
+  - Model picker now separates enabled and not-enabled providers, and clicking a disabled provider opens its settings.
   - OpenWork Share now packages dropped skills, agents, commands, and MCP or OpenWork config into worker bundles.
-  - Better auth handling for MCPs, it now awaits for agents to stop / finish and we removed the Hubspot MCP.
-    ![MCP settings with connected provider and improved auth handling](/images/10thMarch-better-mcp-auth.gif)
-  
+  - MCP auth now waits for agents to stop or finish before continuing, and HubSpot MCP has been removed.
 
+  <table>
+    <tr>
+      <td>
+        <img src="/images/10thMarch-model-picker.gif" alt="Model picker grouped by enabled and not-enabled providers" />
+        <p><em>Model picker</em></p>
+      </td>
+      <td>
+        <img src="/images/10thMarch-better-mcp-auth.gif" alt="MCP settings with connected provider and improved auth handling" />
+        <p><em>MCP auth</em></p>
+      </td>
+    </tr>
+  </table>
 
 </Update>
