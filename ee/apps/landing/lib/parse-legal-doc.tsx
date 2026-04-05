@@ -115,9 +115,9 @@ function isAllCaps(text: string): boolean {
 
 /** Turn email addresses and URLs into clickable links, bold ALL CAPS segments. */
 export function formatText(text: string): ReactNode {
-  // Split on emails and URLs
+  // Split on emails and URLs (strip trailing punctuation from URLs)
   const tokenRegex =
-    /((?:[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|(?:https?:\/\/[^\s,)]+))/g;
+    /((?:[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|(?:https?:\/\/[^\s,)<>]+[^\s,)<>.;:]))/g;
   const parts = text.split(tokenRegex);
   if (parts.length === 1) {
     // No emails or URLs — check if entire text is ALL CAPS
