@@ -36,6 +36,7 @@ import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection 
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
+import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot, buildSessionStatuses, buildSessionTodos } from "./session-read-model.js";
 import {
   collectWorkspaceExportWarnings,
   stripSensitiveWorkspaceExportData,
@@ -469,7 +470,14 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo, path: string, init: { method: string; body?: unknown }) {
+type OpencodeQueryValue = string | number | boolean | null | undefined;
+
+async function fetchOpencodeJson(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  path: string,
+  init: { method: string; body?: unknown; query?: URLSearchParams | Record<string, OpencodeQueryValue> },
+) {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
@@ -478,7 +486,18 @@ async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo,
 
   const url = new URL(baseUrl);
   url.pathname = path.startsWith("/") ? path : `/${path}`;
-  url.search = "";
+  if (init.query instanceof URLSearchParams) {
+    url.search = init.query.toString();
+  } else if (init.query) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(init.query)) {
+      if (value === undefined || value === null) continue;
+      params.set(key, String(value));
+    }
+    url.search = params.toString();
+  } else {
+    url.search = "";
+  }
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
@@ -500,12 +519,7 @@ async function fetchOpencodeJson(config: ServerConfig, workspace: WorkspaceInfo,
   });
 
   const text = await response.text();
-  let json: any = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
+  const json = parseJsonResponse(text);
   if (!response.ok) {
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
       status: response.status,
@@ -1524,6 +1538,51 @@ function createRoutes(
     const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
     const items = await readAuditEntries(workspace.path, workspace.id, limit);
     return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const items = await listWorkspaceSessions(config, workspace, {
+      roots: parseOptionalBoolean(ctx.url.searchParams.get("roots"), "roots"),
+      start: parseOptionalNonNegativeInteger(ctx.url.searchParams.get("start"), "start"),
+      search: ctx.url.searchParams.get("search")?.trim() || undefined,
+      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const item = await readWorkspaceSession(config, workspace, sessionId);
+    return jsonResponse({ item });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/messages", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const items = await readWorkspaceSessionMessages(config, workspace, sessionId, {
+      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/snapshot", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const item = await readWorkspaceSessionSnapshot(config, workspace, sessionId, {
+      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    return jsonResponse({ item });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {
@@ -3581,7 +3640,7 @@ function createRoutes(
     const bundle = await fetchSharedBundle(body.bundleUrl, {
       timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
     });
-    return jsonResponse(bundle);
+  return jsonResponse(bundle);
   });
 
   addRoute(routes, "GET", "/approvals", "host", async (ctx) => {
@@ -3599,6 +3658,125 @@ function createRoutes(
   });
 
   return routes;
+}
+
+function remapSessionReadError(error: unknown): never {
+  if (error instanceof ApiError && error.code === "opencode_request_failed") {
+    const details = error.details;
+    const upstreamStatus =
+      details && typeof details === "object" && "status" in details ? Number((details as { status?: unknown }).status) : NaN;
+    if (upstreamStatus === 400) {
+      throw new ApiError(400, "invalid_query", "OpenCode rejected the session read request", details);
+    }
+    if (upstreamStatus === 404) {
+      throw new ApiError(404, "session_not_found", "Session not found", details);
+    }
+  }
+  throw error;
+}
+
+async function listWorkspaceSessions(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  input: { roots?: boolean; start?: number; search?: string; limit?: number },
+) {
+  try {
+    return buildSessionList(
+      await fetchOpencodeJson(config, workspace, "/session", {
+        method: "GET",
+        query: {
+          roots: input.roots,
+          start: input.start,
+          search: input.search,
+          limit: input.limit,
+        },
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSession(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
+  try {
+    return buildSession(
+      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
+        method: "GET",
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionMessages(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  input: { limit?: number },
+) {
+  try {
+    return buildSessionMessages(
+      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
+        method: "GET",
+        query: { limit: input.limit },
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionTodos(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
+  try {
+    return buildSessionTodos(
+      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
+        method: "GET",
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionStatuses(config: ServerConfig, workspace: WorkspaceInfo) {
+  try {
+    return buildSessionStatuses(
+      await fetchOpencodeJson(config, workspace, "/session/status", {
+        method: "GET",
+      }),
+    );
+  } catch (error) {
+    remapSessionReadError(error);
+  }
+}
+
+async function readWorkspaceSessionSnapshot(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  input: { limit?: number },
+) {
+  try {
+    const [session, messages, todos, statuses] = await Promise.all([
+      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
+        method: "GET",
+      }),
+      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
+        method: "GET",
+        query: { limit: input.limit },
+      }),
+      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
+        method: "GET",
+      }),
+      fetchOpencodeJson(config, workspace, "/session/status", {
+        method: "GET",
+      }),
+    ]);
+    return buildSessionSnapshot({ session, messages, todos, statuses });
+  } catch (error) {
+    remapSessionReadError(error);
+  }
 }
 
 async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
@@ -3662,6 +3840,32 @@ function parseInteger(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseOptionalPositiveInteger(value: string | null, name: string): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new ApiError(400, "invalid_query", `${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseOptionalNonNegativeInteger(value: string | null, name: string): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new ApiError(400, "invalid_query", `${name} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseOptionalBoolean(value: string | null, name: string): boolean | undefined {
+  if (value === null) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new ApiError(400, "invalid_query", `${name} must be a boolean`);
 }
 
 function expandHome(value: string): string {
@@ -4839,7 +5043,8 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
       method: "POST",
       body: template.title ? { title: template.title } : undefined,
     });
-    const sessionId = typeof result?.id === "string" ? result.id.trim() : "";
+    const sessionId =
+      result && typeof result === "object" && "id" in result && typeof result.id === "string" ? result.id.trim() : "";
     if (!sessionId) {
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }

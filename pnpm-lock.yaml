@@ -211,6 +211,9 @@ importers:
       yaml:
         specifier: ^2.6.1
         version: 2.8.2
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/minimatch':
         specifier: ^5.1.2
