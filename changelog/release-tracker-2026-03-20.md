@@ -10,13 +10,16 @@ Internal preparation file for release summaries. This is not yet published to th
 #### Released at
 Unreleased draft release. Tagged at `2026-03-20T12:51:31-07:00`.
 
+#### Title
+OpenAI setup points new chats the right way
+
 #### One-line summary
-Improves provider setup and remote messaging reliability so first-run connection flows feel less brittle.
+Makes first-run provider setup clearer by sending new chats into the ChatGPT flow and fixing remote messaging health reporting.
 
 #### Main changes
-- Improved OpenAI provider onboarding so new-session setup points users into the right ChatGPT connection flow and better distinguishes local versus remote workers.
-- Stabilized remote messaging router health checks so remote workers stop appearing unconfigured when messaging is actually available.
-- Kept this release focused on setup and connection reliability rather than introducing broader new workflows.
+- Swapped the starter CTA to Connect ChatGPT and hid it once OpenAI is already connected.
+- Made OpenAI auth worker-aware so remote workers use the device flow with copyable codes and manual browser launch.
+- Fixed worker-scoped router health so remote messaging no longer appears unconfigured in Settings and identities.
 
 #### Lines of code changed since previous release
 1079 lines changed since `v0.11.175` (618 insertions, 461 deletions).
@@ -66,13 +69,19 @@ False
 #### Released at
 `2026-03-20T20:54:48Z`
 
+#### Title
+Downloads CTA and npm install fallback land
+
 #### One-line summary
-Gets new users to the right install path faster and makes orchestrator installs recover more reliably when local binaries are missing.
+Gets desktop users to the right download path faster and lets `openwork-orchestrator` recover when npm skips its platform binary.
 
 #### Main changes
-- Routed the main landing-page CTA straight to downloads so new users land on the desktop install surface instead of an extra intermediate step.
-- Added an npm install fallback to published OpenWork Orchestrator binaries so local installs can still complete when building from source is unavailable.
-- Kept release outputs aligned with the shipped orchestrator build so install behavior stays more predictable across environments.
+Routes the desktop landing CTA to the Download page so the install path is clearer.
+
+Also released:
+
+- `openwork-orchestrator` postinstall now downloads the matching release binary when optional platform packages are missing.
+- Daytona snapshot builds now use the source orchestrator binary.
 
 #### Lines of code changed since previous release
 175 lines changed since `v0.11.176` (139 insertions, 36 deletions).
@@ -109,7 +118,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -122,13 +131,16 @@ False
 #### Released at
 `2026-03-22T03:08:43Z`
 
+#### Title
+Workspace sharing and model controls get a major refresh
+
 #### One-line summary
-Redesigns core app navigation and sharing first, then makes model controls clearer and smooths several session and feedback flows.
+Redesigns workspace sharing and sidebar structure, makes reasoning controls model-aware, and adds a hosted feedback flow.
 
 #### Main changes
-- Redesigned workspace sharing and the right sidebar, including nested child sessions and cleaner session chrome so navigation feels more structured.
-- Made model behavior controls model-aware with clearer provider and picker behavior across the composer and settings.
-- Routed in-app feedback to a hosted form and restored key session affordances like the in-composer Run action while polishing settings and transcript surfaces.
+- Redesigned workspace sharing and the right sidebar, including cleaner remote credentials and nested child sessions.
+- Made model pickers model-aware with provider icons and per-model reasoning or behavior controls.
+- Moved app feedback to a hosted form, added an Exa toggle, and stopped forcing starter workspaces on desktop boot.
 
 #### Lines of code changed since previous release
 8432 lines changed since `v0.11.177` (5335 insertions, 3097 deletions).
@@ -167,7 +179,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -180,13 +192,16 @@ False
 #### Released at
 `2026-03-22T05:34:34Z`
 
+#### Title
+Den checkout and workspace setup get leaner
+
 #### One-line summary
-Simplifies Den checkout and workspace setup flows while cleaning up a few visible desktop and sharing rough edges.
+Simplifies Den billing and dashboard surfaces, streamlines workspace creation flows, and removes the desktop tray path.
 
 #### Main changes
-- Simplified Den cloud checkout and dashboard surfaces so trial signup and cloud navigation feel lighter and more direct.
-- Refreshed remote workspace creation and folder-selection flows to reduce friction when creating a new workspace.
-- Improved share previews with favicon and social metadata and removed desktop tray behavior that made close and reopen behavior less predictable.
+- Simplified the create-workspace and connect-remote modals so setup fields read more clearly.
+- Refreshed Den checkout and dashboard screens into a flatter, cleaner shell.
+- Removed desktop tray support and now requires contact details on hosted feedback submissions.
 
 #### Lines of code changed since previous release
 1025 lines changed since `v0.11.178` (539 insertions, 486 deletions).
@@ -223,7 +238,7 @@ True
 - Removed desktop tray support from the app.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -236,13 +251,14 @@ False
 #### Released at
 Unreleased draft release. Tagged at `2026-03-22T09:29:16-07:00`.
 
+#### Title
+Den landing and provisioning visuals get pared back
+
 #### One-line summary
-Strips down Den landing and provisioning visuals so the cloud onboarding experience feels lighter and less distracting.
+Mostly a docs-and-artifact cleanup release, with a small Den landing and provisioning UI simplification.
 
 #### Main changes
-- Simplified the landing hero so the first impression focuses more on the core message and less on decorative UI.
-- Removed the hero activity mockup from Den marketing surfaces to reduce visual noise.
-- Simplified the provisioning connection animation and dropped the background cube artwork from the dashboard flow.
+Mostly removes internal PR docs and screenshots, while trimming the Den landing hero and simplifying the worker provisioning animation. No clear core app, server, or developer workflow changes land in this tag.
 
 #### Lines of code changed since previous release
 3020 lines changed since `v0.11.179` (23 insertions, 2997 deletions).
@@ -291,13 +307,14 @@ False
 #### Released at
 `2026-03-22T17:02:23Z`
 
+#### Title
+Version metadata is republished in sync
+
 #### One-line summary
-Republishes the release line with synchronized package metadata and no clear additional user-facing product changes.
+Republishes synchronized package versions only, with no distinct user-facing or developer-facing workflow change.
 
 #### Main changes
-- No material app, server, or workflow changes are visible in this release beyond the new tagged build.
-- Desktop, server, orchestrator, and router package metadata were kept in sync for the `0.11.181` cut.
-- This patch appears to focus on shipping refreshed artifacts rather than changing how OpenWork behaves.
+Packaging-only release that syncs version metadata across app, desktop, server, router, and orchestrator packages. No material workflow, UI, API, or docs behavior changes are visible from the code.
 
 #### Lines of code changed since previous release
 58 lines changed since `v0.11.180` (40 insertions, 18 deletions).
@@ -333,7 +350,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -346,13 +363,16 @@ False
 #### Released at
 `2026-03-23T01:48:48Z`
 
+#### Title
+Local workspaces move under OpenWork server control
+
 #### One-line summary
-Moves local workspace ownership into OpenWork server so reconnect and onboarding flows stay more reliable, while making remote connect UX simpler.
+Shifts local workspace ownership into OpenWork server so creation, reconnects, config writes, and starter bootstrap stay aligned across the app.
 
 #### Main changes
-- Moved local workspace ownership into OpenWork server so reconnects, starter-workspace setup, and sidebar state stay aligned across app surfaces.
-- Simplified the remote workspace connect modal so adding a worker feels clearer and lighter.
-- Polished session tool traces by moving the chevron affordance to the right for faster scanning.
+- Local workspace create, rename, delete, config writes, and reload events now go through OpenWork server first.
+- First-run starter bootstrap and reconnect logic are more reliable across onboarding and sidebar flows.
+- Simplified the remote connect modal, moved tool-trace chevrons right, and added Windows ARM64 dev startup support.
 
 #### Lines of code changed since previous release
 1792 lines changed since `v0.11.181` (1510 insertions, 282 deletions).
@@ -389,7 +409,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -402,13 +422,16 @@ False
 #### Released at
 `2026-03-23T05:01:53Z`
 
+#### Title
+Exa moves into OpenCode settings
+
 #### One-line summary
-Adds Exa to Advanced settings while backing out an unready macOS path-handling change to keep the release stable.
+Surfaces the Exa search toggle in a clearer OpenCode settings section and rolls back an unready macOS path-normalization change.
 
 #### Main changes
-- Added Exa to Advanced settings so power users can configure it alongside other advanced tooling in the app.
-- Reverted the prior macOS path case-folding change after it proved not ready for release.
-- Kept the patch narrowly focused on advanced-settings follow-up and platform stability.
+- Added an OpenCode settings panel that exposes the Exa web-search toggle in a clearer place.
+- Reverted the macOS path case-folding change to avoid destabilizing session and workspace matching.
+- Also removed leftover docs-plan and screenshot artifacts.
 
 #### Lines of code changed since previous release
 614 lines changed since `v0.11.182` (53 insertions, 561 deletions).
@@ -444,7 +467,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -457,13 +480,14 @@ False
 #### Released at
 `2026-03-23T15:04:42Z`
 
+#### Title
+CLI quickstart becomes the primary docs path
+
 #### One-line summary
-Refocuses the docs around a slimmer Quickstart so the main onboarding path is easier to follow.
+Rebuilds the docs around a single CLI-first quickstart and removes older split onboarding paths that were harder to follow.
 
 #### Main changes
-- Simplified the docs experience around a refreshed Quickstart so new users have a clearer primary onboarding path.
-- Removed older docs pages and tutorials in favor of a leaner documentation surface.
-- Updated docs structure and metadata to match the reduced set of guides.
+Collapses the docs nav to a single quickstart, rewrites onboarding around the remote CLI plus desktop connect flow, and removes older introduction, technical, non-technical, and tutorial pages so first-run guidance is much narrower and easier to scan.
 
 #### Lines of code changed since previous release
 898 lines changed since `v0.11.183` (121 insertions, 777 deletions).
@@ -499,7 +523,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -512,13 +536,14 @@ False
 #### Released at
 `2026-03-24T05:34:00Z`
 
+#### Title
+Safer local sharing and messaging setup
+
 #### One-line summary
-Hardens sharing and messaging defaults first, then adds guided Control Chrome setup and Brazilian Portuguese localization.
+Defaults local workers to loopback-only, makes public messaging exposure more deliberate, and adds guided setup for Chrome control.
 
 #### Main changes
-- Defaulted local workers to localhost-only and hardened public auth and publishing flows so sharing surfaces are safer unless users explicitly opt in.
-- Put messaging behind explicit opt-in and added a warning before creating public Telegram bots so public exposure is more deliberate.
-- Added a guided Control Chrome setup flow and Brazilian Portuguese localization to make setup clearer for more users.
+Local workers now stay localhost-only unless users explicitly opt into remote exposure, messaging is disabled until enabled on purpose, public Telegram bot creation shows a risk warning, and Chrome DevTools MCP gets a guided setup flow.
 
 #### Lines of code changed since previous release
 5434 lines changed since `v0.11.184` (4780 insertions, 654 deletions).
@@ -556,7 +581,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -569,13 +594,14 @@ False
 #### Released at
 `2026-03-24T06:16:26Z`
 
+#### Title
+Local reconnects stay scoped to the right workspace
+
 #### One-line summary
-Fixes local workspace scoping during reconnects and bootstrap so sessions stay attached to the right directory.
+Fixes restart and reconnect flows so local sessions and starter workspaces stay attached to the intended directory.
 
 #### Main changes
-- Kept workspace history scoped to the active local workspace during reconnects so switching and reopening do not pull in the wrong session list.
-- Normalized starter workspace paths during desktop bootstrap so persisted local paths reconnect to the correct directory.
-- Kept this release tightly focused on local startup and reconnect reliability instead of new features.
+Keeps local session history scoped to the active workspace during reconnects and normalizes persisted starter paths on desktop bootstrap, so restarts stop reopening or creating sessions against the wrong local directory.
 
 #### Lines of code changed since previous release
 397 lines changed since `v0.11.185` (343 insertions, 54 deletions).
@@ -612,7 +638,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -625,13 +651,14 @@ False
 #### Released at
 `2026-03-24T15:09:03Z`
 
+#### Title
+Windows workspace scoping handles verbatim paths
+
 #### One-line summary
-Fixes Windows path handling so session and workspace scope comparisons stay consistent across standard, verbatim, and UNC-prefixed directories.
+Normalizes Windows path transport, verbatim prefixes, and UNC comparisons so local session scope stays consistent across directory formats.
 
 #### Main changes
-- Normalized Windows directory transport so local session create, delete, and sidebar scope checks all compare the same path shape.
-- Stripped verbatim Windows path prefixes before scope comparison so reconnect and switch flows stop drifting across equivalent paths.
-- Normalized verbatim UNC scope comparisons so Windows remote and local session transitions stay attached to the right workspace.
+Normalizes Windows directory strings end to end, strips verbatim path prefixes, and fixes UNC comparison logic so session lists, deletes, and workspace switching all target the same local workspace scope.
 
 #### Lines of code changed since previous release
 210 lines changed since `v0.11.186` (173 insertions, 37 deletions).
@@ -669,7 +696,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -682,13 +709,14 @@ False
 #### Released at
 `2026-03-24T16:29:47Z`
 
+#### Title
+Landing feedback returns to the previous flow
+
 #### One-line summary
-Restores the prior feedback flow by removing the Loops feedback template from the landing feedback route.
+Backs out the Loops feedback template so the landing feedback endpoint goes back to the simpler email-based path.
 
 #### Main changes
-- Reverted the Loops feedback template change so app feedback submissions return to the earlier behavior.
-- Removed the template files and config tied to the reverted feedback email path.
-- Kept this patch narrowly focused on making feedback submission behavior predictable again.
+Reverts the Loops-based landing feedback template and config, restoring the earlier app-feedback route behavior without introducing any broader app, worker, or docs workflow changes.
 
 #### Lines of code changed since previous release
 328 lines changed since `v0.11.187` (30 insertions, 298 deletions).
@@ -724,7 +752,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -737,13 +765,14 @@ False
 #### Released at
 `2026-03-24T17:16:24Z`
 
+#### Title
+Package metadata rolls forward only
+
 #### One-line summary
-Rolls the release line forward with no visible product or workflow changes.
+Updates the release line with a lockfile and version sync only, without any visible product or workflow changes.
 
 #### Main changes
-- Kept the shipped OpenWork app, server, and cloud behavior effectively unchanged for end users.
-- Refreshed release metadata so the package set stays aligned for the next follow-up patch.
-- Landed as a no-op user-facing release without new workflows, fixes, or removals.
+Packaging-only release: version metadata and the pnpm lockfile are synchronized, with no meaningful user-facing or developer-facing workflow changes in the shipped code.
 
 #### Lines of code changed since previous release
 26 lines changed since `v0.11.188` (13 insertions, 13 deletions).
@@ -779,7 +808,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -792,13 +821,14 @@ False
 #### Released at
 `2026-03-24T23:32:21Z`
 
+#### Title
+Connection guides expand while sharing and auth settle
+
 #### One-line summary
-Stabilizes sharing first, then smooths provider auth timing and refreshes the app shell layout.
+Mostly docs-focused release that reorganizes onboarding around concrete connection guides, while fixing desktop publish routing and headless OpenAI auth timing.
 
 #### Main changes
-- Fixed sharing so public routes keep resolving correctly and packaged desktop builds can publish to the OpenWork share surface.
-- Deferred headless OpenAI auth polling so provider connection flows are less likely to churn while waiting for authorization.
-- Removed the right-sidebar-heavy shell in favor of a flatter app layout that keeps the main workspace flow more focused.
+Mostly docs-only: the site shifts to task guides for remote setup, ChatGPT, custom providers, MCPs, sharing, and skill import, while the app fixes public share routing and waits to poll headless OpenAI auth until users actually open the browser.
 
 #### Lines of code changed since previous release
 3837 lines changed since `v0.11.189` (2654 insertions, 1183 deletions).
@@ -835,7 +865,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -848,13 +878,14 @@ False
 #### Released at
 `2026-03-25T01:04:43Z`
 
+#### Title
+Shared detached workers survive restarts
+
 #### One-line summary
-Makes detached worker sharing survive restarts and tightens settings behavior around disconnected providers.
+Preserves share credentials for detached workers, hides disconnected config-backed providers, and adds clearer Slack and skill-import docs.
 
 #### Main changes
-- Preserved detached worker share credentials across restarts so reopened workers stay connected more reliably.
-- Disabled disconnected config-backed providers correctly so settings state no longer appears active after a disconnect.
-- Kept authorized-folder removal controls visible in settings so cleanup actions remain available when needed.
+Detached Docker-backed workers now keep the right share credentials after restart so share links and reconnect flows keep working, disconnected config-backed providers disappear cleanly from Settings, and docs add clearer Slack and skill-import walkthroughs.
 
 #### Lines of code changed since previous release
 495 lines changed since `v0.11.190` (413 insertions, 82 deletions).
@@ -891,7 +922,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -904,13 +935,16 @@ False
 #### Released at
 `2026-03-25T22:30:34Z`
 
+#### Title
+Workspace switching stops hijacking runtime state
+
 #### One-line summary
-Decouples workspace switching from runtime activation, adds richer template imports, and fixes seeded starter sessions.
+Separates workspace selection from runtime activation, keeps local worker ports stable, and makes shared templates carry starter content correctly.
 
 #### Main changes
-- Made workspace switching feel safer and steadier by keeping selection separate from runtime activation and preserving sticky local worker ports.
-- Expanded workspace templates so shared imports can carry extra `.opencode` files and starter sessions end to end.
-- Fixed blueprint-seeded session materialization so starter conversations render correctly instead of dropping their initial state.
+- Split selected workspace from runtime-connected workspace so browsing no longer flips the active worker.
+- Kept preferred local server ports sticky and avoided collisions across workspaces.
+- Let templates carry extra `.opencode` files and starter sessions, and materialized seeded sessions correctly.
 
 #### Lines of code changed since previous release
 4896 lines changed since `v0.11.191` (3899 insertions, 997 deletions).
@@ -948,7 +982,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -961,13 +995,16 @@ False
 #### Released at
 `2026-03-26T05:23:19Z`
 
+#### Title
+Team template sharing reaches OpenWork Cloud
+
 #### One-line summary
-Introduces Cloud team template sharing and Den organization workflows while adding safer Cloud sign-in fallbacks.
+Adds Save-to-team template flows in the app, while Den gains organizations, member roles, invitations, and a manual Cloud sign-in fallback.
 
 #### Main changes
-- Added Cloud team template sharing flows so teams can publish and reuse workspace templates directly from the app.
-- Introduced Den organizations, member permissions, and org-scoped template sharing surfaces for multi-user Cloud administration.
-- Added clearer Cloud sign-in prompts and a manual fallback so team-sharing flows can recover when the automatic sign-in path stalls.
+- Added Save-to-team flows for workspace templates, with org selection and Cloud sign-in prompts.
+- Introduced Den organizations, member roles, invitations, custom roles, and org-scoped template APIs and screens.
+- Added a manual Cloud sign-in fallback when automatic team-sharing auth stalls.
 
 #### Lines of code changed since previous release
 7841 lines changed since `v0.11.192` (6406 insertions, 1435 deletions).
@@ -1004,7 +1041,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1017,13 +1054,16 @@ False
 #### Released at
 `2026-03-26T20:46:09Z`
 
+#### Title
+Auto compaction and live automations become real workflows
+
 #### One-line summary
-Turns auto compaction into a working app flow, simplifies Den local development, and keeps more settings and automation flows live in place.
+Wires auto compaction to actual workspace config, keeps scheduled jobs live in-app, and adds a faster Den local-dev path.
 
 #### Main changes
-- Wired automatic context compaction through to OpenCode so the app's compaction control now affects real long-session behavior.
-- Simplified Den local development and sandbox dashboard flows with clearer manual sandbox creation and less intrusive startup behavior.
-- Kept setup and operations flows steadier by leaving custom app MCP adds in settings, polling scheduled jobs live, and routing update notices to the right settings destination.
+- Wired Auto context compaction to workspace config so the setting actually changes `compaction.auto`.
+- Kept scheduled jobs live by polling while the Automations view is open.
+- Added a faster Den local-dev path and expanded the Cloud dashboard with shared setups and background-agent links.
 
 #### Lines of code changed since previous release
 5198 lines changed since `v0.11.193` (3852 insertions, 1346 deletions).
@@ -1061,7 +1101,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1074,13 +1114,16 @@ False
 #### Released at
 `2026-03-27T22:02:59Z`
 
+#### Title
+Local workspace creation and Den worker setup get steadier
+
 #### One-line summary
-Sharpens Den worker connection flows while making desktop model, update, and local workspace behavior more reliable.
+Routes new local workspaces through the local host, persists model defaults properly, and smooths Den worker-connect and billing flows.
 
 #### Main changes
-- Restored Den worker connect actions with smoother inline controls and less polling jank across the background agents view.
-- Preserved desktop default model changes and made update badges easier to notice so session setup and maintenance feel more dependable.
-- Fixed local workspace creation and remote workspace binding so switching into active workspaces completes more reliably.
+- Created local workspaces through the local host so setup and binding finish correctly.
+- Preserved workspace default model changes and added a quick compact-session action in chat.
+- Simplified Den organization, worker-connect, and billing flows with less polling jank.
 
 #### Lines of code changed since previous release
 5137 lines changed since `v0.11.194` (3875 insertions, 1262 deletions).
@@ -1118,7 +1161,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1131,13 +1174,16 @@ False
 #### Released at
 `2026-03-30T21:27:27Z`
 
+#### Title
+OpenWork resumes where you left off
+
 #### One-line summary
-Reorients the app around session-first navigation, replaces the old dashboard model, and overhauls automations and workspace state ownership.
+Boots back into the last session, routes straight into session view, and moves automations onto a live scheduler-backed page.
 
 #### Main changes
-- Made OpenWork boot back into the last session and land on the session view instead of routing users through a dashboard-first shell.
-- Rebuilt automations around live scheduler jobs with a dedicated Automations page and more direct settings ownership.
-- Smoothed workspace startup and switching by fixing welcome-workspace bootstrap, sidebar refresh behavior, and several shell-level loading interruptions.
+- Reopened the last session on workspace boot and routed straight into the session view.
+- Moved automations onto a dedicated page backed by live local or remote scheduler jobs.
+- Fixed bootstrap and workspace switching so Welcome setup and loading states stop interrupting startup.
 
 #### Lines of code changed since previous release
 34577 lines changed since `v0.11.195` (15875 insertions, 18702 deletions).
@@ -1175,7 +1221,7 @@ True
 - Removed the old dashboard-first app concept in favor of session-first navigation and settings-owned tool surfaces.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1188,13 +1234,16 @@ False
 #### Released at
 `2026-03-31T05:21:16Z`
 
+#### Title
+Sharing gets safer and startup gets less noisy
+
 #### One-line summary
-Hardens sharing and secret handling while cleaning up sidebar session behavior and unwanted welcome-workspace creation.
+Hardens workspace sharing, keeps orchestrator secrets out of CLI args and logs, and removes noisy sidebar and Welcome-workspace boot behavior.
 
 #### Main changes
-- Protected workspace sharing by gating sensitive exports and forcing bundle fetches to stay on the configured publisher unless users explicitly opt into a warning-backed manual import.
-- Kept orchestrator secrets out of process arguments and logs so local and hosted runs leak less sensitive data.
-- Fixed sidebar and boot behavior by stopping automatic Welcome workspace creation and correcting which sessions appear in collapsed workspace lists.
+- Blocked sensitive workspace exports and showed warnings before sharing risky config or secrets.
+- Trusted bundle imports only from the configured publisher unless users explicitly choose a warning-backed manual path.
+- Moved OpenWork tokens off CLI args and logs, stopped auto-creating Welcome, and fixed collapsed sidebar session lists.
 
 #### Lines of code changed since previous release
 6399 lines changed since `v0.11.196` (5657 insertions, 742 deletions).
@@ -1233,7 +1282,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1246,13 +1295,14 @@ False
 #### Released at
 `2026-03-31T06:00:47Z`
 
+#### Title
+Local workspace switches restart the right engine
+
 #### One-line summary
-Fixes a local-workspace switching race so the engine restarts correctly when moving between local workspaces.
+Fixes a local-only switch bug so changing between local workspaces restarts the engine instead of reusing the old connection.
 
 #### Main changes
-- Restarted the engine correctly when switching between local workspaces instead of reusing stale runtime state.
-- Carried the previous workspace path through activation so local workspace changes are detected reliably.
-- Applied the same race fix to workspace-forget flows so local engine state stays consistent during cleanup.
+Captures the previous local workspace path before selection changes so switching between local workspaces restarts the engine instead of reusing the old connection.
 
 #### Lines of code changed since previous release
 100 lines changed since `v0.11.197` (59 insertions, 41 deletions).
@@ -1288,7 +1338,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1301,13 +1351,16 @@ False
 #### Released at
 `2026-04-02T02:18:50Z`
 
+#### Title
+Pricing, skill hubs, and session recovery sharpen up
+
 #### One-line summary
-Adds pricing and paid Windows flows, expands Den team capabilities, and improves debugging and session recovery across the app.
+Adds pricing and paid Windows messaging, expands Den with skill hubs and `den-api`, and improves everyday session recovery and debugging.
 
 #### Main changes
-- Added a new landing pricing flow with paid Windows messaging and cleaner Cloud navigation into the app.
-- Expanded Den with skill hubs, a Hono-based `den-api`, and a smoother org-invite signup path for team administration.
-- Improved day-to-day reliability with developer log export, per-conversation draft persistence, and recovery after immediate send failures.
+- Added a pricing page and paid Windows messaging, and sent Cloud navigation directly into the app.
+- Expanded Den with skill hubs, a new `den-api`, and a smoother org-invite signup flow.
+- Added developer log export, per-conversation draft persistence, and recovery after immediate send failures.
 
 #### Lines of code changed since previous release
 19623 lines changed since `v0.11.198` (12501 insertions, 7122 deletions).
@@ -1347,7 +1400,7 @@ True
 - Removed the legacy `opkg` CLI integration as part of the release cleanup.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1360,13 +1413,16 @@ False
 #### Released at
 `2026-04-03T15:22:13Z`
 
+#### Title
+Cloud skills and team limits move into the core flow
+
 #### One-line summary
-Brings Cloud team skills into the app and greatly expands Den team, skill hub, and billing management flows.
+Brings Cloud team skills into the app, adds Den teams and deeper skill-hub management, and enforces org limits during creation.
 
 #### Main changes
-- Added an OpenWork Cloud team skills catalog to the app's Skills page, including refresh, install, and share-to-team flows.
-- Added Den teams and full skill hub management so organizations can structure, edit, and browse shared skill collections.
-- Moved billing into org creation and enforced org limits so team setup reflects plan constraints earlier in the workflow.
+- Added an OpenWork Cloud skills catalog to the Skills page, with install and share-to-team flows.
+- Added Den teams plus full skill hub and skill editing and visibility management.
+- Moved billing into org creation and enforced organization member limits before setup finishes.
 
 #### Lines of code changed since previous release
 9000 lines changed since `v0.11.199` (7881 insertions, 1119 deletions).
@@ -1404,8 +1460,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
-

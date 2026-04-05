@@ -10,13 +10,16 @@ Internal preparation file for release summaries. This is not yet published to th
 #### Released at
 `2026-02-26T22:26:17Z`
 
+#### Title
+Unified workspace navigation and smoother downloads
+
 #### One-line summary
-Makes navigation more consistent across dashboard and session views and prevents large downloads from freezing the UI.
+Unifies workspace navigation across dashboard and session views while preventing download-heavy operations from freezing the app.
 
 #### Main changes
-- Unified sidebar navigation and workspace switching so dashboard and session flows behave more consistently.
-- Deduplicated equivalent remote workspace entries and relaxed stale connecting locks so workspace rows stay actionable.
-- Added download throttling to prevent UI freezes during heavier transfer activity.
+- Reused the same workspace and session sidebar in dashboard and session views.
+- Deduplicated equivalent remote workers and kept rows actionable during stale connects.
+- Throttled download updates so large transfers stop freezing the desktop UI.
 
 #### Lines of code changed since previous release
 710 lines changed since `v0.11.124` (160 insertions, 550 deletions).
@@ -53,11 +56,10 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
-
 
 ## v0.11.126
 
@@ -67,13 +69,16 @@ False
 #### Released at
 `2026-02-27T15:47:46Z`
 
+#### Title
+Simpler artifacts and direct workspace actions
+
 #### One-line summary
-Simplifies artifact handling first, then adds quicker worker and plugin actions so common workspace management tasks take fewer steps.
+Simplifies artifact handling and adds direct worker and plugin actions so common cleanup and file workflows take fewer steps.
 
 #### Main changes
-- Replaced the in-app artifact editor with simpler artifact actions, including reveal controls and better handling for markdown files.
-- Added quick actions for workers and plugins so users can reveal workspaces, recover flows, and remove plugins directly from the UI.
-- Trimmed session and dashboard complexity around artifacts so the desktop experience feels lighter and easier to scan.
+- Replaced the inline artifact markdown editor with simpler reveal and open actions.
+- Added Open in Obsidian for markdown and Reveal in Finder or Explorer for local workers.
+- Added direct plugin removal and worker reveal actions from the main UI.
 
 #### Lines of code changed since previous release
 885 lines changed since `v0.11.125` (360 insertions, 525 deletions).
@@ -109,7 +114,7 @@ True
 - Replaced the in-app artifact markdown editor with a simpler read-only artifact action flow.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -122,13 +127,16 @@ False
 #### Released at
 `2026-02-28T02:48:07Z`
 
+#### Title
+Get back online recovery and smarter Docker dev-up
+
 #### One-line summary
-Makes worker recovery clearer and more reliable by adding a plain-language recovery action that keeps existing OpenWork access working.
+Makes worker recovery clearer and preserves existing access, while smoothing Docker dev stacks for developers using local OpenCode config.
 
 #### Main changes
-- Added a user-facing `Get back online` action in worker menus so recovery is easier to discover.
-- Changed worker recovery to reuse existing OpenWork tokens instead of rotating them during sandbox restarts.
-- Improved reconnection handling so recovering a worker is less likely to interrupt the current workspace flow.
+- Added a plain-language Get back online action for remote worker recovery.
+- Reused existing OpenWork tokens during sandbox restarts so reconnects keep working.
+- Updated `dev-up.sh` to mount host OpenCode config and auth into Docker dev stacks.
 
 #### Lines of code changed since previous release
 370 lines changed since `v0.11.126` (325 insertions, 45 deletions).
@@ -164,7 +172,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -177,13 +185,16 @@ False
 #### Released at
 `2026-03-01T18:40:52Z`
 
+#### Title
+Remote file sessions, Obsidian sync, and long-chat readability
+
 #### One-line summary
-Expands remote file workflows with just-in-time file sessions and local mirror support, then makes long desktop sessions easier to read and follow.
+Adds live remote file sessions with Obsidian-backed editing, then makes long desktop conversations easier to read and follow.
 
 #### Main changes
-- Added just-in-time file sessions and batch sync so remote files can be opened and synced as part of the OpenWork workflow.
-- Made remote worker markdown easier to work with locally by opening mirrored files through local tools such as Obsidian.
-- Added desktop font zoom shortcuts and whole-webview zoom so long conversations and documents are easier to read.
+- Added short-lived file sessions with catalog, event, read, write, rename, and delete batch APIs.
+- Mirrored remote markdown into Obsidian and synced edits back to the worker.
+- Added desktop-wide zoom shortcuts while cleaning transcript noise and live-thinking scroll behavior.
 
 #### Lines of code changed since previous release
 2719 lines changed since `v0.11.127` (2612 insertions, 107 deletions).
@@ -223,7 +234,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -236,13 +247,16 @@ False
 #### Released at
 `2026-03-02T02:35:51Z`
 
+#### Title
+Self-serve billing and media-rich messaging
+
 #### One-line summary
-Adds self-serve billing controls in the web cloud dashboard and expands messaging connectors with first-class media delivery.
+Expands cloud billing into a self-serve management flow and lets Slack and Telegram carry richer OpenWork Router messages.
 
 #### Main changes
-- Added billing subscription controls in the web cloud worker dashboard so users can manage subscriptions directly.
-- Added invoice visibility in the billing flow so past charges are easier to review.
-- Added first-class media transport for Slack and Telegram so OpenWork router messages can carry richer content.
+- Added billing plan details, invoices, and subscription actions in the cloud worker dashboard.
+- Extended Slack and Telegram delivery to send richer media, not just plain text.
+- Hardened billing lookups and post-checkout navigation so account state refreshes more reliably.
 
 #### Lines of code changed since previous release
 3238 lines changed since `v0.11.128` (3061 insertions, 177 deletions).
@@ -279,7 +293,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -292,13 +306,16 @@ False
 #### Released at
 `2026-03-02T16:58:05Z`
 
+#### Title
+Service restarts and steadier local connectivity
+
 #### One-line summary
-Makes local connectivity more dependable by hardening router startup, adding restart controls, and smoothing checkout return handling in billing.
+Adds in-app restart controls, makes router startup recover from local port conflicts, and smooths billing returns from checkout.
 
 #### Main changes
-- Hardened desktop router startup so local services come up more predictably.
-- Added in-app service restart controls so users can recover local connectivity without leaving the app.
-- Recovered billing sessions after checkout redirects so returning from subscription flows lands back in a usable state.
+- Added Settings actions to restart orchestrator, OpenCode, OpenWork server, and OpenCodeRouter.
+- Moved OpenCodeRouter onto conflict-free localhost health ports and retried startup failures automatically.
+- Restored billing state after checkout returns and dropped Telegram self-echo loops.
 
 #### Lines of code changed since previous release
 637 lines changed since `v0.11.129` (540 insertions, 97 deletions).
@@ -336,7 +353,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -349,13 +366,16 @@ False
 #### Released at
 `2026-03-04T17:15:52Z`
 
+#### Title
+Virtualized chats and clearer runtime status
+
 #### One-line summary
-Upgrades long-session usability with faster rendering, clearer status feedback, and more durable session controls across the app.
+Keeps long sessions responsive with virtualized rendering, clearer runtime status, and optional auto-compaction after runs finish.
 
 #### Main changes
-- Virtualized session message rendering and fixed blank transcript regressions so long conversations stay responsive.
-- Added a unified status indicator with detail popover plus automatic context compaction controls for clearer session oversight.
-- Added persistent language selection and improved file-open reliability for editor and artifact flows.
+- Virtualized long transcripts so large chats stay responsive instead of rendering every message at once.
+- Replaced split engine and server badges with one Ready indicator that opens a detailed status popover.
+- Added automatic context compaction after runs, plus persistent language selection and sturdier file opening.
 
 #### Lines of code changed since previous release
 1494 lines changed since `v0.11.130` (1134 insertions, 360 deletions).
@@ -396,7 +416,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -409,13 +429,16 @@ False
 #### Released at
 `2026-03-05T00:06:28Z`
 
+#### Title
+Chat-first startup and faster long-session loading
+
 #### One-line summary
-Makes session startup feel steadier by preserving empty-draft launches, opening chats at the latest messages, and reducing long-chat typing lag.
+Preserves the new-session launch state, fixes first-run setup, and makes long chats load from the latest messages with less lag.
 
 #### Main changes
-- Preserved the empty-draft `/session` launch state so startup no longer forces users away from a fresh session flow.
-- Fixed first-run behavior by creating an initial chat and routing non-media uploads into the inbox flow.
-- Opened conversations at the latest messages and triggered transcript windowing earlier so long chats feel more responsive.
+- Kept `/session` as an empty draft view instead of bouncing users into an older chat.
+- Added a first-run worker empty state, created the first chat automatically, and routed non-media uploads into inbox links.
+- Opened sessions at the latest messages, paged older history on demand, and collapsed oversized markdown by default.
 
 #### Lines of code changed since previous release
 611 lines changed since `v0.11.131` (447 insertions, 164 deletions).
@@ -454,7 +477,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -467,13 +490,16 @@ False
 #### Released at
 `2026-03-05T15:54:31Z`
 
+#### Title
+Chat transcripts stop flickering during typing
+
 #### One-line summary
-Stabilizes active chat rendering so transcripts stop flickering while typing and long-message state holds together more reliably.
+Keeps active and long-running sessions visually stable by fixing typing flicker, remount churn, and collapsed long-message resets.
 
 #### Main changes
 - Fixed transcript flicker while typing in active chats.
-- Reduced virtualized remount churn in tail-loaded conversations so long sessions feel steadier.
-- Stopped collapsed long-markdown sections from resetting unexpectedly during session use.
+- Kept long sessions steadier by reducing remount churn in tail-loaded message lists.
+- Preserved expanded long-markdown state instead of collapsing it again mid-session.
 
 #### Lines of code changed since previous release
 292 lines changed since `v0.11.132` (163 insertions, 129 deletions).
@@ -511,7 +537,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -524,13 +550,16 @@ False
 #### Released at
 `2026-03-06T07:28:11Z`
 
+#### Title
+Remote MCP setup gets lighter, with exportable desktop diagnostics
+
 #### One-line summary
-Simplifies remote MCP connection setup and adds stronger desktop diagnostics so setup and troubleshooting are easier from inside OpenWork.
+Makes remote-workspace MCP connection setup clearer and adds in-app debug exports, sandbox probes, and config actions for faster troubleshooting.
 
 #### Main changes
-- Simplified remote MCP setup for remote workspaces, including smoother auth and retry handling.
-- Added exportable debug reports and config actions in Settings so troubleshooting can be done directly from the app.
-- Added sandbox probe diagnostics export so desktop failures are easier to inspect and share.
+- Remote workspaces now steer MCP setup toward URL-based connections, with optional OAuth and safer reload prompts.
+- Settings can copy or export a runtime debug report and run a sandbox probe.
+- Settings can also reveal or reset workspace config without leaving the app.
 
 #### Lines of code changed since previous release
 852 lines changed since `v0.11.133` (789 insertions, 63 deletions).
@@ -568,7 +597,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -581,13 +610,14 @@ False
 #### Released at
 `2026-03-06T19:43:28Z`
 
+#### Title
+Bundled OpenCode version stays aligned across release paths
+
 #### One-line summary
-Keeps packaged OpenCode resolution more consistent across CI, prerelease, and release paths, with no notable direct product-surface changes.
+Pins the packaged OpenCode fallback consistently across CI, prerelease, and release builds, with no notable new app workflow changes.
 
 #### Main changes
-- Kept fallback OpenCode resolution pinned consistently across release paths so packaged builds are less likely to drift.
-- Reduced the chance of mismatched bundled behavior between prerelease and release artifacts.
-- Shipped as a narrow stabilization patch with no notable new end-user features in the app or web surfaces.
+Keeps the bundled OpenCode fallback pinned to the same version across CI, prerelease, and release artifacts so packaged builds drift less, without introducing new user-facing OpenWork workflows.
 
 #### Lines of code changed since previous release
 61 lines changed since `v0.11.134` (31 insertions, 30 deletions).
@@ -623,7 +653,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -636,13 +666,16 @@ False
 #### Released at
 `2026-03-10T04:00:32Z`
 
+#### Title
+OpenWork Share turns dropped files into worker packages
+
 #### One-line summary
-Reshapes OpenWork Share into a more capable packaging flow, upgrades it to the Next.js App Router, and lands a broad set of reliability and polish updates across app and web surfaces.
+Adds a real worker-packaging flow in OpenWork Share, rebuilds the share site on the Next.js App Router, and makes provider connections easier to manage.
 
 #### Main changes
-- Turned OpenWork Share into a worker packager and simplified package creation so shared bundles are more useful as real setup artifacts.
-- Replatformed OpenWork Share onto the Next.js App Router and refreshed its landing and bundle pages for a cleaner public sharing experience.
-- Fixed provider OAuth polling and added provider disconnect controls in Settings so account connection management is more reliable.
+- OpenWork Share now packages dropped skills, agents, commands, and MCP or OpenWork config into worker bundles.
+- The share site moves to the Next.js App Router with refreshed home and bundle pages.
+- Settings now lets users disconnect providers, while OAuth completion and sandbox startup recover more reliably.
 
 #### Lines of code changed since previous release
 12837 lines changed since `v0.11.135` (9531 insertions, 3306 deletions).
@@ -682,7 +715,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -695,13 +728,16 @@ False
 #### Released at
 `2026-03-11T06:01:10Z`
 
+#### Title
+MCP sign-in retries and model setup get clearer
+
 #### One-line summary
-Stabilizes MCP authentication and improves model picker clarity so provider connection and model selection feel more dependable.
+Makes MCP OAuth flows recover more reliably and reorganizes the model picker so disconnected providers route users straight to setup.
 
 #### Main changes
-- Stabilized MCP auth browser handoff, reload, and reconnect paths so remote auth succeeds more reliably.
-- Improved model picker provider sections so providers and their setup actions are easier to understand.
-- Kept bundled OpenCode aligned with desktop builds so release validation and packaged behavior stay in sync.
+- MCP auth now waits through reloads, reopens the browser flow clearly, and keeps retry states visible.
+- The model picker separates enabled providers from setup-needed ones and links the latter to Settings.
+- Remote MCP cards now expose login actions before a server is connected.
 
 #### Lines of code changed since previous release
 734 lines changed since `v0.11.136` (562 insertions, 172 deletions).
@@ -738,7 +774,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -751,13 +787,14 @@ False
 #### Released at
 `2026-03-11T15:19:39Z`
 
+#### Title
+Shared bundle links now open the blueprints worker flow
+
 #### One-line summary
-Fixes shared bundle imports so they route through the blueprints flow and land in the expected workspace setup path.
+Routes shared bundle imports into the blueprints-style worker creation path so new-worker links land in the setup flow users expect.
 
 #### Main changes
-- Routed shared bundle imports through the blueprints flow so imports follow the intended setup path.
-- Improved workspace creation handoff during imports so shared bundles connect to the right setup flow.
-- Updated the supporting app copy for the blueprints import path so the flow is easier to understand.
+Shared bundle deep links now open the worker-creation flow with the right blueprints preset, then continue import through the intended setup path instead of dropping users into the wrong workspace flow.
 
 #### Lines of code changed since previous release
 143 lines changed since `v0.11.137` (101 insertions, 42 deletions).
@@ -793,7 +830,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -806,13 +843,16 @@ False
 #### Released at
 `2026-03-11T19:14:14Z`
 
+#### Title
+Shared bundle imports land on the intended worker
+
 #### One-line summary
-Makes shared skill imports land on the newly created worker and gives users clearer sandbox startup diagnostics.
+Makes shared bundle imports resolve to the exact active or newly created worker and adds more actionable sandbox startup diagnostics.
 
 #### Main changes
-- Shared bundle imports now target the worker that was just created, so imported skills land in the right place.
-- Sandbox worker startup now surfaces richer diagnostics, making failed launches easier to understand and recover from.
-- Workspace startup flow handling was tightened to reduce friction when bringing a worker online.
+- Imports now match the active or newly created worker by workspace ID, local root, or directory hint.
+- Sandbox startup logs now capture resolved Docker paths and launch arguments in the debug report.
+- Failed detached-worker launches surface clearer stage and spawn diagnostics.
 
 #### Lines of code changed since previous release
 460 lines changed since `v0.11.138` (364 insertions, 96 deletions).
@@ -849,7 +889,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -862,13 +902,16 @@ False
 #### Released at
 `2026-03-12T01:33:57Z`
 
+#### Title
+App and worker opens stay on the new session screen
+
 #### One-line summary
-Keeps app and worker launches on the new session screen while improving session clarity and polishing sharing and support flows.
+Keeps launch actions anchored on the new session flow while making oversized-context errors, share feedback, and support booking clearer.
 
 #### Main changes
-- App and worker launch actions now keep users on the new session screen instead of pulling them into a different view unexpectedly.
-- Session flow feels clearer with the todo strip docked to the composer and friendlier handling for oversized-context errors.
-- Share and landing surfaces were polished with inline success feedback and a richer Book a Call form layout with conversation topics.
+- Opening the app or a new worker now stays on the new-session screen instead of jumping away unexpectedly.
+- The todo strip docks to the composer, and HTTP 413 errors now suggest compaction or a fresh session.
+- OpenWork Share adds inline link-success feedback, and the Book a Call form gets clearer topic cards.
 
 #### Lines of code changed since previous release
 5453 lines changed since `v0.11.140` (3894 insertions, 1559 deletions).
@@ -908,7 +951,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -921,13 +964,14 @@ False
 #### Released at
 `2026-03-12T01:48:01Z`
 
+#### Title
+Version alignment patch
+
 #### One-line summary
-Rolls a coordinated patch cut that keeps shipped OpenWork artifacts aligned without adding material user-facing changes.
+Republishes synchronized app, server, orchestrator, and router versions so shipped artifacts stay in lockstep, with no visible workflow changes.
 
 #### Main changes
-- Shipped no material user-facing product changes in this release.
-- Kept desktop, server, orchestrator, and router artifacts aligned on the same version so installs resolve consistently.
-- Refreshed release metadata and lockfiles for a clean stable patch cut.
+Republishes synchronized desktop, server, orchestrator, and router packages so installs resolve the same version everywhere. No clear user-facing or developer-facing workflow changes land in this patch.
 
 #### Lines of code changed since previous release
 26 lines changed since `v0.11.141` (13 insertions, 13 deletions).
@@ -963,7 +1007,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -976,13 +1020,19 @@ False
 #### Released at
 `2026-03-12T20:51:40Z`
 
+#### Title
+Free first Den worker and Google signup
+
 #### One-line summary
-Substantially expands Den by lowering signup friction, redesigning the landing flow, and improving how workers and chat errors behave.
+Lets new users create one free Den worker without billing, sign up with Google, and enter a much clearer cloud onboarding path.
 
 #### Main changes
-- Den now allows one free cloud worker without billing and adds Google signup, making it much easier to get started.
-- The Den landing page was overhauled with a new hero, comparison, support, and CTA flow that explains the product more clearly.
-- Session and sharing surfaces were polished with inline chat errors, no raw markdown flash during streaming, and refreshed share bundle pages and previews.
+Den now lets new users create one free cloud worker without billing and sign up with Google.
+
+Also released:
+
+- Retired remaining Soul-mode surfaces across the app and server.
+- Showed session errors inline, removed raw markdown flashes, and refreshed share bundle pages and previews.
 
 #### Lines of code changed since previous release
 9937 lines changed since `v0.11.142` (6244 insertions, 3693 deletions).
@@ -1023,7 +1073,7 @@ True
 - Removed remaining Soul mode surfaces from the app.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1036,13 +1086,16 @@ False
 #### Released at
 `2026-03-12T22:53:50Z`
 
+#### Title
+Workspace shell recovery and clearer docs entrypoints
+
 #### One-line summary
-Restores reliable workspace-shell navigation and desktop recovery while polishing Den pricing surfaces and MCP browser setup.
+Restores reliable workspace-shell navigation and reset recovery, seeds Chrome DevTools setup correctly, and splits docs paths for technical and non-technical readers.
 
 #### Main changes
-- Workspace shell navigation now stays reachable across dashboard and session flows, reducing dead-end navigation states.
-- Desktop fully clears reset state on relaunch so recovery flows behave more reliably after a reset.
-- Den pricing and capability cards were refined, and Control Chrome setup is seeded more predictably for MCP browser tooling.
+- Kept dashboard, session, and Settings navigation inside the workspace shell so sidebars stay reachable.
+- Fully cleared desktop reset state on relaunch and seeded Control Chrome as `chrome-devtools` for smoother MCP setup.
+- Split docs entrypoints into technical and non-technical paths so onboarding starts in the right place.
 
 #### Lines of code changed since previous release
 1185 lines changed since `v0.11.143` (868 insertions, 317 deletions).
@@ -1080,7 +1133,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1093,13 +1146,16 @@ False
 #### Released at
 `2026-03-13T05:47:09Z`
 
+#### Title
+Den admin backoffice and support routing
+
 #### One-line summary
-Adds a Den admin backoffice while sharpening Den worker flows, support capture, and desktop skill-sharing reliability.
+Adds a protected Den admin panel for support operations, routes enterprise contact submissions into Loops, and tightens desktop skill reload and settings diagnostics.
 
 #### Main changes
-- Added a protected Den admin backoffice so internal operators can see signup, worker, and billing state without going to the database.
-- Polished Den worker surfaces with clearer overview CTAs, lighter activity styling, and cleaner web/mobile actions.
-- Wired enterprise contact capture into Loops and improved desktop skill sharing and hot-reload feedback.
+- Added a protected Den admin backoffice with signup, worker, and billing visibility for internal support.
+- Routed enterprise contact requests into Loops and restored a mobile logout path in Den.
+- Surfaced skill reload and sharing feedback more clearly and moved runtime status into Settings > Advanced.
 
 #### Lines of code changed since previous release
 2493 lines changed since `v0.11.144` (2031 insertions, 462 deletions).
@@ -1137,7 +1193,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1150,13 +1206,16 @@ False
 #### Released at
 `2026-03-13T19:14:51Z`
 
+#### Title
+Failed worker redeploy and safer skill imports
+
 #### One-line summary
-Adds direct failed-worker recovery and smarter shared-skill importing while refreshing the workspace shell toward a calmer operator layout.
+Adds direct Den worker redeploys, makes shared skills pick a destination worker before import, and improves both local Den setup and Chrome-first guidance.
 
 #### Main changes
-- Den now offers a redeploy action for failed workers, giving users a direct recovery path instead of leaving the worker stuck.
-- Shared skill import now asks users to choose a destination worker before importing, preventing skills from landing in the wrong place.
-- The workspace shell was restyled closer to the operator layout, with steadier footer behavior and a Chrome-first browser quickstart.
+- Added a redeploy action for failed Den workers so users can recover instead of getting stuck.
+- Made shared skill imports choose a destination worker before import, including new-worker and remote-worker paths.
+- Added a dockerized local Den test stack and pushed browser setup toward the Chrome MCP path.
 
 #### Lines of code changed since previous release
 3499 lines changed since `v0.11.145` (2158 insertions, 1341 deletions).
@@ -1194,7 +1253,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1207,13 +1266,19 @@ False
 #### Released at
 `2026-03-14T01:31:52Z`
 
+#### Title
+Existing-worker imports and local Share publishing
+
 #### One-line summary
-Expands shared-skill importing to existing workers and makes Share more reliable for long skills and Den worker provisioning.
+Lets shared skills install into existing workers, adds a local Docker-backed Share publisher for self-hosted testing, and keeps Den worker provisioning current.
 
 #### Main changes
-- Shared skills can now be imported into an existing worker through a dedicated in-app flow.
-- OpenWork Share handles long pasted skills better and adds a local Docker publisher flow for self-hosted publishing.
-- Den and desktop setup flows were tightened with clearer Chrome extension guidance and fresher bundled OpenCode behavior for workers.
+Shared skills can now be imported straight into an existing worker from the app.
+
+Also released:
+
+- Added a local Docker-backed Share publisher for self-hosted dev flows.
+- Bundled fresh OpenCode builds for Den workers and improved missing Chrome extension guidance.
 
 #### Lines of code changed since previous release
 1727 lines changed since `v0.11.146` (1551 insertions, 176 deletions).
@@ -1253,7 +1318,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1266,13 +1331,16 @@ False
 #### Released at
 `2026-03-14T22:28:03Z`
 
+#### Title
+Guided Den onboarding and single-skill Share
+
 #### One-line summary
-Redesigns Den onboarding into a guided stepper and simplifies OpenWork Share around publishing a single skill.
+Turns Den signup into a calmer guided flow with clearer provisioning states while refocusing OpenWork Share on publishing one skill well.
 
 #### Main changes
-- Den onboarding is now a guided stepper with clearer loading, provisioning, and browser-access states.
-- OpenWork Share now centers on publishing a single skill, with cleaner frontmatter handling and a smoother import path.
-- Settings gained a polished feedback entrypoint, while session surfaces were tightened with slimmer sidebars and clearer quickstart tips.
+- Rebuilt Den onboarding as a guided flow with clearer naming, intent, loading, and browser-access states.
+- Simplified OpenWork Share to publish a single skill, with cleaner frontmatter and fuller shared previews.
+- Added a polished feedback card and clearer import and status feedback across app surfaces.
 
 #### Lines of code changed since previous release
 4390 lines changed since `v0.11.147` (2764 insertions, 1626 deletions).
@@ -1311,7 +1379,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1324,13 +1392,16 @@ False
 #### Released at
 `2026-03-14T23:56:20Z`
 
+#### Title
+Richer skill previews and steadier jump-to-latest
+
 #### One-line summary
-Simplifies shared skill pages and stabilizes both skill importing and staying pinned to the latest reply during long chats.
+Makes shared skill pages easier to evaluate before import, steadies the worker-selection flow, and keeps long chats pinned to the newest reply while thinking.
 
 #### Main changes
-- Shared skill pages were simplified and now show richer workspace previews before import.
-- Shared skill import flow was steadied so destination selection and import actions behave more predictably.
-- Session view stays pinned to the latest response more reliably while the assistant is still thinking.
+- Simplified shared skill pages and added richer workspace previews before import.
+- Steadied shared-skill deep-link handling and worker selection so imports fire once and land more predictably.
+- Kept Jump to latest pinned during assistant thinking and reduced blank tail space in long chats.
 
 #### Lines of code changed since previous release
 3906 lines changed since `v0.11.148` (2531 insertions, 1375 deletions).
@@ -1368,7 +1439,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1381,13 +1452,16 @@ False
 #### Released at
 `2026-03-15T01:05:19Z`
 
+#### Title
+Faster provider setup and steadier chat rendering
+
 #### One-line summary
-Smooths session setup and chat rendering while routing in-app feedback to the team inbox and keeping settings layout steady.
+Prioritizes common providers in new-session setup, reduces inline image churn while chatting, and routes feedback straight to the team inbox.
 
 #### Main changes
-- Session setup now prioritizes common providers and removes a redundant ChatGPT prompt.
-- Chat rendering reduces inline image churn so long conversations feel steadier.
-- Settings keeps a more stable shell width and sends feedback directly to the team inbox.
+- Moved common providers like OpenAI and Anthropic to the front and hid the redundant ChatGPT prompt in new-session setup.
+- Reduced inline image rerender churn so active chats feel steadier.
+- Kept Settings width stable and sent feedback from Settings directly to the team inbox.
 
 #### Lines of code changed since previous release
 342 lines changed since `v0.11.149` (241 insertions, 101 deletions).
@@ -1426,9 +1500,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
-
-

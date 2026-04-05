@@ -10,13 +10,14 @@ Internal preparation file for release summaries. This is not yet published to th
 #### Released at
 `2026-03-15T03:20:31Z`
 
+#### Title
+Feedback emails reach the team inbox again
+
 #### One-line summary
-Makes feedback submissions reach the OpenWork team inbox reliably again.
+Fixes the in-app feedback email target so reports reach the shared OpenWork inbox again.
 
 #### Main changes
-- Fixed feedback sending so in-app reports go to the team inbox instead of the wrong destination.
-- Removed a small but user-visible failure point in the feedback path, making it more likely that submitted reports are actually received.
-- Shipped as a narrow feedback reliability patch rather than a broader app or web workflow update.
+Updates the feedback mail link to send reports to `team@openworklabs.com`, restoring the intended shared inbox for in-app feedback.
 
 #### Lines of code changed since previous release
 81 lines changed since `v0.11.150` (55 insertions, 26 deletions).
@@ -52,7 +53,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -65,13 +66,14 @@ False
 #### Released at
 Unreleased tag only. No published GitHub release. Tagged at `2026-03-14T20:53:19-07:00`.
 
+#### Title
+CI workflows move to Blacksmith runners
+
 #### One-line summary
-Refreshes release infrastructure only, with no clear user-facing OpenWork product change in this tag.
+Moves CI and release workflows onto Blacksmith-backed runners, with no visible OpenWork app, web, or server workflow change.
 
 #### Main changes
-- No notable end-user app, web, or desktop workflow changes are visible in this release.
-- Focused on release and CI execution changes rather than product behavior.
-- Served as a maintenance checkpoint to keep shipping flows moving cleanly.
+Repoints CI and release workflows to Blacksmith runners and larger Linux release builders, tightening the release pipeline without changing user-facing product behavior.
 
 #### Lines of code changed since previous release
 70 lines changed since `v0.11.151` (35 insertions, 35 deletions).
@@ -120,13 +122,16 @@ False
 #### Released at
 Unreleased tag only. No published GitHub release. Tagged at `2026-03-14T22:35:30-07:00`.
 
+#### Title
+Live session updates and scroll pinning recover
+
 #### One-line summary
-Restores live session streaming so conversations update in place again and stay pinned to the latest output when expected.
+Restores real-time assistant streaming in sessions while keeping long replies pinned correctly and web event streaming more reliable.
 
 #### Main changes
-- Restored live session updates so new assistant output appears in real time again instead of feeling stalled.
-- Brought back scroll pinning behavior so active sessions stay anchored to the newest output more reliably.
-- Tightened the streaming path across app and web session surfaces to make live conversation state feel coherent again.
+- Restored incremental session text updates so assistant replies stream live again.
+- Reworked chat pinning and jump controls so long responses stay easier to follow.
+- Let the web proxy pass event streams through more safely during fallback handling.
 
 #### Lines of code changed since previous release
 449 lines changed since `v0.11.152` (315 insertions, 134 deletions).
@@ -176,13 +181,14 @@ False
 #### Released at
 Unreleased tag only. No published GitHub release. Tagged at `2026-03-15T07:58:03-07:00`.
 
+#### Title
+Desktop release packaging is reworked
+
 #### One-line summary
-Refreshes release packaging only, with no clear user-facing OpenWork product change in this tag.
+Reorganizes the desktop release pipeline around workflow artifacts and staged asset upload, with no direct product workflow change.
 
 #### Main changes
-- No notable end-user app, web, or desktop workflow changes are visible in this release.
-- Focused on release packaging streamlining rather than product behavior.
-- Shipped as release-process maintenance instead of a feature, UX, or reliability patch for users.
+Rebuilds the desktop release pipeline to package workflow artifacts first, verify bundled sidecar metadata, and upload release assets in a later step, including a dedicated Linux ARM64 path.
 
 #### Lines of code changed since previous release
 976 lines changed since `v0.11.153` (488 insertions, 488 deletions).
@@ -231,13 +237,14 @@ False
 #### Released at
 `2026-03-15T16:08:25Z`
 
+#### Title
+Windows release diagnostics stop masking failures
+
 #### One-line summary
-Hardens release diagnostics behind the scenes, with no clear new end-user OpenWork behavior in this release.
+Improves release-pipeline diagnostics and normalizes workflow action inputs so broken Windows packaging runs are easier to debug.
 
 #### Main changes
-- No notable end-user app, web, or desktop workflow changes are visible in this release.
-- Focused on fixing Windows release diagnostics and workflow wiring rather than product behavior.
-- Served as a narrow release-reliability patch instead of a user-facing feature or UX update.
+Fixes the Windows GitHub connectivity diagnostic step and aligns release-action input names so maintainers get clearer failure signals during desktop release packaging.
 
 #### Lines of code changed since previous release
 51 lines changed since `v0.11.154` (27 insertions, 24 deletions).
@@ -273,7 +280,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -286,13 +293,14 @@ False
 #### Released at
 Unreleased tag only. No published GitHub release. Tagged at `2026-03-15T10:06:37-07:00`.
 
+#### Title
+Desktop release packaging splits build from upload
+
 #### One-line summary
-Refreshes release packaging structure only, with no clear user-facing OpenWork product change in this tag.
+Restructures desktop release automation to build artifacts first, bundle Linux ARM separately, and upload assets in a final pass.
 
 #### Main changes
-- No notable end-user app, web, or desktop workflow changes are visible in this release.
-- Focused on splitting desktop release packaging work rather than changing product behavior.
-- Served as another maintenance checkpoint in the release pipeline instead of a user-facing patch.
+Splits desktop releases into build, bundle, and upload stages, adds separate Linux ARM packaging, and introduces automated asset upload from workflow artifacts.
 
 #### Lines of code changed since previous release
 602 lines changed since `v0.11.155` (486 insertions, 116 deletions).
@@ -341,13 +349,16 @@ False
 #### Released at
 Unreleased tag only. No published GitHub release. Tagged at `2026-03-15T12:27:44-07:00`.
 
+#### Title
+Den access controls tighten and nested task sessions return
+
 #### One-line summary
-Makes complex sessions easier to follow by nesting subagent work correctly, cleaning up session row actions, and fixing feedback links on web.
+Hardens Den sign-in and worker access while restoring inline subagent transcripts, selected-row session actions, and cleaner feedback links.
 
 #### Main changes
-- Nested spawned subagent sessions under the task step that launched them so tool-heavy runs read as one coherent flow.
-- Moved session actions into the selected row so list actions feel more local and predictable while navigating sessions.
-- Fixed web feedback email links so they open directly without leaving behind an unnecessary blank tab.
+- Requires verified Den accounts, removes exposed host tokens, and limits worker access more tightly by user role.
+- Renders subagent sessions inline under task steps and moves rename/delete actions into the selected session row.
+- Opens feedback mail links in place on the web instead of leaving a blank tab behind.
 
 #### Lines of code changed since previous release
 706 lines changed since `v0.11.156` (485 insertions, 221 deletions).
@@ -398,13 +409,14 @@ False
 #### Released at
 Unreleased tag only. No published GitHub release. Tagged at `2026-03-15T12:43:37-07:00`.
 
+#### Title
+Orchestrator npm publish runs from package cwd
+
 #### One-line summary
-Updates release publishing plumbing only, with no clear user-facing OpenWork product change in this tag.
+Fixes the release workflow so `openwork-orchestrator` publishes from `packages/orchestrator`, with no visible app or web workflow change.
 
 #### Main changes
-- No notable end-user app, web, or desktop workflow changes are visible in this release.
-- Focused on release publishing workflow wiring rather than product behavior.
-- Served as a narrow maintenance patch to keep shipping flows working reliably.
+Corrects the orchestrator publish job to run from the package directory so sidecar build and npm publish steps use the right paths.
 
 #### Lines of code changed since previous release
 33 lines changed since `v0.11.157` (17 insertions, 16 deletions).
@@ -453,13 +465,16 @@ False
 #### Released at
 `2026-03-15T20:36:46Z`
 
+#### Title
+Den cloud billing and worker launch align
+
 #### One-line summary
-Brings the app cloud-worker flow in line with the Den landing experience and cleans up a couple of visible web regressions around billing and marketing surfaces.
+Aligns the app-hosted Den flow with landing-page messaging, restores checkout handling for extra workers, and fixes visible billing and marketing regressions.
 
 #### Main changes
-- Aligned the app cloud-worker flow with the Den landing experience so hosted setup feels more consistent from first touch through worker creation.
-- Fixed the Den marketing rail rendering so the hosted web surface displays correctly again.
-- Removed an impossible billing navigation branch so the cloud control UI no longer exposes a path users cannot actually use.
+- Reworked the app cloud-worker flow to match the Den landing experience and messaging.
+- Restored Polar checkout and return handling for additional cloud workers.
+- Fixed the Den marketing rail and removed a dead billing navigation path.
 
 #### Lines of code changed since previous release
 2472 lines changed since `v0.11.158` (1192 insertions, 1280 deletions).
@@ -496,7 +511,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -509,13 +524,16 @@ False
 #### Released at
 `2026-03-15T23:51:50Z`
 
+#### Title
+Den auth, downloads, and nested sessions polish
+
 #### One-line summary
-Polishes several high-traffic web and session surfaces so Den entry, downloads, and nested session browsing feel clearer and more reliable.
+Simplifies the Den auth entry flow, sends landing-page downloads to the right installer, and restores parent-child session browsing in the sidebar.
 
 #### Main changes
-- Simplified the Den auth screen so the hosted entry flow feels cleaner and easier to understand.
-- Mapped landing download calls to action to the detected OS and architecture while also making the app shell behave better on dynamic mobile viewports.
-- Restored nested subagent sessions under their parent tasks and cleaned up session list indentation so complex runs are easier to scan.
+- Simplified the Den auth screen so account entry is lighter and easier to scan.
+- Download buttons now choose the right installer for the visitor's OS and architecture.
+- Sidebar previews now keep subagent sessions nested under their parent tasks.
 
 #### Lines of code changed since previous release
 475 lines changed since `v0.11.159` (303 insertions, 172 deletions).
@@ -553,7 +571,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -566,13 +584,14 @@ False
 #### Released at
 Unreleased tag only. No published GitHub release. Tagged at `2026-03-15T16:48:43-07:00`.
 
+#### Title
+Den first-run goes straight to connect
+
 #### One-line summary
-Refines the Den first-run experience by removing transient marketing noise and making the initial hosted setup flow feel more focused.
+Cuts onboarding friction by removing the intent step, waiting for session hydration cleanly, and ending first-run on a direct connect screen.
 
 #### Main changes
-- Improved the Den first-run flow so hosted setup feels more direct and less cluttered.
-- Removed transient marketing UI that could distract from the primary first-run path.
-- Kept the patch focused on first-run flow polish rather than broader app, desktop, or session changes.
+Removes the extra intent step, drops the transient marketing-heavy auth shell, and adds a dedicated final connect screen so new Den users can launch a worker and open it in OpenWork with fewer detours.
 
 #### Lines of code changed since previous release
 448 lines changed since `v0.11.160` (198 insertions, 250 deletions).
@@ -621,13 +640,16 @@ False
 #### Released at
 `2026-03-16T00:51:15Z`
 
+#### Title
+Docker dev prints LAN-ready OpenWork URLs
+
 #### One-line summary
-Improves local Docker dev-stack defaults so OpenWork is easier to test from other devices over LAN or other public local-network paths.
+Makes local Docker testing easier from phones and other devices by printing public URLs and deriving Den auth and CORS defaults from the detected host.
 
 #### Main changes
-- Improved Docker dev defaults so local OpenWork stacks are easier to expose on LAN and similar public local-network setups.
-- Reduced friction when testing from another device by making the local networking path more ready to use out of the box.
-- Kept the release tightly focused on local stack accessibility rather than broader end-user app or web workflow changes.
+- `dev-up.sh` now prints localhost, hostname, and LAN IP URLs for the app, server, and share service.
+- `den-dev-up.sh` derives auth URLs and trusted origins for cross-device testing.
+- Added `OPENWORK_PUBLIC_HOST` and `DEN_PUBLIC_HOST` overrides when auto-detection is wrong.
 
 #### Lines of code changed since previous release
 149 lines changed since `v0.11.161` (130 insertions, 19 deletions).
@@ -663,7 +685,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -676,13 +698,16 @@ False
 #### Released at
 `2026-03-16T02:47:00Z`
 
+#### Title
+Custom skill hub repos and steadier session actions
+
 #### One-line summary
-Adds custom GitHub skill hub repositories first, then smooths session interactions so cloud and extension workflows feel more reliable.
+Lets teams browse and install skills from any GitHub hub repo while making session switching, composer focus, and reload prompts behave more predictably.
 
 #### Main changes
-- Added support for custom GitHub skill hub repositories so teams can point OpenWork at their own skill sources.
-- Kept the composer focused after Cmd+K session actions so keyboard-driven session work no longer breaks flow.
-- Restored the inline skill reload banner and aligned worker status labels for clearer workspace state feedback.
+- Added custom GitHub skill hub repos, including saved repo selection and install-from-that-repo flows.
+- Cmd+K session actions now return focus to the composer after opening or creating sessions.
+- Restored the inline skill reload banner and cleaned up workspace status alignment.
 
 #### Lines of code changed since previous release
 1169 lines changed since `v0.11.162` (1034 insertions, 135 deletions).
@@ -720,7 +745,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -733,13 +758,16 @@ False
 #### Released at
 `2026-03-16T15:14:38Z`
 
+#### Title
+Owner tokens and child sessions stay visible
+
 #### One-line summary
-Keeps nested task context and remote permission recovery clearer first, then broadens sharing and localization polish across the product.
+Clarifies remote approval access with owner tokens, keeps nested child sessions from disappearing in sidebar syncs, and broadens polish across sharing and localization.
 
 #### Main changes
-- Preserved child task sessions during sidebar re-syncs so nested task context stays visible instead of disappearing.
-- Exposed owner tokens in remote permission prompts to make worker handoff and recovery easier to complete.
-- Improved public-facing polish with HTML-first share links, refined Open Graph preview cards, and full Japanese localization coverage.
+- Remote and cloud connect flows now expose owner tokens separately from collaborator tokens for permission prompts.
+- Sidebar resyncs stop dropping child task sessions when root items refresh.
+- Added Japanese localization and sharper HTML-first share previews.
 
 #### Lines of code changed since previous release
 2418 lines changed since `v0.11.163` (1907 insertions, 511 deletions).
@@ -778,7 +806,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -791,13 +819,16 @@ False
 #### Released at
 `2026-03-17T02:56:06Z`
 
+#### Title
+Settings can sign into Cloud and open workers
+
 #### One-line summary
-Adds OpenWork Cloud sign-in and worker-open flows first, then makes Den auth handoff and shared bundle installs much more dependable.
+Adds an in-app OpenWork Cloud settings flow for sign-in, org selection, and worker opening, while smoothing desktop auth handoff and share reliability.
 
 #### Main changes
-- Added OpenWork Cloud auth and worker-open flows in Settings so users can sign in and open cloud workers directly from the app.
-- Improved Den desktop sign-in handoff through the web, including installed desktop scheme support and Better Auth trusted-origin handling.
-- Restored shared bundle installs and polished share previews, while also improving provider credential cleanup and Den landing CTA routing.
+- Added a Cloud tab in Settings for sign-in, org selection, worker lists, and opening ready Den workers into OpenWork.
+- Routed desktop auth through the web handoff flow, including installed-app scheme support and bearer-session handling.
+- Restored shared bundle installs and fully cleared disconnected provider credentials.
 
 #### Lines of code changed since previous release
 3120 lines changed since `v0.11.164` (2391 insertions, 729 deletions).
@@ -837,7 +868,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -850,13 +881,16 @@ False
 #### Released at
 `2026-03-17T05:45:14Z`
 
+#### Title
+Daytona-backed Den Docker flow ships
+
 #### One-line summary
-Introduces a Daytona-backed Den Docker development flow first, then stabilizes local org provisioning and helper scripts for cloud-worker testing.
+Introduces a Daytona-first local Den stack with a worker proxy and snapshot tooling, while tightening org setup and local developer startup paths.
 
 #### Main changes
-- Added a Daytona-backed Den Docker dev flow with the new `den-v2` service set, worker proxy, shared DB package, and provisioning helpers.
-- Improved Den org and environment handling so local and dev setups sync more reliably and generate unique org slugs.
-- Fixed the local web helper path so `webdev:local` starts reliably from the script-driven workflow.
+- Added a Daytona-backed Den Docker flow with a dedicated worker proxy and snapshot builder for preloaded runtimes.
+- Introduced the `den-v2` control plane and shared Den DB packages for the new hosted-worker path.
+- Fixed unique org slug generation and the `webdev:local` startup script.
 
 #### Lines of code changed since previous release
 13718 lines changed since `v0.11.165` (12760 insertions, 958 deletions).
@@ -893,7 +927,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -906,13 +940,14 @@ False
 #### Released at
 Unreleased draft release. Tagged at `2026-03-16T22:50:30-07:00`.
 
+#### Title
+Cloud settings stay gated by developer mode
+
 #### One-line summary
-Keeps OpenWork Cloud controls reachable in Developer Mode so advanced cloud setup does not get stranded in Settings.
+Keeps the Cloud settings tab and default settings route aligned with developer mode so regular users do not land in unfinished controls.
 
 #### Main changes
-- Kept the Settings Cloud controls visible when Developer Mode is enabled.
-- Preserved the intended Cloud-and-Debug settings layout for advanced users working with OpenWork Cloud.
-- Reduced the chance of users getting stuck in a hidden-cloud-state settings flow while configuring cloud features.
+Fixes the Settings tab list and default settings route so Cloud controls only appear in developer mode, matching the intended rollout of the new OpenWork Cloud panel.
 
 #### Lines of code changed since previous release
 45 lines changed since `v0.11.166` (23 insertions, 22 deletions).
@@ -961,13 +996,14 @@ False
 #### Released at
 `2026-03-17T06:27:40Z`
 
+#### Title
+Release recovery with repaired installers
+
 #### One-line summary
-Recovers the release with the intended Cloud-settings gating behavior and repaired release assets so installs can proceed cleanly again.
+Republishes the release with repaired assets; the tagged diff itself is metadata-only, while the intended Cloud tab gating fix landed in `v0.11.167`.
 
 #### Main changes
-- Hid the Settings Cloud tab unless Developer Mode is enabled, while still showing it when advanced users intentionally turn Developer Mode on.
-- Routed desktop Den handoff back to General settings when Developer Mode is off so the UI does not strand users behind a hidden Cloud state.
-- Refreshed lockfile and sidecar manifests and republished the full desktop asset set so release installs work again across platforms.
+This tag mainly recovers the release process: `v0.11.167..v0.11.168` only bumps package versions, while the user-visible Cloud settings gating change was already in the prior tag.
 
 #### Lines of code changed since previous release
 26 lines changed since `v0.11.167` (13 insertions, 13 deletions).
@@ -1004,7 +1040,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1017,13 +1053,19 @@ False
 #### Released at
 `2026-03-18T00:11:42Z`
 
+#### Title
+Den handoff and session chrome get steadier
+
 #### One-line summary
-Hardens Den web handoff and open-in-web routing first, then restores a cleaner, more predictable session and sharing experience.
+Keeps Den browser handoff and worker naming in sync while cleaning up session focus, reload banners, run status, and broken sidebar affordances.
 
 #### Main changes
-- Separated Den browser and API base URLs and tightened proxy-safe handoff behavior so sign-in and worker launch flows stay reliable.
-- Cleaned up session UX by removing the broken artifacts rail, flattening the reload banner, restoring composer focus after command actions, and polishing run status feedback.
-- Simplified OpenWork Share preview cards and updated landing/onboarding routing so CTAs and preview surfaces behave more consistently.
+Hardened Den sign-in and worker-open handoff by separating browser and API base URLs and returning proxy-safe desktop auth URLs.
+
+Also released:
+
+- Restored composer focus, flattened reload banners, and removed the broken artifacts rail.
+- Simplified OpenWork Share OG previews and cleaned up Den landing CTAs.
 
 #### Lines of code changed since previous release
 3699 lines changed since `v0.11.168` (2421 insertions, 1278 deletions).
@@ -1063,7 +1105,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1076,13 +1118,16 @@ False
 #### Released at
 `2026-03-19T17:27:40Z`
 
+#### Title
+OpenWork Cloud web flows and remote reconnects improve
+
 #### One-line summary
-Tailors the hosted web app for OpenWork Cloud first, then makes remote connection, billing, and desktop share-token flows much steadier.
+Reworks the hosted Cloud web flow while making remote worker links, persisted share tokens, provider auth, and desktop close behavior more dependable.
 
 #### Main changes
-- Tailored the hosted web app and Den onboarding flow for OpenWork Cloud with smoother app routes, checkout, and billing recovery.
-- Kept remote connections steadier by persisting worker share tokens across restarts, restoring repeated shared-skill deeplinks, and preserving open-in-web auto-connect behavior.
-- Improved day-to-day usability with self-serve Cloud settings, OpenAI headless auth in the provider modal, worker overlays during connect, and tray-on-close desktop behavior.
+- Rebuilt Den web auth, checkout, and dashboard routes so hosted onboarding and billing feel like the app instead of a one-off page.
+- Persisted worker share tokens and repeated deeplinks across restarts, with stronger open-in-web auto-connect and connect overlays.
+- Added self-serve Cloud settings, OpenAI headless auth, and tray-on-close desktop behavior.
 
 #### Lines of code changed since previous release
 20054 lines changed since `v0.11.169` (7642 insertions, 12412 deletions).
@@ -1123,7 +1168,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1136,13 +1181,16 @@ False
 #### Released at
 Unreleased draft release. Tagged at `2026-03-19T14:01:13-07:00`.
 
+#### Title
+Session trace rows only open when they have details
+
 #### One-line summary
-Reduces desktop startup risk first, then makes session traces expand only when useful while the repo layout moves into a cleaner structure.
+Stops empty trace rows from expanding, removes stray desktop token-store test code from releases, and moves the repo into the new apps and ee layout.
 
 #### Main changes
-- Removed stray desktop token-store test code that could interfere with release reliability and startup behavior.
-- Changed session traces so rows only expand when they actually have details, with better mobile and wrapped-detail presentation.
-- Reworked the repository folder structure to keep builds, release tooling, and package paths aligned after the workspace move.
+- Only trace rows with real details expand, with tighter mobile wrapping and clearer tool icons.
+- Removed stray token-store test code from desktop release code.
+- Reorganized the repo into `apps/` and `ee/` paths without changing app behavior.
 
 #### Lines of code changed since previous release
 1577 lines changed since `v0.11.170` (986 insertions, 591 deletions).
@@ -1192,13 +1240,15 @@ False
 #### Released at
 `2026-03-19T22:28:14Z`
 
+#### Title
+Server package naming and session traces line up
+
 #### One-line summary
-Standardizes the published server package name first, then tightens session trace alignment so run timelines are easier to scan.
+Renames the published server package to `openwork-server` and polishes trace-row icon and chevron alignment so session runs scan more cleanly.
 
 #### Main changes
-- Renamed the published OpenWork server package references to `openwork-server` so install, publish, and version checks all agree.
-- Aligned session trace icons with their summaries for a cleaner timeline row.
-- Centered the session trace chevrons with summaries so expansion controls read more clearly.
+- Renamed the published server package to `openwork-server`, updating orchestrator, release, and dev tooling to resolve the same package consistently.
+- Tightened trace-row icon and chevron alignment so session summaries read cleanly.
 
 #### Lines of code changed since previous release
 3006 lines changed since `v0.11.171` (2296 insertions, 710 deletions).
@@ -1235,7 +1285,7 @@ True
 - Replaced prior published server package references with the standardized `openwork-server` naming.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1248,13 +1298,16 @@ False
 #### Released at
 `2026-03-20T00:55:12Z`
 
+#### Title
+Daytona workers report activity and local Node tools spawn reliably
+
 #### One-line summary
-Adds Daytona worker activity heartbeats first, then improves local tool spawning so nvm-managed Node setups work more reliably.
+Adds worker heartbeats for Daytona-backed Cloud workers while making local MCP and tool launches work in nvm-managed Node environments.
 
 #### Main changes
-- Added Daytona worker activity heartbeats so worker liveness and activity can be tracked more reliably.
-- Added Daytona snapshot release automation so released runtime snapshots can stay in sync with the current worker environment.
-- Exposed nvm-managed Node tools to local spawns so local OpenWork commands can find the expected Node toolchain.
+- Added Daytona worker activity heartbeats so Cloud worker state stays fresher.
+- Added release snapshot automation for Daytona images.
+- Exposed `nvm`-managed Node paths to local spawns so MCP tools and local commands find Node more reliably.
 
 #### Lines of code changed since previous release
 805 lines changed since `v0.11.172` (762 insertions, 43 deletions).
@@ -1290,7 +1343,7 @@ False
 None.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
@@ -1303,13 +1356,16 @@ False
 #### Released at
 Unreleased draft release. Tagged at `2026-03-19T18:59:35-07:00`.
 
+#### Title
+Session traces go back to the familiar behavior
+
 #### One-line summary
-Restores the original session trace behavior first, then brings back copy actions and better worker-name readability in compact sidebars.
+Restores the original trace interaction model, brings back summary copy actions, and keeps worker names readable in narrow sidebars.
 
 #### Main changes
-- Restored the original session trace behavior for a more predictable run timeline.
-- Brought back trace summary copy actions so users can copy key run details again.
-- Preserved worker names in narrow sidebars so active context stays readable in compact layouts.
+- Reverted the newer expandable trace treatment and restored the original session trace behavior.
+- Brought back trace summary copy actions.
+- Kept worker names visible in narrow sidebars instead of collapsing them away.
 
 #### Lines of code changed since previous release
 508 lines changed since `v0.11.173` (107 insertions, 401 deletions).
@@ -1360,13 +1416,19 @@ False
 #### Released at
 `2026-03-20T05:53:41Z`
 
+#### Title
+Authorized folders and first-run session guidance move into Settings
+
 #### One-line summary
-Adds settings-based folder authorization and clearer server-backed empty states first, then tightens sidebar and composer readability across the app shell.
+Adds Settings-based folder authorization and server-backed empty states, then tightens sidebar and composer labeling so navigation stays readable.
 
 #### Main changes
-- Added settings support for managing authorized folders so users can control filesystem access without leaving the product flow.
-- Added server-backed session empty states to give clearer first-run and worker-setup guidance.
-- Refined the app shell and session sidebar by removing the artifacts rail, restoring composer action labels, and improving action, title, timestamp, and footer visibility.
+Adds a server-backed way to manage authorized folders and to seed first-run session empty states from workspace blueprints.
+
+Also released:
+
+- Cleaner sidebar titles, status labels, footer pinning, and hidden generated timestamps.
+- Restored composer action labels and removed the dead artifacts rail.
 
 #### Lines of code changed since previous release
 1685 lines changed since `v0.11.174` (1313 insertions, 372 deletions).
@@ -1406,9 +1468,7 @@ True
 - Removed the session sidebar artifacts rail in favor of a cleaner sidebar flow.
 
 #### Published in changelog page
-False
+True
 
 #### Published in docs
 False
-
-
