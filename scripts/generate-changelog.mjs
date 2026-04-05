@@ -151,13 +151,8 @@ function toEntry(release, prevVersion) {
 function renderEntry(entry) {
   const lines = []
 
-  // Version description with optional compare link
-  const description = entry.compareUrl
-    ? `[${entry.version}](${entry.compareUrl})`
-    : entry.version
-
-  // Open <Update> with date label, version description, and tag
-  lines.push(`<Update label="${entry.date}" description="${description}" tags={["${entry.tag}"]}>`)
+  // Open <Update> with date label, plain version description, and tag
+  lines.push(`<Update label="${entry.date}" description="${entry.version}" tags={["${entry.tag}"]}>`)
   lines.push("")
 
   // Body: major → bullet points, minor → one-liner
@@ -165,6 +160,12 @@ function renderEntry(entry) {
     lines.push(entry.mainChanges)
   } else {
     lines.push(entry.oneLiner)
+  }
+
+  // Compare link at the end
+  if (entry.compareUrl) {
+    lines.push("")
+    lines.push(`[View changes](${entry.compareUrl})`)
   }
 
   lines.push("")

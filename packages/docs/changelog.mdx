@@ -1,569 +1,745 @@
 ---
 title: "Changelog"
 ---
-<Update label="April 4th" description="[v0.11.201](https://github.com/different-ai/openwork/compare/v0.11.200...v0.11.201)" tags={["Improved"]}>
+<Update label="April 4th" description="v0.11.201" tags={["Improved"]}>
 
 Cleans up workspace list behavior, reduces session flicker, and fixes Den skill editing and invite-state handling.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.200...v0.11.201)
+
 </Update>
 
-<Update label="April 3rd" description="[v0.11.200](https://github.com/different-ai/openwork/compare/v0.11.199...v0.11.200)" tags={["New"]}>
+<Update label="April 3rd" description="v0.11.200" tags={["New"]}>
 
 - Added an OpenWork Cloud team skills catalog to the app's Skills page, including refresh, install, and share-to-team flows.
 - Added Den teams and full skill hub management so organizations can structure, edit, and browse shared skill collections.
 - Moved billing into org creation and enforced org limits so team setup reflects plan constraints earlier in the workflow.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.199...v0.11.200)
+
 </Update>
 
-<Update label="April 2nd" description="[v0.11.199](https://github.com/different-ai/openwork/compare/v0.11.198...v0.11.199)" tags={["New"]}>
+<Update label="April 2nd" description="v0.11.199" tags={["New"]}>
 
 - Added a new landing pricing flow with paid Windows messaging and cleaner Cloud navigation into the app.
 - Expanded Den with skill hubs, a Hono-based `den-api`, and a smoother org-invite signup path for team administration.
 - Improved day-to-day reliability with developer log export, per-conversation draft persistence, and recovery after immediate send failures.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.198...v0.11.199)
+
 </Update>
 
-<Update label="March 31st" description="[v0.11.198](https://github.com/different-ai/openwork/compare/v0.11.197...v0.11.198)" tags={["Improved"]}>
+<Update label="March 31st" description="v0.11.198" tags={["Improved"]}>
 
 Fixes a local-workspace switching race so the engine restarts correctly when moving between local workspaces.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.197...v0.11.198)
+
 </Update>
 
-<Update label="March 31st" description="[v0.11.197](https://github.com/different-ai/openwork/compare/v0.11.196...v0.11.197)" tags={["Improved"]}>
+<Update label="March 31st" description="v0.11.197" tags={["Improved"]}>
 
 - Protected workspace sharing by gating sensitive exports and forcing bundle fetches to stay on the configured publisher unless users explicitly opt into a warning-backed manual import.
 - Kept orchestrator secrets out of process arguments and logs so local and hosted runs leak less sensitive data.
 - Fixed sidebar and boot behavior by stopping automatic Welcome workspace creation and correcting which sessions appear in collapsed workspace lists.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.196...v0.11.197)
+
 </Update>
 
-<Update label="March 30th" description="[v0.11.196](https://github.com/different-ai/openwork/compare/v0.11.195...v0.11.196)" tags={["New"]}>
+<Update label="March 30th" description="v0.11.196" tags={["New"]}>
 
 - Made OpenWork boot back into the last session and land on the session view instead of routing users through a dashboard-first shell.
 - Rebuilt automations around live scheduler jobs with a dedicated Automations page and more direct settings ownership.
 - Smoothed workspace startup and switching by fixing welcome-workspace bootstrap, sidebar refresh behavior, and several shell-level loading interruptions.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.195...v0.11.196)
+
 </Update>
 
-<Update label="March 27th" description="[v0.11.195](https://github.com/different-ai/openwork/compare/v0.11.194...v0.11.195)" tags={["Improved"]}>
+<Update label="March 27th" description="v0.11.195" tags={["Improved"]}>
 
 Sharpens Den worker connection flows while making desktop model, update, and local workspace behavior more reliable.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.194...v0.11.195)
+
 </Update>
 
-<Update label="March 26th" description="[v0.11.194](https://github.com/different-ai/openwork/compare/v0.11.193...v0.11.194)" tags={["Improved"]}>
+<Update label="March 26th" description="v0.11.194" tags={["Improved"]}>
 
 Turns auto compaction into a working app flow, simplifies Den local development, and keeps more settings and automation flows live in place.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.193...v0.11.194)
+
 </Update>
 
-<Update label="March 26th" description="[v0.11.193](https://github.com/different-ai/openwork/compare/v0.11.192...v0.11.193)" tags={["New"]}>
+<Update label="March 26th" description="v0.11.193" tags={["New"]}>
 
 - Added Cloud team template sharing flows so teams can publish and reuse workspace templates directly from the app.
 - Introduced Den organizations, member permissions, and org-scoped template sharing surfaces for multi-user Cloud administration.
 - Added clearer Cloud sign-in prompts and a manual fallback so team-sharing flows can recover when the automatic sign-in path stalls.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.192...v0.11.193)
+
 </Update>
 
-<Update label="March 25th" description="[v0.11.192](https://github.com/different-ai/openwork/compare/v0.11.191...v0.11.192)" tags={["New"]}>
+<Update label="March 25th" description="v0.11.192" tags={["New"]}>
 
 - Made workspace switching feel safer and steadier by keeping selection separate from runtime activation and preserving sticky local worker ports.
 - Expanded workspace templates so shared imports can carry extra `.opencode` files and starter sessions end to end.
 - Fixed blueprint-seeded session materialization so starter conversations render correctly instead of dropping their initial state.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.191...v0.11.192)
+
 </Update>
 
-<Update label="March 25th" description="[v0.11.191](https://github.com/different-ai/openwork/compare/v0.11.190...v0.11.191)" tags={["Improved"]}>
+<Update label="March 25th" description="v0.11.191" tags={["Improved"]}>
 
 Makes detached worker sharing survive restarts and tightens settings behavior around disconnected providers.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.190...v0.11.191)
+
 </Update>
 
-<Update label="March 24th" description="[v0.11.190](https://github.com/different-ai/openwork/compare/v0.11.189...v0.11.190)" tags={["Improved"]}>
+<Update label="March 24th" description="v0.11.190" tags={["Improved"]}>
 
 Stabilizes sharing first, then smooths provider auth timing and refreshes the app shell layout.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.189...v0.11.190)
+
 </Update>
 
-<Update label="March 24th" description="[v0.11.189](https://github.com/different-ai/openwork/compare/v0.11.188...v0.11.189)" tags={["Misc"]}>
+<Update label="March 24th" description="v0.11.189" tags={["Misc"]}>
 
 Rolls the release line forward with no visible product or workflow changes.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.188...v0.11.189)
+
 </Update>
 
-<Update label="March 24th" description="[v0.11.188](https://github.com/different-ai/openwork/compare/v0.11.187...v0.11.188)" tags={["Improved"]}>
+<Update label="March 24th" description="v0.11.188" tags={["Improved"]}>
 
 Restores the prior feedback flow by removing the Loops feedback template from the landing feedback route.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.187...v0.11.188)
+
 </Update>
 
-<Update label="March 24th" description="[v0.11.187](https://github.com/different-ai/openwork/compare/v0.11.186...v0.11.187)" tags={["Improved"]}>
+<Update label="March 24th" description="v0.11.187" tags={["Improved"]}>
 
 Fixes Windows path handling so session and workspace scope comparisons stay consistent across standard, verbatim, and UNC-prefixed directories.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.186...v0.11.187)
+
 </Update>
 
-<Update label="March 24th" description="[v0.11.186](https://github.com/different-ai/openwork/compare/v0.11.185...v0.11.186)" tags={["Improved"]}>
+<Update label="March 24th" description="v0.11.186" tags={["Improved"]}>
 
 Fixes local workspace scoping during reconnects and bootstrap so sessions stay attached to the right directory.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.185...v0.11.186)
+
 </Update>
 
-<Update label="March 24th" description="[v0.11.185](https://github.com/different-ai/openwork/compare/v0.11.184...v0.11.185)" tags={["New"]}>
+<Update label="March 24th" description="v0.11.185" tags={["New"]}>
 
 - Defaulted local workers to localhost-only and hardened public auth and publishing flows so sharing surfaces are safer unless users explicitly opt in.
 - Put messaging behind explicit opt-in and added a warning before creating public Telegram bots so public exposure is more deliberate.
 - Added a guided Control Chrome setup flow and Brazilian Portuguese localization to make setup clearer for more users.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.184...v0.11.185)
+
 </Update>
 
-<Update label="March 23rd" description="[v0.11.184](https://github.com/different-ai/openwork/compare/v0.11.183...v0.11.184)" tags={["Misc"]}>
+<Update label="March 23rd" description="v0.11.184" tags={["Misc"]}>
 
 Refocuses the docs around a slimmer Quickstart so the main onboarding path is easier to follow.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.183...v0.11.184)
+
 </Update>
 
-<Update label="March 23rd" description="[v0.11.183](https://github.com/different-ai/openwork/compare/v0.11.182...v0.11.183)" tags={["New"]}>
+<Update label="March 23rd" description="v0.11.183" tags={["New"]}>
 
 Adds Exa to Advanced settings while backing out an unready macOS path-handling change to keep the release stable.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.182...v0.11.183)
+
 </Update>
 
-<Update label="March 23rd" description="[v0.11.182](https://github.com/different-ai/openwork/compare/v0.11.181...v0.11.182)" tags={["Improved"]}>
+<Update label="March 23rd" description="v0.11.182" tags={["Improved"]}>
 
 - Moved local workspace ownership into OpenWork server so reconnects, starter-workspace setup, and sidebar state stay aligned across app surfaces.
 - Simplified the remote workspace connect modal so adding a worker feels clearer and lighter.
 - Polished session tool traces by moving the chevron affordance to the right for faster scanning.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.181...v0.11.182)
+
 </Update>
 
-<Update label="March 22nd" description="[v0.11.181](https://github.com/different-ai/openwork/compare/v0.11.180...v0.11.181)" tags={["Misc"]}>
+<Update label="March 22nd" description="v0.11.181" tags={["Misc"]}>
 
 Republishes the release line with synchronized package metadata and no clear additional user-facing product changes.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.180...v0.11.181)
+
 </Update>
 
-<Update label="March 22nd" description="[v0.11.179](https://github.com/different-ai/openwork/compare/v0.11.178...v0.11.179)" tags={["Improved"]}>
+<Update label="March 22nd" description="v0.11.179" tags={["Improved"]}>
 
 Simplifies Den checkout and workspace setup flows while cleaning up a few visible desktop and sharing rough edges.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.178...v0.11.179)
+
 </Update>
 
-<Update label="March 22nd" description="[v0.11.178](https://github.com/different-ai/openwork/compare/v0.11.177...v0.11.178)" tags={["New"]}>
+<Update label="March 22nd" description="v0.11.178" tags={["New"]}>
 
 - Redesigned workspace sharing and the right sidebar, including nested child sessions and cleaner session chrome so navigation feels more structured.
 - Made model behavior controls model-aware with clearer provider and picker behavior across the composer and settings.
 - Routed in-app feedback to a hosted form and restored key session affordances like the in-composer Run action while polishing settings and transcript surfaces.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.177...v0.11.178)
+
 </Update>
 
-<Update label="March 20th" description="[v0.11.177](https://github.com/different-ai/openwork/compare/v0.11.176...v0.11.177)" tags={["Improved"]}>
+<Update label="March 20th" description="v0.11.177" tags={["Improved"]}>
 
 Gets new users to the right install path faster and makes orchestrator installs recover more reliably when local binaries are missing.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.176...v0.11.177)
+
 </Update>
 
-<Update label="March 20th" description="[v0.11.175](https://github.com/different-ai/openwork/compare/v0.11.174...v0.11.175)" tags={["Improved"]}>
+<Update label="March 20th" description="v0.11.175" tags={["Improved"]}>
 
 Adds settings-based folder authorization and clearer server-backed empty states first, then tightens sidebar and composer readability across the app shell.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.174...v0.11.175)
+
 </Update>
 
-<Update label="March 20th" description="[v0.11.173](https://github.com/different-ai/openwork/compare/v0.11.172...v0.11.173)" tags={["New"]}>
+<Update label="March 20th" description="v0.11.173" tags={["New"]}>
 
 Adds Daytona worker activity heartbeats first, then improves local tool spawning so nvm-managed Node setups work more reliably.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.172...v0.11.173)
+
 </Update>
 
-<Update label="March 19th" description="[v0.11.172](https://github.com/different-ai/openwork/compare/v0.11.171...v0.11.172)" tags={["Improved"]}>
+<Update label="March 19th" description="v0.11.172" tags={["Improved"]}>
 
 Standardizes the published server package name first, then tightens session trace alignment so run timelines are easier to scan.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.171...v0.11.172)
+
 </Update>
 
-<Update label="March 19th" description="[v0.11.170](https://github.com/different-ai/openwork/compare/v0.11.169...v0.11.170)" tags={["Improved"]}>
+<Update label="March 19th" description="v0.11.170" tags={["Improved"]}>
 
 - Tailored the hosted web app and Den onboarding flow for OpenWork Cloud with smoother app routes, checkout, and billing recovery.
 - Kept remote connections steadier by persisting worker share tokens across restarts, restoring repeated shared-skill deeplinks, and preserving open-in-web auto-connect behavior.
 - Improved day-to-day usability with self-serve Cloud settings, OpenAI headless auth in the provider modal, worker overlays during connect, and tray-on-close desktop behavior.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.169...v0.11.170)
+
 </Update>
 
-<Update label="March 18th" description="[v0.11.169](https://github.com/different-ai/openwork/compare/v0.11.168...v0.11.169)" tags={["Improved"]}>
+<Update label="March 18th" description="v0.11.169" tags={["Improved"]}>
 
 Hardens Den web handoff and open-in-web routing first, then restores a cleaner, more predictable session and sharing experience.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.168...v0.11.169)
+
 </Update>
 
-<Update label="March 17th" description="[v0.11.168](https://github.com/different-ai/openwork/compare/v0.11.167...v0.11.168)" tags={["Improved"]}>
+<Update label="March 17th" description="v0.11.168" tags={["Improved"]}>
 
 Recovers the release with the intended Cloud-settings gating behavior and repaired release assets so installs can proceed cleanly again.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.167...v0.11.168)
+
 </Update>
 
-<Update label="March 17th" description="[v0.11.166](https://github.com/different-ai/openwork/compare/v0.11.165...v0.11.166)" tags={["Improved"]}>
+<Update label="March 17th" description="v0.11.166" tags={["Improved"]}>
 
 - Added a Daytona-backed Den Docker dev flow with the new `den-v2` service set, worker proxy, shared DB package, and provisioning helpers.
 - Improved Den org and environment handling so local and dev setups sync more reliably and generate unique org slugs.
 - Fixed the local web helper path so `webdev:local` starts reliably from the script-driven workflow.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.165...v0.11.166)
+
 </Update>
 
-<Update label="March 17th" description="[v0.11.165](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.165)" tags={["Improved"]}>
+<Update label="March 17th" description="v0.11.165" tags={["Improved"]}>
 
 - Added OpenWork Cloud auth and worker-open flows in Settings so users can sign in and open cloud workers directly from the app.
 - Improved Den desktop sign-in handoff through the web, including installed desktop scheme support and Better Auth trusted-origin handling.
 - Restored shared bundle installs and polished share previews, while also improving provider credential cleanup and Den landing CTA routing.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.165)
+
 </Update>
 
-<Update label="March 16th" description="[v0.11.164](https://github.com/different-ai/openwork/compare/v0.11.163...v0.11.164)" tags={["Improved"]}>
+<Update label="March 16th" description="v0.11.164" tags={["Improved"]}>
 
 Keeps nested task context and remote permission recovery clearer first, then broadens sharing and localization polish across the product.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.163...v0.11.164)
+
 </Update>
 
-<Update label="March 16th" description="[v0.11.163](https://github.com/different-ai/openwork/compare/v0.11.162...v0.11.163)" tags={["Improved"]}>
+<Update label="March 16th" description="v0.11.163" tags={["Improved"]}>
 
 Adds custom GitHub skill hub repositories first, then smooths session interactions so cloud and extension workflows feel more reliable.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.162...v0.11.163)
+
 </Update>
 
-<Update label="March 16th" description="[v0.11.162](https://github.com/different-ai/openwork/compare/v0.11.161...v0.11.162)" tags={["New"]}>
+<Update label="March 16th" description="v0.11.162" tags={["New"]}>
 
 Improves local Docker dev-stack defaults so OpenWork is easier to test from other devices over LAN or other public local-network paths.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.161...v0.11.162)
+
 </Update>
 
-<Update label="March 15th" description="[v0.11.160](https://github.com/different-ai/openwork/compare/v0.11.159...v0.11.160)" tags={["Improved"]}>
+<Update label="March 15th" description="v0.11.160" tags={["Improved"]}>
 
 Polishes several high-traffic web and session surfaces so Den entry, downloads, and nested session browsing feel clearer and more reliable.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.159...v0.11.160)
+
 </Update>
 
-<Update label="March 15th" description="[v0.11.159](https://github.com/different-ai/openwork/compare/v0.11.158...v0.11.159)" tags={["Improved"]}>
+<Update label="March 15th" description="v0.11.159" tags={["Improved"]}>
 
 Brings the app cloud-worker flow in line with the Den landing experience and cleans up a couple of visible web regressions around billing and marketing surfaces.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.158...v0.11.159)
+
 </Update>
 
-<Update label="March 15th" description="[v0.11.155](https://github.com/different-ai/openwork/compare/v0.11.154...v0.11.155)" tags={["Misc"]}>
+<Update label="March 15th" description="v0.11.155" tags={["Misc"]}>
 
 Hardens release diagnostics behind the scenes, with no clear new end-user OpenWork behavior in this release.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.154...v0.11.155)
+
 </Update>
 
-<Update label="March 15th" description="[v0.11.151](https://github.com/different-ai/openwork/compare/v0.11.150...v0.11.151)" tags={["Improved"]}>
+<Update label="March 15th" description="v0.11.151" tags={["Improved"]}>
 
 Makes feedback submissions reach the OpenWork team inbox reliably again.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.150...v0.11.151)
+
 </Update>
 
-<Update label="March 15th" description="[v0.11.150](https://github.com/different-ai/openwork/compare/v0.11.149...v0.11.150)" tags={["Improved"]}>
+<Update label="March 15th" description="v0.11.150" tags={["Improved"]}>
 
 Smooths session setup and chat rendering while routing in-app feedback to the team inbox and keeping settings layout steady.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.149...v0.11.150)
+
 </Update>
 
-<Update label="March 14th" description="[v0.11.149](https://github.com/different-ai/openwork/compare/v0.11.148...v0.11.149)" tags={["Improved"]}>
+<Update label="March 14th" description="v0.11.149" tags={["Improved"]}>
 
 Simplifies shared skill pages and stabilizes both skill importing and staying pinned to the latest reply during long chats.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.148...v0.11.149)
+
 </Update>
 
-<Update label="March 14th" description="[v0.11.148](https://github.com/different-ai/openwork/compare/v0.11.147...v0.11.148)" tags={["New"]}>
+<Update label="March 14th" description="v0.11.148" tags={["New"]}>
 
 - Den onboarding is now a guided stepper with clearer loading, provisioning, and browser-access states.
 - OpenWork Share now centers on publishing a single skill, with cleaner frontmatter handling and a smoother import path.
 - Settings gained a polished feedback entrypoint, while session surfaces were tightened with slimmer sidebars and clearer quickstart tips.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.147...v0.11.148)
+
 </Update>
 
-<Update label="March 14th" description="[v0.11.147](https://github.com/different-ai/openwork/compare/v0.11.146...v0.11.147)" tags={["New"]}>
+<Update label="March 14th" description="v0.11.147" tags={["New"]}>
 
 Expands shared-skill importing to existing workers and makes Share more reliable for long skills and Den worker provisioning.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.146...v0.11.147)
+
 </Update>
 
-<Update label="March 13th" description="[v0.11.146](https://github.com/different-ai/openwork/compare/v0.11.145...v0.11.146)" tags={["New"]}>
+<Update label="March 13th" description="v0.11.146" tags={["New"]}>
 
 Adds direct failed-worker recovery and smarter shared-skill importing while refreshing the workspace shell toward a calmer operator layout.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.145...v0.11.146)
+
 </Update>
 
-<Update label="March 13th" description="[v0.11.145](https://github.com/different-ai/openwork/compare/v0.11.144...v0.11.145)" tags={["New"]}>
+<Update label="March 13th" description="v0.11.145" tags={["New"]}>
 
 Adds a Den admin backoffice while sharpening Den worker flows, support capture, and desktop skill-sharing reliability.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.144...v0.11.145)
+
 </Update>
 
-<Update label="March 12th" description="[v0.11.144](https://github.com/different-ai/openwork/compare/v0.11.143...v0.11.144)" tags={["Improved"]}>
+<Update label="March 12th" description="v0.11.144" tags={["Improved"]}>
 
 Restores reliable workspace-shell navigation and desktop recovery while polishing Den pricing surfaces and MCP browser setup.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.143...v0.11.144)
+
 </Update>
 
-<Update label="March 12th" description="[v0.11.143](https://github.com/different-ai/openwork/compare/v0.11.142...v0.11.143)" tags={["New"]}>
+<Update label="March 12th" description="v0.11.143" tags={["New"]}>
 
 - Den now allows one free cloud worker without billing and adds Google signup, making it much easier to get started.
 - The Den landing page was overhauled with a new hero, comparison, support, and CTA flow that explains the product more clearly.
 - Session and sharing surfaces were polished with inline chat errors, no raw markdown flash during streaming, and refreshed share bundle pages and previews.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.142...v0.11.143)
+
 </Update>
 
-<Update label="March 12th" description="[v0.11.142](https://github.com/different-ai/openwork/compare/v0.11.141...v0.11.142)" tags={["Misc"]}>
+<Update label="March 12th" description="v0.11.142" tags={["Misc"]}>
 
 Rolls a coordinated patch cut that keeps shipped OpenWork artifacts aligned without adding material user-facing changes.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.141...v0.11.142)
+
 </Update>
 
-<Update label="March 12th" description="[v0.11.141](https://github.com/different-ai/openwork/compare/v0.11.140...v0.11.141)" tags={["Improved"]}>
+<Update label="March 12th" description="v0.11.141" tags={["Improved"]}>
 
 Keeps app and worker launches on the new session screen while improving session clarity and polishing sharing and support flows.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.140...v0.11.141)
+
 </Update>
 
-<Update label="March 11th" description="[v0.11.140](https://github.com/different-ai/openwork/compare/v0.11.138...v0.11.140)" tags={["Improved"]}>
+<Update label="March 11th" description="v0.11.140" tags={["Improved"]}>
 
 Makes shared skill imports land on the newly created worker and gives users clearer sandbox startup diagnostics.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.138...v0.11.140)
+
 </Update>
 
-<Update label="March 11th" description="[v0.11.138](https://github.com/different-ai/openwork/compare/v0.11.137...v0.11.138)" tags={["Improved"]}>
+<Update label="March 11th" description="v0.11.138" tags={["Improved"]}>
 
 Fixes shared bundle imports so they route through the blueprints flow and land in the expected workspace setup path.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.137...v0.11.138)
+
 </Update>
 
-<Update label="March 11th" description="[v0.11.137](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.137)" tags={["Improved"]}>
+<Update label="March 11th" description="v0.11.137" tags={["Improved"]}>
 
 Stabilizes MCP authentication and improves model picker clarity so provider connection and model selection feel more dependable.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.137)
+
 </Update>
 
-<Update label="March 10th" description="[v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136)" tags={["New"]}>
+<Update label="March 10th" description="v0.11.136" tags={["New"]}>
 
 - Turned OpenWork Share into a worker packager and simplified package creation so shared bundles are more useful as real setup artifacts.
 - Replatformed OpenWork Share onto the Next.js App Router and refreshed its landing and bundle pages for a cleaner public sharing experience.
 - Fixed provider OAuth polling and added provider disconnect controls in Settings so account connection management is more reliable.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136)
+
 </Update>
 
-<Update label="March 6th" description="[v0.11.135](https://github.com/different-ai/openwork/compare/v0.11.134...v0.11.135)" tags={["Misc"]}>
+<Update label="March 6th" description="v0.11.135" tags={["Misc"]}>
 
 Keeps packaged OpenCode resolution more consistent across CI, prerelease, and release paths, with no notable direct product-surface changes.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.134...v0.11.135)
+
 </Update>
 
-<Update label="March 6th" description="[v0.11.134](https://github.com/different-ai/openwork/compare/v0.11.133...v0.11.134)" tags={["New"]}>
+<Update label="March 6th" description="v0.11.134" tags={["New"]}>
 
 Simplifies remote MCP connection setup and adds stronger desktop diagnostics so setup and troubleshooting are easier from inside OpenWork.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.133...v0.11.134)
+
 </Update>
 
-<Update label="March 5th" description="[v0.11.133](https://github.com/different-ai/openwork/compare/v0.11.132...v0.11.133)" tags={["Improved"]}>
+<Update label="March 5th" description="v0.11.133" tags={["Improved"]}>
 
 Stabilizes active chat rendering so transcripts stop flickering while typing and long-message state holds together more reliably.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.132...v0.11.133)
+
 </Update>
 
-<Update label="March 5th" description="[v0.11.132](https://github.com/different-ai/openwork/compare/v0.11.131...v0.11.132)" tags={["Improved"]}>
+<Update label="March 5th" description="v0.11.132" tags={["Improved"]}>
 
 Makes session startup feel steadier by preserving empty-draft launches, opening chats at the latest messages, and reducing long-chat typing lag.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.131...v0.11.132)
+
 </Update>
 
-<Update label="March 4th" description="[v0.11.131](https://github.com/different-ai/openwork/compare/v0.11.130...v0.11.131)" tags={["New"]}>
+<Update label="March 4th" description="v0.11.131" tags={["New"]}>
 
 - Virtualized session message rendering and fixed blank transcript regressions so long conversations stay responsive.
 - Added a unified status indicator with detail popover plus automatic context compaction controls for clearer session oversight.
 - Added persistent language selection and improved file-open reliability for editor and artifact flows.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.130...v0.11.131)
+
 </Update>
 
-<Update label="March 2nd" description="[v0.11.130](https://github.com/different-ai/openwork/compare/v0.11.129...v0.11.130)" tags={["Improved"]}>
+<Update label="March 2nd" description="v0.11.130" tags={["Improved"]}>
 
 Makes local connectivity more dependable by hardening router startup, adding restart controls, and smoothing checkout return handling in billing.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.129...v0.11.130)
+
 </Update>
 
-<Update label="March 2nd" description="[v0.11.129](https://github.com/different-ai/openwork/compare/v0.11.128...v0.11.129)" tags={["New"]}>
+<Update label="March 2nd" description="v0.11.129" tags={["New"]}>
 
 Adds self-serve billing controls in the web cloud dashboard and expands messaging connectors with first-class media delivery.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.128...v0.11.129)
+
 </Update>
 
-<Update label="March 1st" description="[v0.11.128](https://github.com/different-ai/openwork/compare/v0.11.127...v0.11.128)" tags={["New"]}>
+<Update label="March 1st" description="v0.11.128" tags={["New"]}>
 
 Expands remote file workflows with just-in-time file sessions and local mirror support, then makes long desktop sessions easier to read and follow.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.127...v0.11.128)
+
 </Update>
 
-<Update label="February 28th" description="[v0.11.127](https://github.com/different-ai/openwork/compare/v0.11.126...v0.11.127)" tags={["New"]}>
+<Update label="February 28th" description="v0.11.127" tags={["New"]}>
 
 Makes worker recovery clearer and more reliable by adding a plain-language recovery action that keeps existing OpenWork access working.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.126...v0.11.127)
+
 </Update>
 
-<Update label="February 27th" description="[v0.11.126](https://github.com/different-ai/openwork/compare/v0.11.125...v0.11.126)" tags={["New"]}>
+<Update label="February 27th" description="v0.11.126" tags={["New"]}>
 
 Simplifies artifact handling first, then adds quicker worker and plugin actions so common workspace management tasks take fewer steps.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.125...v0.11.126)
+
 </Update>
 
-<Update label="February 26th" description="[v0.11.125](https://github.com/different-ai/openwork/compare/v0.11.124...v0.11.125)" tags={["Improved"]}>
+<Update label="February 26th" description="v0.11.125" tags={["Improved"]}>
 
 Makes navigation more consistent across dashboard and session views and prevents large downloads from freezing the UI.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.124...v0.11.125)
+
 </Update>
 
-<Update label="February 26th" description="[v0.11.124](https://github.com/different-ai/openwork/compare/v0.11.123...v0.11.124)" tags={["New"]}>
+<Update label="February 26th" description="v0.11.124" tags={["New"]}>
 
 Applies the Orbita session layout direction to make the core OpenWork session view feel more structured, readable, and cohesive.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.123...v0.11.124)
+
 </Update>
 
-<Update label="February 26th" description="[v0.11.123](https://github.com/different-ai/openwork/compare/v0.11.122...v0.11.123)" tags={["New"]}>
+<Update label="February 26th" description="v0.11.123" tags={["New"]}>
 
 Refreshes sharing to match OpenWork’s visual identity and adds a built-in local server restart action for easier recovery.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.122...v0.11.123)
+
 </Update>
 
-<Update label="February 26th" description="[v0.11.122](https://github.com/different-ai/openwork/compare/v0.11.121...v0.11.122)" tags={["New"]}>
+<Update label="February 26th" description="v0.11.122" tags={["New"]}>
 
 - Streamlined cloud onboarding with Open in App handoff, GitHub sign-in, a dedicated download page, and stronger hosted auth and callback handling.
 - Added richer sharing flows with workspace profile and skills-set sharing plus deep-linked bundle imports into new workers.
 - Improved day-to-day app usability with grouped exploration steps, faster markdown rendering in long sessions, clearer workspace and share surfaces, and better file-link handling.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.121...v0.11.122)
+
 </Update>
 
-<Update label="February 23rd" description="[v0.11.121](https://github.com/different-ai/openwork/compare/v0.11.120...v0.11.121)" tags={["New"]}>
+<Update label="February 23rd" description="v0.11.121" tags={["New"]}>
 
 Makes session timelines read more naturally and improves the speed of quick actions, search, and composing in active chats.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.120...v0.11.121)
+
 </Update>
 
-<Update label="February 23rd" description="[v0.11.120](https://github.com/different-ai/openwork/compare/v0.11.119...v0.11.120)" tags={["Improved"]}>
+<Update label="February 23rd" description="v0.11.120" tags={["Improved"]}>
 
 Stabilizes session switching across workers and refreshes the landing hero so the product is easier to navigate and read.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.119...v0.11.120)
+
 </Update>
 
-<Update label="February 23rd" description="[v0.11.119](https://github.com/different-ai/openwork/compare/v0.11.118...v0.11.119)" tags={["Improved"]}>
+<Update label="February 23rd" description="v0.11.119" tags={["Improved"]}>
 
 Keeps long chats more responsive and polishes the landing and hosted web surfaces for a cleaner first-run experience.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.118...v0.11.119)
+
 </Update>
 
-<Update label="February 23rd" description="[v0.11.118](https://github.com/different-ai/openwork/compare/v0.11.117...v0.11.118)" tags={["Improved"]}>
+<Update label="February 23rd" description="v0.11.118" tags={["Improved"]}>
 
 Makes long sessions feel faster and clearer while reducing technical noise in hosted worker controls.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.117...v0.11.118)
+
 </Update>
 
-<Update label="February 23rd" description="[v0.11.117](https://github.com/different-ai/openwork/compare/v0.11.116...v0.11.117)" tags={["Improved"]}>
+<Update label="February 23rd" description="v0.11.117" tags={["Improved"]}>
 
 Improves hosted worker management and session readability while hardening messaging and Den reliability in several user-visible failure paths.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.116...v0.11.117)
+
 </Update>
 
-<Update label="February 22nd" description="[v0.11.116](https://github.com/different-ai/openwork/compare/v0.11.115...v0.11.116)" tags={["New"]}>
+<Update label="February 22nd" description="v0.11.116" tags={["New"]}>
 
 Simplifies cloud-worker connection with a cleaner list-detail web flow and desktop deep links that open remote connects more directly.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.115...v0.11.116)
+
 </Update>
 
-<Update label="February 22nd" description="[v0.11.115](https://github.com/different-ai/openwork/compare/v0.11.114...v0.11.115)" tags={["New"]}>
+<Update label="February 22nd" description="v0.11.115" tags={["New"]}>
 
 Makes Telegram identity setup safer with private bot pairing codes and improves hosted auth recovery when the web proxy gets bad upstream responses.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.114...v0.11.115)
+
 </Update>
 
-<Update label="February 22nd" description="[v0.11.114](https://github.com/different-ai/openwork/compare/v0.11.113...v0.11.114)" tags={["Improved"]}>
+<Update label="February 22nd" description="v0.11.114" tags={["Improved"]}>
 
 - Added the Den control plane and web app so users can provision real cloud workers through a guided 3-step setup flow.
 - Made cloud workers easier to reconnect by persisting worker records, surfacing OpenWork connect credentials, and returning compatible workspace-scoped connect links.
 - Improved cloud reliability and access control with completed OAuth setup, asynchronous worker provisioning with auto-polling, and Polar-gated paid access.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.113...v0.11.114)
+
 </Update>
 
-<Update label="February 21st" description="[v0.11.113](https://github.com/different-ai/openwork/compare/v0.11.112...v0.11.113)" tags={["New"]}>
+<Update label="February 21st" description="v0.11.113" tags={["New"]}>
 
 Speeds up session work with a new Cmd+K command palette for jumping between sessions and changing key chat settings in place.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.112...v0.11.113)
+
 </Update>
 
-<Update label="February 21st" description="[v0.11.112](https://github.com/different-ai/openwork/compare/v0.11.111...v0.11.112)" tags={["Improved"]}>
+<Update label="February 21st" description="v0.11.112" tags={["Improved"]}>
 
 Cleans up the session tool timeline by removing step lifecycle noise so active runs are easier to scan.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.111...v0.11.112)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.111](https://github.com/different-ai/openwork/compare/v0.11.110...v0.11.111)" tags={["Misc"]}>
+<Update label="February 20th" description="v0.11.111" tags={["Misc"]}>
 
 Ships synchronized version metadata only, with no distinct user-facing change evident in this release.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.110...v0.11.111)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.110](https://github.com/different-ai/openwork/compare/v0.11.109...v0.11.110)" tags={["Misc"]}>
+<Update label="February 20th" description="v0.11.110" tags={["Misc"]}>
 
 Improves release and deployment plumbing behind the scenes, with no clear new end-user product behavior in this patch.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.109...v0.11.110)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.109](https://github.com/different-ai/openwork/compare/v0.11.108...v0.11.109)" tags={["New"]}>
+<Update label="February 20th" description="v0.11.109" tags={["New"]}>
 
 Makes automation setup less confusing while expanding skill discovery and MCP configuration support for more flexible setups.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.108...v0.11.109)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.108](https://github.com/different-ai/openwork/compare/v0.11.107...v0.11.108)" tags={["Improved"]}>
+<Update label="February 20th" description="v0.11.108" tags={["Improved"]}>
 
 Adds readable share bundle pages first, then makes Soul enable flows sturdier and preserves unsent drafts across tab switches.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.107...v0.11.108)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.107](https://github.com/different-ai/openwork/compare/v0.11.106...v0.11.107)" tags={["Improved"]}>
+<Update label="February 20th" description="v0.11.107" tags={["Improved"]}>
 
 Stops sessions from repeatedly snapping back to the top, making long conversations easier to stay anchored in.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.106...v0.11.107)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.106](https://github.com/different-ai/openwork/compare/v0.11.105...v0.11.106)" tags={["Misc"]}>
+<Update label="February 20th" description="v0.11.106" tags={["Misc"]}>
 
 Refreshes release metadata only, with no clear user-facing product change in this patch.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.105...v0.11.106)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.105](https://github.com/different-ai/openwork/compare/v0.11.104...v0.11.105)" tags={["Improved"]}>
+<Update label="February 20th" description="v0.11.105" tags={["Improved"]}>
 
 Removes automatic session scroll following so the timeline stops fighting users who are reading older output.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.104...v0.11.105)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.104](https://github.com/different-ai/openwork/compare/v0.11.103...v0.11.104)" tags={["Improved"]}>
+<Update label="February 20th" description="v0.11.104" tags={["Improved"]}>
 
 Makes session follow-scroll user-controlled so reviewing earlier output is less likely to be interrupted.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.103...v0.11.104)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.103](https://github.com/different-ai/openwork/compare/v0.11.102...v0.11.103)" tags={["Improved"]}>
+<Update label="February 20th" description="v0.11.103" tags={["Improved"]}>
 
 - Prevented Soul template prompt-injection abuse so unsafe template content is less likely to steer users into unintended behavior.
 - Scoped sidebar synchronization to the active workspace root so switching between workspaces feels more predictable.
 - Kept the patch tightly focused on safety and multi-workspace consistency rather than adding new visible workflows.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.102...v0.11.103)
+
 </Update>
 
-<Update label="February 20th" description="[v0.11.102](https://github.com/different-ai/openwork/compare/v0.11.101...v0.11.102)" tags={["Improved"]}>
+<Update label="February 20th" description="v0.11.102" tags={["Improved"]}>
 
 Clarifies when migration recovery is available so troubleshooting local startup issues feels more predictable.
 
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.101...v0.11.102)
+
 </Update>
 
-<Update label="February 19th" description="[v0.11.101](https://github.com/different-ai/openwork/compare/v0.11.100...v0.11.101)" tags={["New"]}>
+<Update label="February 19th" description="v0.11.101" tags={["New"]}>
 
 Improves local session recovery first, then makes Soul easier to steer and cleans up compact controls across key app surfaces.
+
+[View changes](https://github.com/different-ai/openwork/compare/v0.11.100...v0.11.101)
 
 </Update>
 
