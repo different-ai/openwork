@@ -77,6 +77,7 @@ import type {
   OpenworkServerSettings,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
+import { buildOpenworkWorkspaceBaseUrl } from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
 import {
   isUserVisiblePart,
@@ -113,7 +114,7 @@ import {
 } from "../session/draft-store";
 import { ReactIsland } from "../../react/island";
 import { reactSessionEnabled } from "../../react/feature-flag";
-import { ReadOnlySessionView } from "../../react/session/read-only-session.react";
+import { SessionSurface } from "../../react/session/session-surface.react";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -2126,13 +2127,25 @@ export default function SessionView(props: SessionViewProps) {
     workspaceId: string;
     sessionId: string;
   } | null>(null);
-  const showReactReadOnlySession = createMemo(
+  const reactSessionOpencodeBaseUrl = createMemo(() => {
+    const workspaceId = props.runtimeWorkspaceId?.trim() ?? "";
+    const baseUrl = props.openworkServerClient?.baseUrl?.trim() ?? "";
+    if (!workspaceId || !baseUrl) return "";
+    const mounted = buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl;
+    return `${mounted.replace(/\/+$/, "")}/opencode`;
+  });
+  const reactSessionToken = createMemo(
+    () => props.openworkServerClient?.token?.trim() || props.openworkServerSettings.token?.trim() || "",
+  );
+  const showReactSessionSurface = createMemo(
     () =>
       reactSessionEnabled() &&
       Boolean(
         props.selectedSessionId?.trim() &&
           props.runtimeWorkspaceId?.trim() &&
-          props.openworkServerClient,
+          props.openworkServerClient &&
+          reactSessionOpencodeBaseUrl() &&
+          reactSessionToken(),
       ),
   );
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
@@ -3241,7 +3254,7 @@ export default function SessionView(props: SessionViewProps) {
                       !showWorkspaceSetupEmptyState() &&
                       !showSessionLoadingState() &&
                       !deferSessionRender() &&
-                      !showReactReadOnlySession()
+                      !showReactSessionSurface()
                     }
                   >
                     <div class="text-center px-6 space-y-6">
@@ -3285,15 +3298,17 @@ export default function SessionView(props: SessionViewProps) {
                     when={!showDelayedSessionLoadingState() && !deferSessionRender()}
                   >
                     <Show
-                      when={!showReactReadOnlySession()}
+                      when={!showReactSessionSurface()}
                       fallback={
                         <ReactIsland
                           class="pb-4"
-                          component={ReadOnlySessionView}
+                          component={SessionSurface}
                           props={{
                             client: props.openworkServerClient!,
                             workspaceId: props.runtimeWorkspaceId!,
                             sessionId: props.selectedSessionId!,
+                            opencodeBaseUrl: reactSessionOpencodeBaseUrl(),
+                            openworkToken: reactSessionToken(),
                           }}
                         />
                       }
@@ -3381,7 +3396,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
 
-              <Show when={!showReactReadOnlySession() && !showDelayedSessionLoadingState() && !deferSessionRender() && props.messages.length > 0 && !jumpControlsSuppressed() && (!sessionScroll.isAtBottom() || Boolean(sessionScroll.topClippedMessageId()))}>
+              <Show when={!showReactSessionSurface() && !showDelayedSessionLoadingState() && !deferSessionRender() && props.messages.length > 0 && !jumpControlsSuppressed() && (!sessionScroll.isAtBottom() || Boolean(sessionScroll.topClippedMessageId()))}>
                 <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
                   <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
                     <Show when={Boolean(sessionScroll.topClippedMessageId())}>
@@ -3482,7 +3497,7 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </Show>
 
-          <Show when={!showWorkspaceSetupEmptyState()}>
+          <Show when={!showWorkspaceSetupEmptyState() && !showReactSessionSurface()}>
             <Composer
               prompt={props.prompt}
               draftMode={composerDraftMode()}
