@@ -4,7 +4,8 @@ export type Block =
   | { type: "heading"; text: string }
   | { type: "subheading"; text: string }
   | { type: "paragraph"; text: string }
-  | { type: "list"; items: string[] };
+  | { type: "list"; items: string[] }
+  | { type: "definition-list"; items: { term: string; definition: string }[] };
 
 export interface ParsedLegalDoc {
   title: string;
@@ -49,8 +50,31 @@ export function parseLegalDoc(raw: string): ParsedLegalDoc {
   for (const block of rawBlocks) {
     const joined = block.join(" ").trim();
     const allList = block.every((l) => l.trimStart().startsWith("-"));
+    const allDefinitions = block.length > 1 && block.every((l) => l.trimStart().startsWith('"'));
 
-    if (allList) {
+    if (allDefinitions) {
+      // Definition list: lines like "Term" means ...
+      const items = block.map((l) => {
+        const trimmed = l.trim();
+        const match = trimmed.match(/^"([^"]+)"(?:\s+or\s+"[^"]+")*\s+means\s+(.+)$/);
+        if (match) {
+          // Extract all quoted terms (e.g. "PII" or "Personally Identifiable Information")
+          const termMatch = trimmed.match(/^("(?:[^"]+)"(?:\s+or\s+"[^"]+")*)\s+means\s+/);
+          const term = termMatch ? termMatch[1] : match[1];
+          return { term, definition: match[2] };
+        }
+        // Fallback: split on first " means "
+        const meansIdx = trimmed.indexOf(" means ");
+        if (meansIdx > 0) {
+          return {
+            term: trimmed.slice(0, meansIdx).replace(/^"|"$/g, ""),
+            definition: trimmed.slice(meansIdx + 7)
+          };
+        }
+        return { term: "", definition: trimmed };
+      });
+      blocks.push({ type: "definition-list", items });
+    } else if (allList) {
       const items = block.map((l) => l.replace(/^\s*-/, "").trim());
       // Single-item short lists are subheadings (e.g. "Cookies", "Local Storage")
       if (items.length === 1 && items[0].length < 50) {
@@ -64,7 +88,15 @@ export function parseLegalDoc(raw: string): ParsedLegalDoc {
       !joined.startsWith("-") &&
       !joined.endsWith(".")
     ) {
-      blocks.push({ type: "heading", text: joined });
+      // Distinguish headings (h2) from subheadings (h3):
+      // Questions and longer titles are main headings.
+      // Short section names are subheadings.
+      const isMainHeading = joined.endsWith("?") || joined.length > 35;
+      if (isMainHeading) {
+        blocks.push({ type: "heading", text: joined });
+      } else {
+        blocks.push({ type: "subheading", text: joined });
+      }
     } else {
       blocks.push({ type: "paragraph", text: joined });
     }
@@ -73,24 +105,87 @@ export function parseLegalDoc(raw: string): ParsedLegalDoc {
   return { title, effectiveDate, blocks };
 }
 
-/** Turn email addresses and URLs into clickable links. */
+/** Check if a string is mostly ALL CAPS (>80% uppercase letters). */
+function isAllCaps(text: string): boolean {
+  const letters = text.replace(/[^a-zA-Z]/g, "");
+  if (letters.length < 20) return false;
+  const upper = letters.replace(/[^A-Z]/g, "").length;
+  return upper / letters.length > 0.8;
+}
+
+/** Turn email addresses and URLs into clickable links, bold ALL CAPS segments. */
 export function formatText(text: string): ReactNode {
-  const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
-  const parts = text.split(emailRegex);
-  if (parts.length === 1) return text;
-  return parts.map((part, i) =>
-    emailRegex.test(part) ? (
-      <a
-        key={i}
-        href={`mailto:${part}`}
-        className="text-[#011627] underline hover:opacity-70"
-      >
-        {part}
-      </a>
-    ) : (
-      part
-    )
-  );
+  // Split on emails and URLs
+  const tokenRegex =
+    /((?:[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})|(?:https?:\/\/[^\s,)]+))/g;
+  const parts = text.split(tokenRegex);
+  if (parts.length === 1) {
+    // No emails or URLs — check if entire text is ALL CAPS
+    if (isAllCaps(text)) {
+      return <strong className="font-semibold">{text}</strong>;
+    }
+    return text;
+  }
+  return parts.map((part, i) => {
+    if (/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(part)) {
+      return (
+        <a
+          key={i}
+          href={`mailto:${part}`}
+          className="text-[#011627] underline hover:opacity-70"
+        >
+          {part}
+        </a>
+      );
+    }
+    if (/^https?:\/\//.test(part)) {
+      return (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[#011627] underline hover:opacity-70"
+        >
+          {part}
+        </a>
+      );
+    }
+    if (isAllCaps(part)) {
+      return (
+        <strong key={i} className="font-semibold">
+          {part}
+        </strong>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
+/** Format a paragraph, splitting ALL CAPS sentences into bold segments. */
+function formatParagraph(text: string): ReactNode {
+  // Check if the whole paragraph is ALL CAPS
+  if (isAllCaps(text)) {
+    return <strong className="font-semibold">{formatText(text)}</strong>;
+  }
+
+  // Split on sentence boundaries to find ALL CAPS sentences within mixed paragraphs
+  // Look for transitions between caps and non-caps sections
+  const capsPattern = /([A-Z][A-Z\s,;:()\-—.'"/\d]+[A-Z.)](?:\s|$))/g;
+  const segments = text.split(capsPattern);
+
+  if (segments.length <= 1) return formatText(text);
+
+  return segments.map((segment, i) => {
+    if (isAllCaps(segment)) {
+      return (
+        <strong key={i} className="font-semibold">
+          {formatText(segment)}
+        </strong>
+      );
+    }
+    return <span key={i}>{formatText(segment)}</span>;
+  });
 }
 
 /** Render parsed legal doc blocks into React elements. */
@@ -114,6 +209,22 @@ export function renderBlocks(blocks: Block[]): ReactNode {
           >
             {block.text}
           </h3>
+        );
+      case "definition-list":
+        return (
+          <ul
+            key={i}
+            className="mb-4 list-disc space-y-2 pl-5 text-[15px] leading-relaxed text-gray-700"
+          >
+            {block.items.map((item, j) => (
+              <li key={j}>
+                <strong className="font-semibold text-[#011627]">
+                  {item.term}
+                </strong>{" "}
+                means {formatText(item.definition)}
+              </li>
+            ))}
+          </ul>
         );
       case "list":
         return (
@@ -143,7 +254,7 @@ export function renderBlocks(blocks: Block[]): ReactNode {
             key={i}
             className="mb-4 text-[15px] leading-relaxed text-gray-700"
           >
-            {formatText(block.text)}
+            {formatParagraph(block.text)}
           </p>
         );
     }
