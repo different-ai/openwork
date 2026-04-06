@@ -9,12 +9,19 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin.js";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
 import {
   $applyNodeReplacement,
+  $createRangeSelection,
   $createParagraphNode,
   $createTextNode,
   $getRoot,
   $getSelection,
+  $setSelection,
+  $isElementNode,
   $isRangeSelection,
+  $isTextNode,
   COMMAND_PRIORITY_HIGH,
+  KEY_ARROW_LEFT_COMMAND,
+  KEY_ARROW_RIGHT_COMMAND,
+  KEY_BACKSPACE_COMMAND,
   KEY_ENTER_COMMAND,
   type SerializedTextNode,
   type Spread,
@@ -80,21 +87,25 @@ class ComposerMentionNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
+    const isFile = this.__kind === "file";
     dom.className = this.__kind === "file"
       ? "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11"
       : "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11";
-    dom.textContent = `@${this.__value}`;
+    dom.textContent = `${isFile ? "📄 " : "🤖 "}@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
+    dom.title = `@${this.__value}`;
     return dom;
   }
 
   override updateDOM(prevNode: ComposerMentionNode, dom: HTMLElement) {
     if (prevNode.__value !== this.__value || prevNode.__kind !== this.__kind) {
+      const isFile = this.__kind === "file";
       dom.className = this.__kind === "file"
         ? "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11"
         : "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11";
-      dom.textContent = `@${this.__value}`;
+      dom.textContent = `${isFile ? "📄 " : "🤖 "}@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
+      dom.title = `@${this.__value}`;
     }
     return false;
   }
@@ -118,6 +129,26 @@ class ComposerMentionNode extends TextNode {
 
 function $createComposerMentionNode(value: string, kind: "agent" | "file") {
   return $applyNodeReplacement(new ComposerMentionNode(value, kind));
+}
+
+function setSelectionAfterNode(node: ComposerMentionNode) {
+  const parent = node.getParent();
+  if (!parent || !$isElementNode(parent)) return;
+  const selection = $createRangeSelection();
+  const offset = node.getIndexWithinParent() + 1;
+  selection.anchor.set(parent.getKey(), offset, "element");
+  selection.focus.set(parent.getKey(), offset, "element");
+  $setSelection(selection);
+}
+
+function setSelectionBeforeNode(node: ComposerMentionNode) {
+  const parent = node.getParent();
+  if (!parent || !$isElementNode(parent)) return;
+  const selection = $createRangeSelection();
+  const offset = node.getIndexWithinParent();
+  selection.anchor.set(parent.getKey(), offset, "element");
+  selection.focus.set(parent.getKey(), offset, "element");
+  $setSelection(selection);
 }
 
 function setPrompt(value: string, mentions: Record<string, "agent" | "file">) {
@@ -184,6 +215,93 @@ function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: b
   return null;
 }
 
+function MentionChipNavigationPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const unregisterBackspace = editor.registerCommand(
+      KEY_BACKSPACE_COMMAND,
+      () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+        const anchorNode = selection.anchor.getNode();
+
+        if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
+          const previous = anchorNode.getPreviousSibling();
+          if (previous instanceof ComposerMentionNode) {
+            previous.remove();
+            return true;
+          }
+        }
+
+        if ($isElementNode(anchorNode)) {
+          const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
+          if (previous instanceof ComposerMentionNode) {
+            previous.remove();
+            return true;
+          }
+        }
+
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+
+    const unregisterLeft = editor.registerCommand(
+      KEY_ARROW_LEFT_COMMAND,
+      () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+        const anchorNode = selection.anchor.getNode();
+
+        if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
+          const previous = anchorNode.getPreviousSibling();
+          if (previous instanceof ComposerMentionNode) {
+            setSelectionBeforeNode(previous);
+            return true;
+          }
+        }
+
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+
+    const unregisterRight = editor.registerCommand(
+      KEY_ARROW_RIGHT_COMMAND,
+      () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+        const anchorNode = selection.anchor.getNode();
+
+        if (anchorNode instanceof ComposerMentionNode) {
+          setSelectionAfterNode(anchorNode);
+          return true;
+        }
+
+        if ($isElementNode(anchorNode)) {
+          const current = anchorNode.getChildAtIndex(selection.anchor.offset);
+          if (current instanceof ComposerMentionNode) {
+            setSelectionAfterNode(current);
+            return true;
+          }
+        }
+
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+
+    return () => {
+      unregisterBackspace();
+      unregisterLeft();
+      unregisterRight();
+    };
+  }, [editor]);
+
+  return null;
+}
+
 export function LexicalPromptEditor(props: EditorProps) {
   const initialConfig = useMemo(
     () => ({
@@ -234,6 +352,7 @@ export function LexicalPromptEditor(props: EditorProps) {
         <HistoryPlugin />
         <SyncPlugin value={props.value} mentions={props.mentions} disabled={props.disabled} />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
+        <MentionChipNavigationPlugin />
       </div>
     </LexicalComposer>
   );
