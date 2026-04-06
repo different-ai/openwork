@@ -3365,6 +3365,19 @@ export default function SessionView(props: SessionViewProps) {
                             onModelClick: () => modelControls.openSessionModelPicker(),
                             onSendDraft: handleSendPrompt,
                             onDraftChange: handleDraftChange,
+                            attachmentsEnabled: attachmentsEnabled(),
+                            attachmentsDisabledReason: attachmentsDisabledReason(),
+                            modelVariantLabel: modelControls.sessionModelVariantLabel(),
+                            modelVariant: modelControls.sessionModelVariant(),
+                            modelBehaviorOptions: modelControls.sessionModelBehaviorOptions(),
+                            onModelVariantChange: modelControls.setSessionModelVariant,
+                            agentLabel: agentLabel(),
+                            selectedAgent: sessionActions.selectedSessionAgent(),
+                            listAgents: sessionActions.listAgents,
+                            onSelectAgent: (agent) => {
+                              void applySessionAgent(agent);
+                            },
+                            listCommands: sessionActions.listCommands,
                           }}
                         />
                       }

@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "../../app/lib/opencode";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
-import type { ComposerDraft } from "../../app/types";
+import type { ComposerAttachment, ComposerDraft, PromptMode } from "../../app/types";
 import { SessionDebugPanel } from "./debug-panel.react";
 import { SessionTranscript } from "./message-list.react";
 import { deriveSessionRenderModel } from "./transition-controller";
@@ -31,6 +31,17 @@ type SessionSurfaceProps = {
   onModelClick: () => void;
   onSendDraft: (draft: ComposerDraft) => void;
   onDraftChange: (draft: ComposerDraft) => void;
+  attachmentsEnabled: boolean;
+  attachmentsDisabledReason: string | null;
+  modelVariantLabel: string;
+  modelVariant: string | null;
+  modelBehaviorOptions?: { value: string | null; label: string }[];
+  onModelVariantChange: (value: string | null) => void;
+  agentLabel: string;
+  selectedAgent: string | null;
+  listAgents: () => Promise<import("@opencode-ai/sdk/v2/client").Agent[]>;
+  onSelectAgent: (agent: string | null) => void;
+  listCommands: () => Promise<import("../../app/types").SlashCommandOption[]>;
 };
 
 function transcriptToText(messages: UIMessage[]) {
@@ -73,6 +84,8 @@ function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
 
 export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
+  const [mode, setMode] = useState<PromptMode>("prompt");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
@@ -119,6 +132,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     hydratedKeyRef.current = null;
     setError(null);
     setSending(false);
+    setMode("prompt");
+    setAttachments([]);
   }, [props.sessionId]);
 
   useEffect(() => {
@@ -146,6 +161,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isError: snapshotQuery.isError || Boolean(error),
   });
 
+  const buildDraft = (text: string, nextMode: PromptMode, nextAttachments: ComposerAttachment[]): ComposerDraft => {
+    const trimmed = text.trim();
+    const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
+    return {
+      mode: nextMode,
+      parts: text ? [{ type: "text", text }] : [],
+      attachments: nextAttachments,
+      text,
+      resolvedText: text,
+      command: slashMatch ? { name: slashMatch[1] ?? "", arguments: slashMatch[2] ?? "" } : undefined,
+    };
+  };
+
   const handleCopyTranscript = async () => {
     try {
       await navigator.clipboard.writeText(transcriptToText(renderedMessages));
@@ -160,22 +188,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     setSending(true);
     try {
-      const nextDraft: ComposerDraft = {
-        mode: "prompt",
-        parts: [{ type: "text", text }],
-        attachments: [],
-        text,
-        resolvedText: text,
-      };
+      const nextDraft = buildDraft(text, mode, attachments);
       props.onSendDraft(nextDraft);
       setDraft("");
-      props.onDraftChange({
-        mode: "prompt",
-        parts: [],
-        attachments: [],
-        text: "",
-        resolvedText: "",
-      });
+      setAttachments([]);
+      props.onDraftChange(buildDraft("", mode, []));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
       setSending(false);
@@ -200,14 +217,35 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [liveStatus.type]);
 
   useEffect(() => {
-    props.onDraftChange({
-      mode: "prompt",
-      parts: draft ? [{ type: "text", text: draft }] : [],
-      attachments: [],
-      text: draft,
-      resolvedText: draft,
+    props.onDraftChange(buildDraft(draft, mode, attachments));
+  }, [draft, mode, attachments, props]);
+
+  const handleAttachFiles = (files: File[]) => {
+    if (!props.attachmentsEnabled) {
+      setError(props.attachmentsDisabledReason ?? "Attachments are unavailable.");
+      return;
+    }
+    const next = files.map((file) => ({
+      id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+      name: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      kind: file.type.startsWith("image/") ? "image" as const : "file" as const,
+      file,
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
+    }));
+    setAttachments((current) => [...current, ...next]);
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments((current) => {
+      const target = current.find((item) => item.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return current.filter((item) => item.id !== id);
     });
-  }, [draft, props]);
+  };
 
   const onComposerKeyDown = async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!event.metaKey && !event.ctrlKey) return;
@@ -270,6 +308,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelLabel={props.modelLabel}
         onModelClick={props.onModelClick}
+        mode={mode}
+        onModeChange={setMode}
+        attachments={attachments}
+        onAttachFiles={handleAttachFiles}
+        onRemoveAttachment={handleRemoveAttachment}
+        attachmentsEnabled={props.attachmentsEnabled}
+        attachmentsDisabledReason={props.attachmentsDisabledReason}
+        modelVariantLabel={props.modelVariantLabel}
+        modelVariant={props.modelVariant}
+        modelBehaviorOptions={props.modelBehaviorOptions}
+        onModelVariantChange={props.onModelVariantChange}
+        agentLabel={props.agentLabel}
+        selectedAgent={props.selectedAgent}
+        listAgents={props.listAgents}
+        onSelectAgent={props.onSelectAgent}
+        listCommands={props.listCommands}
       />
       {error ? (
         <div className="mx-auto w-full max-w-[800px] px-4">
