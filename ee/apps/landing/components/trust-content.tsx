@@ -71,18 +71,18 @@ export type DataHandlingRow = {
 export const dataHandlingRows: DataHandlingRow[] = [
   {
     dataType: "Source code",
-    selfHosted: "Local only — never leaves your machine",
-    cloud: "Not stored by OpenWork; accessed at runtime via your LLM provider"
+    selfHosted: "Local only. Never leaves your machine.",
+    cloud: "Not stored by OpenWork. Accessed at runtime through your LLM provider."
   },
   {
     dataType: "LLM API keys",
     selfHosted: "Local keychain or environment variables",
-    cloud: "Stored by your LLM provider, never by OpenWork"
+    cloud: "Held by your LLM provider, not by OpenWork"
   },
   {
     dataType: "Prompts & responses",
     selfHosted: "Local only",
-    cloud: "Passed to your configured LLM provider; not logged by OpenWork"
+    cloud: "Sent to your LLM provider. Not logged by OpenWork."
   },
   {
     dataType: "Usage telemetry",
@@ -151,13 +151,13 @@ export const subprocessors: Subprocessor[] = [
 /* ------------------------------------------------------------------ */
 
 export const sectionAnchors = [
-  { id: "deployment", label: "Deployment Model" },
-  { id: "data-handling", label: "Data Handling" },
-  { id: "data-residency", label: "Data Residency" },
+  { id: "deployment", label: "Deployment model" },
+  { id: "data-handling", label: "Data handling" },
+  { id: "data-residency", label: "Data residency" },
   { id: "subprocessors", label: "Subprocessors" },
-  { id: "incident-response", label: "Incident Response" },
+  { id: "incident-response", label: "Incident response" },
   { id: "compliance", label: "Compliance" },
-  { id: "contact", label: "Security Contact" }
+  { id: "contact", label: "Security contact" }
 ];
 
 /* ------------------------------------------------------------------ */

@@ -72,10 +72,9 @@ export function LandingTrustOverview(props: SharedProps) {
               Security &amp; Data Privacy
             </h1>
             <Prose>
-              OpenWork is a local-first, self-hostable AI work platform. Your code,
-              credentials, and prompts stay on infrastructure you control. This page
-              describes how we handle data, what third parties are involved, and how to
-              reach us for security questions.
+              OpenWork enterprise runs on your servers. We don&apos;t see your code, your API
+              keys, or your prompts. There is no hosted control plane and no
+              phone-home telemetry.
             </Prose>
           </section>
 
@@ -122,24 +121,26 @@ export function LandingTrustOverview(props: SharedProps) {
 
           {/* ── Deployment Model ── */}
           <section className="mt-14">
-            <SectionHeading id="deployment">Deployment Model</SectionHeading>
+            <SectionHeading id="deployment">Deployment model</SectionHeading>
             <Prose>
-              OpenWork ships as a self-hosted desktop application that runs entirely on
-              your infrastructure. Your team controls the servers, the LLM gateway, and
-              the authentication layer.
+              OpenWork ships as a desktop app that you host on your own servers. You
+              bring your own LLM gateway and your own auth stack. Traffic between
+              your users and their LLM provider goes direct; we don&apos;t sit in the
+              middle.
             </Prose>
             <ul className="mt-4 space-y-2.5 text-[14px] leading-relaxed text-slate-600">
               <Bullet>
-                <strong>Desktop app</strong> — runs on your servers. No data leaves your
-                infrastructure unless you explicitly connect to an LLM provider.
+                <strong>Desktop app</strong> runs on your servers. No data leaves
+                your infrastructure unless a user explicitly connects to an LLM
+                provider.
               </Bullet>
               <Bullet>
-                <strong>LLM gateway</strong> — bring your own gateway (LiteLLM,
-                Cloudflare AI Gateway, etc.). OpenWork does not proxy, store, or inspect
-                API traffic.
+                <strong>LLM gateway</strong> is your choice (LiteLLM, Cloudflare AI
+                Gateway, etc.). OpenWork doesn&apos;t proxy, store, or log API
+                traffic.
               </Bullet>
               <Bullet>
-                <strong>Authentication</strong> — integrate with your existing SSO / SAML
+                <strong>Authentication</strong> plugs into your existing SSO or SAML
                 provider.
               </Bullet>
             </ul>
@@ -147,11 +148,9 @@ export function LandingTrustOverview(props: SharedProps) {
 
           {/* ── Data Handling ── */}
           <section className="mt-14">
-            <SectionHeading id="data-handling">Data Handling</SectionHeading>
+            <SectionHeading id="data-handling">Data handling</SectionHeading>
             <Prose>
-              In a self-hosted deployment, OpenWork (the company) receives no customer
-              data. The table below shows where each data type lives depending on
-              deployment mode.
+              We receive zero customer data in a self-hosted deployment.
             </Prose>
             <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200/70">
               <table className="w-full text-[13px]">
@@ -190,19 +189,19 @@ export function LandingTrustOverview(props: SharedProps) {
 
           {/* ── Data Residency ── */}
           <section className="mt-14">
-            <SectionHeading id="data-residency">Data Residency</SectionHeading>
+            <SectionHeading id="data-residency">Data residency</SectionHeading>
             <Prose>
-              Self-hosted deployments give you full control over data location — region,
-              network boundary, and egress policy are all yours. No data is replicated
-              outside your environment.
+              You pick the region, the network boundary, and the egress policy.
+              Nothing replicates outside your environment.
             </Prose>
             <ul className="mt-4 space-y-2.5 text-[14px] leading-relaxed text-slate-600">
               <Bullet>
-                You choose where data resides. OpenWork does not impose a region.
+                OpenWork doesn&apos;t impose a data region. You decide where things
+                live.
               </Bullet>
               <Bullet>
-                Provider choice and deployment choice are fully independent — switching
-                your LLM provider does not change where data is stored.
+                Switching your LLM provider doesn&apos;t affect where data is stored.
+                The two decisions are independent.
               </Bullet>
             </ul>
           </section>
@@ -211,12 +210,8 @@ export function LandingTrustOverview(props: SharedProps) {
           <section className="mt-14">
             <SectionHeading id="subprocessors">Subprocessors</SectionHeading>
             <Prose>
-              The vendors listed below are used by the OpenWork website and optional
-              cloud service.{" "}
-              <strong>
-                In a self-hosted deployment, OpenWork introduces zero third-party
-                subprocessors into your environment.
-              </strong>
+              These vendors apply to the OpenWork website and cloud service only.
+              If you self-host, none of them touch your environment.
             </Prose>
             <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200/70">
               <table className="w-full text-[13px]">
@@ -264,10 +259,10 @@ export function LandingTrustOverview(props: SharedProps) {
 
           {/* ── Incident Response ── */}
           <section className="mt-14">
-            <SectionHeading id="incident-response">Incident Response</SectionHeading>
+            <SectionHeading id="incident-response">Incident response</SectionHeading>
             <Prose>
-              Security issues can be reported privately via email or through a GitHub
-              issue. We commit to the following response times:
+              Report security issues via email or GitHub issue. Our response
+              commitments:
             </Prose>
             <ul className="mt-4 space-y-2.5 text-[14px] leading-relaxed text-slate-600">
               <Bullet>
@@ -321,17 +316,16 @@ export function LandingTrustOverview(props: SharedProps) {
               </table>
             </div>
             <Prose>
-              Need a DPA or vendor security questionnaire completed? Contact us at the
-              address below.
+              If you need a DPA or help with a vendor security questionnaire, reach
+              out below.
             </Prose>
           </section>
 
           {/* ── Security Contact ── */}
           <section className="mt-14">
-            <SectionHeading id="contact">Security Contact</SectionHeading>
+            <SectionHeading id="contact">Security contact</SectionHeading>
             <Prose>
-              For security questions, vendor questionnaires, or to report a
-              vulnerability:
+              Security questions, vendor questionnaires, vulnerability reports:
             </Prose>
             <div className="mt-4 rounded-xl border border-slate-200/70 bg-white/80 px-4 py-3">
               <div className="text-[14px] font-medium text-[#011627]">
@@ -346,10 +340,11 @@ export function LandingTrustOverview(props: SharedProps) {
             </div>
           </section>
 
-          <div className="mt-16">
-            <SiteFooter />
-          </div>
         </main>
+
+        <div className="mx-auto w-full max-w-5xl px-6 pb-16 md:px-8">
+          <SiteFooter />
+        </div>
       </div>
     </div>
   );
