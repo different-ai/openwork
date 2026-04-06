@@ -14,6 +14,9 @@ const apiPort = process.env.DEN_API_PORT?.trim() || process.env.DEN_CONTROLLER_P
 const workerProxyPort = process.env.DEN_WORKER_PROXY_PORT?.trim() || "8789"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
 const databaseUrl = process.env.DATABASE_URL?.trim() || "mysql://root:password@127.0.0.1:3306/openwork_den"
+const dbEncryptionKey =
+  process.env.DEN_DB_ENCRYPTION_KEY?.trim() ||
+  "local-dev-db-encryption-key-please-change-1234567890"
 
 function detectWebOrigins() {
   const origins = new Set([
@@ -196,6 +199,7 @@ async function main() {
         ...process.env,
         OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE?.trim() || "1",
         DATABASE_URL: databaseUrl,
+        DEN_DB_ENCRYPTION_KEY: dbEncryptionKey,
         BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET?.trim() || "local-dev-secret-not-for-production-use!!",
         BETTER_AUTH_URL: process.env.BETTER_AUTH_URL?.trim() || `http://localhost:${webPort}`,
         DEN_BETTER_AUTH_TRUSTED_ORIGINS: process.env.DEN_BETTER_AUTH_TRUSTED_ORIGINS?.trim() || webOrigins,
