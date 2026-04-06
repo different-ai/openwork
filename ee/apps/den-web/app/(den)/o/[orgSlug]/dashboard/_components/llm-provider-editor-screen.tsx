@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, Circle, Cpu, Search } from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
+import { DenCombobox } from "../../../../_components/ui/combobox";
 import { DenInput } from "../../../../_components/ui/input";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DenTextarea } from "../../../../_components/ui/textarea";
@@ -164,6 +165,17 @@ export function LlmProviderEditorScreen({ llmProviderId }: { llmProviderId?: str
     return models.filter((model) => model.name.toLowerCase().includes(normalizedQuery) || model.id.toLowerCase().includes(normalizedQuery));
   }, [catalogDetail?.models, modelQuery]);
 
+  const catalogProviderOptions = useMemo(
+    () =>
+      catalogProviders.map((catalogProvider) => ({
+        value: catalogProvider.id,
+        label: catalogProvider.name,
+        description: catalogProvider.id,
+        meta: `${catalogProvider.modelCount} ${catalogProvider.modelCount === 1 ? "model" : "models"}`,
+      })),
+    [catalogProviders],
+  );
+
   async function saveProvider() {
     if (!orgId) {
       setSaveError("Organization not found.");
@@ -320,21 +332,18 @@ export function LlmProviderEditorScreen({ llmProviderId }: { llmProviderId?: str
 
         {source === "models_dev" ? (
           <div className="mt-8 grid gap-6">
-            <label className="grid gap-3">
+            <div className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Provider</span>
-              <select
+              <DenCombobox
                 value={selectedProviderId}
-                onChange={(event) => setSelectedProviderId(event.target.value)}
-                className="h-12 rounded-2xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 outline-none transition focus:border-gray-400"
-              >
-                <option value="">Select a provider...</option>
-                {catalogProviders.map((catalogProvider) => (
-                  <option key={catalogProvider.id} value={catalogProvider.id}>
-                    {catalogProvider.name} ({catalogProvider.modelCount})
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={catalogProviderOptions}
+                onChange={setSelectedProviderId}
+                ariaLabel="Provider"
+                placeholder="Select a provider..."
+                searchPlaceholder="Search providers..."
+                emptyLabel="No providers match"
+              />
+            </div>
 
             {catalogBusy ? <p className="text-[14px] text-gray-500">Loading provider catalog...</p> : null}
             {catalogError ? <p className="text-[14px] text-red-600">{catalogError}</p> : null}
