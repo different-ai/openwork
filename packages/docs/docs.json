@@ -15,6 +15,10 @@
   "navigation": {
     "tabs": [
       {
+        "tab": "API Reference",
+        "openapi": "https://api.openworklabs.com/openapi.json"
+      },
+      {
         "tab": "Start here",
         "pages": [
           "get-started",
