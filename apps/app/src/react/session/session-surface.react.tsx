@@ -10,7 +10,6 @@ import { SessionDebugPanel } from "./debug-panel.react";
 import { deriveSessionRenderModel } from "./transition-controller";
 import { SessionTranscript } from "./message-list.react";
 import {
-  ensureWorkspaceSessionSync,
   seedSessionState,
   statusKey as reactStatusKey,
   todoKey as reactTodoKey,
@@ -101,14 +100,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
   });
-
-  useEffect(() => {
-    return ensureWorkspaceSessionSync({
-      workspaceId: props.workspaceId,
-      baseUrl: props.opencodeBaseUrl,
-      openworkToken: props.openworkToken,
-    });
-  }, [props.workspaceId, props.opencodeBaseUrl, props.openworkToken]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
