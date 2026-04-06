@@ -1,7 +1,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Copy, KeyRound, ShieldCheck, Trash2 } from "lucide-react";
+import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../../../_components/ui/button";
 import { DenInput } from "../../../../_components/ui/input";
@@ -20,20 +20,6 @@ function formatDateTime(value: string | null) {
   }
 
   return date.toLocaleString();
-}
-
-function formatRateLimit(apiKey: DenOrgApiKey) {
-  if (!apiKey.rateLimitEnabled || !apiKey.rateLimitMax || !apiKey.rateLimitTimeWindow) {
-    return "Disabled";
-  }
-
-  const seconds = Math.max(1, Math.round(apiKey.rateLimitTimeWindow / 1000));
-  if (seconds % 60 === 0) {
-    const minutes = seconds / 60;
-    return `${apiKey.rateLimitMax}/${minutes === 1 ? "minute" : `${minutes} min`}`;
-  }
-
-  return `${apiKey.rateLimitMax}/${seconds}s`;
 }
 
 function formatKeyPreview(apiKey: DenOrgApiKey) {
@@ -257,10 +243,6 @@ export function ApiKeysScreen() {
                       Copy it now. After this state closes, only the name and leading characters remain visible in the table.
                     </p>
                   </div>
-                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-[12px] font-medium text-emerald-200">
-                    <ShieldCheck className="h-4 w-4" />
-                    600 req / min
-                  </div>
                 </div>
 
                 <div className="mt-5 rounded-[20px] border border-white/10 bg-white/5 p-4">
@@ -282,10 +264,6 @@ export function ApiKeysScreen() {
                     <p className="mt-1 text-[14px] leading-6 text-gray-500">
                       Keys are always issued for your own membership in this workspace and inherit the built-in request limit.
                     </p>
-                  </div>
-                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-medium text-emerald-700">
-                    <ShieldCheck className="h-4 w-4" />
-                    600 req / min
                   </div>
                 </div>
 
@@ -323,10 +301,9 @@ export function ApiKeysScreen() {
           </div>
 
           <div className="overflow-hidden rounded-[28px] border border-gray-100 bg-white">
-            <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_160px_180px_120px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+            <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
               <span>Key</span>
               <span>Owner</span>
-              <span>Rate limit</span>
               <span>Last used</span>
               <span />
             </div>
@@ -339,7 +316,7 @@ export function ApiKeysScreen() {
               apiKeys.map((apiKey) => (
                 <div
                   key={apiKey.id}
-                  className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_160px_180px_120px] items-center gap-4 border-b border-gray-100 px-6 py-4 transition hover:bg-gray-50/70 last:border-b-0"
+                  className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] items-center gap-4 border-b border-gray-100 px-6 py-4 transition hover:bg-gray-50/70 last:border-b-0"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-[14px] font-medium text-gray-900">
@@ -355,7 +332,6 @@ export function ApiKeysScreen() {
                     <p className="truncate text-[12px] text-gray-400">{apiKey.owner.email}</p>
                   </div>
 
-                  <span className="text-[13px] text-gray-500">{formatRateLimit(apiKey)}</span>
                   <span className="text-[13px] text-gray-500">{formatDateTime(apiKey.lastRequest)}</span>
 
                   <div className="flex justify-end">
