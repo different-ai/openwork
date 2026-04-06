@@ -3,9 +3,11 @@ import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { jsonValidator, requireUserMiddleware } from "../../middleware/index.js"
 import { db } from "../../db.js"
+import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const createGrantSchema = z.object({
@@ -16,6 +18,26 @@ const createGrantSchema = z.object({
 const exchangeGrantSchema = z.object({
   grant: z.string().trim().min(12).max(128),
 })
+
+const desktopHandoffGrantResponseSchema = z.object({
+  grant: z.string(),
+  expiresAt: z.string().datetime(),
+  openworkUrl: z.string().url(),
+}).meta({ ref: "DesktopHandoffGrantResponse" })
+
+const desktopHandoffExchangeResponseSchema = z.object({
+  token: z.string(),
+  user: z.object({
+    id: z.string(),
+    email: z.string().email(),
+    name: z.string().nullable(),
+  }),
+}).meta({ ref: "DesktopHandoffExchangeResponse" })
+
+const grantNotFoundSchema = z.object({
+  error: z.literal("grant_not_found"),
+  message: z.string(),
+}).meta({ ref: "DesktopHandoffGrantNotFoundError" })
 
 function readSingleHeader(value: string | null) {
   const first = value?.split(",")[0]?.trim() ?? ""
@@ -90,7 +112,21 @@ function buildOpenworkDeepLink(input: {
 }
 
 export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
-  app.post("/v1/auth/desktop-handoff", requireUserMiddleware, jsonValidator(createGrantSchema), async (c) => {
+  app.post(
+    "/v1/auth/desktop-handoff",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Create desktop handoff grant",
+      description: "Creates a short-lived desktop handoff grant and deep link so a signed-in web user can continue the same account in the OpenWork desktop app.",
+      responses: {
+        200: jsonResponse("Desktop handoff grant created successfully.", desktopHandoffGrantResponseSchema),
+        400: jsonResponse("The handoff request body was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create a desktop handoff grant.", unauthorizedSchema),
+      },
+    }),
+    requireUserMiddleware,
+    jsonValidator(createGrantSchema),
+    async (c) => {
     const user = c.get("user")
     const session = c.get("session")
     if (!user?.id || !session?.token) {
@@ -120,9 +156,23 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         denBaseUrl,
       }),
     })
-  })
+    },
+  )
 
-  app.post("/v1/auth/desktop-handoff/exchange", jsonValidator(exchangeGrantSchema), async (c) => {
+  app.post(
+    "/v1/auth/desktop-handoff/exchange",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "Exchange desktop handoff grant",
+      description: "Exchanges a one-time desktop handoff grant for the user's session token and basic profile so the desktop app can sign the user in.",
+      responses: {
+        200: jsonResponse("Desktop handoff grant exchanged successfully.", desktopHandoffExchangeResponseSchema),
+        400: jsonResponse("The handoff exchange request body was invalid.", invalidRequestSchema),
+        404: jsonResponse("The handoff grant was missing, expired, or already used.", grantNotFoundSchema),
+      },
+    }),
+    jsonValidator(exchangeGrantSchema),
+    async (c) => {
     const input = c.req.valid("json")
 
     const now = new Date()
@@ -171,5 +221,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         name: row.user.name,
       },
     })
-  })
+    },
+  )
 }

@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import {
   buildOrganizationApiKeyMetadata,
@@ -14,13 +15,136 @@ import { ensureApiKeyManager, idParamSchema, orgIdParamSchema } from "./shared.j
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
-})
+}).meta({ ref: "CreateOrganizationApiKeyRequest" })
+
+const validationIssueSchema = z.object({
+  message: z.string(),
+  path: z.array(z.union([z.string(), z.number()])).optional(),
+}).passthrough()
+
+const invalidRequestSchema = z.object({
+  error: z.literal("invalid_request"),
+  details: z.array(validationIssueSchema),
+}).meta({ ref: "InvalidRequestError" })
+
+const unauthorizedSchema = z.object({
+  error: z.literal("unauthorized"),
+}).meta({ ref: "UnauthorizedError" })
+
+const organizationNotFoundSchema = z.object({
+  error: z.literal("organization_not_found"),
+}).meta({ ref: "OrganizationNotFoundError" })
+
+const forbiddenApiKeyManagerSchema = z.object({
+  error: z.literal("forbidden"),
+  message: z.string(),
+}).meta({ ref: "OrganizationApiKeyForbiddenError" })
+
+const apiKeyNotFoundSchema = z.object({
+  error: z.literal("api_key_not_found"),
+}).meta({ ref: "OrganizationApiKeyNotFoundError" })
+
+const apiKeyOwnerSchema = z.object({
+  userId: z.string(),
+  memberId: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+  image: z.string().nullable(),
+}).meta({ ref: "OrganizationApiKeyOwner" })
+
+const organizationApiKeySchema = z.object({
+  id: z.string(),
+  configId: z.string(),
+  name: z.string().nullable(),
+  start: z.string().nullable(),
+  prefix: z.string().nullable(),
+  enabled: z.boolean(),
+  rateLimitEnabled: z.boolean(),
+  rateLimitMax: z.number().int().nullable(),
+  rateLimitTimeWindow: z.number().int().nullable(),
+  lastRequest: z.string().datetime().nullable(),
+  expiresAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  owner: apiKeyOwnerSchema,
+}).meta({ ref: "OrganizationApiKey" })
+
+const organizationApiKeyListResponseSchema = z.object({
+  apiKeys: z.array(organizationApiKeySchema),
+}).meta({ ref: "OrganizationApiKeyListResponse" })
+
+const createdOrganizationApiKeySchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  start: z.string().nullable(),
+  prefix: z.string().nullable(),
+  enabled: z.boolean(),
+  rateLimitEnabled: z.boolean(),
+  rateLimitMax: z.number().int().nullable(),
+  rateLimitTimeWindow: z.number().int().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+}).meta({ ref: "CreatedOrganizationApiKey" })
+
+const createOrganizationApiKeyResponseSchema = z.object({
+  apiKey: createdOrganizationApiKeySchema,
+  key: z.string().min(1),
+}).meta({ ref: "CreateOrganizationApiKeyResponse" })
 
 const apiKeyIdParamSchema = orgIdParamSchema.extend(idParamSchema("apiKeyId").shape)
+const hideApiKeyGenerationRoute = () => process.env.NODE_ENV === "production"
 
 export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/orgs/:orgId/api-keys",
+    describeRoute({
+      tags: ["Organizations", "Organization API Keys"],
+      summary: "List organization API keys",
+      description: "Returns the API keys that belong to the selected organization.",
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: {
+          description: "Organization API keys",
+          content: {
+            "application/json": {
+              schema: resolver(organizationApiKeyListResponseSchema),
+            },
+          },
+        },
+        400: {
+          description: "Invalid request",
+          content: {
+            "application/json": {
+              schema: resolver(invalidRequestSchema),
+            },
+          },
+        },
+        401: {
+          description: "Unauthorized",
+          content: {
+            "application/json": {
+              schema: resolver(unauthorizedSchema),
+            },
+          },
+        },
+        403: {
+          description: "Forbidden",
+          content: {
+            "application/json": {
+              schema: resolver(forbiddenApiKeyManagerSchema),
+            },
+          },
+        },
+        404: {
+          description: "Organization not found",
+          content: {
+            "application/json": {
+              schema: resolver(organizationNotFoundSchema),
+            },
+          },
+        },
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -38,6 +162,55 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
 
   app.post(
     "/v1/orgs/:orgId/api-keys",
+    describeRoute({
+      tags: ["Organizations", "Organization API Keys"],
+      summary: "Create an organization API key",
+      description: "Creates a new API key for the selected organization.",
+      hide: hideApiKeyGenerationRoute,
+      security: [{ bearerAuth: [] }],
+      responses: {
+        201: {
+          description: "Organization API key created",
+          content: {
+            "application/json": {
+              schema: resolver(createOrganizationApiKeyResponseSchema),
+            },
+          },
+        },
+        400: {
+          description: "Invalid request",
+          content: {
+            "application/json": {
+              schema: resolver(invalidRequestSchema),
+            },
+          },
+        },
+        401: {
+          description: "Unauthorized",
+          content: {
+            "application/json": {
+              schema: resolver(unauthorizedSchema),
+            },
+          },
+        },
+        403: {
+          description: "Forbidden",
+          content: {
+            "application/json": {
+              schema: resolver(forbiddenApiKeyManagerSchema),
+            },
+          },
+        },
+        404: {
+          description: "Organization not found",
+          content: {
+            "application/json": {
+              schema: resolver(organizationNotFoundSchema),
+            },
+          },
+        },
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -86,6 +259,49 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
 
   app.delete(
     "/v1/orgs/:orgId/api-keys/:apiKeyId",
+    describeRoute({
+      tags: ["Organizations", "Organization API Keys"],
+      summary: "Delete an organization API key",
+      description: "Deletes an API key from the selected organization.",
+      security: [{ bearerAuth: [] }],
+      responses: {
+        204: {
+          description: "Organization API key deleted",
+        },
+        400: {
+          description: "Invalid request",
+          content: {
+            "application/json": {
+              schema: resolver(invalidRequestSchema),
+            },
+          },
+        },
+        401: {
+          description: "Unauthorized",
+          content: {
+            "application/json": {
+              schema: resolver(unauthorizedSchema),
+            },
+          },
+        },
+        403: {
+          description: "Forbidden",
+          content: {
+            "application/json": {
+              schema: resolver(forbiddenApiKeyManagerSchema),
+            },
+          },
+        },
+        404: {
+          description: "API key or organization not found",
+          content: {
+            "application/json": {
+              schema: resolver(z.union([organizationNotFoundSchema, apiKeyNotFoundSchema])),
+            },
+          },
+        },
+      },
+    }),
     requireUserMiddleware,
     paramValidator(apiKeyIdParamSchema),
     resolveOrganizationContextMiddleware,

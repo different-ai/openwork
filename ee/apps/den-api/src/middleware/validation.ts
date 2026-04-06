@@ -1,11 +1,11 @@
-import { zValidator } from "@hono/zod-validator"
+import { validator as zValidator } from "hono-openapi"
 import type { ZodSchema } from "zod"
 
-function invalidRequestResponse(result: { success: false; error: { issues: unknown } }, c: { json: (body: unknown, status?: number) => Response }) {
+function invalidRequestResponse(result: { success: false; error: unknown }, c: { json: (body: unknown, status?: number) => Response }) {
   return c.json(
     {
       error: "invalid_request",
-      details: result.error.issues,
+      details: result.error,
     },
     400,
   )

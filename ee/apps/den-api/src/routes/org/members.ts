@@ -2,9 +2,11 @@ import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, roleIncludesOwner } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOwner, idParamSchema, normalizeRoleName, orgIdParamSchema } from "./shared.js"
@@ -17,7 +19,25 @@ type MemberId = typeof MemberTable.$inferSelect.id
 const orgMemberParamsSchema = orgIdParamSchema.extend(idParamSchema("memberId").shape)
 
 export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  app.post("/v1/orgs/:orgId/members/:memberId/role", requireUserMiddleware, paramValidator(orgMemberParamsSchema), resolveOrganizationContextMiddleware, jsonValidator(updateMemberRoleSchema), async (c) => {
+  app.post(
+    "/v1/orgs/:orgId/members/:memberId/role",
+    describeRoute({
+      tags: ["Organizations", "Organization Members"],
+      summary: "Update member role",
+      description: "Changes the role assigned to a specific organization member.",
+      responses: {
+        200: jsonResponse("Member role updated successfully.", successSchema),
+        400: jsonResponse("The member role update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update member roles.", unauthorizedSchema),
+        403: jsonResponse("Only organization owners can update member roles.", forbiddenSchema),
+        404: jsonResponse("The member or organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgMemberParamsSchema),
+    resolveOrganizationContextMiddleware,
+    jsonValidator(updateMemberRoleSchema),
+    async (c) => {
     const permission = ensureOwner(c)
     if (!permission.ok) {
       return c.json(permission.response, 403)
@@ -57,9 +77,27 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
 
     await db.update(MemberTable).set({ role }).where(eq(MemberTable.id, member.id))
     return c.json({ success: true })
-  })
+    },
+  )
 
-  app.delete("/v1/orgs/:orgId/members/:memberId", requireUserMiddleware, paramValidator(orgMemberParamsSchema), resolveOrganizationContextMiddleware, async (c) => {
+  app.delete(
+    "/v1/orgs/:orgId/members/:memberId",
+    describeRoute({
+      tags: ["Organizations", "Organization Members"],
+      summary: "Remove organization member",
+      description: "Removes a member from an organization while protecting the owner role from deletion.",
+      responses: {
+        204: emptyResponse("Member removed successfully."),
+        400: jsonResponse("The member removal request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to remove organization members.", unauthorizedSchema),
+        403: jsonResponse("Only organization owners can remove members.", forbiddenSchema),
+        404: jsonResponse("The member or organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgMemberParamsSchema),
+    resolveOrganizationContextMiddleware,
+    async (c) => {
     const permission = ensureOwner(c)
     if (!permission.ok) {
       return c.json(permission.response, 403)
@@ -94,5 +132,6 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       memberId: member.id,
     })
     return c.body(null, 204)
-  })
+    },
+  )
 }

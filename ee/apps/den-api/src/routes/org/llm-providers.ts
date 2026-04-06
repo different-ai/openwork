@@ -9,6 +9,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import {
@@ -20,6 +21,7 @@ import {
 } from "../../middleware/index.js"
 import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-dev.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
+import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema, memberHasRole, orgIdParamSchema } from "./shared.js"
 
@@ -92,6 +94,32 @@ const llmProviderWriteSchema = z.object({
     })
   }
 })
+
+const providerCatalogListResponseSchema = z.object({
+  providers: z.array(z.object({}).passthrough()),
+}).meta({ ref: "LlmProviderCatalogListResponse" })
+
+const providerCatalogResponseSchema = z.object({
+  provider: z.object({}).passthrough(),
+}).meta({ ref: "LlmProviderCatalogResponse" })
+
+const llmProviderListResponseSchema = z.object({
+  llmProviders: z.array(z.object({}).passthrough()),
+}).meta({ ref: "LlmProviderListResponse" })
+
+const llmProviderResponseSchema = z.object({
+  llmProvider: z.object({}).passthrough(),
+}).meta({ ref: "LlmProviderResponse" })
+
+const providerCatalogUnavailableSchema = z.object({
+  error: z.literal("provider_catalog_unavailable"),
+  message: z.string(),
+}).meta({ ref: "ProviderCatalogUnavailableError" })
+
+const conflictSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+}).meta({ ref: "ConflictError" })
 
 function createFailure(status: number, error: string, message?: string): RouteFailure {
   return { status, error, message }
@@ -453,6 +481,17 @@ async function loadLlmProviders(input: {
 export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
   app.get(
     "/v1/orgs/:orgId/llm-provider-catalog",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "List LLM provider catalog",
+      description: "Lists the provider catalog from models.dev so an organization can choose which LLM providers to configure.",
+      responses: {
+        200: jsonResponse("Provider catalog returned successfully.", providerCatalogListResponseSchema),
+        400: jsonResponse("The provider catalog path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to browse the provider catalog.", unauthorizedSchema),
+        502: jsonResponse("The external provider catalog was unavailable.", providerCatalogUnavailableSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -471,6 +510,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/orgs/:orgId/llm-provider-catalog/:providerId",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "Get LLM provider catalog entry",
+      description: "Returns the full models.dev catalog record for one provider, including its config template and model list.",
+      responses: {
+        200: jsonResponse("Provider catalog entry returned successfully.", providerCatalogResponseSchema),
+        400: jsonResponse("The provider catalog path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to inspect provider catalog entries.", unauthorizedSchema),
+        404: jsonResponse("The requested provider catalog entry could not be found.", notFoundSchema),
+        502: jsonResponse("The external provider catalog was unavailable.", providerCatalogUnavailableSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(providerCatalogParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -506,6 +557,16 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/orgs/:orgId/llm-providers",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "List organization LLM providers",
+      description: "Lists the LLM providers that the current organization member is allowed to see and potentially manage.",
+      responses: {
+        200: jsonResponse("Accessible organization LLM providers returned successfully.", llmProviderListResponseSchema),
+        400: jsonResponse("The provider list path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to list organization LLM providers.", unauthorizedSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -532,6 +593,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId/connect",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "Get LLM provider connect payload",
+      description: "Returns one accessible organization LLM provider with the concrete model configuration needed to connect to it.",
+      responses: {
+        200: jsonResponse("Provider connection payload returned successfully.", llmProviderResponseSchema),
+        400: jsonResponse("The provider connect path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to connect to an organization LLM provider.", unauthorizedSchema),
+        403: jsonResponse("The caller does not have access to this organization LLM provider.", forbiddenSchema),
+        404: jsonResponse("The provider could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgLlmProviderParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -597,6 +670,17 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.post(
     "/v1/orgs/:orgId/llm-providers",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "Create organization LLM provider",
+      description: "Creates a new organization-scoped LLM provider from either a models.dev provider template or a pasted custom configuration.",
+      responses: {
+        201: jsonResponse("Organization LLM provider created successfully.", llmProviderResponseSchema),
+        400: jsonResponse("The provider creation request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create organization LLM providers.", unauthorizedSchema),
+        404: jsonResponse("A referenced provider, model, member, or team could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -698,6 +782,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.patch(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "Update organization LLM provider",
+      description: "Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants.",
+      responses: {
+        200: jsonResponse("Organization LLM provider updated successfully.", llmProviderResponseSchema),
+        400: jsonResponse("The provider update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update organization LLM providers.", unauthorizedSchema),
+        403: jsonResponse("The caller is not allowed to update this organization LLM provider.", forbiddenSchema),
+        404: jsonResponse("The provider or a referenced resource could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgLlmProviderParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -822,6 +918,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.delete(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "Delete organization LLM provider",
+      description: "Deletes an organization LLM provider and removes its models and access rules.",
+      responses: {
+        204: emptyResponse("Organization LLM provider deleted successfully."),
+        400: jsonResponse("The provider deletion path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to delete organization LLM providers.", unauthorizedSchema),
+        403: jsonResponse("The caller is not allowed to delete this organization LLM provider.", forbiddenSchema),
+        404: jsonResponse("The provider could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgLlmProviderParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -866,6 +974,19 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.delete(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId/access/:accessId",
+    describeRoute({
+      tags: ["Organizations", "Organization LLM Providers"],
+      summary: "Remove LLM provider access grant",
+      description: "Removes one explicit member or team access grant from an organization LLM provider.",
+      responses: {
+        204: emptyResponse("Organization LLM provider access removed successfully."),
+        400: jsonResponse("The provider access deletion path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage provider access.", unauthorizedSchema),
+        403: jsonResponse("The caller is not allowed to manage access for this provider.", forbiddenSchema),
+        404: jsonResponse("The provider or access grant could not be found.", notFoundSchema),
+        409: jsonResponse("The request tried to remove a protected provider access entry.", conflictSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgLlmProviderParamsSchema.extend(idParamSchema("accessId").shape)),
     resolveOrganizationContextMiddleware,

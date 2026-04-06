@@ -2,9 +2,11 @@ import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { InvitationTable, MemberTable, OrganizationRoleTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { serializePermissionRecord } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { createRoleId, ensureOwner, idParamSchema, normalizeRoleName, orgIdParamSchema, replaceRoleValue, splitRoles } from "./shared.js"
@@ -25,7 +27,25 @@ type OrganizationRoleId = typeof OrganizationRoleTable.$inferSelect.id
 const orgRoleParamsSchema = orgIdParamSchema.extend(idParamSchema("roleId").shape)
 
 export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  app.post("/v1/orgs/:orgId/roles", requireUserMiddleware, paramValidator(orgIdParamSchema), resolveOrganizationContextMiddleware, jsonValidator(createRoleSchema), async (c) => {
+  app.post(
+    "/v1/orgs/:orgId/roles",
+    describeRoute({
+      tags: ["Organizations", "Organization Roles"],
+      summary: "Create organization role",
+      description: "Creates a custom organization role with a named permission map.",
+      responses: {
+        201: jsonResponse("Organization role created successfully.", successSchema),
+        400: jsonResponse("The role creation request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create organization roles.", unauthorizedSchema),
+        403: jsonResponse("Only organization owners can create organization roles.", forbiddenSchema),
+        404: jsonResponse("The organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgIdParamSchema),
+    resolveOrganizationContextMiddleware,
+    jsonValidator(createRoleSchema),
+    async (c) => {
     const permission = ensureOwner(c)
     if (!permission.ok) {
       return c.json(permission.response, 403)
@@ -57,9 +77,28 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     })
 
     return c.json({ success: true }, 201)
-  })
+    },
+  )
 
-  app.patch("/v1/orgs/:orgId/roles/:roleId", requireUserMiddleware, paramValidator(orgRoleParamsSchema), resolveOrganizationContextMiddleware, jsonValidator(updateRoleSchema), async (c) => {
+  app.patch(
+    "/v1/orgs/:orgId/roles/:roleId",
+    describeRoute({
+      tags: ["Organizations", "Organization Roles"],
+      summary: "Update organization role",
+      description: "Updates a custom organization role and propagates role name changes to members and pending invitations.",
+      responses: {
+        200: jsonResponse("Organization role updated successfully.", successSchema),
+        400: jsonResponse("The role update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update organization roles.", unauthorizedSchema),
+        403: jsonResponse("Only organization owners can update organization roles.", forbiddenSchema),
+        404: jsonResponse("The role or organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgRoleParamsSchema),
+    resolveOrganizationContextMiddleware,
+    jsonValidator(updateRoleSchema),
+    async (c) => {
     const permission = ensureOwner(c)
     if (!permission.ok) {
       return c.json(permission.response, 403)
@@ -145,9 +184,27 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     return c.json({ success: true })
-  })
+    },
+  )
 
-  app.delete("/v1/orgs/:orgId/roles/:roleId", requireUserMiddleware, paramValidator(orgRoleParamsSchema), resolveOrganizationContextMiddleware, async (c) => {
+  app.delete(
+    "/v1/orgs/:orgId/roles/:roleId",
+    describeRoute({
+      tags: ["Organizations", "Organization Roles"],
+      summary: "Delete organization role",
+      description: "Deletes a custom organization role after confirming that no members or pending invitations still depend on it.",
+      responses: {
+        204: emptyResponse("Organization role deleted successfully."),
+        400: jsonResponse("The role deletion request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to delete organization roles.", unauthorizedSchema),
+        403: jsonResponse("Only organization owners can delete organization roles.", forbiddenSchema),
+        404: jsonResponse("The role or organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgRoleParamsSchema),
+    resolveOrganizationContextMiddleware,
+    async (c) => {
     const permission = ensureOwner(c)
     if (!permission.ok) {
       return c.json(permission.response, 403)
@@ -196,5 +253,6 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
 
     await db.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleRow.id))
     return c.body(null, 204)
-  })
+    },
+  )
 }

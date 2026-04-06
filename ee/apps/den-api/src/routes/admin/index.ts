@@ -1,10 +1,12 @@
 import { asc, desc, eq, isNotNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthSessionTable, AuthUserTable, WorkerTable, AdminAllowlistTable } from "@openwork-ee/den-db/schema"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getCloudWorkerAdminBillingStatus } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { queryValidator, requireAdminMiddleware } from "../../middleware/index.js"
+import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -12,6 +14,18 @@ type UserId = typeof AuthUserTable.$inferSelect.id
 const overviewQuerySchema = z.object({
   includeBilling: z.string().optional(),
 })
+
+const adminOverviewResponseSchema = z.object({
+  viewer: z.object({
+    id: z.string(),
+    email: z.string(),
+    name: z.string().nullable(),
+  }),
+  admins: z.array(z.object({}).passthrough()),
+  summary: z.object({}).passthrough(),
+  users: z.array(z.object({}).passthrough()),
+  generatedAt: z.string().datetime(),
+}).meta({ ref: "AdminOverviewResponse" })
 
 function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? ""
@@ -84,7 +98,21 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
-  app.get("/v1/admin/overview", requireAdminMiddleware, queryValidator(overviewQuerySchema), async (c) => {
+  app.get(
+    "/v1/admin/overview",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Get admin overview",
+      description: "Returns a high-level administrative overview of users, sessions, workers, admins, and optional billing data for Den operations.",
+      responses: {
+        200: jsonResponse("Administrative overview returned successfully.", adminOverviewResponseSchema),
+        400: jsonResponse("The admin overview query parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be an authenticated admin.", unauthorizedSchema),
+      },
+    }),
+    requireAdminMiddleware,
+    queryValidator(overviewQuerySchema),
+    async (c) => {
     const user = c.get("user")
     const query = c.req.valid("query")
     const includeBilling = parseBooleanQuery(query.includeBilling)
@@ -289,5 +317,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       users: userRows,
       generatedAt: new Date().toISOString(),
     })
-  })
+    },
+  )
 }
