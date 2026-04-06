@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react";
-import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { DynamicToolUIPart } from "ai";
 
 import { safeStringify, summarizeStep } from "../../app/utils";
 
@@ -34,30 +34,51 @@ function diffLineClass(line: string) {
   return "text-gray-12";
 }
 
-function extractDiff(state: Record<string, unknown>) {
-  const candidates = [state.diff, state.patch, state.output];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    if (candidate.includes("@@") || candidate.includes("+++ ") || candidate.includes("--- ")) {
-      return candidate;
-    }
+function extractDiff(output: unknown) {
+  if (typeof output !== "string") return null;
+  if (output.includes("@@") || output.includes("+++ ") || output.includes("--- ")) {
+    return output;
   }
   return null;
 }
 
-export function ToolCallView(props: { part: Part; developerMode: boolean }) {
+export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const record = props.part as Part & { tool?: string; state?: Record<string, unknown> };
-  const state = (record.state ?? {}) as Record<string, unknown>;
-  const summary = useMemo(() => summarizeStep(props.part), [props.part]);
-  const title = summary.title?.trim() || String(record.tool ?? "Tool");
+  const summary = useMemo(
+    () =>
+      summarizeStep({
+        id: props.part.toolCallId,
+        type: "tool",
+        sessionID: "",
+        messageID: "",
+        tool: props.part.toolName,
+        state: {
+          input: props.part.input,
+          output: props.part.state === "output-available" ? props.part.output : undefined,
+          error: props.part.state === "output-error" ? props.part.errorText : undefined,
+          status:
+            props.part.state === "output-available"
+              ? "completed"
+              : props.part.state === "output-error"
+                ? "error"
+                : "running",
+        },
+      } as any),
+    [props.part],
+  );
+
+  const title = summary.title?.trim() || props.part.toolName || "Tool";
   const subtitle = summary.detail?.trim() || "";
-  const toolName = typeof record.tool === "string" ? record.tool : "tool";
-  const status = typeof state.status === "string" ? state.status : "unknown";
-  const input = state.input;
-  const output = state.output;
-  const error = typeof state.error === "string" ? state.error : "";
-  const diff = extractDiff(state);
+  const status =
+    props.part.state === "output-available"
+      ? "completed"
+      : props.part.state === "output-error"
+        ? "error"
+        : "running";
+  const input = props.part.input;
+  const output = props.part.state === "output-available" ? props.part.output : undefined;
+  const error = props.part.state === "output-error" ? props.part.errorText : "";
+  const diff = extractDiff(output);
   const diffLines = diff ? normalizeToolText(diff).split("\n") : [];
   const expandable = hasStructuredValue(input) || hasStructuredValue(output) || Boolean(diff) || Boolean(error);
 
@@ -76,7 +97,7 @@ export function ToolCallView(props: { part: Part; developerMode: boolean }) {
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
             <div className="text-xs font-medium text-gray-12">{title}</div>
-            <div className="text-[11px] text-gray-11">{toolName}</div>
+            <div className="text-[11px] text-gray-11">{props.part.toolName}</div>
             {subtitle ? <div className="text-xs text-gray-11">{subtitle}</div> : null}
           </div>
           <div
@@ -103,7 +124,7 @@ export function ToolCallView(props: { part: Part; developerMode: boolean }) {
               <div className="mt-2 grid gap-1 overflow-hidden rounded-md">
                 {diffLines.map((line, index) => (
                   <div
-                    key={`${toolName}-diff-${index}`}
+                    key={`${props.part.toolCallId}-diff-${index}`}
                     className={`whitespace-pre-wrap break-words px-2 py-0.5 font-mono text-[11px] leading-relaxed ${diffLineClass(line)}`}
                   >
                     {line || " "}
@@ -135,7 +156,7 @@ export function ToolCallView(props: { part: Part; developerMode: boolean }) {
 
           {props.developerMode && !expandable ? (
             <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
-              {safeStringify(state)}
+              {safeStringify({ input, output, error, state: props.part.state })}
             </pre>
           ) : null}
         </div>

@@ -1,13 +1,13 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useChat } from "@ai-sdk/react";
 import { useQuery } from "@tanstack/react-query";
 
-import { createClient, unwrap } from "../../app/lib/opencode";
-import { abortSessionSafe } from "../../app/lib/opencode-session";
 import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
 import { SessionDebugPanel } from "./debug-panel.react";
 import { deriveSessionRenderModel } from "./transition-controller";
 import { SessionTranscript } from "./message-list.react";
+import { createOpenworkChatTransport, snapshotToUIMessages } from "./usechat-adapter";
 
 type SessionSurfaceProps = {
   client: OpenworkServerClient;
@@ -27,17 +27,31 @@ function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolea
 
 export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
-  const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rendered, setRendered] = useState<{
     sessionId: string;
     snapshot: OpenworkSessionSnapshot;
   } | null>(null);
-
-  const opencodeClient = useMemo(
-    () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
-    [props.opencodeBaseUrl, props.openworkToken],
+  const hydratedKeyRef = useRef<string | null>(null);
+  const transport = useMemo(
+    () =>
+      createOpenworkChatTransport({
+        baseUrl: props.opencodeBaseUrl,
+        openworkToken: props.openworkToken,
+        sessionId: props.sessionId,
+      }),
+    [props.opencodeBaseUrl, props.openworkToken, props.sessionId],
   );
+  const chat = useChat({
+    id: props.sessionId,
+    transport,
+    onError(nextError) {
+      setError(nextError.message);
+    },
+    onFinish() {
+      void query.refetch();
+    },
+  });
 
   const queryKey = useMemo(
     () => ["react-session-snapshot", props.workspaceId, props.sessionId],
@@ -48,58 +62,59 @@ export function SessionSurface(props: SessionSurfaceProps) {
     queryKey,
     queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
     staleTime: 500,
-    refetchInterval: (current) =>
-      actionBusy || current.state.data?.status.type === "busy" || current.state.data?.status.type === "retry"
-        ? 800
-        : false,
   });
 
-  useEffect(() => {
-    if (!query.data) return;
-    setRendered({ sessionId: props.sessionId, snapshot: query.data });
-  }, [props.sessionId, query.data]);
+  const currentSnapshot = query.data?.session.id === props.sessionId ? query.data : null;
 
-  const snapshot = query.data ?? rendered?.snapshot ?? null;
+  useEffect(() => {
+    if (!currentSnapshot) return;
+    setRendered({ sessionId: props.sessionId, snapshot: currentSnapshot });
+  }, [props.sessionId, currentSnapshot]);
+
+  useEffect(() => {
+    hydratedKeyRef.current = null;
+    setError(null);
+  }, [props.sessionId]);
+
+  useEffect(() => {
+    if (!currentSnapshot) return;
+    const key = `${props.sessionId}:${currentSnapshot.session.time?.updated ?? currentSnapshot.session.time?.created ?? 0}:${currentSnapshot.messages.length}`;
+    if (hydratedKeyRef.current === key) return;
+    hydratedKeyRef.current = key;
+    chat.setMessages(snapshotToUIMessages(currentSnapshot));
+  }, [chat, props.sessionId, currentSnapshot]);
+
+  const snapshot = currentSnapshot ?? rendered?.snapshot ?? null;
+  const chatStreaming = chat.status === "submitted" || chat.status === "streaming";
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
-    renderedSessionId: query.data ? props.sessionId : rendered?.sessionId ?? null,
-    hasSnapshot: Boolean(snapshot),
-    isFetching: query.isFetching,
-    isError: query.isError,
+    renderedSessionId:
+      chat.messages.length > 0 || query.data ? props.sessionId : rendered?.sessionId ?? null,
+    hasSnapshot: Boolean(snapshot) || chat.messages.length > 0,
+    isFetching: query.isFetching || chatStreaming,
+    isError: query.isError || chat.status === "error",
   });
 
   const handleSend = async () => {
     const text = draft.trim();
-    if (!text || actionBusy) return;
-    setActionBusy(true);
+    if (!text || chatStreaming) return;
     setError(null);
     try {
-      unwrap(
-        await opencodeClient.session.promptAsync({
-          sessionID: props.sessionId,
-          parts: [{ type: "text", text }],
-        }),
-      );
+      await chat.sendMessage({ text });
       setDraft("");
-      await query.refetch();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
-    } finally {
-      setActionBusy(false);
     }
   };
 
   const handleAbort = async () => {
-    if (actionBusy) return;
-    setActionBusy(true);
+    if (!chatStreaming) return;
     setError(null);
     try {
-      await abortSessionSafe(opencodeClient, props.sessionId);
+      chat.stop();
       await query.refetch();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to stop run.");
-    } finally {
-      setActionBusy(false);
     }
   };
 
@@ -120,19 +135,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : null}
 
-      {!snapshot && query.isLoading ? (
+      {!snapshot && query.isLoading && chat.messages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
             <div className="text-sm text-dls-secondary">Loading React session view...</div>
           </div>
         </div>
-      ) : query.isError && !snapshot ? (
+      ) : (query.isError || chat.status === "error") && !snapshot && chat.messages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
-            {query.error instanceof Error ? query.error.message : "Failed to load React session view."}
+            {error || (query.error instanceof Error ? query.error.message : "Failed to load React session view.")}
           </div>
         </div>
-      ) : snapshot && snapshot.messages.length === 0 ? (
+      ) : chat.messages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
             <div className="text-sm text-dls-secondary">No transcript yet.</div>
@@ -140,8 +155,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : (
         <SessionTranscript
-          messages={snapshot?.messages ?? []}
-          isStreaming={Boolean(snapshot?.status.type === "busy" || snapshot?.status.type === "retry")}
+          messages={chat.messages}
+          isStreaming={chatStreaming}
           developerMode={props.developerMode}
         />
       )}
@@ -159,14 +174,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
           />
           <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
             <div className="text-xs text-dls-secondary">
-              {statusLabel(snapshot ?? undefined, actionBusy)}
+              {statusLabel(snapshot ?? undefined, chatStreaming)}
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 className="rounded-full border border-dls-border px-4 py-2 text-sm text-dls-secondary transition-colors hover:bg-dls-hover disabled:opacity-50"
                 onClick={handleAbort}
-                disabled={actionBusy || snapshot?.status.type !== "busy"}
+                disabled={!chatStreaming}
               >
                 Stop
               </button>
@@ -174,7 +189,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 type="button"
                 className="rounded-full bg-[var(--dls-accent)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)] disabled:opacity-50"
                 onClick={handleSend}
-                disabled={actionBusy || !draft.trim() || model.transitionState !== "idle"}
+                disabled={chatStreaming || !draft.trim() || model.transitionState !== "idle"}
               >
                 Run task
               </button>
