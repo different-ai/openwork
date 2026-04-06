@@ -2,9 +2,9 @@ import { LandingTrustOverview } from "../../components/landing-trust";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork — Trust",
+  title: "OpenWork — Security & Data Privacy",
   description:
-    "How OpenWork approaches deployment control, local-first architecture, provider choice, and enterprise trust."
+    "How OpenWork handles data, subprocessors, incident response, and compliance for self-hosted enterprise deployments."
 };
 
 export default async function TrustPage() {
