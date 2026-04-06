@@ -54,6 +54,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [slashOpen, setSlashOpen] = useState(false);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [menuIndex, setMenuIndex] = useState(0);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
@@ -62,10 +63,12 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     setSlashOpen(Boolean(slashMatch));
+    setMenuIndex(0);
   }, [slashMatch]);
 
   useEffect(() => {
     setMentionOpen(Boolean(mentionMatch));
+    setMenuIndex(0);
   }, [mentionMatch]);
 
   useEffect(() => {
@@ -109,8 +112,61 @@ export function ReactSessionComposer(props: ComposerProps) {
       ? fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"] }).map((entry) => entry.obj).slice(0, 8)
       : mentionItems.slice(0, 8);
 
+  const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
+  const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
+
+  useEffect(() => {
+    if (!activeItems.length) {
+      setMenuIndex(0);
+      return;
+    }
+    setMenuIndex((current) => Math.max(0, Math.min(current, activeItems.length - 1)));
+  }, [activeItems.length]);
+
+  const acceptActiveItem = () => {
+    if (!activeItems.length) return false;
+    if (activeMenu === "slash") {
+      const command = slashFiltered[menuIndex];
+      if (!command) return false;
+      props.onDraftChange(`/${command.name} `);
+      return true;
+    }
+    if (activeMenu === "mention") {
+      const item = mentionFiltered[menuIndex];
+      if (!item) return false;
+      props.onInsertMention(item.kind, item.value);
+      return true;
+    }
+    return false;
+  };
+
+  const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (!activeMenu || !activeItems.length) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setMenuIndex((current) => (current + 1) % activeItems.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setMenuIndex((current) => (current - 1 + activeItems.length) % activeItems.length);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      void acceptActiveItem();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setSlashOpen(false);
+      setMentionOpen(false);
+    }
+  };
+
   return (
-    <div className="mx-auto w-full max-w-[800px] px-4">
+    <div className="mx-auto w-full max-w-[800px] px-4" onKeyDownCapture={handleKeyDownCapture}>
       <div className="rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
         <div className="flex items-center justify-between gap-3 border-b border-dls-border px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
@@ -265,7 +321,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                 <button
                   key={command.id}
                   type="button"
-                  className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
+                  className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-dls-hover" : ""}`}
                   onClick={() => props.onDraftChange(`/${command.name} `)}
                 >
                   <div className="text-sm font-medium text-dls-text">/{command.name}</div>
@@ -282,7 +338,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                 <button
                   key={item.id}
                   type="button"
-                  className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
+                  className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "mention" && mentionFiltered[menuIndex]?.id === item.id ? "bg-dls-hover" : ""}`}
                   onClick={() => props.onInsertMention(item.kind, item.value)}
                 >
                   <div className="text-sm font-medium text-dls-text">@{item.label}</div>
