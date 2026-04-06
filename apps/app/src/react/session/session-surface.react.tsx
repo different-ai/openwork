@@ -258,7 +258,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setNotice({ title: props.attachmentsDisabledReason ?? "Attachments are unavailable.", tone: "warning" });
       return;
     }
-    const next = files.map((file) => ({
+    const oversized = files.filter((file) => file.size > 25 * 1024 * 1024);
+    const accepted = files.filter((file) => file.size <= 25 * 1024 * 1024);
+    if (oversized.length) {
+      setNotice({
+        title: oversized.length === 1 ? `${oversized[0]?.name ?? "File"} is too large` : `${oversized.length} files are too large`,
+        description: "Files over 25 MB were skipped.",
+        tone: "warning",
+      });
+    }
+    if (!accepted.length) return;
+    const next = accepted.map((file) => ({
       id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
       name: file.name,
       mimeType: file.type || "application/octet-stream",

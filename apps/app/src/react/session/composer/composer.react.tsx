@@ -59,6 +59,16 @@ function countLines(text: string) {
   return text ? text.split(/\r?\n/).length : 0;
 }
 
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isImageAttachment(attachment: ComposerAttachment) {
+  return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
+}
+
 export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -264,13 +274,28 @@ export function ReactSessionComposer(props: ComposerProps) {
           </button>
         </div>
         {props.attachments.length > 0 ? (
-          <div className="flex flex-wrap gap-2 border-b border-dls-border px-4 py-3">
+          <div className="grid gap-3 border-b border-dls-border px-4 py-3 sm:grid-cols-2">
             {props.attachments.map((attachment) => (
-              <div key={attachment.id} className="flex items-center gap-2 rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1.5 text-xs text-dls-text">
-                <span className="max-w-[220px] truncate">{attachment.name}</span>
+              <div key={attachment.id} className="flex items-center gap-3 rounded-2xl border border-dls-border bg-dls-hover/40 px-3 py-3 text-xs text-dls-text">
+                {isImageAttachment(attachment) && attachment.previewUrl ? (
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
+                    <img src={attachment.previewUrl} alt={attachment.name} className="h-full w-full object-cover" />
+                  </div>
+                ) : (
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-surface text-lg">
+                    {isImageAttachment(attachment) ? "🖼️" : "📄"}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-dls-text">{attachment.name}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
+                    <span className="truncate rounded-full bg-dls-surface px-2 py-0.5">{attachment.mimeType || "application/octet-stream"}</span>
+                    <span>{formatBytes(attachment.size)}</span>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  className="text-dls-secondary transition-colors hover:text-dls-text"
+                  className="rounded-full border border-dls-border bg-dls-surface px-2 py-1 text-dls-secondary transition-colors hover:text-dls-text"
                   onClick={() => props.onRemoveAttachment(attachment.id)}
                 >
                   ×
