@@ -115,7 +115,6 @@ import {
 import { ReactIsland } from "../../react/island";
 import { reactSessionEnabled } from "../../react/feature-flag";
 import { SessionSurface } from "../../react/session/session-surface.react";
-import { SessionSyncProvider } from "../../react/session/session-sync-provider.react";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -3201,18 +3200,6 @@ export default function SessionView(props: SessionViewProps) {
 
           <div class="flex-1 flex overflow-hidden">
             <div class="relative min-w-0 flex-1 overflow-hidden bg-dls-surface">
-              <Show when={showReactSessionSurface()}>
-                <ReactIsland
-                  class="contents"
-                  instanceKey={props.runtimeWorkspaceId!}
-                  component={SessionSyncProvider}
-                  props={{
-                    workspaceId: props.runtimeWorkspaceId!,
-                    opencodeBaseUrl: reactSessionOpencodeBaseUrl(),
-                    openworkToken: reactSessionToken(),
-                  }}
-                />
-              </Show>
               <div
                 class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20" : "pt-10"} bg-dls-surface`}
                 style={{ contain: "layout paint style" }}
