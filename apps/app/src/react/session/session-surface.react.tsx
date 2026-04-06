@@ -4,9 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 
 import { createClient, unwrap } from "../../app/lib/opencode";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
-import type { OpenworkServerClient, OpenworkSessionMessage, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
+import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
 import { SessionDebugPanel } from "./debug-panel.react";
 import { deriveSessionRenderModel } from "./transition-controller";
+import { SessionTranscript } from "./message-list.react";
 
 type SessionSurfaceProps = {
   client: OpenworkServerClient;
@@ -17,52 +18,11 @@ type SessionSurfaceProps = {
   developerMode: boolean;
 };
 
-function partText(part: Record<string, unknown>) {
-  if (typeof part.text === "string" && part.text.trim()) return part.text.trim();
-  if (typeof part.reasoning === "string" && part.reasoning.trim()) return part.reasoning.trim();
-  try {
-    return JSON.stringify(part, null, 2);
-  } catch {
-    return "[unsupported part]";
-  }
-}
-
-function roleLabel(role: string) {
-  if (role === "user") return "You";
-  if (role === "assistant") return "OpenWork";
-  return role;
-}
-
 function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
   if (busy) return "Running...";
   if (snapshot?.status.type === "busy") return "Running...";
   if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
   return "Ready";
-}
-
-function MessageCard(props: { message: OpenworkSessionMessage }) {
-  const role = props.message.info.role;
-  const bubbleClass =
-    role === "user"
-      ? "border-blue-6/35 bg-blue-3/25 text-gray-12"
-      : "border-dls-border bg-dls-surface text-gray-12";
-
-  return (
-    <article className={`mx-auto flex w-full max-w-[760px] ${role === "user" ? "justify-end" : "justify-start"}`}>
-      <div className={`w-full rounded-[24px] border px-5 py-4 shadow-[var(--dls-card-shadow)] ${bubbleClass}`}>
-        <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-dls-secondary">
-          {roleLabel(role)}
-        </div>
-        <div className="space-y-3">
-          {props.message.parts.map((part) => (
-            <div key={part.id} className="text-sm leading-7 whitespace-pre-wrap break-words">
-              {partText(part as Record<string, unknown>)}
-            </div>
-          ))}
-        </div>
-      </div>
-    </article>
-  );
 }
 
 export function SessionSurface(props: SessionSurfaceProps) {
@@ -179,11 +139,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         </div>
       ) : (
-        <div className="space-y-4">
-          {snapshot?.messages.map((message) => (
-            <MessageCard key={message.info.id} message={message} />
-          ))}
-        </div>
+        <SessionTranscript
+          messages={snapshot?.messages ?? []}
+          isStreaming={Boolean(snapshot?.status.type === "busy" || snapshot?.status.type === "retry")}
+          developerMode={props.developerMode}
+        />
       )}
 
       <div className="mx-auto w-full max-w-[800px] px-4">

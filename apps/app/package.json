@@ -60,8 +60,11 @@
     "lucide-solid": "^0.562.0",
     "marked": "^17.0.1",
     "react": "^19.1.1",
+    "react-markdown": "^10.1.0",
     "react-dom": "^19.1.1",
-    "solid-js": "^1.9.0"
+    "remark-gfm": "^4.0.1",
+    "solid-js": "^1.9.0",
+    "streamdown": "^2.5.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.2",
