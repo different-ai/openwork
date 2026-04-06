@@ -16,6 +16,8 @@ import {
   $isRangeSelection,
   COMMAND_PRIORITY_HIGH,
   KEY_ENTER_COMMAND,
+  type SerializedTextNode,
+  type Spread,
   TextNode,
   type EditorConfig,
   type NodeKey,
@@ -34,6 +36,16 @@ type EditorProps = {
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
 };
 
+type SerializedComposerMentionNode = Spread<
+  {
+    mentionValue: string;
+    mentionKind: "agent" | "file";
+    type: "composer-mention";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
 class ComposerMentionNode extends TextNode {
   __value: string;
   __kind: "agent" | "file";
@@ -46,10 +58,24 @@ class ComposerMentionNode extends TextNode {
     return new ComposerMentionNode(node.__value, node.__kind, node.__key);
   }
 
-  constructor(value: string, kind: "agent" | "file", key?: NodeKey) {
+  static override importJSON(serializedNode: SerializedComposerMentionNode) {
+    return $createComposerMentionNode(serializedNode.mentionValue, serializedNode.mentionKind);
+  }
+
+  constructor(value = "", kind: "agent" | "file" = "file", key?: NodeKey) {
     super(`@${value}`, key);
     this.__value = value;
     this.__kind = kind;
+  }
+
+  override exportJSON(): SerializedComposerMentionNode {
+    return {
+      ...super.exportJSON(),
+      mentionValue: this.__value,
+      mentionKind: this.__kind,
+      type: "composer-mention",
+      version: 1,
+    };
   }
 
   override createDOM(_config: EditorConfig) {
