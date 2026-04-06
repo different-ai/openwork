@@ -307,6 +307,13 @@ const formatMcpStatusLabel = (status: McpStatus | undefined) => {
   }
 };
 
+const mcpStatusBadgeClass = (status: McpStatus | undefined) => {
+  if (status?.status === "connected") {
+    return "bg-green-3 text-green-11";
+  }
+  return "bg-gray-3 text-gray-10";
+};
+
 const insertTextWithBreaks = (target: HTMLElement, text: string) => {
   const chunks = text.split("\n");
   chunks.forEach((chunk, index) => {
@@ -2006,7 +2013,7 @@ export default function Composer(props: ComposerProps) {
                                             <div class="min-w-0 flex-1">
                                               <div class="flex items-center justify-between gap-3">
                                                 <div class="truncate text-xs font-semibold text-gray-11">{mcp.name}</div>
-                                                <span class="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-10">
+                                                <span class={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(mcp.status)}`}>
                                                   {formatMcpStatusLabel(mcp.status)}
                                                 </span>
                                               </div>
