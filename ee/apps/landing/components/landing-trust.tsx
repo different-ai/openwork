@@ -188,7 +188,6 @@ export function LandingTrustOverview(props: SharedProps) {
               We treat security not as an afterthought, but as a foundational pillar of everything we build.
               This mindset drives our development processes, infrastructure decisions, and organizational policies.
               We treat the data entrusted to us with the utmost care and responsibility.
-              By being Open Source, we welcome verification and feedback on how we can do even better.
             </p>
           </section>
 

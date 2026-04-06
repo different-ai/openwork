@@ -98,10 +98,10 @@ export const trustTopics: TrustTopic[] = [
     label: "Self-hosting",
     title: "Your infra, your rules.",
     panelIntro:
-      "Enterprise governance, regional compliance, and internal security reviews get simpler when you own the stack. Self-hosted paths get the same feature set as cloud — not a stripped-down fallback.",
+      "Enterprise governance, regional compliance, and internal security reviews get simpler when you own the stack (and the data!). Self-host with confidence, not as a fallback.",
     bullets: [
       "OpenWork supports desktop-hosted, CLI-hosted, and hosted cloud server paths.",
-      "Self-hosted paths remain valid and are not treated as a secondary deployment mode.",
+      "We help enterpises avoid lock-in with a single LLM provider and retain their data ownership.",
       "Your team keeps infrastructure ownership when you deploy in your own environment.",
       "Enterprise review does not require adopting a hosted-only control plane."
     ],
@@ -121,12 +121,12 @@ export const trustTopics: TrustTopic[] = [
     label: "Local-first workflows",
     title: "Local-first by design.",
     panelIntro:
-      "Most AI tooling defaults to cloud and asks you to opt out. OpenWork reverses that — work starts on your machine, and cloud connections are explicit choices your team makes, not hidden defaults.",
+      "Most AI tooling defaults to cloud and asks you to opt out. We are local-first, and cloud connections are explicit choices your team makes, not hidden defaults.",
     bullets: [
       "The desktop-hosted app/server path is a first-class way to run OpenWork.",
       "Hosted and self-hosted modes share the same user-level connect flow instead of separate products.",
       "OpenWork stays open, local-first, and standards-based in the product vision.",
-      "Runtime boundaries stay legible enough for enterprise review."
+      "Runtime boundaries stay legible and transparent for enterprise review."
     ],
     icon: HardDrive,
     toneClassName: "bg-emerald-50 text-emerald-700",
@@ -148,12 +148,12 @@ export const trustTopics: TrustTopic[] = [
     label: "BYOK",
     title: "Bring your own keys.",
     panelIntro:
-      "Keep your existing model provider agreements intact. When you connect directly with your own credentials, OpenWork never intermediates that relationship — your usage stays between you and your provider.",
+      "Keep your existing model provider agreements intact. When you connect directly with your own credentials, your usage stays between you and your provider.",
     bullets: [
-      "OpenWork supports bring-your-own-key model access.",
-      "Teams can keep provider choice aligned with internal approvals and procurement.",
+      "We do not collect or analyze usage or performance analytics. No telemetry without consent.",
+      "Individual Teams can keep provider choice aligned with internal approvals and procurement.",
       "Third-party model providers connected with your own credentials are governed by their own terms.",
-      "Proxy gateways such as LiteLLM and Cloudflare AI Gateway are also supported. Just ask us about it. "
+      "We also support custom proxy gateways such as LiteLLM and Cloudflare AI Gateway. "
     ],
     icon: KeyRound,
     toneClassName: "bg-violet-50 text-violet-700",
@@ -165,11 +165,11 @@ export const trustTopics: TrustTopic[] = [
   {
     slug: "data-residency-controls",
     label: "Data residency",
-    title: "Data stays where you put it.",
+    title: "The Data stays where your company or customers are.",
     panelIntro:
-      "Residency isn't a feature flag — it's a consequence of where you deploy. Self-hosted environments give your team full authority over region, network boundary, and egress policy without negotiating with a control plane.",
+      "Data regulations shouldn't restrict innovation. Self-hosted environments give your team full authority over region, network boundary, and egress policy without negotiating with a control plane.",
     bullets: [
-      "Residency decisions follow where your team runs OpenWork.",
+      "We let you choose your own data Residency instead of imposing ours.",
       "Self-hosted environments keep infrastructure location under customer control.",
       "OpenWork avoids forcing a cloud-only lock-in model for teams that need residency control.",
       "Provider choice and deployment choice stay separate for cleaner review."
@@ -188,11 +188,11 @@ export const trustTopics: TrustTopic[] = [
   {
     slug: "incident-response",
     label: "Incident response",
-    title: "Private, time-bound disclosure.",
+    title: "We'll notify of any major security incident withtin 72 hours.",
     panelIntro:
-      "We ask for private reports before public disclosure, commit to a 3-day acknowledgment and 7-day triage window, and treat the security policy as a public contract — not aspirational language.",
+      "We commit to a 3-day acknowledgment and notification of any major security incident. By default, we also commit to a 7-day triage and resolution for high priority issues.",
     bullets: [
-      "Security issues should be reported privately rather than through public GitHub issues.",
+      "Security issues can be reported privately or via a github issue if you're a security researcher.",
       "The public security policy asks reporters to include impact and reproduction details.",
       "OpenWork commits to acknowledge receipt within 3 business days.",
       "OpenWork commits to share an initial triage status within 7 business days."
@@ -217,12 +217,12 @@ export const trustTopics: TrustTopic[] = [
     label: "Status page access",
     title: "Real operational data, on request.",
     panelIntro:
-      "Enterprise reviews shouldn't rely on marketing copy for uptime claims. Request access to live status data during procurement so your security team can evaluate reliability on actual evidence.",
+      "We uphold SLAs, uptime and other reliability parameters via measurable metrics, not a marketing copy.",
     bullets: [
       "Status information is available by request.",
-      "The trust page does not imply a formal uptime SLA.",
       "Operational review can happen without padded uptime claims.",
-      "The same team inbox handles status page requests from enterprise prospects."
+      "Request access to live status data during procurement so you can evaluate our reliability.",
+      "Feel free to request access to our status page by clicking at the button below:"
     ],
     icon: LifeBuoy,
     toneClassName: "bg-rose-50 text-rose-700",

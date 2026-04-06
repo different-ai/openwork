@@ -4,7 +4,7 @@ import { getGithubData } from "../../lib/github";
 export const metadata = {
   title: "OpenWork — Trust",
   description:
-    "A concise overview of how OpenWork approaches deployment control, local-first architecture, provider choice, and enterprise trust."
+    "How OpenWork approaches deployment control, local-first architecture, provider choice, and enterprise trust."
 };
 
 export default async function TrustPage() {

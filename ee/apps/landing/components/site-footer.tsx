@@ -34,7 +34,7 @@ export function SiteFooter() {
             Enterprise
           </Link>
           <Link href="/trust" className="transition-colors hover:text-gray-800">
-            Trust
+            Trust Center
           </Link>
           <Link href="/privacy" className="transition-colors hover:text-gray-800">
             Privacy
@@ -42,7 +42,7 @@ export function SiteFooter() {
           <Link href="/terms" className="transition-colors hover:text-gray-800">
             Terms
           </Link>
-          <div>© 2026 OpenWork Project.</div>
+          <div>© 2026 Different AI</div>
         </div>
       </div>
     </footer>
