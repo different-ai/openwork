@@ -1,5 +1,6 @@
 import {
   Match,
+  Show,
   Switch,
   createEffect,
   createMemo,
@@ -111,6 +112,7 @@ import {
   readStoredFontZoom,
 } from "./lib/font-zoom";
 import {
+  buildOpenworkWorkspaceBaseUrl,
   parseOpenworkWorkspaceIdFromUrl,
   readOpenworkConnectInviteFromSearch,
   stripOpenworkConnectInviteFromUrl,
@@ -120,6 +122,9 @@ import {
   writeOpenworkServerSettings,
   type OpenworkServerSettings,
 } from "./lib/openwork-server";
+import { ReactIsland } from "../react/island";
+import { reactSessionEnabled } from "../react/feature-flag";
+import { ReactSessionRuntime } from "../react/session/runtime-sync.react";
 import {
   parseBundleDeepLink,
   stripBundleQuery,
@@ -2066,6 +2071,24 @@ export default function App() {
     error: error(),
   });
 
+  const reactSessionRuntimeEnabled = createMemo(() => reactSessionEnabled());
+  const reactSessionRuntimeBaseUrl = createMemo(() => {
+    const workspaceId = runtimeWorkspaceId()?.trim() ?? "";
+    const baseUrl = openworkServerClient()?.baseUrl?.trim() ?? "";
+    if (!workspaceId || !baseUrl) return "";
+    const mounted = buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl;
+    return `${mounted.replace(/\/+$/, "")}/opencode`;
+  });
+  const reactSessionRuntimeToken = createMemo(
+    () => openworkServerClient()?.token?.trim() || openworkServerSettings().token?.trim() || "",
+  );
+  const showReactSessionRuntime = createMemo(
+    () =>
+      reactSessionRuntimeEnabled() &&
+      openworkServerStatus() === "connected" &&
+      Boolean(runtimeWorkspaceId()?.trim() && reactSessionRuntimeBaseUrl() && reactSessionRuntimeToken()),
+  );
+
   const settingsTabs = new Set<SettingsTab>([
     "general",
     "den",
@@ -2168,6 +2191,18 @@ export default function App() {
             <ExtensionsProvider store={extensionsStore}>
               <AutomationsProvider store={automationsStore}>
                 <StatusToastsProvider store={statusToastsStore}>
+                  <Show when={showReactSessionRuntime()}>
+                    <ReactIsland
+                      class="hidden"
+                      instanceKey={`react-runtime:${runtimeWorkspaceId()!}`}
+                      component={ReactSessionRuntime}
+                      props={{
+                        workspaceId: runtimeWorkspaceId()!,
+                        opencodeBaseUrl: reactSessionRuntimeBaseUrl(),
+                        openworkToken: reactSessionRuntimeToken(),
+                      }}
+                    />
+                  </Show>
             <Switch>
               <Match when={currentView() === "session"}>
                 <SessionView {...sessionProps()} />

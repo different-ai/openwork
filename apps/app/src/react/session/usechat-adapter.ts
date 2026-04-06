@@ -87,22 +87,38 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
     role: message.info.role,
     parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
       if (part.type === "text") {
-        return [{ type: "text", text: getTextPartValue(part), state: "done" as const }];
+        return [{
+          type: "text",
+          text: getTextPartValue(part),
+          state: "done" as const,
+          providerMetadata: { opencode: { partId: part.id } },
+        }];
       }
       if (part.type === "reasoning") {
-        return [{ type: "reasoning", text: getTextPartValue(part), state: "done" as const }];
+        return [{
+          type: "reasoning",
+          text: getTextPartValue(part),
+          state: "done" as const,
+          providerMetadata: { opencode: { partId: part.id } },
+        }];
       }
       if (part.type === "file") {
         const record = part as Part & { url?: string; filename?: string; mime?: string };
         return record.url
-          ? [{ type: "file", url: record.url, filename: record.filename, mediaType: record.mime ?? "application/octet-stream" }]
+          ? [{
+              type: "file",
+              url: record.url,
+              filename: record.filename,
+              mediaType: record.mime ?? "application/octet-stream",
+              providerMetadata: { opencode: { partId: part.id } },
+            }]
           : [];
       }
       if (part.type === "tool") {
-        return [mapToolPart(part)];
+        return [{ ...mapToolPart(part), providerMetadata: { opencode: { partId: part.id } } }];
       }
       if (part.type === "step-start") {
-        return [{ type: "step-start" }];
+        return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
       }
       return [];
     }),
