@@ -103,7 +103,7 @@ function TopicPanel({ topic, callHref }: { topic: TrustTopic; callHref: string }
   const Icon = topic.icon;
 
   return (
-    <div className="landing-shell flex h-full flex-col justify-between rounded-[1.75rem] p-5 md:p-6">
+    <div className="landing-shell flex h-full flex-col rounded-[1.75rem] p-5 md:p-6">
       <div>
         <div className="flex items-center gap-3">
           <div
@@ -123,11 +123,11 @@ function TopicPanel({ topic, callHref }: { topic: TrustTopic; callHref: string }
       {topic.slug === "subprocessors" ? (
         <SubprocessorRows />
       ) : (
-        <div className="mt-3 grid gap-2">
+        <div className="mt-3 flex flex-1 flex-col gap-2">
           {topic.bullets.map((bullet) => (
             <div
               key={bullet}
-              className="rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-2 text-[13px] leading-relaxed text-slate-600"
+              className="flex flex-1 items-center rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-2 text-[13px] leading-relaxed text-slate-600"
             >
               {bullet}
             </div>
@@ -173,7 +173,6 @@ export function LandingTrustOverview(props: SharedProps) {
             stars={props.stars}
             callUrl={callHref}
             downloadHref={props.downloadHref}
-            active="trust"
           />
         </div>
 
