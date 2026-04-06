@@ -36,6 +36,18 @@ function formatRateLimit(apiKey: DenOrgApiKey) {
   return `${apiKey.rateLimitMax}/${seconds}s`;
 }
 
+function formatKeyPreview(apiKey: DenOrgApiKey) {
+  if (apiKey.start) {
+    return `${apiKey.start}...`;
+  }
+
+  if (apiKey.prefix) {
+    return `${apiKey.prefix}${apiKey.id.slice(0, 6)}...`;
+  }
+
+  return `${apiKey.id.slice(0, 6)}...`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -56,7 +68,9 @@ export function ApiKeysScreen() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [createdKeyName, setCreatedKeyName] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const access = useMemo(
@@ -109,6 +123,8 @@ export function ApiKeysScreen() {
     setCreating(true);
     setError(null);
     setCreatedKey(null);
+    setCreatedKeyName(null);
+    setCopied(false);
     try {
       const { response, payload } = await requestJson(
         `/v1/orgs/${encodeURIComponent(orgId)}/api-keys`,
@@ -129,13 +145,29 @@ export function ApiKeysScreen() {
       }
 
       setCreatedKey(nextKey);
+      setCreatedKeyName(name);
       setName("");
+      setShowCreateForm(false);
       await loadApiKeys();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to create API key.");
     } finally {
       setCreating(false);
     }
+  }
+
+  function openCreateForm() {
+    setError(null);
+    setCopied(false);
+    setCreatedKey(null);
+    setCreatedKeyName(null);
+    setName("");
+    setShowCreateForm(true);
+  }
+
+  function closeCreateForm() {
+    setName("");
+    setShowCreateForm(false);
   }
 
   async function handleDelete(apiKey: DenOrgApiKey) {
@@ -213,60 +245,81 @@ export function ApiKeysScreen() {
             </div>
           ) : null}
 
-          <div className="mb-6 grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-            <form
-              onSubmit={handleCreate}
-              className="rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]"
-            >
-              <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+            {createdKey ? (
+              <div className="rounded-[24px] bg-[#0f172a] p-6 text-white">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[16px] font-semibold tracking-[-0.03em]">
+                      {createdKeyName ? `${createdKeyName} is ready` : "Your new API key is ready"}
+                    </p>
+                    <p className="mt-1 text-[14px] leading-6 text-slate-300">
+                      Copy it now. After this state closes, only the name and leading characters remain visible in the table.
+                    </p>
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-[12px] font-medium text-emerald-200">
+                    <ShieldCheck className="h-4 w-4" />
+                    600 req / min
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-[20px] border border-white/10 bg-white/5 p-4">
+                  <code className="block break-all text-[13px] leading-6 text-emerald-200">{createdKey}</code>
+                </div>
+
+                <div className="mt-5 flex flex-wrap justify-end gap-3">
+                  <DenButton variant="secondary" icon={Copy} onClick={() => void copyCreatedKey()}>
+                    {copied ? "Copied" : "Copy key"}
+                  </DenButton>
+                  <DenButton onClick={openCreateForm}>Create another key</DenButton>
+                </div>
+              </div>
+            ) : showCreateForm ? (
+              <form onSubmit={handleCreate}>
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Issue a new key</p>
+                    <p className="mt-1 text-[14px] leading-6 text-gray-500">
+                      Keys are always issued for your own membership in this workspace and inherit the built-in request limit.
+                    </p>
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-medium text-emerald-700">
+                    <ShieldCheck className="h-4 w-4" />
+                    600 req / min
+                  </div>
+                </div>
+
+                <label className="grid gap-3">
+                  <span className="text-[14px] font-medium text-gray-700">Key name</span>
+                  <DenInput
+                    type="text"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="CI worker"
+                    required
+                  />
+                </label>
+
+                <div className="mt-5 flex flex-wrap justify-end gap-3">
+                  <DenButton type="button" variant="secondary" onClick={closeCreateForm}>
+                    Cancel
+                  </DenButton>
+                  <DenButton type="submit" loading={creating}>
+                    Create API key
+                  </DenButton>
+                </div>
+              </form>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Issue a new key</p>
+                  <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Create a new API key</p>
                   <p className="mt-1 text-[14px] leading-6 text-gray-500">
-                    Keys are always issued for your own membership in this workspace and inherit the built-in request limit.
+                    Issue a named, rate-limited key for your own org membership when you need one.
                   </p>
                 </div>
-                <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-medium text-emerald-700">
-                  <ShieldCheck className="h-4 w-4" />
-                  600 req / min
-                </div>
+                <DenButton onClick={openCreateForm}>New key</DenButton>
               </div>
-
-              <label className="grid gap-3">
-                <span className="text-[14px] font-medium text-gray-700">Key name</span>
-                <DenInput
-                  type="text"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="CI worker"
-                  required
-                />
-              </label>
-
-              <div className="mt-5 flex justify-end">
-                <DenButton type="submit" loading={creating}>
-                  Create API key
-                </DenButton>
-              </div>
-            </form>
-
-            <div className="rounded-[30px] border border-gray-200 bg-[#0f172a] p-6 text-white shadow-[0_18px_48px_-34px_rgba(15,23,42,0.5)]">
-              <p className="text-[16px] font-semibold tracking-[-0.03em]">One-time secret</p>
-              <p className="mt-2 text-[14px] leading-6 text-slate-300">
-                Save the key when it is created. After this screen closes, only the name and leading characters remain visible.
-              </p>
-
-              <div className="mt-5 rounded-[24px] border border-white/10 bg-white/5 p-4">
-                <code className="block break-all text-[13px] leading-6 text-emerald-200">
-                  {createdKey ?? "Create a key to reveal the secret here."}
-                </code>
-              </div>
-
-              <div className="mt-4 flex justify-end">
-                <DenButton variant="secondary" icon={Copy} onClick={() => void copyCreatedKey()} disabled={!createdKey}>
-                  {copied ? "Copied" : "Copy key"}
-                </DenButton>
-              </div>
-            </div>
+            )}
           </div>
 
           <div className="overflow-hidden rounded-[28px] border border-gray-100 bg-white">
@@ -293,7 +346,7 @@ export function ApiKeysScreen() {
                       {apiKey.name ?? apiKey.start ?? "Untitled key"}
                     </p>
                     <p className="mt-1 truncate text-[12px] text-gray-400">
-                      {apiKey.prefix ?? ""}{apiKey.start ?? apiKey.id.slice(0, 6)}... {formatDateTime(apiKey.createdAt)}
+                      {formatKeyPreview(apiKey)} {formatDateTime(apiKey.createdAt)}
                     </p>
                   </div>
 
