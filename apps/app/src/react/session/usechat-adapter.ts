@@ -26,6 +26,7 @@ type InternalPartState = {
   textStarted: Set<string>;
   reasoningStarted: Set<string>;
   partKinds: Map<string, Part["type"]>;
+  partSessions: Map<string, string>;
   tools: Map<string, ToolStreamState>;
   assistantMessageId: string | null;
   streamFinished: boolean;
@@ -125,6 +126,7 @@ function createPartState(): InternalPartState {
     textStarted: new Set<string>(),
     reasoningStarted: new Set<string>(),
     partKinds: new Map<string, Part["type"]>(),
+    partSessions: new Map<string, string>(),
     tools: new Map<string, ToolStreamState>(),
     assistantMessageId: null,
     streamFinished: false,
@@ -267,6 +269,7 @@ function handleEventChunk(
 
     ensureAssistantStart(controller, state, part.messageID);
     state.partKinds.set(part.id, part.type);
+    state.partSessions.set(part.id, part.sessionID);
 
     if (part.type === "text") {
       if (!state.textStarted.has(part.id)) {
@@ -306,9 +309,13 @@ function handleEventChunk(
     const record = (event.properties ?? {}) as Record<string, unknown>;
     const messageID = typeof record.messageID === "string" ? record.messageID : null;
     const partID = typeof record.partID === "string" ? record.partID : null;
+    const recordSessionID = typeof record.sessionID === "string" ? record.sessionID : null;
     const field = typeof record.field === "string" ? record.field : null;
     const delta = typeof record.delta === "string" ? record.delta : "";
     if (!messageID || !partID || !field || !delta) return;
+
+    const ownerSessionID = recordSessionID ?? state.partSessions.get(partID) ?? null;
+    if (ownerSessionID !== sessionId) return;
 
     ensureAssistantStart(controller, state, messageID);
 
