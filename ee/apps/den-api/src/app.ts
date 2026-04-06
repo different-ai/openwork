@@ -125,6 +125,9 @@ app.get(
         version: "dev",
         description: "OpenAPI spec for the Den control plane API.",
       },
+      servers: [
+        { url: "https://api.openworklabs.com" },
+      ],
       tags: [
         { name: "System", description: "Service health and operational routes." },
         { name: "Documentation", description: "OpenAPI document and Swagger UI routes." },
