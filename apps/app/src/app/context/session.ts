@@ -1118,7 +1118,10 @@ export function createSessionStore(options: {
     }
   }
 
-  async function selectSession(sessionID: string) {
+  async function selectSession(
+    sessionID: string,
+    selectOptions?: { skipHealthCheck?: boolean; source?: string },
+  ) {
     const c = options.client();
     if (!c) return;
 
@@ -1159,15 +1162,20 @@ export function createSessionStore(options: {
     const run = (async () => {
       mark("start");
 
-      mark("checking health");
-      try {
-        await withTimeout(c.global.health(), 3000, "health");
-        mark("health ok");
-      } catch (error) {
-        mark("health FAILED", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        throw new Error(t("app.connection_lost", currentLocale()));
+      const skipHealthCheck = selectOptions?.skipHealthCheck === true;
+      if (skipHealthCheck) {
+        mark("health skipped", { source: selectOptions?.source ?? "unknown" });
+      } else {
+        mark("checking health");
+        try {
+          await withTimeout(c.global.health(), 3000, "health");
+          mark("health ok");
+        } catch (error) {
+          mark("health FAILED", {
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+          throw new Error(t("app.connection_lost", currentLocale()));
+        }
       }
       if (abortIfStale("selection changed after health")) return;
 

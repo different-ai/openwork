@@ -114,8 +114,13 @@ pub fn engine_info(
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
 ) -> EngineInfo {
-    let mut state = manager.inner.lock().expect("engine mutex poisoned");
+    let state = manager.inner.lock().expect("engine mutex poisoned");
     if state.runtime == EngineRuntime::Orchestrator {
+        let runtime = state.runtime.clone();
+        let fallback_project_dir = state.project_dir.clone();
+        let fallback_username = state.opencode_username.clone();
+        let fallback_password = state.opencode_password.clone();
+        drop(state);
         let data_dir = orchestrator_manager
             .inner
             .lock()
@@ -142,18 +147,18 @@ pub fn engine_info(
             .as_ref()
             .and_then(|active| status.workspaces.iter().find(|ws| &ws.id == active))
             .map(|ws| ws.path.clone())
-            .or_else(|| state.project_dir.clone());
+            .or(fallback_project_dir.clone());
 
         // The orchestrator can keep running across app relaunches. In that case, the in-memory
         // EngineManager state (including opencode basic auth) is lost. Persist a small
         // auth snapshot next to openwork-orchestrator-state.json so the UI can reconnect.
         let auth_snapshot = orchestrator::read_orchestrator_auth(&data_dir);
-        let opencode_username = state.opencode_username.clone().or_else(|| {
+        let opencode_username = fallback_username.or_else(|| {
             auth_snapshot
                 .as_ref()
                 .and_then(|auth| auth.opencode_username.clone())
         });
-        let opencode_password = state.opencode_password.clone().or_else(|| {
+        let opencode_password = fallback_password.or_else(|| {
             auth_snapshot
                 .as_ref()
                 .and_then(|auth| auth.opencode_password.clone())
@@ -161,7 +166,7 @@ pub fn engine_info(
         let project_dir = project_dir.or_else(|| auth_snapshot.and_then(|auth| auth.project_dir));
         return EngineInfo {
             running: status.running,
-            runtime: state.runtime.clone(),
+            runtime,
             base_url,
             project_dir,
             hostname: Some("127.0.0.1".to_string()),
@@ -173,6 +178,8 @@ pub fn engine_info(
             last_stderr,
         };
     }
+    drop(state);
+    let mut state = manager.inner.lock().expect("engine mutex poisoned");
     EngineManager::snapshot_locked(&mut state)
 }
 

@@ -111,6 +111,7 @@ import {
   saveSessionDraft,
   sessionDraftScopeKey,
 } from "../session/draft-store";
+import type { BootPhase, StartupBranch, StartupTraceEvent } from "../lib/startup-boot";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -148,6 +149,10 @@ export type SessionViewProps = {
   orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
   appVersion: string | null;
+  booting: boolean;
+  startupPhase: BootPhase;
+  startupBranch: StartupBranch;
+  startupTrace: StartupTraceEvent[];
   headerStatus: string;
   busyHint: string | null;
   updateStatus: {
@@ -163,6 +168,7 @@ export type SessionViewProps = {
   anyActiveRuns: boolean;
   installUpdateAndRestart: () => void;
   newTaskDisabled: boolean;
+  sidebarHydratedFromCache: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   openRenameWorkspace: (workspaceId: string) => void;
   messages: MessageWithParts[];
@@ -2142,6 +2148,25 @@ export default function SessionView(props: SessionViewProps) {
     if (props.messages.length > 0) return false;
     return props.sessionLoadingById(sessionId);
   });
+  const showStartupSkeleton = createMemo(() => {
+    if (props.messages.length > 0) return false;
+    if (props.clientConnected) return false;
+    const phase = props.startupPhase;
+    return phase !== "sessionIndexReady" && phase !== "firstSessionReady" && phase !== "ready";
+  });
+  const showSidebarInitialLoading = createMemo(() => {
+    if (props.workspaceSessionGroups.some((group) => group.sessions.length > 0)) {
+      return false;
+    }
+    if (props.sidebarHydratedFromCache) return false;
+    const phase = props.startupPhase;
+    if (phase !== "sessionIndexReady" && phase !== "firstSessionReady" && phase !== "ready") {
+      return true;
+    }
+    return props.workspaceSessionGroups.some(
+      (group) => group.status === "loading" || group.status === "idle",
+    );
+  });
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = createSignal(false);
   const [deferSessionRender, setDeferSessionRender] = createSignal(false);
   let deferSessionRenderFrame: number | undefined;
@@ -2943,6 +2968,7 @@ export default function SessionView(props: SessionViewProps) {
               selectedWorkspaceId={props.selectedWorkspaceId}
               developerMode={props.developerMode}
               selectedSessionId={props.selectedSessionId}
+              showInitialLoading={showSidebarInitialLoading()}
               showSessionActions
               sessionStatusById={props.sessionStatusById}
               connectingWorkspaceId={props.connectingWorkspaceId}
@@ -3202,6 +3228,29 @@ export default function SessionView(props: SessionViewProps) {
                     chatContentEl = el;
                   }}
                 >
+                  <Show when={showStartupSkeleton()}>
+                    <div class="px-6 py-14" role="status" aria-live="polite">
+                      <div class="mx-auto max-w-2xl space-y-6">
+                        <div class="space-y-2">
+                          <div class="h-4 w-32 rounded-full bg-dls-hover/80 animate-pulse" />
+                          <div class="h-3 w-64 rounded-full bg-dls-hover/60 animate-pulse" />
+                        </div>
+                        <div class="space-y-3">
+                          <For each={[0, 1, 2]}>
+                            {(idx) => (
+                              <div class="rounded-2xl border border-dls-border bg-dls-hover/40 p-4">
+                                <div class="mb-3 h-3 rounded-full bg-dls-hover/80 animate-pulse" style={{ width: idx === 0 ? "42%" : idx === 1 ? "56%" : "36%" }} />
+                                <div class="space-y-2">
+                                  <div class="h-2.5 rounded-full bg-dls-hover/70 animate-pulse" />
+                                  <div class="h-2.5 rounded-full bg-dls-hover/60 animate-pulse" style={{ width: idx === 2 ? "74%" : "88%" }} />
+                                </div>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
                   <Show when={showDelayedSessionLoadingState()}>
                     <div class="px-6 py-24">
                       <div
@@ -3227,6 +3276,7 @@ export default function SessionView(props: SessionViewProps) {
                     when={
                       props.messages.length === 0 &&
                       !showWorkspaceSetupEmptyState() &&
+                      !showStartupSkeleton() &&
                       !showSessionLoadingState() &&
                       !deferSessionRender()
                     }

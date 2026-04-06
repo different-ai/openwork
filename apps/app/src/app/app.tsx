@@ -125,6 +125,13 @@ import {
   stripBundleQuery,
 } from "./bundles";
 import { createBundlesStore } from "./bundles/store";
+import {
+  classifyStartupBranch,
+  pushStartupTraceEvent,
+  type BootPhase,
+  type StartupBranch,
+  type StartupTraceEvent,
+} from "./lib/startup-boot";
 
 type SettingsReturnTarget = {
   view: View;
@@ -136,6 +143,27 @@ type PendingInitialSessionSelection = {
   workspaceId: string;
   title: string | null;
   readyAt: number;
+};
+
+const STARTUP_SESSION_SNAPSHOT_KEY = "openwork.startupSessionSnapshot.v1";
+const STARTUP_SESSION_SNAPSHOT_VERSION = 1;
+const STARTUP_SESSION_SNAPSHOT_MAX_PER_WORKSPACE = 12;
+
+type StartupSessionSnapshotEntry = {
+  id: string;
+  title: string;
+  parentID?: string | null;
+  directory?: string | null;
+  time?: {
+    updated?: number | null;
+    created?: number | null;
+  };
+};
+
+type StartupSessionSnapshot = {
+  version: number;
+  updatedAt: number;
+  sessionsByWorkspaceId: Record<string, StartupSessionSnapshotEntry[]>;
 };
 
 export default function App() {
@@ -321,6 +349,8 @@ export default function App() {
     if (!isTauriRuntime()) return;
     if (!developerMode()) return;
     if (!documentVisible()) return;
+    if (booting()) return;
+    if (workspaceStore?.connectingWorkspaceId?.()) return;
 
     let busy = false;
 
@@ -353,9 +383,39 @@ export default function App() {
   const [error, setError] = createSignal<string | null>(null);
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
+  const [bootPhase, setBootPhase] = createSignal<BootPhase>("nativeInit");
+  const [startupBranch, setStartupBranch] = createSignal<StartupBranch>("unknown");
+  const [startupTrace, setStartupTrace] = createSignal<StartupTraceEvent[]>([]);
+  const [firstSidebarVisibleAt, setFirstSidebarVisibleAt] = createSignal<number | null>(null);
+  const [firstSessionPaintAt, setFirstSessionPaintAt] = createSignal<number | null>(null);
   const [, setLastKnownConfigSnapshot] = createSignal("");
   const [developerMode, setDeveloperMode] = createSignal(false);
   const [documentVisible, setDocumentVisible] = createSignal(true);
+
+  const markStartupTrace = (phase: BootPhase, event: string, detail?: Record<string, unknown>) => {
+    setStartupTrace((current) =>
+      pushStartupTraceEvent(current, {
+        at: Date.now(),
+        phase,
+        event,
+        ...(detail ? { detail } : {}),
+      }),
+    );
+  };
+
+  createEffect(() => {
+    const phase = bootPhase();
+    const isBooting = phase !== "ready" && phase !== "error";
+    setBooting(isBooting);
+  });
+
+  createEffect(() => {
+    if (bootPhase() === "ready" || bootPhase() === "error") return;
+    const message = error();
+    if (!message) return;
+    setBootPhase("error");
+    markStartupTrace("error", "startup-error", { message });
+  });
 
   createEffect(() => {
     if (developerMode()) return;
@@ -549,12 +609,29 @@ export default function App() {
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const activeTodos = createMemo(() => todos());
   const activeWorkingFiles = createMemo(() => workingFiles());
+  const [startupSessionSnapshotByWorkspaceId, setStartupSessionSnapshotByWorkspaceId] = createSignal<
+    Record<string, StartupSessionSnapshotEntry[]>
+  >({});
 
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
   const loadSessionsWithReady = async (scopeRoot?: string) => {
     await loadSessions(scopeRoot);
     setSessionsLoaded(true);
   };
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(STARTUP_SESSION_SNAPSHOT_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as StartupSessionSnapshot;
+      if (!parsed || parsed.version !== STARTUP_SESSION_SNAPSHOT_VERSION) return;
+      if (!parsed.sessionsByWorkspaceId || typeof parsed.sessionsByWorkspaceId !== "object") return;
+      setStartupSessionSnapshotByWorkspaceId(parsed.sessionsByWorkspaceId);
+    } catch {
+      // ignore malformed snapshots
+    }
+  });
 
   createEffect(() => {
     if (!client()) {
@@ -764,10 +841,53 @@ export default function App() {
     openworkServer: openworkServerStore,
     openworkEnvWorkspaceId: envOpenworkWorkspaceId,
     onEngineStable: () => {},
+    onBootPhaseChange: (phase, detail) => {
+      setBootPhase(phase);
+      markStartupTrace(phase, "phase-change", detail);
+    },
+    onStartupBranch: (branch, detail) => {
+      setStartupBranch(branch);
+      markStartupTrace(bootPhase(), "branch", { branch, ...(detail ?? {}) });
+    },
+    onStartupTrace: (event, detail) => {
+      markStartupTrace(bootPhase(), event, detail);
+    },
     engineRuntime,
     developerMode,
     pendingInitialSessionSelection,
     setPendingInitialSessionSelection,
+  });
+
+  createEffect(() => {
+    if (startupBranch() !== "unknown") return;
+    const active = workspaceStore.selectedWorkspaceInfo?.() ?? null;
+    const derived = classifyStartupBranch({
+      workspaceCount: workspaceStore.workspaces().length,
+      activeWorkspaceType: active?.workspaceType ?? null,
+      startupPreference: startupPreference(),
+      engineHasBaseUrl: Boolean(workspaceStore.engine()?.baseUrl),
+      selectedWorkspacePath: workspaceStore.selectedWorkspacePath?.() ?? "",
+    });
+    if (derived !== "unknown") {
+      setStartupBranch(derived);
+      markStartupTrace(bootPhase(), "branch-derived", { branch: derived });
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!developerMode()) return;
+    const payload = {
+      phase: bootPhase(),
+      branch: startupBranch(),
+      events: startupTrace(),
+    };
+    try {
+      (window as { __openworkStartupTrace?: typeof payload }).__openworkStartupTrace = payload;
+      console.log("[startup-trace]", payload);
+    } catch {
+      // ignore trace publishing failures
+    }
   });
 
   const {
@@ -972,6 +1092,98 @@ export default function App() {
         error: group.error,
       };
     });
+  });
+
+  const hydratedSidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
+    const liveGroups = sidebarWorkspaceGroups();
+    if (liveGroups.some((group) => group.sessions.length > 0)) {
+      return liveGroups;
+    }
+
+    const snapshotByWorkspaceId = startupSessionSnapshotByWorkspaceId();
+    if (!snapshotByWorkspaceId || Object.keys(snapshotByWorkspaceId).length === 0) {
+      return liveGroups;
+    }
+
+    return liveGroups.map((group) => {
+      if (group.sessions.length > 0) return group;
+      const cachedSessions = snapshotByWorkspaceId[group.workspace.id] ?? [];
+      if (!cachedSessions.length) return group;
+      return {
+        ...group,
+        sessions: cachedSessions,
+      };
+    });
+  });
+
+  const sidebarHydratedFromCache = createMemo(() => {
+    const liveGroups = sidebarWorkspaceGroups();
+    const hydratedGroups = hydratedSidebarWorkspaceGroups();
+    if (!hydratedGroups.length) return false;
+    if (liveGroups.length !== hydratedGroups.length) return false;
+    return hydratedGroups.some((group, index) => {
+      const liveGroup = liveGroups[index];
+      if (!liveGroup) return false;
+      return liveGroup.sessions.length === 0 && group.sessions.length > 0;
+    });
+  });
+
+  createEffect(() => {
+    if (firstSidebarVisibleAt()) return;
+    const anyRowsVisible = hydratedSidebarWorkspaceGroups().some((group) => group.sessions.length > 0);
+    if (!anyRowsVisible) return;
+    const at = Date.now();
+    setFirstSidebarVisibleAt(at);
+    markStartupTrace(bootPhase(), "first-sidebar-visible", {
+      at,
+      source: sidebarHydratedFromCache() ? "cache" : "live",
+    });
+  });
+
+  createEffect(() => {
+    if (firstSessionPaintAt()) return;
+    if (currentView() !== "session") return;
+    const selected = activeSessionId();
+    if (!selected) return;
+    const hasVisibleSessionSurface = visibleMessages().length > 0 || sessionsLoaded();
+    if (!hasVisibleSessionSurface) return;
+    const at = Date.now();
+    setFirstSessionPaintAt(at);
+    markStartupTrace(bootPhase(), "first-session-paint", { at, sessionId: selected });
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!sessionsLoaded()) return;
+
+    const groups = sidebarWorkspaceGroups();
+    const sessionsByWorkspaceId: Record<string, StartupSessionSnapshotEntry[]> = {};
+    for (const group of groups) {
+      if (!group.sessions.length) continue;
+      sessionsByWorkspaceId[group.workspace.id] = group.sessions
+        .slice(0, STARTUP_SESSION_SNAPSHOT_MAX_PER_WORKSPACE)
+        .map((session) => ({
+          id: session.id,
+          title: session.title,
+          parentID: session.parentID ?? null,
+          directory: session.directory ?? null,
+          time: session.time,
+        }));
+    }
+    if (Object.keys(sessionsByWorkspaceId).length === 0) return;
+
+    const payload: StartupSessionSnapshot = {
+      version: STARTUP_SESSION_SNAPSHOT_VERSION,
+      updatedAt: Date.now(),
+      sessionsByWorkspaceId,
+    };
+
+    try {
+      window.localStorage.setItem(STARTUP_SESSION_SNAPSHOT_KEY, JSON.stringify(payload));
+      setStartupSessionSnapshotByWorkspaceId(sessionsByWorkspaceId);
+    } catch {
+      // ignore storage write failures
+    }
   });
 
   createEffect(() => {
@@ -1556,7 +1768,7 @@ export default function App() {
       });
     }
 
-    void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
+    void workspaceStore.bootstrapOnboarding();
   });
 
   createEffect(() => {
@@ -1895,7 +2107,7 @@ export default function App() {
       setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
       createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
       pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
-      workspaceSessionGroups: sidebarWorkspaceGroups(),
+      workspaceSessionGroups: hydratedSidebarWorkspaceGroups(),
       selectedSessionId: activeSessionId(),
       openRenameWorkspace: workspaceStore.openRenameWorkspace,
       editWorkspaceConnection: workspaceStore.openWorkspaceConnectionSettings,
@@ -2012,6 +2224,10 @@ export default function App() {
     orchestratorStatus: orchestratorStatusState(),
     opencodeRouterInfo: opencodeRouterInfoState(),
     appVersion: appVersion(),
+    booting: booting(),
+    startupPhase: bootPhase(),
+    startupBranch: startupBranch(),
+    startupTrace: startupTrace(),
     headerStatus: headerStatus(),
     busyHint: busyHint(),
     updateStatus: updateStatus(),
@@ -2019,7 +2235,8 @@ export default function App() {
     installUpdateAndRestart,
     skills: skills(),
     newTaskDisabled: newTaskDisabled(),
-    workspaceSessionGroups: sidebarWorkspaceGroups(),
+    sidebarHydratedFromCache: sidebarHydratedFromCache(),
+    workspaceSessionGroups: hydratedSidebarWorkspaceGroups(),
     openRenameWorkspace: workspaceStore.openRenameWorkspace,
     messages: visibleMessages(),
     getSessionById: sessionById,
