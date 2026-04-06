@@ -33,7 +33,7 @@ function SubprocessorRows() {
           href={sp.href}
           rel="noreferrer"
           target="_blank"
-          className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-slate-50/80"
+          className="flex min-w-0 items-center gap-3 px-4 py-2.5 transition-colors hover:bg-slate-50/80"
         >
           <div
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold tracking-wide"
@@ -48,7 +48,7 @@ function SubprocessorRows() {
               {sp.purpose}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden shrink-0 items-center gap-2 sm:flex">
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${categoryColors[sp.category] ?? "bg-slate-100 text-slate-600"}`}
             >
@@ -72,6 +72,31 @@ function externalLinkProps(href: string) {
   return /^https?:\/\//.test(href) || href.startsWith("mailto:")
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
+}
+
+function TopicChip({
+  topic,
+  active,
+  onSelect
+}: {
+  topic: TrustTopic;
+  active: boolean;
+  onSelect: (slug: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(topic.slug)}
+      className={`shrink-0 rounded-full border px-3.5 py-1.5 text-[13px] font-medium tracking-tight transition-all ${
+        active
+          ? "border-[#011627] bg-[#011627] text-white shadow-[0_8px_20px_-8px_rgba(1,22,39,0.45)]"
+          : "border-slate-200/80 bg-white/80 text-slate-600 hover:border-slate-300 hover:text-[#011627]"
+      }`}
+      aria-pressed={active}
+    >
+      {topic.label}
+    </button>
+  );
 }
 
 function TopicRailItem({
@@ -190,12 +215,25 @@ export function LandingTrustOverview(props: SharedProps) {
             </p>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)]">
-            <div className="landing-shell rounded-[1.75rem] p-4 xl:p-5">
+          <section className="flex flex-col gap-4 xl:grid xl:grid-cols-[220px_minmax(0,1fr)]">
+            {/* Mobile: horizontal scrollable chip row */}
+            <div className="flex gap-2 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden xl:hidden">
+              {trustTopics.map((topic) => (
+                <TopicChip
+                  key={topic.slug}
+                  topic={topic}
+                  active={topic.slug === activeTopic.slug}
+                  onSelect={setActiveSlug}
+                />
+              ))}
+            </div>
+
+            {/* Desktop: sidebar rail */}
+            <div className="landing-shell hidden rounded-[1.75rem] p-5 xl:block">
               <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                 Topics
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+              <div className="grid gap-2">
                 {trustTopics.map((topic) => (
                   <TopicRailItem
                     key={topic.slug}
