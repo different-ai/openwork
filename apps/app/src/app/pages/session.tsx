@@ -81,6 +81,7 @@ import type {
 import { buildOpenworkWorkspaceBaseUrl } from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
 import {
+  isUserSkillIndicatorTextPart,
   isUserVisiblePart,
   isTauriRuntime,
   isWindowsPlatform,
@@ -519,8 +520,10 @@ export default function SessionView(props: SessionViewProps) {
       used += next.length;
     };
 
+    const isUser = (message.info as { role?: string }).role === "user";
     for (const part of message.parts) {
-      if (!isUserVisiblePart(part)) {
+      const includeSkillIndicator = isUser && isUserSkillIndicatorTextPart(part);
+      if (!isUserVisiblePart(part) && !includeSkillIndicator) {
         continue;
       }
       if (part.type === "text") {

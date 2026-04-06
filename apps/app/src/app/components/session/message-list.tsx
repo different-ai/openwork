@@ -26,6 +26,7 @@ import {
 } from "../../types";
 import {
   groupMessageParts,
+  isUserSkillIndicatorTextPart,
   isUserVisiblePart,
   summarizeStep,
 } from "../../utils";
@@ -380,9 +381,14 @@ export default function MessageList(props: MessageListProps) {
     props.expandedStepIds.has(id) ||
     relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
-  const renderablePartsForMessage = (message: MessageWithParts) =>
-    message.parts.filter((part) => {
-      if (!props.developerMode && !isUserVisiblePart(part)) {
+  const renderablePartsForMessage = (message: MessageWithParts) => {
+    const isUser = (message.info as { role?: string }).role === "user";
+    return message.parts.filter((part) => {
+      const passesVisibility =
+        props.developerMode ||
+        isUserVisiblePart(part) ||
+        (isUser && isUserSkillIndicatorTextPart(part));
+      if (!passesVisibility) {
         return false;
       }
 
@@ -405,6 +411,7 @@ export default function MessageList(props: MessageListProps) {
 
       return props.developerMode;
     });
+  };
 
   const messageBlocks = createMemo<MessageBlockItem[]>(() => {
     const startedAt = perfNow();
@@ -463,7 +470,7 @@ export default function MessageList(props: MessageListProps) {
       const groupId = String((message.info as any).id ?? "message");
       const attachments = attachmentsForParts(renderableParts);
       const nonAttachmentParts = renderableParts.filter((part) => !isAttachmentPart(part));
-      const groups = groupMessageParts(nonAttachmentParts, groupId);
+      const groups = groupMessageParts(nonAttachmentParts, groupId, isUser);
       const isStepsOnly =
         groups.length > 0 && groups.every((group) => group.kind === "steps");
       const stepGroups = isStepsOnly

@@ -469,6 +469,17 @@ export function isVisibleTextPart(part: Part) {
   return part.type === "text" && isUserVisiblePart(part);
 }
 
+/** Ignored companion text on user turns (e.g. slash-command skill label); not the synthetic template. */
+export function isUserSkillIndicatorTextPart(part: Part): boolean {
+  if (part.type !== "text") return false;
+  const flags = part as { synthetic?: boolean; ignored?: boolean };
+  return flags.ignored === true && flags.synthetic !== true;
+}
+
+export function isUserTranscriptTextPart(part: Part, isUserMessage: boolean): boolean {
+  return isVisibleTextPart(part) || (isUserMessage && isUserSkillIndicatorTextPart(part));
+}
+
 const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
 
 function isExplorationToolPart(part: Part) {
@@ -477,7 +488,11 @@ function isExplorationToolPart(part: Part) {
   return EXPLORATION_TOOL_NAMES.has(tool);
 }
 
-export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
+export function groupMessageParts(
+  parts: Part[],
+  messageId: string,
+  isUserMessage = false,
+): MessageGroup[] {
   const groups: MessageGroup[] = [];
   const explorationSteps: Part[] = [];
   let textBuffer = "";
@@ -514,10 +529,19 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
 
   parts.forEach((part) => {
     if (part.type === "text") {
-      if (!isVisibleTextPart(part)) {
+      if (!isUserTranscriptTextPart(part, isUserMessage)) {
         return;
       }
       flushExplorationSteps();
+      if (isUserSkillIndicatorTextPart(part)) {
+        flushText();
+        groups.push({
+          kind: "text",
+          part,
+          segment: sawExecution ? "result" : "intent",
+        });
+        return;
+      }
       textBuffer += (part as { text?: string }).text ?? "";
       return;
     }

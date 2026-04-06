@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import { marked } from "marked";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { File } from "lucide-solid";
-import { isTauriRuntime, safeStringify, summarizeStep } from "../utils";
+import { isTauriRuntime, isUserSkillIndicatorTextPart, safeStringify, summarizeStep } from "../utils";
 import { usePlatform } from "../context/platform";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
 
@@ -573,6 +573,14 @@ export default function PartView(props: Props) {
   const textClass = () => (tone() === "dark" ? "text-gray-12" : "text-gray-12");
   const subtleTextClass = () => (tone() === "dark" ? "text-gray-12/70" : "text-gray-11");
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
+  const primaryTextClass = createMemo(() => {
+    if (p().type !== "text" || !isUserSkillIndicatorTextPart(p())) {
+      return textClass();
+    }
+    return tone() === "dark"
+      ? "italic text-[13px] leading-snug text-gray-11"
+      : "italic text-[13px] leading-snug text-gray-10";
+  });
   const toolOnly = () => true;
   const showToolOutput = () => developerMode();
   const markdownSource = createMemo(() => {
@@ -873,7 +881,7 @@ export default function PartView(props: Props) {
               ref={(el) => {
                 textContainerEl = el;
               }}
-              class={`whitespace-pre-wrap break-words text-[14px] leading-relaxed max-h-[22rem] overflow-hidden ${textClass()}`.trim()}
+              class={`whitespace-pre-wrap break-words text-[14px] leading-relaxed max-h-[22rem] overflow-hidden ${primaryTextClass()}`.trim()}
             >
               {collapsedPreviewText()}
             </div>
@@ -899,7 +907,7 @@ export default function PartView(props: Props) {
               ref={(el) => {
                 textContainerEl = el;
               }}
-              class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
+              class={`whitespace-pre-wrap break-words ${primaryTextClass()}`.trim()}
             >
               {renderTextWithLinks()}
             </div>
@@ -909,7 +917,7 @@ export default function PartView(props: Props) {
           <Show when={renderedMarkdown() === null}>
             <div
               ref={(el) => { textContainerEl = el; }}
-              class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
+              class={`whitespace-pre-wrap break-words ${primaryTextClass()}`.trim()}
             >
               {renderTextWithLinks()}
             </div>
@@ -917,7 +925,7 @@ export default function PartView(props: Props) {
           <Show when={typeof renderedMarkdown() === "string" && renderedMarkdown()}>
             <div
               ref={(el) => { textContainerEl = el; }}
-              class={`markdown-content max-w-none ${textClass()}
+              class={`markdown-content max-w-none ${primaryTextClass()}
                 [&_strong]:font-semibold
                 [&_em]:italic
                 [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
