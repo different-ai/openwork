@@ -18,6 +18,7 @@ type SyncEntry = {
   refs: number;
   stopTimer: ReturnType<typeof setTimeout> | null;
   dispose: () => void;
+  pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
 };
 
 const idleStatus: SessionStatus = { type: "idle" };
@@ -171,7 +172,7 @@ function appendDelta(messages: UIMessage[], messageId: string, partId: string, d
   });
 }
 
-function applyEvent(workspaceId: string, event: OpencodeEvent) {
+function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
 
   if (event.type === "session.status") {
@@ -207,10 +208,16 @@ function applyEvent(workspaceId: string, event: OpencodeEvent) {
     if (!part?.sessionID || !part.messageID) return;
     const mapped = toUIPart(part);
     if (!mapped) return;
+    const pending = entry.pendingDeltas.get(part.id);
+    const seededPart =
+      pending && ((mapped.type === "text" && !pending.reasoning) || (mapped.type === "reasoning" && pending.reasoning))
+        ? { ...mapped, text: `${mapped.text}${pending.text}`, state: "streaming" as const }
+        : mapped;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID), (current = []) => {
       const withMessage = upsertMessage(current, { id: part.messageID, role: "assistant", parts: [] });
-      return upsertPart(withMessage, part.messageID, part.id, mapped);
+      return upsertPart(withMessage, part.messageID, part.id, seededPart);
     });
+    if (pending) entry.pendingDeltas.delete(part.id);
     return;
   }
 
@@ -226,7 +233,21 @@ function applyEvent(workspaceId: string, event: OpencodeEvent) {
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) => {
       // Ensure the message shell exists before appending the delta
       const withMessage = upsertMessage(current, { id: props.messageID!, role: "assistant", parts: [] });
-      return appendDelta(withMessage, props.messageID!, props.partID!, props.delta!, props.field === "reasoning");
+      const next = appendDelta(withMessage, props.messageID!, props.partID!, props.delta!, props.field === "reasoning");
+      const message = next.find((item) => item.id === props.messageID);
+      const matched = message?.parts.some((part) =>
+        (part.type === "dynamic-tool" && part.toolCallId === props.partID) || getPartMetadataId(part) === props.partID,
+      );
+      if (!matched) {
+        const pending = entry.pendingDeltas.get(props.partID!) ?? {
+          messageId: props.messageID!,
+          reasoning: props.field === "reasoning",
+          text: "",
+        };
+        pending.text += props.delta!;
+        entry.pendingDeltas.set(props.partID!, pending);
+      }
+      return next;
     });
     return;
   }
@@ -241,6 +262,7 @@ function applyEvent(workspaceId: string, event: OpencodeEvent) {
 function startSync(input: SyncOptions) {
   const client = createClient(input.baseUrl, undefined, { token: input.openworkToken, mode: "openwork" });
   const controller = new AbortController();
+  const entry = syncs.get(syncKey(input));
 
   void client.event.subscribe(undefined, { signal: controller.signal }).then((sub) => {
     void (async () => {
@@ -248,7 +270,8 @@ function startSync(input: SyncOptions) {
         if (controller.signal.aborted) return;
         const event = normalizeEvent(raw);
         if (!event) continue;
-        applyEvent(input.workspaceId, event);
+        if (!entry) continue;
+        applyEvent(entry, input.workspaceId, event);
       }
     })();
   });
@@ -271,8 +294,12 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   syncs.set(key, {
     refs: 1,
     stopTimer: null,
-    dispose: startSync(input),
+    dispose: () => {},
+    pendingDeltas: new Map(),
   });
+
+  const created = syncs.get(key)!;
+  created.dispose = startSync(input);
 
   return () => releaseWorkspaceSessionSync(input);
 }
@@ -291,7 +318,43 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
 
 export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
   const queryClient = getReactQueryClient();
-  queryClient.setQueryData(transcriptKey(workspaceId, snapshot.session.id), snapshotToUIMessages(snapshot));
+  const key = transcriptKey(workspaceId, snapshot.session.id);
+  const incoming = snapshotToUIMessages(snapshot);
+  const existing = queryClient.getQueryData<UIMessage[]>(key);
+
+  if (existing && existing.length > 0 && (snapshot.status.type === "busy" || snapshot.status.type === "retry")) {
+    // During active streaming the server snapshot may have empty/stale text
+    // for in-progress parts while the cache already accumulated text via
+    // deltas.  Merge so we never overwrite longer cached text with shorter
+    // server text.
+    const merged = incoming.map((incomingMsg) => {
+      const cachedMsg = existing.find((m) => m.id === incomingMsg.id);
+      if (!cachedMsg) return incomingMsg;
+      const parts = incomingMsg.parts.map((inPart, index) => {
+        const cachedPart = cachedMsg.parts[index];
+        if (!cachedPart) return inPart;
+        if (
+          (inPart.type === "text" || inPart.type === "reasoning") &&
+          (cachedPart.type === "text" || cachedPart.type === "reasoning") &&
+          cachedPart.text.length > inPart.text.length
+        ) {
+          return { ...inPart, text: cachedPart.text };
+        }
+        return inPart;
+      });
+      // Keep any extra cached parts the server doesn't know about yet
+      if (cachedMsg.parts.length > incomingMsg.parts.length) {
+        for (let i = incomingMsg.parts.length; i < cachedMsg.parts.length; i++) {
+          parts.push(cachedMsg.parts[i]);
+        }
+      }
+      return { ...incomingMsg, parts };
+    });
+    queryClient.setQueryData(key, merged);
+  } else {
+    queryClient.setQueryData(key, incoming);
+  }
+
   queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), snapshot.status);
   queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
 }

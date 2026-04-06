@@ -129,16 +129,33 @@ const upsertPartInfo = (list: Part[], next: Part) => {
   const index = list.findIndex((part) => part.id === next.id);
   if (index === -1) return sortById([...list, next]);
   const copy = list.slice();
-  copy[index] = next;
+  const existing = copy[index] as Part & Record<string, unknown>;
+  const incoming = next as Part & Record<string, unknown>;
+  if ((incoming.type === "text" || incoming.type === "reasoning") && typeof existing.text === "string") {
+    const nextText = typeof incoming.text === "string" ? incoming.text : "";
+    copy[index] = { ...existing, ...incoming, text: nextText || existing.text } as Part;
+  } else {
+    copy[index] = next;
+  }
   return copy;
 };
 
 const removePartInfo = (list: Part[], partID: string) => list.filter((part) => part.id !== partID);
 
-const appendPartDelta = (list: Part[], partID: string, field: string, delta: string) => {
+const appendPartDelta = (list: Part[], messageID: string, sessionID: string | null, partID: string, field: string, delta: string) => {
   if (!delta) return list;
   const index = list.findIndex((part) => part.id === partID);
-  if (index === -1) return list;
+  if (index === -1) {
+    if (field !== "text" && field !== "reasoning") return list;
+    const synthetic = {
+      id: partID,
+      messageID,
+      sessionID: sessionID ?? "",
+      type: field === "reasoning" ? "reasoning" : "text",
+      text: delta,
+    } as Part;
+    return sortById([...list, synthetic]);
+  }
 
   const existing = list[index] as Part & Record<string, unknown>;
   const current = existing[field];
@@ -1063,11 +1080,45 @@ export function createSessionStore(options: {
       .filter((info) => !!info?.id)
       .map((info) => info as MessageInfo);
 
+    const isStreaming = (store.sessionStatus[sessionID] ?? "idle") !== "idle";
+
     batch(() => {
       setStore("messages", sessionID, reconcile(sortById(infos), { key: "id" }));
       for (const message of list) {
         const parts = message.parts.filter((part) => !!part?.id);
-        setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
+
+        if (isStreaming) {
+          // During active streaming, the server snapshot may have empty/stale
+          // text fields for in-progress parts while the local store already
+          // accumulated text via message.part.delta events.  Merge carefully
+          // so we never overwrite longer local text with shorter server text.
+          const existingParts = store.parts[message.info.id] ?? [];
+          const merged = sortById(parts).map((incoming) => {
+            const existing = existingParts.find((p) => p.id === incoming.id);
+            if (!existing) return incoming;
+            const incomingRecord = incoming as Part & Record<string, unknown>;
+            const existingRecord = existing as Part & Record<string, unknown>;
+            if (
+              (incoming.type === "text" || incoming.type === "reasoning") &&
+              typeof existingRecord.text === "string" &&
+              typeof incomingRecord.text === "string" &&
+              existingRecord.text.length > incomingRecord.text.length
+            ) {
+              return { ...incoming, text: existingRecord.text } as Part;
+            }
+            return incoming;
+          });
+          // Also keep any local-only parts (created from early deltas) that
+          // the server snapshot doesn't know about yet.
+          for (const existing of existingParts) {
+            if (!merged.find((p) => p.id === existing.id)) {
+              merged.push(existing);
+            }
+          }
+          setStore("parts", message.info.id, reconcile(sortById(merged), { key: "id" }));
+        } else {
+          setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
+        }
       }
     });
   }
@@ -1748,6 +1799,7 @@ export function createSessionStore(options: {
     if (event.type === "message.part.delta") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
+        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         const partID = typeof record.partID === "string" ? record.partID : null;
         const field = typeof record.field === "string" ? record.field : null;
@@ -1755,10 +1807,11 @@ export function createSessionStore(options: {
         const partDeltaStartedAt = perfNow();
 
         if (messageID && partID && field && delta) {
-          setStore("parts", messageID, (current = []) => appendPartDelta(current, partID, field, delta));
+          setStore("parts", messageID, (current = []) => appendPartDelta(current, messageID, sessionID, partID, field, delta));
           const partDeltaMs = Math.round((perfNow() - partDeltaStartedAt) * 100) / 100;
           if (sessionDebugEnabled() && (partDeltaMs >= 8 || delta.length >= 120)) {
             recordPerfLog(true, "session.event", "message.part.delta", {
+              sessionID,
               messageID,
               partID,
               field,
