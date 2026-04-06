@@ -1,7 +1,8 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { useQuery } from "@tanstack/react-query";
+import type { UIMessage } from "ai";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
 import { SessionDebugPanel } from "./debug-panel.react";
@@ -33,6 +34,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     snapshot: OpenworkSessionSnapshot;
   } | null>(null);
   const hydratedKeyRef = useRef<string | null>(null);
+  const queryClient = useQueryClient();
   const transport = useMemo(
     () =>
       createOpenworkChatTransport({
@@ -57,6 +59,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => ["react-session-snapshot", props.workspaceId, props.sessionId],
     [props.workspaceId, props.sessionId],
   );
+  const transcriptKey = useMemo(
+    () => ["react-session-transcript", props.workspaceId, props.sessionId],
+    [props.workspaceId, props.sessionId],
+  );
 
   const query = useQuery<OpenworkSessionSnapshot>({
     queryKey,
@@ -65,6 +71,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const currentSnapshot = query.data?.session.id === props.sessionId ? query.data : null;
+  const transcriptQuery = useQuery<UIMessage[]>({
+    queryKey: transcriptKey,
+    queryFn: async () => {
+      if (currentSnapshot) return snapshotToUIMessages(currentSnapshot);
+      return [];
+    },
+    initialData: () => {
+      const cached = queryClient.getQueryData<UIMessage[]>(transcriptKey);
+      if (cached) return cached;
+      return currentSnapshot ? snapshotToUIMessages(currentSnapshot) : [];
+    },
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+  });
 
   useEffect(() => {
     if (!currentSnapshot) return;
@@ -78,19 +98,46 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (!currentSnapshot) return;
+    const existing = queryClient.getQueryData<UIMessage[]>(transcriptKey);
+    if (!existing || existing.length === 0) {
+      queryClient.setQueryData(transcriptKey, snapshotToUIMessages(currentSnapshot));
+    }
+  }, [currentSnapshot, queryClient, transcriptKey]);
+
+  useEffect(() => {
+    const cached = transcriptQuery.data;
+    if (!cached || cached.length === 0) return;
+    if (chat.messages.length > 0) return;
+    chat.setMessages(cached);
+  }, [chat, chat.messages.length, transcriptQuery.data]);
+
+  useEffect(() => {
+    if (chat.messages.length === 0) return;
+    queryClient.setQueryData(transcriptKey, chat.messages);
+  }, [chat.messages, queryClient, transcriptKey]);
+
+  useEffect(() => {
+    if (!currentSnapshot) return;
     const key = `${props.sessionId}:${currentSnapshot.session.time?.updated ?? currentSnapshot.session.time?.created ?? 0}:${currentSnapshot.messages.length}`;
     if (hydratedKeyRef.current === key) return;
     hydratedKeyRef.current = key;
-    chat.setMessages(snapshotToUIMessages(currentSnapshot));
-  }, [chat, props.sessionId, currentSnapshot]);
+    const nextMessages = snapshotToUIMessages(currentSnapshot);
+    if (chat.messages.length === 0) {
+      chat.setMessages(nextMessages);
+    }
+    queryClient.setQueryData(transcriptKey, (current: UIMessage[] | undefined) =>
+      current && current.length > 0 ? current : nextMessages,
+    );
+  }, [chat, chat.messages.length, props.sessionId, currentSnapshot, queryClient, transcriptKey]);
 
   const snapshot = currentSnapshot ?? rendered?.snapshot ?? null;
   const chatStreaming = chat.status === "submitted" || chat.status === "streaming";
+  const renderedMessages = transcriptQuery.data && transcriptQuery.data.length > 0 ? transcriptQuery.data : chat.messages;
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
     renderedSessionId:
-      chat.messages.length > 0 || query.data ? props.sessionId : rendered?.sessionId ?? null,
-    hasSnapshot: Boolean(snapshot) || chat.messages.length > 0,
+      renderedMessages.length > 0 || query.data ? props.sessionId : rendered?.sessionId ?? null,
+    hasSnapshot: Boolean(snapshot) || renderedMessages.length > 0,
     isFetching: query.isFetching || chatStreaming,
     isError: query.isError || chat.status === "error",
   });
@@ -135,19 +182,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : null}
 
-      {!snapshot && query.isLoading && chat.messages.length === 0 ? (
+      {!snapshot && query.isLoading && renderedMessages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
             <div className="text-sm text-dls-secondary">Loading React session view...</div>
           </div>
         </div>
-      ) : (query.isError || chat.status === "error") && !snapshot && chat.messages.length === 0 ? (
+      ) : (query.isError || chat.status === "error") && !snapshot && renderedMessages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
             {error || (query.error instanceof Error ? query.error.message : "Failed to load React session view.")}
           </div>
         </div>
-      ) : chat.messages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
+      ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
             <div className="text-sm text-dls-secondary">No transcript yet.</div>
@@ -155,7 +202,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : (
         <SessionTranscript
-          messages={chat.messages}
+          messages={renderedMessages}
           isStreaming={chatStreaming}
           developerMode={props.developerMode}
         />
