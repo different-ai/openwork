@@ -137,22 +137,36 @@ function upsertPart(messages: UIMessage[], messageId: string, partId: string, ne
 function appendDelta(messages: UIMessage[], messageId: string, partId: string, delta: string, reasoning: boolean) {
   return messages.map((message) => {
     if (message.id !== messageId) return message;
+
+    // Try to find and update an existing matching part
+    let matched = false;
     const parts = message.parts.map((part) => {
       if (reasoning && part.type === "reasoning") {
         const id = getPartMetadataId(part);
         if (id === partId || (!id && message.parts.at(-1) === part)) {
+          matched = true;
           return { ...part, text: `${part.text}${delta}`, state: "streaming" as const };
         }
       }
       if (!reasoning && part.type === "text") {
         const id = getPartMetadataId(part);
         if (id === partId || (!id && message.parts.at(-1) === part)) {
+          matched = true;
           return { ...part, text: `${part.text}${delta}`, state: "streaming" as const };
         }
       }
       if (part.type === "dynamic-tool" && part.toolCallId === partId) return part;
       return part;
     });
+
+    // If no existing part matched, create a new one so the delta is not lost
+    if (!matched) {
+      const newPart: UIMessage["parts"][number] = reasoning
+        ? { type: "reasoning", text: delta, state: "streaming" as const, providerMetadata: { opencode: { partId } } }
+        : { type: "text", text: delta, state: "streaming" as const, providerMetadata: { opencode: { partId } } };
+      return { ...message, parts: [...parts, newPart] };
+    }
+
     return { ...message, parts };
   });
 }
@@ -209,9 +223,11 @@ function applyEvent(workspaceId: string, event: OpencodeEvent) {
       delta?: string;
     };
     if (!props.sessionID || !props.messageID || !props.partID || !props.delta) return;
-    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
-      appendDelta(current, props.messageID!, props.partID!, props.delta!, props.field === "reasoning"),
-    );
+    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) => {
+      // Ensure the message shell exists before appending the delta
+      const withMessage = upsertMessage(current, { id: props.messageID!, role: "assistant", parts: [] });
+      return appendDelta(withMessage, props.messageID!, props.partID!, props.delta!, props.field === "reasoning");
+    });
     return;
   }
 
