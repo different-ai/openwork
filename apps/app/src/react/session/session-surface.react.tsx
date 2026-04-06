@@ -42,6 +42,8 @@ type SessionSurfaceProps = {
   listAgents: () => Promise<import("@opencode-ai/sdk/v2/client").Agent[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<import("../../app/types").SlashCommandOption[]>;
+  recentFiles: string[];
+  searchFiles: (query: string) => Promise<string[]>;
 };
 
 function transcriptToText(messages: UIMessage[]) {
@@ -86,6 +88,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState<PromptMode>("prompt");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [mentions, setMentions] = useState<Record<string, "agent" | "file">>({});
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
@@ -134,6 +137,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setSending(false);
     setMode("prompt");
     setAttachments([]);
+    setMentions({});
   }, [props.sessionId]);
 
   useEffect(() => {
@@ -164,9 +168,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const buildDraft = (text: string, nextMode: PromptMode, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const trimmed = text.trim();
     const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
+    const parts: ComposerDraft["parts"] = text.split(/(@[^\s@]+)/).flatMap((segment) => {
+      if (!segment) return [] as ComposerDraft["parts"];
+      if (segment.startsWith("@")) {
+        const value = segment.slice(1);
+        const kind = mentions[value];
+        if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
+        if (kind === "file") return [{ type: "file", path: value, label: value } satisfies ComposerDraft["parts"][number]];
+      }
+      return [{ type: "text", text: segment } satisfies ComposerDraft["parts"][number]];
+    });
     return {
       mode: nextMode,
-      parts: text ? [{ type: "text", text }] : [],
+      parts,
       attachments: nextAttachments,
       text,
       resolvedText: text,
@@ -247,6 +261,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
   };
 
+  const handleInsertMention = (kind: "agent" | "file", value: string) => {
+    setDraft((current) => current.replace(/@([^\s@]*)$/, `@${value} `));
+    setMentions((current) => ({ ...current, [value]: kind }));
+  };
+
   const onComposerKeyDown = async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!event.metaKey && !event.ctrlKey) return;
     if (event.key !== "Enter") return;
@@ -324,6 +343,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         listAgents={props.listAgents}
         onSelectAgent={props.onSelectAgent}
         listCommands={props.listCommands}
+        recentFiles={props.recentFiles}
+        searchFiles={props.searchFiles}
+        onInsertMention={handleInsertMention}
       />
       {error ? (
         <div className="mx-auto w-full max-w-[800px] px-4">

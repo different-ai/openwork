@@ -6,6 +6,13 @@ import type { ComposerAttachment, PromptMode } from "../../../app/types";
 import { LexicalPromptEditor } from "./editor.react";
 import type { SlashCommandOption } from "../../../app/types";
 
+type MentionItem = {
+  id: string;
+  kind: "agent" | "file";
+  value: string;
+  label: string;
+};
+
 type ComposerProps = {
   draft: string;
   onDraftChange: (value: string) => void;
@@ -32,6 +39,9 @@ type ComposerProps = {
   listAgents: () => Promise<Agent[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
+  recentFiles: string[];
+  searchFiles: (query: string) => Promise<string[]>;
+  onInsertMention: (kind: "agent" | "file", value: string) => void;
 };
 
 export function ReactSessionComposer(props: ComposerProps) {
@@ -40,13 +50,21 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
+  const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
 
   const slashMatch = props.mode === "prompt" ? props.draft.match(/^\/(\S*)$/) : null;
   const slashQuery = slashMatch?.[1] ?? "";
+  const mentionMatch = props.mode === "prompt" ? props.draft.match(/@([^\s@]*)$/) : null;
+  const mentionQuery = mentionMatch?.[1] ?? "";
 
   useEffect(() => {
     setSlashOpen(Boolean(slashMatch));
   }, [slashMatch]);
+
+  useEffect(() => {
+    setMentionOpen(Boolean(mentionMatch));
+  }, [mentionMatch]);
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -58,11 +76,36 @@ export function ReactSessionComposer(props: ComposerProps) {
     void props.listCommands().then(setCommands).catch(() => setCommands([]));
   }, [slashOpen, props]);
 
+  useEffect(() => {
+    if (!mentionOpen) return;
+    let cancelled = false;
+    void Promise.all([props.listAgents(), props.searchFiles(mentionQuery)]).then(([agentList, files]) => {
+      if (cancelled) return;
+      const recent = props.recentFiles.slice(0, 8);
+      const next: MentionItem[] = [
+        ...agentList.map((agent) => ({ id: `agent:${agent.name}`, kind: "agent" as const, value: agent.name, label: agent.name })),
+        ...recent.map((file) => ({ id: `file:${file}`, kind: "file" as const, value: file, label: file })),
+        ...files.filter((file) => !recent.includes(file)).map((file) => ({ id: `file:${file}`, kind: "file" as const, value: file, label: file })),
+      ];
+      setMentionItems(next);
+    }).catch(() => {
+      if (!cancelled) setMentionItems([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mentionOpen, mentionQuery, props]);
+
   const slashFiltered = !slashOpen
     ? []
     : slashQuery
       ? fuzzysort.go(slashQuery, commands, { keys: ["name", "description"] }).map((entry) => entry.obj).slice(0, 8)
       : commands.slice(0, 8);
+  const mentionFiltered = !mentionOpen
+    ? []
+    : mentionQuery
+      ? fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"] }).map((entry) => entry.obj).slice(0, 8)
+      : mentionItems.slice(0, 8);
 
   return (
     <div className="mx-auto w-full max-w-[800px] px-4">
@@ -198,6 +241,23 @@ export function ReactSessionComposer(props: ComposerProps) {
                 >
                   <div className="text-sm font-medium text-dls-text">/{command.name}</div>
                   {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {mentionOpen && mentionFiltered.length > 0 ? (
+          <div className="border-t border-dls-border px-3 py-2">
+            <div className="grid gap-1">
+              {mentionFiltered.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
+                  onClick={() => props.onInsertMention(item.kind, item.value)}
+                >
+                  <div className="text-sm font-medium text-dls-text">@{item.label}</div>
+                  <div className="text-xs text-dls-secondary">{item.kind === "agent" ? "Agent" : "File"}</div>
                 </button>
               ))}
             </div>

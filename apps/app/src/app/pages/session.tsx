@@ -3378,6 +3378,8 @@ export default function SessionView(props: SessionViewProps) {
                               void applySessionAgent(agent);
                             },
                             listCommands: sessionActions.listCommands,
+                            recentFiles: props.workingFiles,
+                            searchFiles: sessionActions.searchWorkspaceFiles,
                           }}
                         />
                       }
