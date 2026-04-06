@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
-import type { ComposerAttachment, PromptMode } from "../../../app/types";
+import type { ComposerAttachment } from "../../../app/types";
 import { LexicalPromptEditor } from "./editor.react";
 import type { SlashCommandOption } from "../../../app/types";
 import { ReactComposerNotice, type ReactComposerNotice as ReactComposerNoticeData } from "./notice.react";
@@ -25,8 +25,6 @@ type ComposerProps = {
   statusLabel: string;
   modelLabel: string;
   onModelClick: () => void;
-  mode: PromptMode;
-  onModeChange: (mode: PromptMode) => void;
   attachments: ComposerAttachment[];
   onAttachFiles: (files: File[]) => void;
   onRemoveAttachment: (id: string) => void;
@@ -57,9 +55,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
 
-  const slashMatch = props.mode === "prompt" ? props.draft.match(/^\/(\S*)$/) : null;
+  const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
-  const mentionMatch = props.mode === "prompt" ? props.draft.match(/@([^\s@]*)$/) : null;
+  const mentionMatch = props.draft.match(/@([^\s@]*)$/);
   const mentionQuery = mentionMatch?.[1] ?? "";
 
   useEffect(() => {
@@ -116,20 +114,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       <div className="rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
         <div className="flex items-center justify-between gap-3 border-b border-dls-border px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${props.mode === "prompt" ? "border-dls-border bg-dls-hover text-dls-text" : "border-dls-border/70 bg-transparent text-dls-secondary hover:bg-dls-hover/60"}`}
-              onClick={() => props.onModeChange("prompt")}
-            >
-              Prompt
-            </button>
-            <button
-              type="button"
-              className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${props.mode === "shell" ? "border-dls-border bg-dls-hover text-dls-text" : "border-dls-border/70 bg-transparent text-dls-secondary hover:bg-dls-hover/60"}`}
-              onClick={() => props.onModeChange("shell")}
-            >
-              Shell
-            </button>
             <button
               type="button"
               className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"

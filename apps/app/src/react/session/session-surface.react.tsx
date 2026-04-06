@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "../../app/lib/opencode";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
-import type { ComposerAttachment, ComposerDraft, PromptMode } from "../../app/types";
+import type { ComposerAttachment, ComposerDraft } from "../../app/types";
 import { SessionDebugPanel } from "./debug-panel.react";
 import { SessionTranscript } from "./message-list.react";
 import { deriveSessionRenderModel } from "./transition-controller";
@@ -87,7 +87,6 @@ function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
 
 export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
-  const [mode, setMode] = useState<PromptMode>("prompt");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [mentions, setMentions] = useState<Record<string, "agent" | "file">>({});
   const [notice, setNotice] = useState<ReactComposerNotice | null>(null);
@@ -137,7 +136,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     hydratedKeyRef.current = null;
     setError(null);
     setSending(false);
-    setMode("prompt");
     setAttachments([]);
     setMentions({});
     setNotice(null);
@@ -174,7 +172,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isError: snapshotQuery.isError || Boolean(error),
   });
 
-  const buildDraft = (text: string, nextMode: PromptMode, nextAttachments: ComposerAttachment[]): ComposerDraft => {
+  const buildDraft = (text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const trimmed = text.trim();
     const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
     const parts: ComposerDraft["parts"] = text.split(/(@[^\s@]+)/).flatMap((segment) => {
@@ -188,7 +186,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return [{ type: "text", text: segment } satisfies ComposerDraft["parts"][number]];
     });
     return {
-      mode: nextMode,
+      mode: "prompt",
       parts,
       attachments: nextAttachments,
       text,
@@ -211,11 +209,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     setSending(true);
     try {
-      const nextDraft = buildDraft(text, mode, attachments);
+      const nextDraft = buildDraft(text, attachments);
       props.onSendDraft(nextDraft);
       setDraft("");
       setAttachments([]);
-      props.onDraftChange(buildDraft("", mode, []));
+      props.onDraftChange(buildDraft("", []));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
       setSending(false);
@@ -240,8 +238,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [liveStatus.type]);
 
   useEffect(() => {
-    props.onDraftChange(buildDraft(draft, mode, attachments));
-  }, [draft, mode, attachments, props]);
+    props.onDraftChange(buildDraft(draft, attachments));
+  }, [draft, attachments, props]);
 
   const handleAttachFiles = (files: File[]) => {
     if (!props.attachmentsEnabled) {
@@ -341,8 +339,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelLabel={props.modelLabel}
         onModelClick={props.onModelClick}
-        mode={mode}
-        onModeChange={setMode}
         attachments={attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
