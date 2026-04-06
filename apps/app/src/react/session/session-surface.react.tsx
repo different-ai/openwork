@@ -1,22 +1,14 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useChat } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { createClient } from "../../app/lib/opencode";
-import { abortSessionSafe } from "../../app/lib/opencode-session";
 import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
 import { SessionDebugPanel } from "./debug-panel.react";
 import { deriveSessionRenderModel } from "./transition-controller";
 import { SessionTranscript } from "./message-list.react";
-import {
-  ensureWorkspaceSessionSync,
-  seedSessionState,
-  statusKey as reactStatusKey,
-  todoKey as reactTodoKey,
-  transcriptKey as reactTranscriptKey,
-} from "./session-sync";
-import { snapshotToUIMessages } from "./usechat-adapter";
+import { createOpenworkChatTransport, snapshotToUIMessages } from "./usechat-adapter";
 
 type SessionSurfaceProps = {
   client: OpenworkServerClient;
@@ -37,32 +29,38 @@ function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolea
 export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
   const [rendered, setRendered] = useState<{
     sessionId: string;
     snapshot: OpenworkSessionSnapshot;
   } | null>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
-  const opencodeClient = useMemo(
-    () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
-    [props.opencodeBaseUrl, props.openworkToken],
+  const transport = useMemo(
+    () =>
+      createOpenworkChatTransport({
+        baseUrl: props.opencodeBaseUrl,
+        openworkToken: props.openworkToken,
+        sessionId: props.sessionId,
+      }),
+    [props.opencodeBaseUrl, props.openworkToken, props.sessionId],
   );
+  const chat = useChat({
+    id: props.sessionId,
+    transport,
+    onError(nextError) {
+      setError(nextError.message);
+    },
+    onFinish() {
+      void query.refetch();
+    },
+  });
 
   const queryKey = useMemo(
     () => ["react-session-snapshot", props.workspaceId, props.sessionId],
     [props.workspaceId, props.sessionId],
   );
-  const transcriptQueryKey = useMemo(
-    () => reactTranscriptKey(props.workspaceId, props.sessionId),
-    [props.workspaceId, props.sessionId],
-  );
-  const statusQueryKey = useMemo(
-    () => reactStatusKey(props.workspaceId, props.sessionId),
-    [props.workspaceId, props.sessionId],
-  );
-  const todoQueryKey = useMemo(
-    () => reactTodoKey(props.workspaceId, props.sessionId),
+  const transcriptKey = useMemo(
+    () => ["react-session-transcript", props.workspaceId, props.sessionId],
     [props.workspaceId, props.sessionId],
   );
 
@@ -73,42 +71,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const currentSnapshot = query.data?.session.id === props.sessionId ? query.data : null;
-  const statusQuery = useQuery({
-    queryKey: statusQueryKey,
-    queryFn: async () => currentSnapshot?.status ?? { type: "idle" as const },
-    initialData: () => queryClient.getQueryData(statusQueryKey) ?? currentSnapshot?.status ?? { type: "idle" as const },
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-  });
-  useQuery({
-    queryKey: todoQueryKey,
-    queryFn: async () => currentSnapshot?.todos ?? [],
-    initialData: () => queryClient.getQueryData(todoQueryKey) ?? currentSnapshot?.todos ?? [],
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-  });
   const transcriptQuery = useQuery<UIMessage[]>({
-    queryKey: transcriptQueryKey,
+    queryKey: transcriptKey,
     queryFn: async () => {
       if (currentSnapshot) return snapshotToUIMessages(currentSnapshot);
       return [];
     },
     initialData: () => {
-      const cached = queryClient.getQueryData<UIMessage[]>(transcriptQueryKey);
+      const cached = queryClient.getQueryData<UIMessage[]>(transcriptKey);
       if (cached) return cached;
       return currentSnapshot ? snapshotToUIMessages(currentSnapshot) : [];
     },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
   });
-
-  useEffect(() => {
-    return ensureWorkspaceSessionSync({
-      workspaceId: props.workspaceId,
-      baseUrl: props.opencodeBaseUrl,
-      openworkToken: props.openworkToken,
-    });
-  }, [props.workspaceId, props.opencodeBaseUrl, props.openworkToken]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
@@ -118,52 +94,63 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     hydratedKeyRef.current = null;
     setError(null);
-    setSending(false);
   }, [props.sessionId]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [currentSnapshot, props.workspaceId]);
+    const existing = queryClient.getQueryData<UIMessage[]>(transcriptKey);
+    if (!existing || existing.length === 0) {
+      queryClient.setQueryData(transcriptKey, snapshotToUIMessages(currentSnapshot));
+    }
+  }, [currentSnapshot, queryClient, transcriptKey]);
+
+  useEffect(() => {
+    const cached = transcriptQuery.data;
+    if (!cached || cached.length === 0) return;
+    if (chat.messages.length > 0) return;
+    chat.setMessages(cached);
+  }, [chat, chat.messages.length, transcriptQuery.data]);
+
+  useEffect(() => {
+    if (chat.messages.length === 0) return;
+    queryClient.setQueryData(transcriptKey, chat.messages);
+  }, [chat.messages, queryClient, transcriptKey]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
     const key = `${props.sessionId}:${currentSnapshot.session.time?.updated ?? currentSnapshot.session.time?.created ?? 0}:${currentSnapshot.messages.length}`;
     if (hydratedKeyRef.current === key) return;
     hydratedKeyRef.current = key;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [props.sessionId, currentSnapshot, props.workspaceId]);
+    const nextMessages = snapshotToUIMessages(currentSnapshot);
+    if (chat.messages.length === 0) {
+      chat.setMessages(nextMessages);
+    }
+    queryClient.setQueryData(transcriptKey, (current: UIMessage[] | undefined) =>
+      current && current.length > 0 ? current : nextMessages,
+    );
+  }, [chat, chat.messages.length, props.sessionId, currentSnapshot, queryClient, transcriptKey]);
 
   const snapshot = currentSnapshot ?? rendered?.snapshot ?? null;
-  const liveStatus = statusQuery.data ?? snapshot?.status ?? { type: "idle" as const };
-  const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
-  const renderedMessages = transcriptQuery.data ?? [];
+  const chatStreaming = chat.status === "submitted" || chat.status === "streaming";
+  const renderedMessages = transcriptQuery.data && transcriptQuery.data.length > 0 ? transcriptQuery.data : chat.messages;
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
     renderedSessionId:
       renderedMessages.length > 0 || query.data ? props.sessionId : rendered?.sessionId ?? null,
     hasSnapshot: Boolean(snapshot) || renderedMessages.length > 0,
     isFetching: query.isFetching || chatStreaming,
-    isError: query.isError || Boolean(error),
+    isError: query.isError || chat.status === "error",
   });
 
   const handleSend = async () => {
     const text = draft.trim();
     if (!text || chatStreaming) return;
     setError(null);
-    setSending(true);
     try {
-      const result = await opencodeClient.session.promptAsync({
-        sessionID: props.sessionId,
-        parts: [{ type: "text", text }],
-      });
-      if (result.error) {
-        throw result.error instanceof Error ? result.error : new Error(String(result.error));
-      }
+      await chat.sendMessage({ text });
       setDraft("");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
-      setSending(false);
     }
   };
 
@@ -171,18 +158,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!chatStreaming) return;
     setError(null);
     try {
-      await abortSessionSafe(opencodeClient, props.sessionId);
+      chat.stop();
       await query.refetch();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to stop run.");
     }
   };
-
-  useEffect(() => {
-    if (liveStatus.type === "idle") {
-      setSending(false);
-    }
-  }, [liveStatus.type]);
 
   const onComposerKeyDown = async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!event.metaKey && !event.ctrlKey) return;
@@ -207,7 +188,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             <div className="text-sm text-dls-secondary">Loading React session view...</div>
           </div>
         </div>
-      ) : (query.isError || error) && !snapshot && renderedMessages.length === 0 ? (
+      ) : (query.isError || chat.status === "error") && !snapshot && renderedMessages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
             {error || (query.error instanceof Error ? query.error.message : "Failed to load React session view.")}

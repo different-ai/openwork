@@ -1,8 +1,7 @@
 import { createEffect, onCleanup, onMount } from "solid-js";
 import { createElement, Fragment, type ComponentType } from "react";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
-import { getReactQueryClient } from "./kernel/query-client";
 
 type ReactIslandProps<T extends object> = {
   component: ComponentType<T>;
@@ -14,7 +13,7 @@ type ReactIslandProps<T extends object> = {
 export function ReactIsland<T extends object>(props: ReactIslandProps<T>) {
   let container: HTMLDivElement | undefined;
   let root: Root | null = null;
-  const queryClient = getReactQueryClient();
+  const queryClient = new QueryClient();
 
   const render = () => {
     if (!root) return;
