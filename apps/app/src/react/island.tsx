@@ -1,5 +1,5 @@
 import { createEffect, onCleanup, onMount } from "solid-js";
-import { createElement, type ComponentType } from "react";
+import { createElement, Fragment, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -7,6 +7,7 @@ type ReactIslandProps<T extends object> = {
   component: ComponentType<T>;
   props: T;
   class?: string;
+  instanceKey?: string;
 };
 
 export function ReactIsland<T extends object>(props: ReactIslandProps<T>) {
@@ -20,7 +21,7 @@ export function ReactIsland<T extends object>(props: ReactIslandProps<T>) {
       createElement(
         QueryClientProvider,
         { client: queryClient },
-        createElement(props.component, props.props),
+        createElement(Fragment, { key: props.instanceKey }, createElement(props.component, props.props)),
       ),
     );
   };
@@ -33,6 +34,7 @@ export function ReactIsland<T extends object>(props: ReactIslandProps<T>) {
 
   createEffect(() => {
     props.props;
+    props.instanceKey;
     render();
   });
 

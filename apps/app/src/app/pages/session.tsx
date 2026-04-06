@@ -3302,6 +3302,7 @@ export default function SessionView(props: SessionViewProps) {
                       fallback={
                         <ReactIsland
                           class="pb-4"
+                          instanceKey={`${props.runtimeWorkspaceId!}:${props.selectedSessionId!}`}
                           component={SessionSurface}
                           props={{
                             client: props.openworkServerClient!,
