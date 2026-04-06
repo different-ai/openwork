@@ -9,12 +9,23 @@ type ComposerProps = {
   busy: boolean;
   disabled: boolean;
   statusLabel: string;
+  modelLabel: string;
+  onModelClick: () => void;
 };
 
 export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div className="mx-auto w-full max-w-[800px] px-4">
       <div className="rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
+        <div className="flex items-center justify-between gap-3 border-b border-dls-border px-4 py-3">
+          <button
+            type="button"
+            className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
+            onClick={props.onModelClick}
+          >
+            {props.modelLabel}
+          </button>
+        </div>
         <LexicalPromptEditor
           value={props.draft}
           disabled={props.disabled}

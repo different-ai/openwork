@@ -3361,6 +3361,10 @@ export default function SessionView(props: SessionViewProps) {
                             opencodeBaseUrl: reactSessionOpencodeBaseUrl(),
                             openworkToken: reactSessionToken(),
                             developerMode: props.developerMode,
+                            modelLabel: modelControls.selectedSessionModelLabel() || t("session.model_fallback"),
+                            onModelClick: () => modelControls.openSessionModelPicker(),
+                            onSendDraft: handleSendPrompt,
+                            onDraftChange: handleDraftChange,
                           }}
                         />
                       }

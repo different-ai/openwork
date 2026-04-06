@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "../../app/lib/opencode";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
+import type { ComposerDraft } from "../../app/types";
 import { SessionDebugPanel } from "./debug-panel.react";
 import { SessionTranscript } from "./message-list.react";
 import { deriveSessionRenderModel } from "./transition-controller";
@@ -26,7 +27,33 @@ type SessionSurfaceProps = {
   opencodeBaseUrl: string;
   openworkToken: string;
   developerMode: boolean;
+  modelLabel: string;
+  onModelClick: () => void;
+  onSendDraft: (draft: ComposerDraft) => void;
+  onDraftChange: (draft: ComposerDraft) => void;
 };
+
+function transcriptToText(messages: UIMessage[]) {
+  return messages
+    .map((message) => {
+      const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
+      const body = message.parts
+        .flatMap((part) => {
+          if (part.type === "text") return [part.text];
+          if (part.type === "reasoning") return [part.text];
+          if (part.type === "dynamic-tool") {
+            if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
+            if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
+            return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
+          }
+          return [];
+        })
+        .join("\n\n");
+      return `${header}\n${body}`.trim();
+    })
+    .filter(Boolean)
+    .join("\n\n---\n\n");
+}
 
 function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
   if (busy) return "Running...";
@@ -119,20 +146,36 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isError: snapshotQuery.isError || Boolean(error),
   });
 
+  const handleCopyTranscript = async () => {
+    try {
+      await navigator.clipboard.writeText(transcriptToText(renderedMessages));
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Failed to copy transcript.");
+    }
+  };
+
   const handleSend = async () => {
     const text = draft.trim();
     if (!text || chatStreaming) return;
     setError(null);
     setSending(true);
     try {
-      const result = await opencodeClient.session.promptAsync({
-        sessionID: props.sessionId,
+      const nextDraft: ComposerDraft = {
+        mode: "prompt",
         parts: [{ type: "text", text }],
-      });
-      if (result.error) {
-        throw result.error instanceof Error ? result.error : new Error(String(result.error));
-      }
+        attachments: [],
+        text,
+        resolvedText: text,
+      };
+      props.onSendDraft(nextDraft);
       setDraft("");
+      props.onDraftChange({
+        mode: "prompt",
+        parts: [],
+        attachments: [],
+        text: "",
+        resolvedText: "",
+      });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
       setSending(false);
@@ -155,6 +198,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setSending(false);
     }
   }, [liveStatus.type]);
+
+  useEffect(() => {
+    props.onDraftChange({
+      mode: "prompt",
+      parts: draft ? [{ type: "text", text: draft }] : [],
+      attachments: [],
+      text: draft,
+      resolvedText: draft,
+    });
+  }, [draft, props]);
 
   const onComposerKeyDown = async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (!event.metaKey && !event.ctrlKey) return;
@@ -192,7 +245,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         </div>
       ) : (
-        <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
+        <div className="space-y-4">
+          <div className="mx-auto flex w-full max-w-[800px] justify-end px-4">
+            <button
+              type="button"
+              className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
+              onClick={handleCopyTranscript}
+              disabled={renderedMessages.length === 0}
+            >
+              Copy transcript
+            </button>
+          </div>
+          <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
+        </div>
       )}
 
       <ReactSessionComposer
@@ -203,6 +268,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         busy={chatStreaming}
         disabled={model.transitionState !== "idle"}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
+        modelLabel={props.modelLabel}
+        onModelClick={props.onModelClick}
       />
       {error ? (
         <div className="mx-auto w-full max-w-[800px] px-4">
