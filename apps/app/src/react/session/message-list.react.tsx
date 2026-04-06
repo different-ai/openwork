@@ -8,6 +8,28 @@ function isImageAttachment(mime: string) {
   return mime.startsWith("image/");
 }
 
+function messageToText(message: UIMessage) {
+  return message.parts
+    .flatMap((part) => {
+      if (part.type === "text") return [part.text];
+      if (part.type === "reasoning") return [part.text];
+      if (part.type === "file") return [part.filename ?? part.url];
+      if (isToolUIPart(part)) {
+        const toolName = part.type === "dynamic-tool" ? part.toolName : part.type.replace(/^tool-/, "");
+        if (part.state === "output-error") return [`[tool:${toolName}] ${part.errorText}`];
+        if (part.state === "output-available") return [`[tool:${toolName}] ${JSON.stringify(part.output)}`];
+        return [`[tool:${toolName}] ${JSON.stringify(part.input)}`];
+      }
+      return [];
+    })
+    .join("\n\n")
+    .trim();
+}
+
+async function copyMessage(message: UIMessage) {
+  await navigator.clipboard.writeText(messageToText(message));
+}
+
 function latestAssistantMessageId(messages: UIMessage[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -58,6 +80,15 @@ function AssistantBlock(props: { message: UIMessage; developerMode: boolean; isS
   return (
     <article className="flex justify-start" data-message-role="assistant" data-message-id={props.message.id}>
       <div className="group relative w-full max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased">
+        <div className="mb-2 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+            onClick={() => void copyMessage(props.message)}
+          >
+            Copy
+          </button>
+        </div>
         <div className="space-y-4">
           {props.message.parts.map((part, index) => {
             if (part.type === "text") {
@@ -111,7 +142,16 @@ function UserBlock(props: { message: UIMessage }) {
 
   return (
     <article className="flex justify-end" data-message-role="user" data-message-id={props.message.id}>
-      <div className="relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text">
+      <div className="group relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text">
+        <div className="mb-2 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+            onClick={() => void copyMessage(props.message)}
+          >
+            Copy
+          </button>
+        </div>
         {attachments.length > 0 ? (
           <div className="mb-3 flex flex-wrap gap-2">
             {attachments.map((part, index) => (
