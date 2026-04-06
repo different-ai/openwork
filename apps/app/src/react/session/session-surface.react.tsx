@@ -12,6 +12,7 @@ import { SessionTranscript } from "./message-list.react";
 import { deriveSessionRenderModel } from "./transition-controller";
 import { getReactQueryClient } from "../kernel/query-client";
 import { ReactSessionComposer } from "./composer/composer.react";
+import type { ReactComposerNotice } from "./composer/notice.react";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
@@ -89,6 +90,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [mode, setMode] = useState<PromptMode>("prompt");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [mentions, setMentions] = useState<Record<string, "agent" | "file">>({});
+  const [notice, setNotice] = useState<ReactComposerNotice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
@@ -138,7 +140,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setMode("prompt");
     setAttachments([]);
     setMentions({});
+    setNotice(null);
   }, [props.sessionId]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const id = window.setTimeout(() => setNotice(null), 2400);
+    return () => window.clearTimeout(id);
+  }, [notice]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
@@ -236,7 +245,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const handleAttachFiles = (files: File[]) => {
     if (!props.attachmentsEnabled) {
-      setError(props.attachmentsDisabledReason ?? "Attachments are unavailable.");
+      setNotice({ title: props.attachmentsDisabledReason ?? "Attachments are unavailable.", tone: "warning" });
       return;
     }
     const next = files.map((file) => ({
@@ -249,6 +258,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
     }));
     setAttachments((current) => [...current, ...next]);
+    setNotice({
+      title: next.length === 1 ? `Attached ${next[0]?.name ?? "file"}` : `Attached ${next.length} files`,
+      tone: "success",
+    });
   };
 
   const handleRemoveAttachment = (id: string) => {
@@ -347,6 +360,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
+        notice={notice}
+        onNotice={setNotice}
       />
       {error ? (
         <div className="mx-auto w-full max-w-[800px] px-4">

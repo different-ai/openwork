@@ -5,6 +5,7 @@ import fuzzysort from "fuzzysort";
 import type { ComposerAttachment, PromptMode } from "../../../app/types";
 import { LexicalPromptEditor } from "./editor.react";
 import type { SlashCommandOption } from "../../../app/types";
+import { ReactComposerNotice, type ReactComposerNotice as ReactComposerNoticeData } from "./notice.react";
 
 type MentionItem = {
   id: string;
@@ -43,6 +44,8 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: "agent" | "file", value: string) => void;
+  notice: ReactComposerNoticeData | null;
+  onNotice: (notice: ReactComposerNoticeData) => void;
 };
 
 export function ReactSessionComposer(props: ComposerProps) {
@@ -223,14 +226,54 @@ export function ReactSessionComposer(props: ComposerProps) {
             ))}
           </div>
         ) : null}
-        <LexicalPromptEditor
-          value={props.draft}
-          mentions={props.mentions}
-          disabled={props.disabled}
-          placeholder="Describe your task..."
-          onChange={props.onDraftChange}
-          onSubmit={props.onSend}
-        />
+        <div className="relative">
+          <ReactComposerNotice notice={props.notice} />
+          <LexicalPromptEditor
+            value={props.draft}
+            mentions={props.mentions}
+            disabled={props.disabled}
+            placeholder="Describe your task..."
+            onChange={props.onDraftChange}
+            onSubmit={props.onSend}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData?.files ?? []);
+              if (!files.length) return;
+              event.preventDefault();
+              if (!props.attachmentsEnabled) {
+                props.onNotice({
+                  title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
+                  tone: "warning",
+                });
+                return;
+              }
+              props.onAttachFiles(files);
+              props.onNotice({
+                title: files.length === 1 ? `Attached ${files[0]?.name ?? "file"}` : `Attached ${files.length} files`,
+                tone: "success",
+              });
+            }}
+            onDragOver={(event) => {
+              if (event.dataTransfer?.files?.length) event.preventDefault();
+            }}
+            onDrop={(event) => {
+              const files = Array.from(event.dataTransfer?.files ?? []);
+              if (!files.length) return;
+              event.preventDefault();
+              if (!props.attachmentsEnabled) {
+                props.onNotice({
+                  title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
+                  tone: "warning",
+                });
+                return;
+              }
+              props.onAttachFiles(files);
+              props.onNotice({
+                title: files.length === 1 ? `Attached ${files[0]?.name ?? "file"}` : `Attached ${files.length} files`,
+                tone: "success",
+              });
+            }}
+          />
+        </div>
         {slashOpen && slashFiltered.length > 0 ? (
           <div className="border-t border-dls-border px-3 py-2">
             <div className="grid gap-1">

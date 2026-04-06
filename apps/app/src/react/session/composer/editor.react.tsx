@@ -29,6 +29,9 @@ type EditorProps = {
   placeholder: string;
   onChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
+  onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+  onDrop?: React.DragEventHandler<HTMLDivElement>;
+  onDragOver?: React.DragEventHandler<HTMLDivElement>;
 };
 
 class ComposerMentionNode extends TextNode {
@@ -189,6 +192,9 @@ export function LexicalPromptEditor(props: EditorProps) {
               className="min-h-[140px] w-full resize-none bg-transparent text-base text-dls-text outline-none placeholder:text-dls-secondary"
               aria-placeholder={props.placeholder}
               placeholder={<span />}
+              onPaste={props.onPaste}
+              onDrop={props.onDrop}
+              onDragOver={props.onDragOver}
             />
           }
           placeholder={
