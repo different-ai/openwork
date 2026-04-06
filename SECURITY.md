@@ -11,7 +11,7 @@ Please do not open public GitHub issues for security vulnerabilities.
 
 Instead, report vulnerabilities privately to:
 
-- Email: `benjamin.shafii@gmail.com`
+- Email: `ben@openworklabs.com`
 - Subject: `[OpenWork security] <short summary>`
 
 Please include:

@@ -99,6 +99,12 @@ export function LandingEnterprise(props: Props) {
                 </div>
               </div>
             </div>
+
+            <div className="mt-4">
+              <a href="/trust" className="text-[14px] font-medium text-[#011627] transition-colors hover:text-slate-700">
+                Trust details
+              </a>
+            </div>
           </section>
 
           <section className="space-y-6">

@@ -6,9 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
+    "dev:react-session": "OPENWORK_DEV_MODE=1 VITE_OPENWORK_REACT_SESSION=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev-react\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
     "dev:windows": "node ./scripts/dev-windows.mjs",
     "dev:windows:x64": "node ./scripts/dev-windows.mjs x64",
     "build": "tauri build",
+    "build:debug:react-session": "VITE_OPENWORK_REACT_SESSION=1 tauri build --debug",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "devDependencies": {

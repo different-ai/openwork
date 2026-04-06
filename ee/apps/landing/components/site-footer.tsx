@@ -33,13 +33,16 @@ export function SiteFooter() {
           <Link href="/enterprise" className="transition-colors hover:text-gray-800">
             Enterprise
           </Link>
+          <Link href="/trust" className="transition-colors hover:text-gray-800">
+            Trust Center
+          </Link>
           <Link href="/privacy" className="transition-colors hover:text-gray-800">
             Privacy
           </Link>
           <Link href="/terms" className="transition-colors hover:text-gray-800">
             Terms
           </Link>
-          <div>© 2026 OpenWork Project.</div>
+          <div>© 2026 Different AI</div>
         </div>
       </div>
     </footer>
