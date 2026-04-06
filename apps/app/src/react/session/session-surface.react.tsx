@@ -10,6 +10,7 @@ import { SessionDebugPanel } from "./debug-panel.react";
 import { SessionTranscript } from "./message-list.react";
 import { deriveSessionRenderModel } from "./transition-controller";
 import { getReactQueryClient } from "../kernel/query-client";
+import { ReactSessionComposer } from "./composer/composer.react";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
@@ -194,41 +195,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
         <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
       )}
 
-      <div className="mx-auto w-full max-w-[800px] px-4">
-        <div className="rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.currentTarget.value)}
-            onKeyDown={onComposerKeyDown}
-            rows={5}
-            placeholder="Describe your task..."
-            className="min-h-[180px] w-full resize-none bg-transparent px-6 py-5 text-base text-dls-text outline-none placeholder:text-dls-secondary"
-            disabled={model.transitionState !== "idle"}
-          />
-          <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
-            <div className="text-xs text-dls-secondary">{statusLabel(snapshot ?? undefined, chatStreaming)}</div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="rounded-full border border-dls-border px-4 py-2 text-sm text-dls-secondary transition-colors hover:bg-dls-hover disabled:opacity-50"
-                onClick={handleAbort}
-                disabled={!chatStreaming}
-              >
-                Stop
-              </button>
-              <button
-                type="button"
-                className="rounded-full bg-[var(--dls-accent)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)] disabled:opacity-50"
-                onClick={handleSend}
-                disabled={chatStreaming || !draft.trim() || model.transitionState !== "idle"}
-              >
-                Run task
-              </button>
-            </div>
-          </div>
-          {error ? <div className="border-t border-red-6/30 px-4 py-3 text-sm text-red-11">{error}</div> : null}
+      <ReactSessionComposer
+        draft={draft}
+        onDraftChange={setDraft}
+        onSend={handleSend}
+        onStop={handleAbort}
+        busy={chatStreaming}
+        disabled={model.transitionState !== "idle"}
+        statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
+      />
+      {error ? (
+        <div className="mx-auto w-full max-w-[800px] px-4">
+          <div className="rounded-b-[20px] border border-t-0 border-red-6/30 px-4 py-3 text-sm text-red-11">{error}</div>
         </div>
-      </div>
+      ) : null}
       {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
     </div>
   );
