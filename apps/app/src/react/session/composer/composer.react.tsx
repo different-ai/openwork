@@ -44,7 +44,20 @@ type ComposerProps = {
   onInsertMention: (kind: "agent" | "file", value: string) => void;
   notice: ReactComposerNoticeData | null;
   onNotice: (notice: ReactComposerNoticeData) => void;
+  onPasteText: (text: string) => void;
+  onUnsupportedFileLinks: (links: string[]) => void;
+  isRemoteWorkspace: boolean;
+  isSandboxWorkspace: boolean;
+  onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
 };
+
+function parseClipboardLinks(text: string) {
+  return Array.from(text.matchAll(/https?:\/\/\S+/g)).map((match) => match[0]).filter(Boolean);
+}
+
+function countLines(text: string) {
+  return text ? text.split(/\r?\n/).length : 0;
+}
 
 export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
@@ -277,20 +290,47 @@ export function ReactSessionComposer(props: ComposerProps) {
             onSubmit={props.onSend}
             onPaste={(event) => {
               const files = Array.from(event.clipboardData?.files ?? []);
-              if (!files.length) return;
-              event.preventDefault();
-              if (!props.attachmentsEnabled) {
-                props.onNotice({
-                  title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
-                  tone: "warning",
-                });
+              const text = event.clipboardData?.getData("text/plain") ?? "";
+              if (files.length) {
+                event.preventDefault();
+                const supported = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("text/") || file.type === "application/pdf");
+                const unsupported = files.filter((file) => !supported.includes(file));
+                if (supported.length) {
+                  if (!props.attachmentsEnabled) {
+                    props.onNotice({
+                      title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
+                      tone: "warning",
+                    });
+                  } else {
+                    props.onAttachFiles(supported);
+                    props.onNotice({
+                      title: supported.length === 1 ? `Attached ${supported[0]?.name ?? "file"}` : `Attached ${supported.length} files`,
+                      tone: "success",
+                    });
+                  }
+                }
+                if (unsupported.length) {
+                  props.onUnsupportedFileLinks(parseClipboardLinks(text));
+                  props.onNotice({ title: "Inserted links for unsupported files", tone: "info" });
+                }
                 return;
               }
-              props.onAttachFiles(files);
-              props.onNotice({
-                title: files.length === 1 ? `Attached ${files[0]?.name ?? "file"}` : `Attached ${files.length} files`,
-                tone: "success",
-              });
+
+              if (!text.trim()) return;
+              if ((props.isRemoteWorkspace || props.isSandboxWorkspace) && /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)) {
+                props.onNotice({
+                  title: "Pasted local paths may not exist on the connected worker.",
+                  tone: "warning",
+                  actionLabel: props.onUploadInboxFiles ? "Upload to shared folder" : undefined,
+                  onAction: props.onUploadInboxFiles ? () => void props.onUploadInboxFiles?.([]) : undefined,
+                });
+              }
+
+              if (countLines(text) > 10) {
+                event.preventDefault();
+                props.onPasteText(text);
+                props.onNotice({ title: "Inserted pasted text as a collapsed chip", tone: "info" });
+              }
             }}
             onDragOver={(event) => {
               if (event.dataTransfer?.files?.length) event.preventDefault();

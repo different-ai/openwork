@@ -3380,6 +3380,9 @@ export default function SessionView(props: SessionViewProps) {
                             listCommands: sessionActions.listCommands,
                             recentFiles: props.workingFiles,
                             searchFiles: sessionActions.searchWorkspaceFiles,
+                            isRemoteWorkspace: props.selectedWorkspaceDisplay.workspaceType === "remote",
+                            isSandboxWorkspace: isSandboxWorkspace(),
+                            onUploadInboxFiles: uploadInboxFiles,
                           }}
                         />
                       }

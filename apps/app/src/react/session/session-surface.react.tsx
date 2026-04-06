@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "../../app/lib/opencode";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import type { OpenworkServerClient, OpenworkSessionSnapshot } from "../../app/lib/openwork-server";
-import type { ComposerAttachment, ComposerDraft } from "../../app/types";
+import type { ComposerAttachment, ComposerDraft, ComposerPart } from "../../app/types";
 import { SessionDebugPanel } from "./debug-panel.react";
 import { SessionTranscript } from "./message-list.react";
 import { deriveSessionRenderModel } from "./transition-controller";
@@ -45,6 +45,9 @@ type SessionSurfaceProps = {
   listCommands: () => Promise<import("../../app/types").SlashCommandOption[]>;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
+  isRemoteWorkspace: boolean;
+  isSandboxWorkspace: boolean;
+  onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
 };
 
 function transcriptToText(messages: UIMessage[]) {
@@ -89,6 +92,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [mentions, setMentions] = useState<Record<string, "agent" | "file">>({});
+  const [pasteParts, setPasteParts] = useState<Array<{ id: string; label: string; text: string; lines: number }>>([]);
   const [notice, setNotice] = useState<ReactComposerNotice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -138,6 +142,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setSending(false);
     setAttachments([]);
     setMentions({});
+    setPasteParts([]);
     setNotice(null);
   }, [props.sessionId]);
 
@@ -175,8 +180,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const buildDraft = (text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const trimmed = text.trim();
     const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
-    const parts: ComposerDraft["parts"] = text.split(/(@[^\s@]+)/).flatMap((segment) => {
+    const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
+      const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
+      if (pasteMatch) {
+        const target = pasteParts.find((item) => item.label === pasteMatch[1]);
+        if (target) {
+          return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines }];
+        }
+      }
       if (segment.startsWith("@")) {
         const value = segment.slice(1);
         const kind = mentions[value];
@@ -239,7 +251,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     props.onDraftChange(buildDraft(draft, attachments));
-  }, [draft, attachments, props]);
+  }, [draft, attachments, pasteParts, props]);
 
   const handleAttachFiles = (files: File[]) => {
     if (!props.attachmentsEnabled) {
@@ -275,6 +287,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleInsertMention = (kind: "agent" | "file", value: string) => {
     setDraft((current) => current.replace(/@([^\s@]*)$/, `@${value} `));
     setMentions((current) => ({ ...current, [value]: kind }));
+  };
+
+  const handlePasteText = (text: string) => {
+    const id = `paste-${Math.random().toString(36).slice(2)}`;
+    const label = `${id.slice(-4)} · ${text.split(/\r?\n/).length} lines`;
+    setPasteParts((current) => [...current, { id, label, text, lines: text.split(/\r?\n/).length }]);
+    setDraft((current) => `${current}[pasted text ${label}]`);
+  };
+
+  const handleUnsupportedFileLinks = (links: string[]) => {
+    if (!links.length) return;
+    setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
   };
 
   const onComposerKeyDown = async (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -358,6 +382,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onInsertMention={handleInsertMention}
         notice={notice}
         onNotice={setNotice}
+        onPasteText={handlePasteText}
+        onUnsupportedFileLinks={handleUnsupportedFileLinks}
+        isRemoteWorkspace={props.isRemoteWorkspace}
+        isSandboxWorkspace={props.isSandboxWorkspace}
+        onUploadInboxFiles={props.onUploadInboxFiles}
       />
       {error ? (
         <div className="mx-auto w-full max-w-[800px] px-4">
