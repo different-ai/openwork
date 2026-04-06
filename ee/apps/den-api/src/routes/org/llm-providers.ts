@@ -21,7 +21,7 @@ import {
 } from "../../middleware/index.js"
 import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-dev.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
-import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema, memberHasRole, orgIdParamSchema } from "./shared.js"
 
@@ -42,7 +42,7 @@ const providerCatalogParamsSchema = orgIdParamSchema.extend({
   providerId: z.string().trim().min(1).max(255),
 })
 
-const orgLlmProviderParamsSchema = orgIdParamSchema.extend(idParamSchema("llmProviderId").shape)
+const orgLlmProviderParamsSchema = orgIdParamSchema.extend(idParamSchema("llmProviderId", "llmProvider").shape)
 
 const customModelSchema = z.object({
   id: z.string().trim().min(1).max(255),
@@ -65,8 +65,8 @@ const llmProviderWriteSchema = z.object({
   modelIds: z.array(z.string().trim().min(1).max(255)).min(1).optional(),
   customConfigText: z.string().trim().min(1).optional(),
   apiKey: z.string().trim().max(65535).optional(),
-  memberIds: z.array(z.string().trim().min(1).max(255)).max(500).optional().default([]),
-  teamIds: z.array(z.string().trim().min(1).max(255)).max(500).optional().default([]),
+  memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
+  teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
 }).superRefine((value, ctx) => {
   if (value.source === "models_dev") {
     if (!value.providerId) {
@@ -988,7 +988,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgLlmProviderParamsSchema.extend(idParamSchema("accessId").shape)),
+    paramValidator(orgLlmProviderParamsSchema.extend(idParamSchema("accessId", "llmProviderAccess").shape)),
     resolveOrganizationContextMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")

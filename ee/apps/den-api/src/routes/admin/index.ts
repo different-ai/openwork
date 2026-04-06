@@ -6,7 +6,7 @@ import { z } from "zod"
 import { getCloudWorkerAdminBillingStatus } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { queryValidator, requireAdminMiddleware } from "../../middleware/index.js"
-import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -17,7 +17,7 @@ const overviewQuerySchema = z.object({
 
 const adminOverviewResponseSchema = z.object({
   viewer: z.object({
-    id: z.string(),
+    id: denTypeIdSchema("user"),
     email: z.string(),
     name: z.string().nullable(),
   }),

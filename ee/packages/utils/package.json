@@ -21,9 +21,13 @@
     "build": "tsup"
   },
   "dependencies": {
-    "typeid-js": "^1.2.0"
+    "luxon": "^3.6.1",
+    "typeid-js": "^1.2.0",
+    "uuid": "^11.1.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/luxon": "^3.6.2",
     "@types/node": "^20.11.30",
     "tsup": "^8.5.0",
     "typescript": "^5.5.4"

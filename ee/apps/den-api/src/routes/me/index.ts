@@ -2,7 +2,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { requireUserMiddleware, resolveUserOrganizationsMiddleware, type UserOrganizationsContext } from "../../middleware/index.js"
-import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const meResponseSchema = z.object({
@@ -12,10 +12,10 @@ const meResponseSchema = z.object({
 
 const meOrganizationsResponseSchema = z.object({
   orgs: z.array(z.object({
-    id: z.string(),
+    id: denTypeIdSchema("organization"),
     isActive: z.boolean(),
   }).passthrough()),
-  activeOrgId: z.string().nullable(),
+  activeOrgId: denTypeIdSchema("organization").nullable(),
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "CurrentUserOrganizationsResponse" })
 

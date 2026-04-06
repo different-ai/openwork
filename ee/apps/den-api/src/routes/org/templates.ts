@@ -6,7 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
-import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema, orgIdParamSchema, parseTemplateJson } from "./shared.js"
 
@@ -16,15 +16,15 @@ const createTemplateSchema = z.object({
 })
 
 const templateSchema = z.object({
-  id: z.string(),
-  organizationId: z.string(),
+  id: denTypeIdSchema("tempTemplateSharing"),
+  organizationId: denTypeIdSchema("organization"),
   name: z.string(),
   templateData: z.unknown(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   creator: z.object({
-    memberId: z.string(),
-    userId: z.string(),
+    memberId: denTypeIdSchema("member"),
+    userId: denTypeIdSchema("user"),
     role: z.string(),
     name: z.string().nullable(),
     email: z.string().email().nullable(),
@@ -41,7 +41,7 @@ const templateListResponseSchema = z.object({
 }).meta({ ref: "TemplateListResponse" })
 
 type TemplateSharingId = typeof TempTemplateSharingTable.$inferSelect.id
-const orgTemplateParamsSchema = orgIdParamSchema.extend(idParamSchema("templateId").shape)
+const orgTemplateParamsSchema = orgIdParamSchema.extend(idParamSchema("templateId", "tempTemplateSharing").shape)
 
 export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(

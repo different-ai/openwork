@@ -6,7 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
-import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import type { WorkerRouteVariables } from "./shared.js"
 import {
@@ -35,9 +35,9 @@ const workerInstanceSchema = z.object({
 }).nullable().meta({ ref: "WorkerInstance" })
 
 const workerSchema = z.object({
-  id: z.string(),
-  orgId: z.string(),
-  createdByUserId: z.string().nullable(),
+  id: denTypeIdSchema("worker"),
+  orgId: denTypeIdSchema("organization"),
+  createdByUserId: denTypeIdSchema("user").nullable(),
   isMine: z.boolean(),
   name: z.string(),
   description: z.string().nullable(),

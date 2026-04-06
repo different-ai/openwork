@@ -1,7 +1,8 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
 import { env } from "../../env.js"
+import { denTypeIdSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 export type OrgRouteVariables =
@@ -11,13 +12,19 @@ export type OrgRouteVariables =
   & Partial<MemberTeamsContext>
 
 export const orgIdParamSchema = z.object({
-  orgId: z.string().trim().min(1).max(255),
+  orgId: denTypeIdSchema("organization"),
 })
 
-export function idParamSchema<K extends string>(key: K) {
+export function idParamSchema<K extends string>(key: K, typeName?: DenTypeIdName) {
+  if (!typeName) {
+    return z.object({
+      [key]: z.string().trim().min(1).max(255),
+    } as unknown as Record<K, z.ZodString>)
+  }
+
   return z.object({
-    [key]: z.string().trim().min(1).max(255),
-  } as Record<K, z.ZodString>)
+    [key]: denTypeIdSchema(typeName),
+  } as unknown as Record<K, z.ZodType<string, string>>)
 }
 
 export function splitRoles(value: string) {

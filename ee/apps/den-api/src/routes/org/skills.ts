@@ -22,7 +22,7 @@ import {
   resolveOrganizationContextMiddleware,
 } from "../../middleware/index.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
-import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema, memberHasRole, orgIdParamSchema } from "./shared.js"
 
@@ -80,12 +80,12 @@ const updateSkillHubSchema = z.object({
 })
 
 const addSkillToHubSchema = z.object({
-  skillId: z.string().trim().min(1),
+  skillId: denTypeIdSchema("skill"),
 })
 
 const addSkillHubAccessSchema = z.object({
-  orgMembershipId: z.string().trim().min(1).optional(),
-  teamId: z.string().trim().min(1).optional(),
+  orgMembershipId: denTypeIdSchema("member").optional(),
+  teamId: denTypeIdSchema("team").optional(),
 }).superRefine((value, ctx) => {
   const count = Number(Boolean(value.orgMembershipId)) + Number(Boolean(value.teamId))
   if (count !== 1) {
@@ -105,10 +105,10 @@ type MemberId = typeof MemberTable.$inferSelect.id
 type SkillRow = typeof SkillTable.$inferSelect
 type SkillHubRow = typeof SkillHubTable.$inferSelect
 
-const orgSkillHubParamsSchema = orgIdParamSchema.extend(idParamSchema("skillHubId").shape)
-const orgSkillParamsSchema = orgIdParamSchema.extend(idParamSchema("skillId").shape)
-const orgSkillHubSkillParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("skillId").shape)
-const orgSkillHubAccessParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("accessId").shape)
+const orgSkillHubParamsSchema = orgIdParamSchema.extend(idParamSchema("skillHubId", "skillHub").shape)
+const orgSkillParamsSchema = orgIdParamSchema.extend(idParamSchema("skillId", "skill").shape)
+const orgSkillHubSkillParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("skillId", "skill").shape)
+const orgSkillHubAccessParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("accessId", "skillHubMember").shape)
 
 const skillResponseSchema = z.object({
   skill: z.object({}).passthrough(),

@@ -1,5 +1,8 @@
+import { type DenTypeIdName, typeId } from "@openwork-ee/utils/typeid"
 import { resolver } from "hono-openapi"
 import { z } from "zod"
+
+const TYPE_ID_EXAMPLE_SUFFIX = "01h2xcejqtf2nbrexx3vqjhp41"
 
 function toPascalCase(value: string) {
   return value
@@ -32,6 +35,15 @@ export function buildOperationId(method: string, path: string) {
     .map(toPascalCase)
     .join("")
     .replace(/^[A-Z]/, (char) => char.toLowerCase())
+}
+
+export function denTypeIdSchema<TName extends DenTypeIdName>(typeName: TName) {
+  const prefix = typeId.prefix[typeName]
+  return typeId.schema(typeName).describe(`Den TypeID with '${prefix}_' prefix.`).meta({
+    description: `Den TypeID with '${prefix}_' prefix and a ${typeId.suffixLength}-character base32 suffix.`,
+    examples: [`${prefix}_${TYPE_ID_EXAMPLE_SUFFIX}`],
+    format: "typeid",
+  })
 }
 
 const validationIssueSchema = z.object({

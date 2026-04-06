@@ -9,6 +9,7 @@ import {
   listOrganizationApiKeys,
 } from "../../api-keys.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureApiKeyManager, idParamSchema, orgIdParamSchema } from "./shared.js"
@@ -45,8 +46,8 @@ const apiKeyNotFoundSchema = z.object({
 }).meta({ ref: "OrganizationApiKeyNotFoundError" })
 
 const apiKeyOwnerSchema = z.object({
-  userId: z.string(),
-  memberId: z.string(),
+  userId: denTypeIdSchema("user"),
+  memberId: denTypeIdSchema("member"),
   name: z.string(),
   email: z.string().email(),
   image: z.string().nullable(),

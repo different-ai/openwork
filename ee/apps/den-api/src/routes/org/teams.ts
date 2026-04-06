@@ -16,7 +16,7 @@ import {
   requireUserMiddleware,
   resolveOrganizationContextMiddleware,
 } from "../../middleware/index.js"
-import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
   ensureTeamManager,
@@ -26,12 +26,12 @@ import {
 
 const createTeamSchema = z.object({
   name: z.string().trim().min(1).max(255),
-  memberIds: z.array(z.string().trim().min(1)).optional().default([]),
+  memberIds: z.array(denTypeIdSchema("member")).optional().default([]),
 })
 
 const updateTeamSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
-  memberIds: z.array(z.string().trim().min(1)).optional(),
+  memberIds: z.array(denTypeIdSchema("member")).optional(),
 }).superRefine((value, ctx) => {
   if (value.name === undefined && value.memberIds === undefined) {
     ctx.addIssue({
@@ -45,16 +45,16 @@ const updateTeamSchema = z.object({
 type TeamId = typeof TeamTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 
-const orgTeamParamsSchema = orgIdParamSchema.extend(idParamSchema("teamId").shape)
+const orgTeamParamsSchema = orgIdParamSchema.extend(idParamSchema("teamId", "team").shape)
 
 const teamResponseSchema = z.object({
   team: z.object({
-    id: z.string(),
-    organizationId: z.string(),
+    id: denTypeIdSchema("team"),
+    organizationId: denTypeIdSchema("organization"),
     name: z.string(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
-    memberIds: z.array(z.string()),
+    memberIds: z.array(denTypeIdSchema("member")),
   }),
 }).meta({ ref: "TeamResponse" })
 

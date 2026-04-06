@@ -24,7 +24,7 @@ const updateRoleSchema = z.object({
 })
 
 type OrganizationRoleId = typeof OrganizationRoleTable.$inferSelect.id
-const orgRoleParamsSchema = orgIdParamSchema.extend(idParamSchema("roleId").shape)
+const orgRoleParamsSchema = orgIdParamSchema.extend(idParamSchema("roleId", "organizationRole").shape)
 
 export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(

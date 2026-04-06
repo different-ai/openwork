@@ -7,7 +7,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { jsonValidator, requireUserMiddleware } from "../../middleware/index.js"
 import { db } from "../../db.js"
-import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const createGrantSchema = z.object({
@@ -28,7 +28,7 @@ const desktopHandoffGrantResponseSchema = z.object({
 const desktopHandoffExchangeResponseSchema = z.object({
   token: z.string(),
   user: z.object({
-    id: z.string(),
+    id: denTypeIdSchema("user"),
     email: z.string().email(),
     name: z.string().nullable(),
   }),

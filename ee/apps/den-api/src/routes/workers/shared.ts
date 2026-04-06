@@ -16,6 +16,7 @@ import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSu
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import type { UserOrganizationsContext } from "../../middleware/index.js"
+import { denTypeIdSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
@@ -55,7 +56,7 @@ export const activityHeartbeatSchema = z.object({
 })
 
 export const workerIdParamSchema = z.object({
-  id: z.string().trim().min(1).max(255),
+  id: denTypeIdSchema("worker"),
 })
 
 export type WorkerRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext>

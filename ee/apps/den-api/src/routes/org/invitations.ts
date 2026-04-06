@@ -7,7 +7,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { sendDenOrganizationInvitationEmail } from "../../email.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
-import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { listAssignableRoles } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -19,14 +19,14 @@ const inviteMemberSchema = z.object({
 })
 
 const invitationResponseSchema = z.object({
-  invitationId: z.string(),
+  invitationId: denTypeIdSchema("invitation"),
   email: z.string().email(),
   role: z.string(),
   expiresAt: z.string().datetime(),
 }).meta({ ref: "InvitationResponse" })
 
 type InvitationId = typeof InvitationTable.$inferSelect.id
-const orgInvitationParamsSchema = orgIdParamSchema.extend(idParamSchema("invitationId").shape)
+const orgInvitationParamsSchema = orgIdParamSchema.extend(idParamSchema("invitationId", "invitation").shape)
 
 export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(

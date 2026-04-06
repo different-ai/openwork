@@ -8,7 +8,7 @@ import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
-import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { acceptInvitationForUser, createOrganizationForUser, getInvitationPreview, setSessionActiveOrganization } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -19,11 +19,11 @@ const createOrganizationSchema = z.object({
 })
 
 const invitationPreviewQuerySchema = z.object({
-  id: z.string().trim().min(1),
+  id: denTypeIdSchema("invitation"),
 })
 
 const acceptInvitationSchema = z.object({
-  id: z.string().trim().min(1),
+  id: denTypeIdSchema("invitation"),
 })
 
 const organizationResponseSchema = z.object({
@@ -44,9 +44,9 @@ const invitationPreviewResponseSchema = z.object({}).passthrough().meta({ ref: "
 
 const invitationAcceptedResponseSchema = z.object({
   accepted: z.literal(true),
-  organizationId: z.string(),
+  organizationId: denTypeIdSchema("organization"),
   organizationSlug: z.string().nullable(),
-  invitationId: z.string(),
+  invitationId: denTypeIdSchema("invitation"),
 }).meta({ ref: "InvitationAcceptedResponse" })
 
 const organizationContextResponseSchema = z.object({
