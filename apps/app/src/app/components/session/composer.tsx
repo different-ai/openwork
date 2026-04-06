@@ -2,10 +2,11 @@ import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMou
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
 import ProviderIcon from "../provider-icon";
-import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
+import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, File as FileIcon, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-solid";
 import ComposerNotice, { type ComposerNotice as ComposerNoticeData } from "./composer-notice";
+import { useConnections } from "../../connections/provider";
 
-import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
+import type { ComposerAttachment, ComposerDraft, ComposerPart, McpStatus, PromptMode, SkillCard, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { t } from "../../../i18n";
 
@@ -22,6 +23,8 @@ type MentionGroup = {
   category: "agent" | "recent" | "file";
   items: MentionOption[];
 };
+
+type ToolMenuSection = "commands" | "skills" | "mcps";
 
 type ComposerProps = {
   prompt: string;
@@ -62,7 +65,9 @@ type ComposerProps = {
   ) => void | Promise<Array<{ name: string; path: string }> | void>;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
+  skills: SkillCard[];
   listCommands: () => Promise<SlashCommandOption[]>;
+  onOpenSettings: (section: ToolMenuSection) => void;
 };
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
@@ -268,6 +273,40 @@ const createSlashSpan = (cmd: SlashCommandOption) => {
   return span;
 };
 
+const mergeSlashCommandsWithSkills = (commands: SlashCommandOption[], skills: SkillCard[]) => {
+  const merged = new Map<string, SlashCommandOption>();
+  for (const command of commands) {
+    merged.set(command.name, command);
+  }
+  for (const skill of skills) {
+    if (merged.has(skill.name)) continue;
+    merged.set(skill.name, {
+      id: `skill:${skill.name}`,
+      name: skill.name,
+      description: skill.description,
+      source: "skill",
+    });
+  }
+  return Array.from(merged.values());
+};
+
+const formatMcpStatusLabel = (status: McpStatus | undefined) => {
+  switch (status?.status) {
+    case "connected":
+      return t("context_panel.mcp_connected");
+    case "needs_auth":
+      return t("context_panel.mcp_needs_auth");
+    case "needs_client_registration":
+      return t("context_panel.mcp_register_client");
+    case "failed":
+      return t("context_panel.mcp_failed");
+    case "disabled":
+      return t("context_panel.mcp_disabled");
+    default:
+      return t("mcp.configured");
+  }
+};
+
 const insertTextWithBreaks = (target: HTMLElement, text: string) => {
   const chunks = text.split("\n");
   chunks.forEach((chunk, index) => {
@@ -445,10 +484,12 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 };
 
 export default function Composer(props: ComposerProps) {
+  const connections = useConnections();
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let inboxFileInputRef: HTMLInputElement | undefined;
   let variantPickerRef: HTMLDivElement | undefined;
+  let toolMenuRef: HTMLDivElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
   let pasteCounter = 0;
@@ -529,6 +570,8 @@ export default function Composer(props: ComposerProps) {
   const [slashIndex, setSlashIndex] = createSignal(0);
   const [slashCommands, setSlashCommands] = createSignal<SlashCommandOption[]>([]);
   const [slashLoading, setSlashLoading] = createSignal(false);
+  const [toolMenuOpen, setToolMenuOpen] = createSignal(false);
+  const [toolMenuSection, setToolMenuSection] = createSignal<ToolMenuSection>("commands");
 
   onMount(() => {
     queueMicrotask(() => focusEditorEnd());
@@ -609,6 +652,27 @@ export default function Composer(props: ComposerProps) {
 
   const mentionOptions = createMemo(() => mentionGroups().flatMap((group: MentionGroup) => group.items));
   const mentionVisible = createMemo(() => mentionOptions().slice(0, 10));
+  const availableSlashCommands = createMemo(() => mergeSlashCommandsWithSkills(slashCommands(), props.skills));
+  const toolCommandItems = createMemo(() =>
+    availableSlashCommands().filter((command) => !command.source || command.source === "command"),
+  );
+  const toolSkillItems = createMemo(() =>
+    availableSlashCommands().filter((command) => command.source === "skill"),
+  );
+  const activeMcpItems = createMemo(() => {
+    const statuses = connections.mcpStatuses();
+    return connections
+      .mcpServers()
+      .filter((entry) => entry.config.enabled !== false)
+      .map((entry) => ({
+        name: entry.name,
+        status: statuses[entry.name],
+        details:
+          entry.config.type === "remote"
+            ? entry.config.url ?? t("mcp.config_source")
+            : entry.config.command?.join(" ") ?? t("mcp.config_source"),
+      }));
+  });
 
   createEffect(() => {
     if (!mentionOpen()) return;
@@ -652,6 +716,7 @@ export default function Composer(props: ComposerProps) {
         setMentionQuery("");
         setSlashOpen(false);
         setSlashQuery("");
+        setToolMenuOpen(false);
         setMode(props.draftMode);
         setEditorText(props.prompt);
         if (!props.prompt) {
@@ -907,7 +972,7 @@ export default function Composer(props: ComposerProps) {
   const slashFiltered = createMemo(() => {
     if (!slashOpen()) return [];
     const query = slashQuery().trim().toLowerCase();
-    const commands = slashCommands();
+    const commands = availableSlashCommands();
     if (!query) return commands.slice(0, 15);
     return fuzzysort
       .go(query, commands, { keys: ["name", "description"] })
@@ -921,16 +986,20 @@ export default function Composer(props: ComposerProps) {
     setSlashIndex(0);
   });
 
-  // Refresh commands each time the slash picker opens so hot-reloaded skills
-  // and commands become selectable without restarting the session view.
-  createEffect(() => {
-    if (!slashOpen()) return;
+  const refreshSlashCommands = () => {
     setSlashLoading(true);
     props
       .listCommands()
       .then((commands) => setSlashCommands(commands))
       .catch(() => setSlashCommands([]))
       .finally(() => setSlashLoading(false));
+  };
+
+  // Refresh commands each time a command menu opens so hot-reloaded skills
+  // and commands become selectable without restarting the session view.
+  createEffect(() => {
+    if (!slashOpen() && !toolMenuOpen()) return;
+    refreshSlashCommands();
   });
 
   // If the editor contains an exact /command (no spaces), auto-convert it into a styled chip.
@@ -939,7 +1008,7 @@ export default function Composer(props: ComposerProps) {
     if (!slashOpen()) return;
     const query = slashQuery().trim();
     if (!query) return;
-    const cmd = slashCommands().find((c) => c.name === query);
+    const cmd = availableSlashCommands().find((c) => c.name === query);
     if (!cmd) return;
     handleSlashSelect(cmd);
   });
@@ -954,6 +1023,8 @@ export default function Composer(props: ComposerProps) {
     const chip = createSlashSpan(cmd);
     editorRef.appendChild(chip);
     editorRef.appendChild(document.createTextNode(" "));
+    setDraftText(text);
+    rememberRecentEmit(text);
     suppressPromptSync = true;
     props.onDraftChange({
       mode: mode(),
@@ -1026,7 +1097,7 @@ export default function Composer(props: ComposerProps) {
       const [cmdToken, ...argTokens] = text.split(" ");
       const commandName = cmdToken.slice(1); // strip leading /
       if (commandName) {
-        const matchedCommand = slashCommands().find((c) => c.name === commandName);
+        const matchedCommand = availableSlashCommands().find((c) => c.name === commandName);
         if (matchedCommand) {
           draft.command = { name: commandName, arguments: argTokens.join(" ") };
         }
@@ -1503,6 +1574,7 @@ export default function Composer(props: ComposerProps) {
     setMentionQuery("");
     setSlashOpen(false);
     setSlashQuery("");
+    setToolMenuOpen(false);
   });
   createEffect(() => {
     if (!variantMenuOpen()) return;
@@ -1510,6 +1582,17 @@ export default function Composer(props: ComposerProps) {
       if (!variantPickerRef) return;
       if (variantPickerRef.contains(event.target as Node)) return;
       setVariantMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
+  });
+
+  createEffect(() => {
+    if (!toolMenuOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!toolMenuRef) return;
+      if (toolMenuRef.contains(event.target as Node)) return;
+      setToolMenuOpen(false);
     };
     window.addEventListener("mousedown", handler);
     onCleanup(() => window.removeEventListener("mousedown", handler));
@@ -1764,23 +1847,183 @@ export default function Composer(props: ComposerProps) {
                             target.value = "";
                           }}
                         />
-                        <button
-                          type="button"
-                          class={`rounded-md p-1.5 text-gray-10 transition-colors hover:bg-gray-3 ${attachmentsDisabled() ? "cursor-not-allowed" : ""
-                            }`}
-                          onClick={() => {
-                            if (attachmentsDisabled()) return;
-                            fileInputRef?.click();
-                          }}
-                          disabled={attachmentsDisabled()}
-                          title={
-                            attachmentsDisabled()
-                              ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
-                              : t("composer.attach_files")
-                          }
-                        >
-                          <Paperclip size={16} />
-                        </button>
+                        <div class="relative" ref={(el) => (toolMenuRef = el)}>
+                          <div class="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              class={`rounded-md p-1.5 text-gray-10 transition-colors hover:bg-gray-3 ${attachmentsDisabled() ? "cursor-not-allowed" : ""
+                                }`}
+                              onClick={() => {
+                                if (attachmentsDisabled()) return;
+                                fileInputRef?.click();
+                              }}
+                              disabled={attachmentsDisabled()}
+                              title={
+                                attachmentsDisabled()
+                                  ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
+                                  : t("composer.attach_files")
+                              }
+                            >
+                              <Paperclip size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              class={`rounded-md p-1.5 transition-colors ${toolMenuOpen() ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"
+                                }`}
+                              aria-expanded={toolMenuOpen()}
+                              aria-haspopup="dialog"
+                              title={t("composer.tools_label")}
+                              onClick={() => {
+                                setMentionOpen(false);
+                                setMentionQuery("");
+                                setSlashOpen(false);
+                                setSlashQuery("");
+                                setToolMenuOpen((current) => !current);
+                              }}
+                            >
+                              <Plug size={16} />
+                            </button>
+                          </div>
+
+                          <Show when={toolMenuOpen()}>
+                            <div class="absolute bottom-full left-0 z-40 mb-3 w-[min(calc(100vw-2.5rem),34rem)] overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+                              <div class="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
+                                <div class="border-r border-dls-border bg-gray-2/30 p-2">
+                                  <For each={[
+                                    { id: "commands" as const, label: t("dashboard.commands") },
+                                    { id: "skills" as const, label: t("dashboard.skills") },
+                                    { id: "mcps" as const, label: t("composer.mcps_label") },
+                                  ]}>
+                                    {(section) => (
+                                      <button
+                                        type="button"
+                                        class={`mb-1 flex w-full items-center justify-between rounded-[16px] px-3 py-2.5 text-left text-sm transition-colors ${toolMenuSection() === section.id
+                                          ? "bg-gray-3 text-gray-12"
+                                          : "text-gray-11 hover:bg-gray-2"
+                                          }`}
+                                        onMouseDown={(event: MouseEvent) => event.preventDefault()}
+                                        onClick={() => setToolMenuSection(section.id)}
+                                      >
+                                        <span class="truncate">{section.label}</span>
+                                        <ChevronRight size={14} class="shrink-0 text-gray-9" />
+                                      </button>
+                                    )}
+                                  </For>
+                                </div>
+
+                                <div class="max-h-72 overflow-y-auto p-2" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
+                                  <div class="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
+                                    <button
+                                      type="button"
+                                      class="inline-flex items-center gap-1.5 rounded-full border border-dls-border px-3 py-1.5 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-2"
+                                      onMouseDown={(event: MouseEvent) => event.preventDefault()}
+                                      onClick={() => {
+                                        setToolMenuOpen(false);
+                                        props.onOpenSettings(toolMenuSection());
+                                      }}
+                                    >
+                                      <Settings size={12} />
+                                      {t("composer.configure")}
+                                    </button>
+                                  </div>
+                                  <Show when={toolMenuSection() === "commands"}>
+                                    <Show
+                                      when={toolCommandItems().length}
+                                      fallback={
+                                        <div class="px-3 py-2 text-xs text-gray-10">
+                                          {slashLoading() ? t("composer.loading_commands") : t("composer.no_commands")}
+                                        </div>
+                                      }
+                                    >
+                                      <For each={toolCommandItems()}>
+                                        {(command) => (
+                                          <button
+                                            type="button"
+                                            class="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                            onClick={() => {
+                                              setToolMenuOpen(false);
+                                              handleSlashSelect(command);
+                                            }}
+                                          >
+                                            <Terminal size={14} class="mt-0.5 shrink-0 text-gray-9" />
+                                            <div class="min-w-0">
+                                              <div class="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
+                                              <Show when={command.description}>
+                                                <div class="truncate text-xs text-gray-10">{command.description}</div>
+                                              </Show>
+                                            </div>
+                                          </button>
+                                        )}
+                                      </For>
+                                    </Show>
+                                  </Show>
+
+                                  <Show when={toolMenuSection() === "skills"}>
+                                    <Show
+                                      when={toolSkillItems().length}
+                                      fallback={
+                                        <div class="px-3 py-2 text-xs text-gray-10">
+                                          {slashLoading() ? t("composer.loading_commands") : t("context_panel.no_skills")}
+                                        </div>
+                                      }
+                                    >
+                                      <For each={toolSkillItems()}>
+                                        {(skill) => (
+                                          <button
+                                            type="button"
+                                            class="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                            onClick={() => {
+                                              setToolMenuOpen(false);
+                                              handleSlashSelect(skill);
+                                            }}
+                                          >
+                                            <Zap size={14} class="mt-0.5 shrink-0 text-gray-9" />
+                                            <div class="min-w-0">
+                                              <div class="truncate text-xs font-semibold text-gray-11">/{skill.name}</div>
+                                              <Show when={skill.description}>
+                                                <div class="truncate text-xs text-gray-10">{skill.description}</div>
+                                              </Show>
+                                            </div>
+                                          </button>
+                                        )}
+                                      </For>
+                                    </Show>
+                                  </Show>
+
+                                  <Show when={toolMenuSection() === "mcps"}>
+                                    <Show
+                                      when={activeMcpItems().length}
+                                      fallback={
+                                        <div class="px-3 py-2 text-xs text-gray-10">
+                                          {connections.mcpStatus() ?? t("context_panel.no_mcp")}
+                                        </div>
+                                      }
+                                    >
+                                      <For each={activeMcpItems()}>
+                                        {(mcp) => (
+                                          <div class="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                            <Plug size={14} class="mt-0.5 shrink-0 text-gray-9" />
+                                            <div class="min-w-0 flex-1">
+                                              <div class="flex items-center justify-between gap-3">
+                                                <div class="truncate text-xs font-semibold text-gray-11">{mcp.name}</div>
+                                                <span class="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-10">
+                                                  {formatMcpStatusLabel(mcp.status)}
+                                                </span>
+                                              </div>
+                                              <Show when={mcp.details}>
+                                                <div class="truncate text-xs text-gray-10">{mcp.details}</div>
+                                              </Show>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </For>
+                                    </Show>
+                                  </Show>
+                                </div>
+                              </div>
+                            </div>
+                          </Show>
+                        </div>
                       </div>
                       <div class="ml-auto flex shrink-0 items-center pl-2">
                         <Show

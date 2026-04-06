@@ -3604,7 +3604,17 @@ export default function SessionView(props: SessionViewProps) {
               listAgents={sessionActions.listAgents}
               recentFiles={props.workingFiles}
               searchFiles={sessionActions.searchWorkspaceFiles}
+              skills={props.skills}
               listCommands={sessionActions.listCommands}
+              onOpenSettings={(section) =>
+                openSettings(
+                  section === "skills"
+                    ? "skills"
+                    : section === "mcps"
+                      ? "extensions"
+                      : "automations",
+                )
+              }
               isRemoteWorkspace={
                 props.selectedWorkspaceDisplay.workspaceType === "remote"
               }
