@@ -317,9 +317,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       )}
 
-      <ReactSessionComposer
-        draft={draft}
-        onDraftChange={setDraft}
+        <ReactSessionComposer
+          draft={draft}
+          mentions={mentions}
+          onDraftChange={setDraft}
         onSend={handleSend}
         onStop={handleAbort}
         busy={chatStreaming}

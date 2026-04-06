@@ -15,6 +15,7 @@ type MentionItem = {
 
 type ComposerProps = {
   draft: string;
+  mentions: Record<string, "agent" | "file">;
   onDraftChange: (value: string) => void;
   onSend: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
@@ -224,6 +225,7 @@ export function ReactSessionComposer(props: ComposerProps) {
         ) : null}
         <LexicalPromptEditor
           value={props.draft}
+          mentions={props.mentions}
           disabled={props.disabled}
           placeholder="Describe your task..."
           onChange={props.onDraftChange}
