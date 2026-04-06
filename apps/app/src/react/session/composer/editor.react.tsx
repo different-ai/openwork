@@ -53,6 +53,15 @@ type SerializedComposerMentionNode = Spread<
   SerializedTextNode
 >;
 
+type SerializedComposerSlashCommandNode = Spread<
+  {
+    commandName: string;
+    type: "composer-slash-command";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
 class ComposerMentionNode extends TextNode {
   __value: string;
   __kind: "agent" | "file";
@@ -131,7 +140,77 @@ function $createComposerMentionNode(value: string, kind: "agent" | "file") {
   return $applyNodeReplacement(new ComposerMentionNode(value, kind));
 }
 
-function setSelectionAfterNode(node: ComposerMentionNode) {
+class ComposerSlashCommandNode extends TextNode {
+  __commandName: string;
+
+  static override getType() {
+    return "composer-slash-command";
+  }
+
+  static override clone(node: ComposerSlashCommandNode) {
+    return new ComposerSlashCommandNode(node.__commandName, node.__key);
+  }
+
+  static override importJSON(serializedNode: SerializedComposerSlashCommandNode) {
+    return $createComposerSlashCommandNode(serializedNode.commandName);
+  }
+
+  constructor(commandName = "", key?: NodeKey) {
+    super(`/${commandName}`, key);
+    this.__commandName = commandName;
+  }
+
+  override exportJSON(): SerializedComposerSlashCommandNode {
+    return {
+      ...super.exportJSON(),
+      commandName: this.__commandName,
+      type: "composer-slash-command",
+      version: 1,
+    };
+  }
+
+  override createDOM(_config: EditorConfig) {
+    const dom = document.createElement("span");
+    dom.className = "inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11";
+    dom.textContent = `/${this.__commandName}`;
+    dom.contentEditable = "false";
+    dom.setAttribute("spellcheck", "false");
+    dom.title = `/${this.__commandName}`;
+    return dom;
+  }
+
+  override updateDOM(prevNode: ComposerSlashCommandNode, dom: HTMLElement) {
+    if (prevNode.__commandName !== this.__commandName) {
+      dom.textContent = `/${this.__commandName}`;
+      dom.title = `/${this.__commandName}`;
+    }
+    return false;
+  }
+
+  override canInsertTextBefore(): false {
+    return false;
+  }
+
+  override canInsertTextAfter(): false {
+    return false;
+  }
+
+  override isTextEntity(): true {
+    return true;
+  }
+
+  override isToken(): true {
+    return true;
+  }
+}
+
+function $createComposerSlashCommandNode(commandName: string) {
+  return $applyNodeReplacement(new ComposerSlashCommandNode(commandName));
+}
+
+type ComposerInlineTokenNode = ComposerMentionNode | ComposerSlashCommandNode;
+
+function setSelectionAfterNode(node: ComposerInlineTokenNode) {
   const parent = node.getParent();
   if (!parent || !$isElementNode(parent)) return;
   const selection = $createRangeSelection();
@@ -141,7 +220,7 @@ function setSelectionAfterNode(node: ComposerMentionNode) {
   $setSelection(selection);
 }
 
-function setSelectionBeforeNode(node: ComposerMentionNode) {
+function setSelectionBeforeNode(node: ComposerInlineTokenNode) {
   const parent = node.getParent();
   if (!parent || !$isElementNode(parent)) return;
   const selection = $createRangeSelection();
@@ -156,6 +235,12 @@ function setPrompt(value: string, mentions: Record<string, "agent" | "file">) {
   root.clear();
   const paragraph = $createParagraphNode();
   root.append(paragraph);
+  const slashMatch = value.match(/^\/(\S+)\s(.*)$/s);
+  if (slashMatch?.[1]) {
+    paragraph.append($createComposerSlashCommandNode(slashMatch[1]));
+    paragraph.append($createTextNode(" "));
+    value = slashMatch[2] ?? "";
+  }
   const segments = value.split(/(@[^\s@]+)/);
   for (const segment of segments) {
     if (!segment) continue;
@@ -228,7 +313,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode) {
+          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSlashCommandNode) {
             previous.remove();
             return true;
           }
@@ -256,7 +341,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode) {
+          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSlashCommandNode) {
             setSelectionBeforeNode(previous);
             return true;
           }
@@ -274,14 +359,14 @@ function MentionChipNavigationPlugin() {
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
 
-        if (anchorNode instanceof ComposerMentionNode) {
+        if (anchorNode instanceof ComposerMentionNode || anchorNode instanceof ComposerSlashCommandNode) {
           setSelectionAfterNode(anchorNode);
           return true;
         }
 
         if ($isElementNode(anchorNode)) {
           const current = anchorNode.getChildAtIndex(selection.anchor.offset);
-          if (current instanceof ComposerMentionNode) {
+          if (current instanceof ComposerMentionNode || current instanceof ComposerSlashCommandNode) {
             setSelectionAfterNode(current);
             return true;
           }
@@ -310,7 +395,7 @@ export function LexicalPromptEditor(props: EditorProps) {
         throw error;
       },
         editable: !props.disabled,
-        nodes: [ComposerMentionNode],
+        nodes: [ComposerMentionNode, ComposerSlashCommandNode],
         editorState: () => {
           setPrompt(props.value, props.mentions);
         },
