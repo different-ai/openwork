@@ -351,7 +351,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       {model.transitionState === "switching" && showDelayedLoading ? (
         <div className="flex justify-center px-6 pt-4">
           <div className="rounded-full border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary">
@@ -360,7 +360,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : null}
 
-      <div className="flex-1 space-y-4 pb-6 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain space-y-4 px-3 py-4 sm:px-5">
       {showDelayedLoading && pendingSessionLoad ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
@@ -396,7 +396,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       )}
       </div>
 
-      <div className="static bottom-0 z-10 border-t border-dls-border/70 px-0 pb-4 pt-3 ">
+      <div className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
         <ReactSessionComposer
           draft={draft}
           mentions={mentions}

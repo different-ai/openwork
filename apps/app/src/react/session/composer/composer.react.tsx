@@ -414,6 +414,7 @@ export function ReactSessionComposer(props: ComposerProps) {
           <LexicalPromptEditor
             value={props.draft}
             mentions={props.mentions}
+            pastedText={props.pastedText.map((item) => ({ label: item.label, lines: item.lines }))}
             disabled={props.disabled}
             placeholder="Describe your task..."
             onChange={props.onDraftChange}

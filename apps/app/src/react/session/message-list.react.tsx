@@ -1,8 +1,31 @@
 /** @jsxImportSource react */
+import { useState } from "react";
 import { isToolUIPart, type DynamicToolUIPart, type UIMessage } from "ai";
 
 import { MarkdownBlock } from "./markdown.react";
 import { ToolCallView } from "./tool-call.react";
+
+function CopyButton(props: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center justify-center rounded-lg border border-dls-border bg-dls-surface p-1.5 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+      title="Copy message"
+      onClick={async () => {
+        await navigator.clipboard.writeText(props.text);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      }}
+    >
+      {copied ? (
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+      ) : (
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg>
+      )}
+    </button>
+  );
+}
 
 function isImageAttachment(mime: string) {
   return mime.startsWith("image/");
@@ -80,14 +103,8 @@ function AssistantBlock(props: { message: UIMessage; developerMode: boolean; isS
   return (
     <article className="flex justify-start" data-message-role="assistant" data-message-id={props.message.id}>
       <div className="group relative w-full max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased">
-        <div className="mb-2 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            type="button"
-            className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
-            onClick={() => void copyMessage(props.message)}
-          >
-            Copy
-          </button>
+        <div className="mb-1 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+          <CopyButton text={messageToText(props.message)} />
         </div>
         <div className="space-y-4">
           {props.message.parts.map((part, index) => {
@@ -143,14 +160,8 @@ function UserBlock(props: { message: UIMessage }) {
   return (
     <article className="flex justify-end" data-message-role="user" data-message-id={props.message.id}>
       <div className="group relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text">
-        <div className="mb-2 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            type="button"
-            className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
-            onClick={() => void copyMessage(props.message)}
-          >
-            Copy
-          </button>
+        <div className="mb-1 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+          <CopyButton text={messageToText(props.message)} />
         </div>
         {attachments.length > 0 ? (
           <div className="mb-3 flex flex-wrap gap-2">
