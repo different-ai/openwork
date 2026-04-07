@@ -1,9 +1,34 @@
 ---
-title: "Team Templates"
+title: "Team Provisioning"
 ---
 
-OpenWork Cloud enables team to move faster by making it easy to share your setup across your org.
+OpenWork Cloud team provisioning covers both the starting setup new teammates inherit and the shared resources your org manages after onboarding.
 
-When your team starts with OpenWork they'll have the option to pick from one of the templates that is uniquely provisioned to them.
+## Recommended setup order
 
-Creating a template is easy: simply create a setup as you would usually. Create your skills, connect your MCPs, and simply click on Share.
+1. **Publish a Team Template**
+
+   Start from a configured workspace, add the skills and MCP servers your team needs, and use Share to publish a reusable template.
+
+2. **Invite members**
+
+   Add people to the org and assign the right role before you hand out shared resources.
+
+3. **Set up shared model access**
+
+   Open `LLM Providers` in the org dashboard to save provider credentials, choose the exact models to expose, and grant access to specific people or teams.
+
+4. **Create API keys for automations**
+
+   Open `API Keys` to issue named org keys for CI jobs, internal tools, or backend services. Copy the secret when it is created because the full key is only shown once.
+
+5. **Run long-lived work in Shared Workspace**
+
+   Use shared cloud workers for background tasks or messaging-connected runtimes that should stay available for the whole team.
+
+## When to use which surface
+
+- **Team Templates:** when a teammate needs the same starting setup.
+- **LLM Providers:** when the org should manage credentials and approved model lists centrally.
+- **API Keys:** when a service needs to call OpenWork without an interactive user session.
+- **API Reference:** when you need the current `den-api` routes, auth shape, and request examples.
