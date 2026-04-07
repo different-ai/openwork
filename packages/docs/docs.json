@@ -40,6 +40,7 @@
           {
             "group": "Tutorials",
             "pages": [
+              "how-to-get-an-anthropic-api-key",
               "how-to-connect-a-custom-provider",
               "importing-a-skill"
             ]
