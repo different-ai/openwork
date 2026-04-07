@@ -152,12 +152,14 @@ export function ReactSessionComposer(props: ComposerProps) {
       const command = slashFiltered[menuIndex];
       if (!command) return false;
       props.onDraftChange(`/${command.name} `);
+      setSlashOpen(false);
       return true;
     }
     if (activeMenu === "mention") {
       const item = mentionFiltered[menuIndex];
       if (!item) return false;
       props.onInsertMention(item.kind, item.value);
+      setMentionOpen(false);
       return true;
     }
     return false;
@@ -382,12 +384,16 @@ export function ReactSessionComposer(props: ComposerProps) {
         {slashOpen && slashFiltered.length > 0 ? (
           <div className="border-t border-dls-border px-3 py-2">
             <div className="grid gap-1">
-              {slashFiltered.map((command) => (
+              {slashFiltered.map((command, index) => (
                 <button
                   key={command.id}
                   type="button"
                   className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-dls-hover" : ""}`}
-                  onClick={() => props.onDraftChange(`/${command.name} `)}
+                  onMouseEnter={() => setMenuIndex(index)}
+                  onClick={() => {
+                    props.onDraftChange(`/${command.name} `);
+                    setSlashOpen(false);
+                  }}
                 >
                   <div className="text-sm font-medium text-dls-text">/{command.name}</div>
                   {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
@@ -399,12 +405,16 @@ export function ReactSessionComposer(props: ComposerProps) {
         {mentionOpen && mentionFiltered.length > 0 ? (
           <div className="border-t border-dls-border px-3 py-2">
             <div className="grid gap-1">
-              {mentionFiltered.map((item) => (
+              {mentionFiltered.map((item, index) => (
                 <button
                   key={item.id}
                   type="button"
                   className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "mention" && mentionFiltered[menuIndex]?.id === item.id ? "bg-dls-hover" : ""}`}
-                  onClick={() => props.onInsertMention(item.kind, item.value)}
+                  onMouseEnter={() => setMenuIndex(index)}
+                  onClick={() => {
+                    props.onInsertMention(item.kind, item.value);
+                    setMentionOpen(false);
+                  }}
                 >
                   <div className="text-sm font-medium text-dls-text">@{item.label}</div>
                   <div className="text-xs text-dls-secondary">{item.kind === "agent" ? "Agent" : "File"}</div>
