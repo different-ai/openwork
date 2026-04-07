@@ -74,14 +74,17 @@ const markdownComponents: Components = {
   td({ children }) {
     return <td className="border border-dls-border p-2 align-top">{children}</td>;
   },
+  hr() {
+    return <hr className="my-6 border-none border-t-0 h-px bg-dls-border/40" />;
+  },
 };
 
 const markdownClassName = `markdown-content max-w-none text-gray-12
   [&_strong]:font-semibold
   [&_em]:italic
-  [&_h1]:my-4 [&_h1]:text-2xl [&_h1]:font-bold
-  [&_h2]:my-3 [&_h2]:text-xl [&_h2]:font-bold
-  [&_h3]:my-2 [&_h3]:text-lg [&_h3]:font-bold
+  [&_h1]:my-5 [&_h1]:text-xl [&_h1]:font-semibold
+  [&_h2]:my-4 [&_h2]:text-lg [&_h2]:font-semibold
+  [&_h3]:my-3 [&_h3]:text-base [&_h3]:font-semibold
   [&_p]:my-3 [&_p]:leading-relaxed
   [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6
   [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6

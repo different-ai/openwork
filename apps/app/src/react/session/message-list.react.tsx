@@ -110,7 +110,7 @@ function AssistantBlock(props: { message: UIMessage; developerMode: boolean; isS
             }
 
             if (part.type === "step-start") {
-              return <div key={`${props.message.id}-step-${index}`} className="text-[11px] uppercase tracking-[0.12em] text-gray-8">Step started</div>;
+              return null;
             }
 
             if (isToolUIPart(part)) {
