@@ -101,6 +101,8 @@ export type SettingsViewProps = {
     preferredProviderId?: string;
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
+  openCustomProviderModal: () => Promise<void>;
+  customProviderBusy: boolean;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
   openworkServerClient: OpenworkServerClient | null;
@@ -1509,6 +1511,13 @@ export default function SettingsView(props: SettingsViewProps) {
                   {props.providerAuthBusy
                     ? translate("settings.loading_providers")
                     : translate("settings.connect_provider")}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={props.openCustomProviderModal}
+                  disabled={props.busy || props.customProviderBusy}
+                >
+                  Add custom provider
                 </Button>
                 <div class="text-xs text-gray-10">{providerSummary()}</div>
               </div>

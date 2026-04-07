@@ -14,6 +14,8 @@ import { useLocation, useNavigate } from "@solidjs/router";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import CustomProviderModal from "./components/custom-provider-modal";
+import { addCustomProviderToConfig, type CustomProviderConfig } from "./provider-config";
 import ModelPickerModal from "./components/model-picker-modal";
 import ConfirmModal from "./components/confirm-modal";
 import ResetModal from "./components/reset-modal";
@@ -381,6 +383,9 @@ export default function App() {
     null
   );
   const [sseConnected, setSseConnected] = createSignal(false);
+
+  const [customProviderModalOpen, setCustomProviderModalOpen] = createSignal(false);
+  const [customProviderBusy, setCustomProviderBusy] = createSignal(false);
 
   const [busy, setBusy] = createSignal(false);
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
@@ -925,6 +930,28 @@ export default function App() {
     markOpencodeConfigReloadRequired: () => markOpencodeConfigReloadRequired(),
     focusPromptSoon: focusSessionPromptSoon,
   });
+
+  async function openCustomProviderModal() {
+    setCustomProviderModalOpen(true);
+  }
+
+  function closeCustomProviderModal() {
+    setCustomProviderModalOpen(false);
+  }
+
+  async function submitCustomProvider(
+    providerId: string,
+    config: CustomProviderConfig,
+  ): Promise<void> {
+    setCustomProviderBusy(true);
+    try {
+      await addCustomProviderToConfig(workspaceStore.selectedWorkspaceRoot(), providerId, config);
+      await refreshProviders();
+      setCustomProviderModalOpen(false);
+    } finally {
+      setCustomProviderBusy(false);
+    }
+  }
 
   const runtimeWorkspaceId = createMemo(() => workspaceStore.runtimeWorkspaceId());
   const activeWorkspaceServerConfig = createMemo(() => workspaceStore.runtimeWorkspaceConfig());
@@ -2059,6 +2086,11 @@ export default function App() {
       refreshProviders,
       submitProviderApiKey,
       connectCloudProvider,
+      customProviderModalOpen: customProviderModalOpen(),
+      customProviderBusy: customProviderBusy(),
+      openCustomProviderModal,
+      closeCustomProviderModal,
+      submitCustomProvider,
       setView,
       toggleSettings: () => toggleSettingsView("general"),
       startupPreference: startupPreference(),
@@ -2525,6 +2557,14 @@ export default function App() {
         onConfirm={(folder) => {
           void bundlesStore.startWorkspaceFromBundle(folder);
         }}
+      />
+
+      <CustomProviderModal
+        open={customProviderModalOpen()}
+        projectDir={workspaceStore.selectedWorkspaceRoot()}
+        existingProviderIds={providers().map((p) => p.id)}
+        onSubmit={submitCustomProvider}
+        onClose={closeCustomProviderModal}
       />
 
       <CreateWorkspaceModal

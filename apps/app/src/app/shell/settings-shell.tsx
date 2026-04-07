@@ -53,6 +53,7 @@ import { ProviderAuthModal,
   type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../context/providers";
+import CustomProviderModal from "../components/custom-provider-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import { ShareWorkspaceModal } from "../workspace";
 import {
@@ -96,6 +97,11 @@ export type SettingsShellProps = {
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   refreshProviders: () => Promise<unknown>;
+  customProviderModalOpen: boolean;
+  customProviderBusy: boolean;
+  openCustomProviderModal: () => Promise<void>;
+  closeCustomProviderModal: () => void;
+  submitCustomProvider: (providerId: string, config: import("../provider-config").CustomProviderConfig) => Promise<void>;
   setView: (view: View, sessionId?: string) => void;
   toggleSettings: () => void;
   startupPreference: StartupPreference | null;
@@ -1151,6 +1157,8 @@ export default function SettingsShell(props: SettingsShellProps) {
                   providerAuthBusy={props.providerAuthBusy}
                   openProviderAuthModal={props.openProviderAuthModal}
                   disconnectProvider={props.disconnectProvider}
+                  openCustomProviderModal={props.openCustomProviderModal}
+                  customProviderBusy={props.customProviderBusy}
                   openworkServerStatus={props.openworkServerStatus}
                   openworkServerUrl={props.openworkServerUrl}
                   openworkServerClient={props.openworkServerClient}
@@ -1292,6 +1300,14 @@ export default function SettingsShell(props: SettingsShellProps) {
           onSubmitOAuth={handleProviderAuthOAuth}
           onRefreshProviders={props.refreshProviders}
           onClose={() => props.closeProviderAuthModal()}
+        />
+
+        <CustomProviderModal
+          open={props.customProviderModalOpen}
+          projectDir={props.selectedWorkspaceRoot}
+          existingProviderIds={props.providers.map((p) => p.id.toLowerCase())}
+          onSubmit={props.submitCustomProvider}
+          onClose={props.closeCustomProviderModal}
         />
 
         <ShareWorkspaceModal
