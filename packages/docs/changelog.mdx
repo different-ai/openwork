@@ -123,112 +123,59 @@ title: "Changelog"
 
 <Update label="March 23rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.184](https://github.com/different-ai/openwork/compare/v0.11.183...v0.11.184): CLI quickstart becomes the primary docs path
+  ## [v0.11.184](https://github.com/different-ai/openwork/compare/v0.11.181...v0.11.184): Docs reset, exa and local workspaces
 
-  Rebuilds the docs around a single CLI-first quickstart and removes older split onboarding paths that were harder to follow.
-
-  ## [v0.11.183](https://github.com/different-ai/openwork/compare/v0.11.182...v0.11.183): Exa moves into OpenCode settings
-
-  Surfaces the Exa search toggle in a clearer OpenCode settings section and rolls back an unready macOS path-normalization change.
-
-  ## [v0.11.182](https://github.com/different-ai/openwork/compare/v0.11.181...v0.11.182): Local workspaces move under OpenWork server control
-
-  - Local workspace create, rename, delete, config writes, and reload events now go through OpenWork server first.
-  - First-run starter bootstrap and reconnect logic are more reliable across onboarding and sidebar flows.
-  - Simplified the remote connect modal, moved tool-trace chevrons right, and added Windows ARM64 dev startup support.
+  - Rebuilt the docs around a single CLI-first quickstart.
+  - Enables Exa search from opencode settings.
+  - More reliable first-runs and simplified remote connect modal.
 
 </Update>
 
 <Update label="March 22nd" tags={["🐛 Bug Fixes", "🏗️ Refactoring", "🚀 New Features"]}>
 
-  ## [v0.11.181](https://github.com/different-ai/openwork/compare/v0.11.180...v0.11.181): Version metadata is republished in sync
+  ## [v0.11.181](https://github.com/different-ai/openwork/compare/v0.11.177...v0.11.181): Simplified den checkout and workspace sharing
 
-  Republishes synchronized package versions only, with no distinct user-facing or developer-facing workflow change.
-
-  ## [v0.11.179](https://github.com/different-ai/openwork/compare/v0.11.178...v0.11.179): Den checkout and workspace setup get leaner
-
-  Simplifies Den billing and dashboard surfaces, streamlines workspace creation flows, and removes the desktop tray path.
-
-  ## [v0.11.178](https://github.com/different-ai/openwork/compare/v0.11.177...v0.11.178): Workspace sharing and model controls get a major refresh
-
-  - Redesigned workspace sharing and the right sidebar, including cleaner remote credentials and nested child sessions.
+  - Simplifies Den billing, dashboard and workspace creation flows.
   - Made model pickers model-aware with provider icons and per-model reasoning or behavior controls.
-  - Moved app feedback to a hosted form, added an Exa toggle, and stopped forcing starter workspaces on desktop boot.
 
 </Update>
 
 <Update label="March 20th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
 
-  ## [v0.11.177](https://github.com/different-ai/openwork/compare/v0.11.176...v0.11.177): Downloads CTA and npm install fallback land
+  ## [v0.11.177](https://github.com/different-ai/openwork/compare/v0.11.172...v0.11.177): Cloud worker heartbeats
 
-  Gets desktop users to the right download path faster and lets `openwork-orchestrator` recover when npm skips its platform binary.
-
-  ## [v0.11.175](https://github.com/different-ai/openwork/compare/v0.11.174...v0.11.175): Authorized folders and first-run session guidance move into Settings
-
-  Adds Settings-based folder authorization and server-backed empty states, then tightens sidebar and composer labeling so navigation stays readable.
-
-  ## [v0.11.173](https://github.com/different-ai/openwork/compare/v0.11.172...v0.11.173): Daytona workers report activity and local Node tools spawn reliably
-
-  Adds worker heartbeats for Daytona-backed Cloud workers while making local MCP and tool launches work in nvm-managed Node environments.
+  - Adds worker heartbeats for Cloud workers
+  - Added Settings-based folder authorization and server-backed empty states
 
 </Update>
 
 <Update label="March 19th" tags={["🐛 Bug Fixes", "🏗️ Refactoring", "🚀 New Features"]}>
 
-  ## [v0.11.172](https://github.com/different-ai/openwork/compare/v0.11.171...v0.11.172): Server package naming and session traces line up
+  ## [v0.11.172](https://github.com/different-ai/openwork/compare/v0.11.168...v0.11.172): Remote reconnects and cloud flows
 
-  Renames the published server package to `openwork-server` and polishes trace-row icon and chevron alignment so session runs scan more cleanly.
-
-  ## [v0.11.170](https://github.com/different-ai/openwork/compare/v0.11.169...v0.11.170): OpenWork Cloud web flows and remote reconnects improve
-
-  - Rebuilt Den web auth, checkout, and dashboard routes so hosted onboarding and billing feel like the app instead of a one-off page.
-  - Persisted worker share tokens and repeated deeplinks across restarts, with stronger open-in-web auto-connect and connect overlays.
+  - Rebuilt Den webapp onboarding and billing.
+  - Persisted worker share tokens and repeated deeplinks across restarts.
   - Added self-serve Cloud settings, OpenAI headless auth, and tray-on-close desktop behavior.
-
-</Update>
-
-<Update label="March 18th" tags={["🐛 Bug Fixes"]}>
-
-  ## [v0.11.169](https://github.com/different-ai/openwork/compare/v0.11.168...v0.11.169): Den handoff and session chrome get steadier
-
-  Keeps Den browser handoff and worker naming in sync while cleaning up session focus, reload banners, run status, and broken sidebar affordances.
 
 </Update>
 
 <Update label="March 17th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
 
-  ## [v0.11.168](https://github.com/different-ai/openwork/compare/v0.11.167...v0.11.168): Release recovery with repaired installers
-
-  Republishes the release with repaired assets; the tagged diff itself is metadata-only, while the intended Cloud tab gating fix landed in `v0.11.167`.
-
-  ## [v0.11.166](https://github.com/different-ai/openwork/compare/v0.11.165...v0.11.166): Daytona-backed Den Docker flow ships
-
-  - Added a Daytona-backed Den Docker flow with a dedicated worker proxy and snapshot builder for preloaded runtimes.
-  - Introduced the `den-v2` control plane and shared Den DB packages for the new hosted-worker path.
-  - Fixed unique org slug generation and the `webdev:local` startup script.
-
-  ## [v0.11.165](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.165): Settings can sign into Cloud and open workers
-
-  - Added a Cloud tab in Settings for sign-in, org selection, worker lists, and opening ready Den workers into OpenWork.
-  - Routed desktop auth through the web handoff flow, including installed-app scheme support and bearer-session handling.
-  - Restored shared bundle installs and fully cleared disconnected provider credentials.
+  ## [v0.11.168](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.168): Release recovery with repaired installers
+  - Cloud Migration from render VMs to Daytona Sandbox workers
+  - pnpm web:dev-local working reliably when starting from scratch in a new worktree 
+  - Restored Shared bundle installs and better cache clearing of disconnected provider credentials.
 
 </Update>
 
 <Update label="March 16th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.164](https://github.com/different-ai/openwork/compare/v0.11.163...v0.11.164): Owner tokens and child sessions stay visible
+  ## [v0.11.164](https://github.com/different-ai/openwork/compare/v0.11.160...v0.11.164): Public skills and subagents
 
-  Clarifies remote approval access with owner tokens, keeps nested child sessions from disappearing in sidebar syncs, and broadens polish across sharing and localization.
-
-  ## [v0.11.163](https://github.com/different-ai/openwork/compare/v0.11.162...v0.11.163): Custom skill hub repos and steadier session actions
-
-  Lets teams browse and install skills from any GitHub hub repo while making session switching, composer focus, and reload prompts behave more predictably.
-
-  ## [v0.11.162](https://github.com/different-ai/openwork/compare/v0.11.161...v0.11.162): Docker dev prints LAN-ready OpenWork URLs
-
-  Makes local Docker testing easier from phones and other devices by printing public URLs and deriving Den auth and CORS defaults from the detected host.
-
+  - You can now add public repos as skill repository
+  - Simplified docker testing pipeline
+  - Minor sidebar bug fixes
+  
 </Update>
 
 <Update label="March 15th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
