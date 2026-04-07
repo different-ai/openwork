@@ -1,3 +1,6 @@
+import { t } from "../../i18n";
+
+/** Raw English string — used for prefix matching against stored titles. */
 export const DEFAULT_SESSION_TITLE = "New session";
 
 const GENERATED_SESSION_TITLE_PREFIX = `${DEFAULT_SESSION_TITLE} - `;
@@ -11,9 +14,9 @@ export function isGeneratedSessionTitle(title: string | null | undefined) {
 
 export function getDisplaySessionTitle(
   title: string | null | undefined,
-  fallback = DEFAULT_SESSION_TITLE,
+  fallback?: string,
 ) {
   const trimmed = title?.trim() ?? "";
-  if (!trimmed || isGeneratedSessionTitle(trimmed)) return fallback;
+  if (!trimmed || isGeneratedSessionTitle(trimmed)) return fallback ?? t("session.default_title");
   return trimmed;
 }

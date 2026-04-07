@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { ProviderListItem } from "./types";
+import { t } from "../i18n";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -397,9 +398,9 @@ export function createSystemState(options: {
       }
 
       if (result.removed.length) {
-        setCacheRepairResult("OpenCode cache repaired. Restart the engine if it was running.");
+        setCacheRepairResult(t("settings.cache_repaired"));
       } else {
-        setCacheRepairResult("No OpenCode cache found. Nothing to repair.");
+        setCacheRepairResult(t("settings.cache_nothing_to_repair"));
       }
     } catch (e) {
       setCacheRepairResult(e instanceof Error ? e.message : safeStringify(e));

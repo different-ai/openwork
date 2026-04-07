@@ -2593,6 +2593,12 @@ export default {
   "settings.messaging_section_desc":
     "Manage Telegram/Slack identities and bindings in the Identities tab.",
   "settings.messaging_section_title": "Messaging",
+  "session.default_title": "New session",
+  "plugins.scheduler_desc": "Run scheduled jobs with the OpenCode scheduler plugin.",
+  "settings.cache_repaired": "OpenCode cache repaired. Restart the engine if it was running.",
+  "settings.cache_nothing_to_repair": "No OpenCode cache found. Nothing to repair.",
+  "settings.provider_default_label": "Provider default",
+  "settings.provider_default_desc": "Use the model's built-in default reasoning behavior.",
   "settings.model_behavior": "Model behavior",
   "settings.model_behavior_desc":
     "Open the default model picker to choose reasoning profiles when they are available.",
@@ -2735,8 +2741,8 @@ export default {
   "settings.stop_runs_before_cleanup": "Stop active runs before cleanup",
   "settings.stop_runs_before_reset_config":
     "Stop active runs before resetting config",
-  "settings.suffix_available": "{available} available",
-  "settings.suffix_connected": "connected",
+  "settings.connected_count": "{count} connected",
+  "settings.available_count": "{count} available",
   "settings.switch": "Switch",
   "settings.tab_description_advanced":
     "Inspect runtime health, connection state, and developer-facing controls.",

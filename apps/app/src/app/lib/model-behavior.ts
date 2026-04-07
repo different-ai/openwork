@@ -1,6 +1,6 @@
 import type { ProviderListItem } from "../types";
 import type { ModelBehaviorOption } from "../types";
-import { t, currentLocale } from "../../i18n";
+import { t } from "../../i18n";
 
 type ProviderModel = ProviderListItem["models"][string];
 
@@ -14,11 +14,13 @@ const WELL_KNOWN_VARIANT_ORDER = [
   "max",
 ] as const;
 
-const DEFAULT_BEHAVIOR_OPTION: ModelBehaviorOption = {
-  value: null,
-  label: "Provider default",
-  description: "Use the model's built-in default reasoning behavior.",
-};
+function defaultBehaviorOption(): ModelBehaviorOption {
+  return {
+    value: null,
+    label: t("settings.provider_default_label"),
+    description: t("settings.provider_default_desc"),
+  };
+}
 
 const humanize = (value: string) => {
   const cleaned = value.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
@@ -97,7 +99,7 @@ const getVariantLabel = (providerID: string, key: string) => {
 
 export const formatGenericBehaviorLabel = (value: string | null) => {
   const normalized = normalizeModelBehaviorValue(value);
-  if (!normalized) return DEFAULT_BEHAVIOR_OPTION.label;
+  if (!normalized) return defaultBehaviorOption().label;
   return getVariantLabel("generic", normalized);
 };
 
@@ -124,7 +126,7 @@ export const getModelBehaviorOptions = (
   const variantKeys = sortVariantKeys(getVariantKeys(model));
   if (!variantKeys.length) return [];
   return [
-    DEFAULT_BEHAVIOR_OPTION,
+    defaultBehaviorOption(),
     ...variantKeys.map((key) => {
       const label = getVariantLabel(providerID, key);
       return {
@@ -161,8 +163,8 @@ export const getModelBehaviorSummary = (
   if (options.length > 0) {
     return {
       title,
-      label: selected?.label ?? DEFAULT_BEHAVIOR_OPTION.label,
-      description: selected?.description ?? DEFAULT_BEHAVIOR_OPTION.description,
+      label: selected?.label ?? defaultBehaviorOption().label,
+      description: selected?.description ?? defaultBehaviorOption().description,
       options,
     };
   }

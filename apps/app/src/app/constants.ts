@@ -1,4 +1,5 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
+import { t } from "../i18n";
 
 export const MODEL_PREF_KEY = "openwork.defaultModel";
 export const SESSION_MODEL_PREF_KEY = "openwork.sessionModels";
@@ -16,7 +17,7 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
   {
     name: "opencode-scheduler",
     packageName: "opencode-scheduler",
-    description: "Run scheduled jobs with the OpenCode scheduler plugin.",
+    get description() { return t("plugins.scheduler_desc"); },
     tags: ["automation", "jobs"],
     installMode: "simple",
   },
