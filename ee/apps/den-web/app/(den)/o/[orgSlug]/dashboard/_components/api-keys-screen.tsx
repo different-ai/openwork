@@ -363,10 +363,6 @@ export function ApiKeysScreen() {
                                     <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
                                         Create a new API key
                                     </p>
-                                    <p className="mt-1 text-[14px] leading-6 text-gray-500">
-                                        Create a new API key for this
-                                        organization.
-                                    </p>
                                 </div>
                                 <DenButton onClick={openCreateForm}>
                                     New key
