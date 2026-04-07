@@ -68,6 +68,7 @@ const EnvSchema = z.object({
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
   DAYTONA_WORKER_PROXY_BASE_URL: z.string().optional(),
   DAYTONA_SANDBOX_NAME_PREFIX: z.string().optional(),
+  DAYTONA_SHARED_VOLUME_NAME: z.string().optional(),
   DAYTONA_VOLUME_NAME_PREFIX: z.string().optional(),
   DAYTONA_WORKSPACE_MOUNT_PATH: z.string().optional(),
   DAYTONA_DATA_MOUNT_PATH: z.string().optional(),
@@ -240,8 +241,10 @@ export const env = {
       optionalString(parsed.DAYTONA_WORKER_PROXY_BASE_URL) ?? "https://workers.den.openworklabs",
     sandboxNamePrefix:
       optionalString(parsed.DAYTONA_SANDBOX_NAME_PREFIX) ?? "den-daytona-worker",
-    volumeNamePrefix:
-      optionalString(parsed.DAYTONA_VOLUME_NAME_PREFIX) ?? "den-daytona-worker",
+    sharedVolumeName:
+      optionalString(parsed.DAYTONA_SHARED_VOLUME_NAME) ??
+      optionalString(parsed.DAYTONA_VOLUME_NAME_PREFIX) ??
+      "den-daytona-workers",
     workspaceMountPath:
       optionalString(parsed.DAYTONA_WORKSPACE_MOUNT_PATH) ?? "/workspace",
     dataMountPath:
