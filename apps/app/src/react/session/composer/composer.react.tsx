@@ -422,18 +422,29 @@ export function ReactSessionComposer(props: ComposerProps) {
               const files = Array.from(event.dataTransfer?.files ?? []);
               if (!files.length) return;
               event.preventDefault();
-              if (!props.attachmentsEnabled) {
-                props.onNotice({
-                  title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
-                  tone: "warning",
-                });
-                return;
+              const supported = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("text/") || file.type === "application/pdf");
+              const unsupported = files.filter((file) => !supported.includes(file));
+              if (supported.length) {
+                if (!props.attachmentsEnabled) {
+                  props.onNotice({
+                    title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
+                    tone: "warning",
+                  });
+                } else {
+                  props.onAttachFiles(supported);
+                  props.onNotice({
+                    title: supported.length === 1 ? `Attached ${supported[0]?.name ?? "file"}` : `Attached ${supported.length} files`,
+                    tone: "success",
+                  });
+                }
               }
-              props.onAttachFiles(files);
-              props.onNotice({
-                title: files.length === 1 ? `Attached ${files[0]?.name ?? "file"}` : `Attached ${files.length} files`,
-                tone: "success",
-              });
+              if (unsupported.length) {
+                props.onNotice({
+                  title: unsupported.length === 1 ? `${unsupported[0]?.name ?? "File"} could not be attached` : `${unsupported.length} files could not be attached`,
+                  description: "Drop supports images, text files, and PDFs for now.",
+                  tone: "info",
+                });
+              }
             }}
           />
         </div>
