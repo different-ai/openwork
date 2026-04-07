@@ -96,6 +96,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [notice, setNotice] = useState<ReactComposerNotice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
@@ -140,6 +141,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     hydratedKeyRef.current = null;
     setError(null);
     setSending(false);
+    setShowDelayedLoading(false);
     setAttachments([]);
     setMentions({});
     setPasteParts([]);
@@ -169,11 +171,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const liveStatus = statusState ?? snapshot?.status ?? { type: "idle" as const };
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
   const renderedMessages = transcriptState ?? [];
+  const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
+
+  useEffect(() => {
+    if (!pendingSessionLoad) {
+      setShowDelayedLoading(false);
+      return;
+    }
+    const id = window.setTimeout(() => setShowDelayedLoading(true), 2000);
+    return () => window.clearTimeout(id);
+  }, [pendingSessionLoad]);
+
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
     renderedSessionId: renderedMessages.length > 0 || snapshotQuery.data ? props.sessionId : rendered?.sessionId ?? null,
     hasSnapshot: Boolean(snapshot) || renderedMessages.length > 0,
-    isFetching: snapshotQuery.isFetching || chatStreaming,
+    isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
   });
 
@@ -339,7 +352,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   return (
     <div className="flex min-h-full flex-col">
-      {model.transitionState === "switching" ? (
+      {model.transitionState === "switching" && showDelayedLoading ? (
         <div className="flex justify-center px-6 pt-4">
           <div className="rounded-full border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary">
             {model.renderSource === "cache" ? "Switching session from cache..." : "Switching session..."}
@@ -348,7 +361,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ) : null}
 
       <div className="flex-1 space-y-4 pb-6 pt-4">
-      {!snapshot && snapshotQuery.isLoading && renderedMessages.length === 0 ? (
+      {showDelayedLoading && pendingSessionLoad ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
             <div className="text-sm text-dls-secondary">Loading React session view...</div>
