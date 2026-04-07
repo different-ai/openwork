@@ -32,7 +32,8 @@ export function registerWorkerBillingRoutes<T extends { Variables: WorkerRouteVa
   app.get(
     "/v1/workers/billing",
     describeRoute({
-      tags: ["Workers", "Worker Billing"],
+      tags: ["Workers"],
+      hide: true,
       summary: "Get worker billing status",
       description: "Returns billing and subscription status for the signed-in user's cloud worker access.",
       responses: {
@@ -74,7 +75,8 @@ export function registerWorkerBillingRoutes<T extends { Variables: WorkerRouteVa
   app.post(
     "/v1/workers/billing/subscription",
     describeRoute({
-      tags: ["Workers", "Worker Billing"],
+      tags: ["Workers"],
+      hide: true,
       summary: "Update worker subscription settings",
       description: "Updates whether the user's cloud worker subscription should cancel at the end of the current billing period.",
       responses: {

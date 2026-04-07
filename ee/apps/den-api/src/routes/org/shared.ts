@@ -79,7 +79,7 @@ export function ensureOwner(c: { get: (key: "organizationContext") => OrgRouteVa
       ok: false as const,
       response: {
         error: "forbidden",
-        message: "Only organization owners can manage members and roles.",
+        message: "Only workspace owners can manage members and roles.",
       },
     }
   }
@@ -106,7 +106,7 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only organization owners and admins can invite members.",
+      message: "Only workspace owners and admins can invite members.",
     },
   }
 }
@@ -130,7 +130,7 @@ export function ensureTeamManager(c: { get: (key: "organizationContext") => OrgR
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only organization owners and admins can manage teams.",
+      message: "Only workspace owners and admins can manage teams.",
     },
   }
 }
@@ -154,7 +154,7 @@ export function ensureApiKeyManager(c: { get: (key: "organizationContext") => Or
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only organization owners and admins can manage API keys.",
+      message: "Only workspace owners and admins can manage API keys.",
     },
   }
 }

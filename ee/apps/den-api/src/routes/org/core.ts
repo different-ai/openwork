@@ -74,6 +74,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs",
     describeRoute({
       tags: ["Organizations"],
+      hide: true,
       summary: "Create organization",
       description: "Creates a new organization for the signed-in user after verifying that their account can provision OpenWork Cloud workspaces.",
       responses: {
@@ -144,7 +145,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
   app.get(
     "/v1/orgs/invitations/preview",
     describeRoute({
-      tags: ["Organizations", "Organization Invitations"],
+      tags: ["Invitations"],
       summary: "Preview organization invitation",
       description: "Returns invitation preview details so a user can inspect an organization invite before accepting it.",
       responses: {
@@ -169,7 +170,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
   app.post(
     "/v1/orgs/invitations/accept",
     describeRoute({
-      tags: ["Organizations", "Organization Invitations"],
+      tags: ["Invitations"],
       summary: "Accept organization invitation",
       description: "Accepts an organization invitation for the current signed-in user and switches their active organization to the accepted workspace.",
       responses: {

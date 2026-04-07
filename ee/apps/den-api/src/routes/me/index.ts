@@ -43,7 +43,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
   app.get(
     "/v1/me/orgs",
     describeRoute({
-      tags: ["Users", "Organizations"],
+      tags: ["Users"],
       summary: "List current user's organizations",
       description: "Lists the organizations visible to the current user and marks which organization is currently active.",
       responses: {

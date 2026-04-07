@@ -87,14 +87,14 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
   app.post(
     "/v1/orgs/:orgId/teams",
     describeRoute({
-      tags: ["Organizations", "Organization Teams"],
+      tags: ["Teams"],
       summary: "Create team",
       description: "Creates a team inside an organization and can optionally attach existing organization members to it.",
       responses: {
         201: jsonResponse("Team created successfully.", teamResponseSchema),
         400: jsonResponse("The team creation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create teams.", unauthorizedSchema),
-        403: jsonResponse("The caller is not allowed to manage teams for this organization.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can create teams.", forbiddenSchema),
         404: jsonResponse("The organization or a referenced member could not be found.", notFoundSchema),
       },
     }),
@@ -176,14 +176,14 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
   app.patch(
     "/v1/orgs/:orgId/teams/:teamId",
     describeRoute({
-      tags: ["Organizations", "Organization Teams"],
+      tags: ["Teams"],
       summary: "Update team",
       description: "Updates a team's name and-or membership list within an organization.",
       responses: {
         200: jsonResponse("Team updated successfully.", teamResponseSchema),
         400: jsonResponse("The team update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update teams.", unauthorizedSchema),
-        403: jsonResponse("The caller is not allowed to manage teams for this organization.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can update teams.", forbiddenSchema),
         404: jsonResponse("The team, organization, or a referenced member could not be found.", notFoundSchema),
       },
     }),
@@ -280,14 +280,14 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
   app.delete(
     "/v1/orgs/:orgId/teams/:teamId",
     describeRoute({
-      tags: ["Organizations", "Organization Teams"],
+      tags: ["Teams"],
       summary: "Delete team",
       description: "Deletes a team and removes its related hub-access and team-membership records.",
       responses: {
         204: emptyResponse("Team deleted successfully."),
         400: jsonResponse("The team deletion path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete teams.", unauthorizedSchema),
-        403: jsonResponse("The caller is not allowed to manage teams for this organization.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can delete teams.", forbiddenSchema),
         404: jsonResponse("The team or organization could not be found.", notFoundSchema),
       },
     }),

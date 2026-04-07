@@ -68,6 +68,7 @@ app.get(
   "/",
   describeRoute({
     tags: ["System"],
+    hide: true,
     summary: "Redirect API root",
     description: "Redirects the API root to the OpenWork marketing site instead of serving API content.",
     responses: {
@@ -110,7 +111,7 @@ registerWorkerRoutes(app)
 app.get(
   "/openapi.json",
   describeRoute({
-    tags: ["Documentation"],
+    tags: ["System"],
     summary: "Get OpenAPI document",
     description: "Returns the machine-readable OpenAPI 3.1 document for the Den API so humans and tools can inspect the API surface.",
     responses: {
@@ -123,26 +124,32 @@ app.get(
       info: {
         title: "Den API",
         version: "dev",
-        description: "OpenAPI spec for the Den control plane API.",
+        description: [
+          "OpenAPI spec for the Den control plane API.",
+          "",
+          "Authentication:",
+          "- Use `Authorization: Bearer <session-token>` for user-authenticated routes that require a Den session.",
+          "- Use `x-api-key: <den-api-key>` for API-key-authenticated routes that accept organization API keys.",
+          "- Public routes like health and documentation do not require authentication.",
+          "",
+          "Swagger tip: use the security schemes in the Authorize dialog to set either `bearerAuth` or `denApiKey` before trying protected endpoints.",
+        ].join("\n"),
       },
       tags: [
         { name: "System", description: "Service health and operational routes." },
-        { name: "Documentation", description: "OpenAPI document and Swagger UI routes." },
-        { name: "Organizations", description: "Organization-scoped Den API routes." },
-        { name: "Organization Invitations", description: "Organization invitation creation, preview, acceptance, and cancellation routes." },
-        { name: "Organization API Keys", description: "Organization API key management routes." },
-        { name: "Organization Members", description: "Organization member management routes." },
-        { name: "Organization Roles", description: "Organization custom role management routes." },
-        { name: "Organization Teams", description: "Organization team management routes." },
-        { name: "Organization Templates", description: "Organization shared template routes." },
-        { name: "Organization LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
-        { name: "Organization Skills", description: "Organization skill authoring and sharing routes." },
-        { name: "Organization Skill Hubs", description: "Organization skill hub management and access routes." },
+        { name: "Organizations", description: "Top-level organization creation and context routes." },
+        { name: "Invitations", description: "Invitation preview, acceptance, creation, and cancellation routes." },
+        { name: "API Keys", description: "Organization API key management routes." },
+        { name: "Members", description: "Organization member management routes." },
+        { name: "Roles", description: "Organization custom role management routes." },
+        { name: "Teams", description: "Organization team management routes." },
+        { name: "Templates", description: "Organization shared template routes." },
+        { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
+        { name: "Skills", description: "Organization skill authoring and sharing routes." },
+        { name: "Skill Hubs", description: "Organization skill hub management and access routes." },
         { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
-        { name: "Worker Billing", description: "Worker subscription and billing status routes." },
         { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
         { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
-        { name: "Authentication", description: "Authentication and desktop sign-in handoff routes." },
         { name: "Admin", description: "Administrative reporting routes." },
         { name: "Users", description: "Current user and membership routes." },
       ],
@@ -152,11 +159,13 @@ app.get(
             type: "http",
             scheme: "bearer",
             bearerFormat: "session-token",
+            description: "Session token passed as `Authorization: Bearer <session-token>` for user-authenticated Den routes.",
           },
           denApiKey: {
             type: "apiKey",
             in: "header",
             name: "x-api-key",
+            description: "Organization API key passed as the `x-api-key` header for API-key-authenticated Den routes.",
           },
         },
       },
@@ -175,7 +184,7 @@ app.get(
 app.get(
   "/docs",
   describeRoute({
-    tags: ["Documentation"],
+    tags: ["System"],
     summary: "Serve Swagger UI",
     description: "Serves Swagger UI so developers can browse and try the Den API from a browser.",
     responses: {

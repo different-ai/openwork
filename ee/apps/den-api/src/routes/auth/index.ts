@@ -10,6 +10,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     ["GET", "POST"],
     "/api/auth/*",
     describeRoute({
+      hide: true,
       tags: ["Authentication"],
       summary: "Handle Better Auth flow",
       description: "Proxies Better Auth sign-in, sign-out, session, and verification flows under the Den API auth namespace.",

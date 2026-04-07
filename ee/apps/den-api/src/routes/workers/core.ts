@@ -339,7 +339,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         200: jsonResponse("Worker updated successfully.", z.object({ worker: workerSchema }).meta({ ref: "WorkerUpdateResponse" })),
         400: jsonResponse("The worker update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update workers.", unauthorizedSchema),
-        403: jsonResponse("Only the worker creator can rename this worker.", forbiddenSchema),
+        403: jsonResponse("Only the worker owner can rename this worker.", forbiddenSchema),
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
@@ -372,7 +372,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     if (worker.created_by_user_id !== user.id) {
       return c.json({
         error: "forbidden",
-        message: "Only the worker owner can rename this sandbox.",
+        message: "Only the worker owner can rename this worker.",
       }, 403)
     }
 

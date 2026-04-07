@@ -482,7 +482,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.get(
     "/v1/orgs/:orgId/llm-provider-catalog",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "List LLM provider catalog",
       description: "Lists the provider catalog from models.dev so an organization can choose which LLM providers to configure.",
       responses: {
@@ -511,7 +511,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.get(
     "/v1/orgs/:orgId/llm-provider-catalog/:providerId",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "Get LLM provider catalog entry",
       description: "Returns the full models.dev catalog record for one provider, including its config template and model list.",
       responses: {
@@ -558,7 +558,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.get(
     "/v1/orgs/:orgId/llm-providers",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "List organization LLM providers",
       description: "Lists the LLM providers that the current organization member is allowed to see and potentially manage.",
       responses: {
@@ -594,14 +594,14 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.get(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId/connect",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "Get LLM provider connect payload",
       description: "Returns one accessible organization LLM provider with the concrete model configuration needed to connect to it.",
       responses: {
         200: jsonResponse("Provider connection payload returned successfully.", llmProviderResponseSchema),
         400: jsonResponse("The provider connect path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to connect to an organization LLM provider.", unauthorizedSchema),
-        403: jsonResponse("The caller does not have access to this organization LLM provider.", forbiddenSchema),
+        403: jsonResponse("Only members with access grants, the provider creator, or workspace admins can connect to this provider.", forbiddenSchema),
         404: jsonResponse("The provider could not be found.", notFoundSchema),
       },
     }),
@@ -671,7 +671,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.post(
     "/v1/orgs/:orgId/llm-providers",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "Create organization LLM provider",
       description: "Creates a new organization-scoped LLM provider from either a models.dev provider template or a pasted custom configuration.",
       responses: {
@@ -783,14 +783,14 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.patch(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "Update organization LLM provider",
       description: "Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants.",
       responses: {
         200: jsonResponse("Organization LLM provider updated successfully.", llmProviderResponseSchema),
         400: jsonResponse("The provider update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update organization LLM providers.", unauthorizedSchema),
-        403: jsonResponse("The caller is not allowed to update this organization LLM provider.", forbiddenSchema),
+        403: jsonResponse("Only the provider creator or a workspace admin can update providers.", forbiddenSchema),
         404: jsonResponse("The provider or a referenced resource could not be found.", notFoundSchema),
       },
     }),
@@ -824,7 +824,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       if (!canManageLlmProvider(payload, provider)) {
         return c.json({
           error: "forbidden",
-          message: "Only the provider creator or an org admin can update providers.",
+          message: "Only the provider creator or a workspace admin can update providers.",
         }, 403)
       }
 
@@ -919,14 +919,14 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.delete(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "Delete organization LLM provider",
       description: "Deletes an organization LLM provider and removes its models and access rules.",
       responses: {
         204: emptyResponse("Organization LLM provider deleted successfully."),
         400: jsonResponse("The provider deletion path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete organization LLM providers.", unauthorizedSchema),
-        403: jsonResponse("The caller is not allowed to delete this organization LLM provider.", forbiddenSchema),
+        403: jsonResponse("Only the provider creator or a workspace admin can delete providers.", forbiddenSchema),
         404: jsonResponse("The provider could not be found.", notFoundSchema),
       },
     }),
@@ -958,7 +958,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       if (!canManageLlmProvider(payload, provider)) {
         return c.json({
           error: "forbidden",
-          message: "Only the provider creator or an org admin can delete providers.",
+          message: "Only the provider creator or a workspace admin can delete providers.",
         }, 403)
       }
 
@@ -975,14 +975,14 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   app.delete(
     "/v1/orgs/:orgId/llm-providers/:llmProviderId/access/:accessId",
     describeRoute({
-      tags: ["Organizations", "Organization LLM Providers"],
+      tags: ["LLM Providers"],
       summary: "Remove LLM provider access grant",
       description: "Removes one explicit member or team access grant from an organization LLM provider.",
       responses: {
         204: emptyResponse("Organization LLM provider access removed successfully."),
         400: jsonResponse("The provider access deletion path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to manage provider access.", unauthorizedSchema),
-        403: jsonResponse("The caller is not allowed to manage access for this provider.", forbiddenSchema),
+        403: jsonResponse("Only the provider creator or a workspace admin can manage provider access.", forbiddenSchema),
         404: jsonResponse("The provider or access grant could not be found.", notFoundSchema),
         409: jsonResponse("The request tried to remove a protected provider access entry.", conflictSchema),
       },
@@ -1015,7 +1015,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       }
 
       if (!canManageLlmProvider(payload, provider)) {
-        return c.json({ error: "forbidden", message: "Only the provider creator or an org admin can manage access." }, 403)
+        return c.json({ error: "forbidden", message: "Only the provider creator or a workspace admin can manage access." }, 403)
       }
 
       const accessRows = await db

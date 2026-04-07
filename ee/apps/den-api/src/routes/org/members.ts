@@ -22,14 +22,14 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
   app.post(
     "/v1/orgs/:orgId/members/:memberId/role",
     describeRoute({
-      tags: ["Organizations", "Organization Members"],
+      tags: ["Members"],
       summary: "Update member role",
       description: "Changes the role assigned to a specific organization member.",
       responses: {
         200: jsonResponse("Member role updated successfully.", successSchema),
         400: jsonResponse("The member role update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update member roles.", unauthorizedSchema),
-        403: jsonResponse("Only organization owners can update member roles.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners can update member roles.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
@@ -83,14 +83,14 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
   app.delete(
     "/v1/orgs/:orgId/members/:memberId",
     describeRoute({
-      tags: ["Organizations", "Organization Members"],
+      tags: ["Members"],
       summary: "Remove organization member",
       description: "Removes a member from an organization while protecting the owner role from deletion.",
       responses: {
         204: emptyResponse("Member removed successfully."),
         400: jsonResponse("The member removal request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to remove organization members.", unauthorizedSchema),
-        403: jsonResponse("Only organization owners can remove members.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners can remove members.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),

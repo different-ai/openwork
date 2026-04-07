@@ -47,7 +47,7 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
   app.post(
     "/v1/orgs/:orgId/templates",
     describeRoute({
-      tags: ["Organizations", "Organization Templates"],
+      tags: ["Templates"],
       summary: "Create shared template",
       description: "Stores a reusable shared template snapshot inside an organization.",
       responses: {
@@ -103,7 +103,7 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
   app.get(
     "/v1/orgs/:orgId/templates",
     describeRoute({
-      tags: ["Organizations", "Organization Templates"],
+      tags: ["Templates"],
       summary: "List shared templates",
       description: "Lists the shared templates that belong to an organization, including creator metadata.",
       responses: {
@@ -170,14 +170,14 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
   app.delete(
     "/v1/orgs/:orgId/templates/:templateId",
     describeRoute({
-      tags: ["Organizations", "Organization Templates"],
+      tags: ["Templates"],
       summary: "Delete shared template",
-      description: "Deletes a shared template when the caller is the template creator or an organization owner.",
+      description: "Deletes a shared template when the caller is the template creator or a workspace owner.",
       responses: {
         204: emptyResponse("Template deleted successfully."),
         400: jsonResponse("The template deletion path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete templates.", unauthorizedSchema),
-        403: jsonResponse("The caller is not allowed to delete this template.", forbiddenSchema),
+        403: jsonResponse("Only the template creator or a workspace owner can delete templates.", forbiddenSchema),
         404: jsonResponse("The template or organization could not be found.", notFoundSchema),
       },
     }),
@@ -211,7 +211,7 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
     if (!isOwner && !isCreator) {
       return c.json({
         error: "forbidden",
-        message: "Only the template creator or organization owner can delete templates.",
+        message: "Only the template creator or a workspace owner can delete templates.",
       }, 403)
     }
 

@@ -30,14 +30,14 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
   app.post(
     "/v1/orgs/:orgId/roles",
     describeRoute({
-      tags: ["Organizations", "Organization Roles"],
+      tags: ["Roles"],
       summary: "Create organization role",
       description: "Creates a custom organization role with a named permission map.",
       responses: {
         201: jsonResponse("Organization role created successfully.", successSchema),
         400: jsonResponse("The role creation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create organization roles.", unauthorizedSchema),
-        403: jsonResponse("Only organization owners can create organization roles.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners can create custom roles.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
@@ -83,14 +83,14 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
   app.patch(
     "/v1/orgs/:orgId/roles/:roleId",
     describeRoute({
-      tags: ["Organizations", "Organization Roles"],
+      tags: ["Roles"],
       summary: "Update organization role",
       description: "Updates a custom organization role and propagates role name changes to members and pending invitations.",
       responses: {
         200: jsonResponse("Organization role updated successfully.", successSchema),
         400: jsonResponse("The role update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update organization roles.", unauthorizedSchema),
-        403: jsonResponse("Only organization owners can update organization roles.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners can update custom roles.", forbiddenSchema),
         404: jsonResponse("The role or organization could not be found.", notFoundSchema),
       },
     }),
@@ -190,14 +190,14 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
   app.delete(
     "/v1/orgs/:orgId/roles/:roleId",
     describeRoute({
-      tags: ["Organizations", "Organization Roles"],
+      tags: ["Roles"],
       summary: "Delete organization role",
       description: "Deletes a custom organization role after confirming that no members or pending invitations still depend on it.",
       responses: {
         204: emptyResponse("Organization role deleted successfully."),
         400: jsonResponse("The role deletion request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete organization roles.", unauthorizedSchema),
-        403: jsonResponse("Only organization owners can delete organization roles.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners can delete custom roles.", forbiddenSchema),
         404: jsonResponse("The role or organization could not be found.", notFoundSchema),
       },
     }),
