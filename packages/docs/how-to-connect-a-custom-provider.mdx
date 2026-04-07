@@ -3,9 +3,25 @@ title: "Adding a custom LLM provider/model"
 description: "How to connect a custom provider with openwork"
 ---
 
-Because `Openwork` is built on `Opencode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
+OpenWork supports two different custom-provider workflows depending on where you want the configuration to live.
 
-The reason for this is that you may want to support different models and permissions across several workspaces, specially when sharing it with a team.
+## Use OpenWork Cloud for shared provider access
+
+If your organization uses OpenWork Cloud, open `LLM Providers` in the org dashboard when you want one shared provider setup for multiple teammates.
+
+- Add the provider credentials once.
+- Choose which models the org should expose.
+- Grant access to specific people or teams.
+
+This is the best option when the provider should be managed centrally instead of copied into each person's local config.
+
+If you also need non-interactive access for automations or backend services, create an org `API Key` in the same dashboard and use the docs site's `API Reference` tab for the current `den-api` routes.
+
+## Use workspace config for local or self-managed providers
+
+Because `OpenWork` is built on `OpenCode` primitives, it also supports the same provider configuration you can add to `opencode.json`, including custom [models](https://opencode.ai/docs/models/). For local or self-managed setups, we recommend adding the provider to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
+
+The reason for this is that you may want to support different models and permissions across several workspaces, especially when sharing them with a team.
 
 Inside `/path-to-your-workspace/.config/opencode/opencode.json`:
 ```
@@ -27,6 +43,6 @@ Inside `/path-to-your-workspace/.config/opencode/opencode.json`:
 }
 ```
 
-We've also built a [custom skill](https://share.openworklabs.com/b/01KNBQDQAK41VZSZDF5G9MW4MW) that you can import in Openwork following [this guide](/importing-a-skill). 
+We've also built a [custom skill](https://share.openworklabs.com/b/01KNBQDQAK41VZSZDF5G9MW4MW) that you can import in OpenWork by following [this guide](/importing-a-skill).
 
 The following tutorial covers how to [import a custom provider using the skill](https://x.com/getopenwork/status/2034129039317995908?s=20).
