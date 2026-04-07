@@ -14,6 +14,13 @@ type MentionItem = {
   label: string;
 };
 
+type PastedTextChip = {
+  id: string;
+  label: string;
+  text: string;
+  lines: number;
+};
+
 type ComposerProps = {
   draft: string;
   mentions: Record<string, "agent" | "file">;
@@ -46,6 +53,9 @@ type ComposerProps = {
   onNotice: (notice: ReactComposerNoticeData) => void;
   onPasteText: (text: string) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
+  pastedText: PastedTextChip[];
+  onRevealPastedText: (id: string) => void;
+  onRemovePastedText: (id: string) => void;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
@@ -301,6 +311,39 @@ export function ReactSessionComposer(props: ComposerProps) {
                   onClick={() => props.onRemoveAttachment(attachment.id)}
                 >
                   ×
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {props.pastedText.length > 0 ? (
+          <div className="flex flex-wrap gap-2 border-b border-dls-border px-4 py-3">
+            {props.pastedText.map((item) => (
+              <div key={item.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-amber-6/35 bg-amber-3/15 px-3 py-2 text-xs text-amber-11">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">Pasted text · {item.label}</div>
+                  <div className="truncate text-[11px] opacity-80">{item.lines} lines</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full border border-amber-6/30 bg-white/50 px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/80"
+                  onClick={() => props.onRevealPastedText(item.id)}
+                >
+                  View
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-amber-6/30 bg-white/50 px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/80"
+                  onClick={() => void navigator.clipboard.writeText(item.text)}
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-amber-6/30 bg-white/50 px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/80"
+                  onClick={() => props.onRemovePastedText(item.id)}
+                >
+                  Remove
                 </button>
               </div>
             ))}

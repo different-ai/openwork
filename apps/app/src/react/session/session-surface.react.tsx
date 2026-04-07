@@ -306,6 +306,25 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setDraft((current) => `${current}[pasted text ${label}]`);
   };
 
+  const handleRevealPastedText = (id: string) => {
+    const part = pasteParts.find((item) => item.id === id);
+    if (!part) return;
+    setNotice({
+      title: `Pasted text · ${part.label}`,
+      description: part.text.slice(0, 800),
+      tone: "info",
+    });
+  };
+
+  const handleRemovePastedText = (id: string) => {
+    setPasteParts((current) => {
+      const target = current.find((item) => item.id === id);
+      if (!target) return current;
+      setDraft((draftValue) => draftValue.replace(`[pasted text ${target.label}]`, ""));
+      return current.filter((item) => item.id !== id);
+    });
+  };
+
   const handleUnsupportedFileLinks = (links: string[]) => {
     if (!links.length) return;
     setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
@@ -394,6 +413,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onNotice={setNotice}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
+        pastedText={pasteParts}
+        onRevealPastedText={handleRevealPastedText}
+        onRemovePastedText={handleRemovePastedText}
         isRemoteWorkspace={props.isRemoteWorkspace}
         isSandboxWorkspace={props.isSandboxWorkspace}
         onUploadInboxFiles={props.onUploadInboxFiles}
