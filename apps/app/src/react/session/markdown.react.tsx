@@ -75,7 +75,7 @@ const markdownComponents: Components = {
     return <td className="border border-dls-border p-2 align-top">{children}</td>;
   },
   hr() {
-    return <hr className="my-6 border-none border-t-0 h-px bg-dls-border/40" />;
+    return <hr className="my-6 border-none h-px bg-gray-4" />;
   },
 };
 
