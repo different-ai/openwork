@@ -90,6 +90,19 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     return normalizedId === "openai" || normalizedName === "openai";
   };
 
+  // TODO: remove once we upgrade to opencode 1.3.0 — the Claude Pro/Max OAuth
+  // method is dropped upstream there, so this client-side filter is no longer needed.
+  const isAnthropicProvider = (id: string, fallbackName?: string) => {
+    const normalizedId = id.trim().toLowerCase();
+    const normalizedName = fallbackName?.trim().toLowerCase() ?? "";
+    return normalizedId === "anthropic" || normalizedName === "anthropic";
+  };
+
+  const isClaudeProMaxMethod = (method: ProviderAuthMethod) => {
+    const label = method.label.toLowerCase();
+    return method.type === "oauth" && label.includes("pro/max");
+  };
+
   const entries = createMemo<ProviderAuthEntry[]>(() => {
     const methods = props.authMethods ?? {};
     const connected = new Set(props.connectedProviderIds ?? []);
@@ -99,6 +112,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       .map((id): ProviderAuthEntry => {
         const provider = providers.find((item) => item.id === id);
         const entryMethods = (methods[id] ?? []).filter((method) => {
+          if (isAnthropicProvider(id, provider?.name) && isClaudeProMaxMethod(method)) {
+            return false;
+          }
           if (!isOpenAiProvider(id, provider?.name)) return true;
           if (method.type !== "oauth") return true;
           if (isRemoteWorker()) return isOpenAiHeadlessMethod(method);
