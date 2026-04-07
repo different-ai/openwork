@@ -396,7 +396,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       )}
       </div>
 
-      <div className="sticky bottom-0 z-10 border-t border-dls-border/70 bg-[linear-gradient(180deg,rgba(250,250,252,0),rgba(250,250,252,0.94)_28%,rgba(250,250,252,0.98)_100%)] px-0 pb-4 pt-3 backdrop-blur-sm dark:bg-[linear-gradient(180deg,rgba(14,15,18,0),rgba(14,15,18,0.92)_28%,rgba(14,15,18,0.98)_100%)]">
+      <div className="static bottom-0 z-10 border-t border-dls-border/70 px-0 pb-4 pt-3 ">
         <ReactSessionComposer
           draft={draft}
           mentions={mentions}
