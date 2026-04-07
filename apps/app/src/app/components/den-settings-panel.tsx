@@ -17,6 +17,11 @@ import {
   writeDenSettings,
 } from "../lib/den";
 import {
+  denSessionUpdatedEvent,
+  dispatchDenSessionUpdated,
+  type DenSessionUpdatedDetail,
+} from "../lib/den-session-events";
+import {
   clearDenTemplateCache,
   loadDenTemplateCache,
   readDenTemplateCacheSnapshot,
@@ -78,9 +83,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
   const tr = (key: string) => t(key, currentLocale());
   const initial = readDenSettings();
-  const initialBaseUrl = props.developerMode
-    ? initial.baseUrl || DEFAULT_DEN_BASE_URL
-    : DEFAULT_DEN_BASE_URL;
+  const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
 
   const [baseUrl, setBaseUrl] = createSignal(initialBaseUrl);
   const [baseUrlDraft, setBaseUrlDraft] = createSignal(initialBaseUrl);
@@ -155,20 +158,12 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   createEffect(() => {
     writeDenSettings({
-      baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
+      baseUrl: baseUrl(),
       authToken: authToken() || null,
       activeOrgId: activeOrgId() || null,
       activeOrgSlug: activeOrg()?.slug ?? null,
       activeOrgName: activeOrg()?.name ?? null,
     });
-  });
-
-  createEffect(() => {
-    if (!props.developerMode) {
-      setBaseUrl(DEFAULT_DEN_BASE_URL);
-      setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
-      setBaseUrlError(null);
-    }
   });
 
   const openControlPlane = () => {
@@ -239,7 +234,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       }
 
       writeDenSettings({
-        baseUrl: props.developerMode ? nextBaseUrl : DEFAULT_DEN_BASE_URL,
+        baseUrl: nextBaseUrl,
         authToken: result.token,
         activeOrgId: null,
         activeOrgSlug: null,
@@ -248,26 +243,21 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       setManualAuthInput("");
       setManualAuthOpen(false);
-      window.dispatchEvent(
-        new CustomEvent("openwork-den-session-updated", {
-          detail: {
-            status: "success",
-            email: result.user?.email ?? null,
-          },
-        }),
-      );
+      dispatchDenSessionUpdated({
+        status: "success",
+        baseUrl: nextBaseUrl,
+        token: result.token,
+        user: result.user,
+        email: result.user?.email ?? null,
+      });
     } catch (error) {
-      window.dispatchEvent(
-        new CustomEvent("openwork-den-session-updated", {
-          detail: {
-            status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : tr("den.error_signin_failed"),
-          },
-        }),
-      );
+      dispatchDenSessionUpdated({
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : tr("den.error_signin_failed"),
+      });
     } finally {
       setAuthBusy(false);
     }
@@ -337,7 +327,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const nextOrg = response.orgs.find((org) => org.id === next) ?? null;
       setActiveOrgId(next);
       writeDenSettings({
-        baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
+        baseUrl: baseUrl(),
         authToken: authToken() || null,
         activeOrgId: next || null,
         activeOrgSlug: nextOrg?.slug ?? null,
@@ -472,18 +462,27 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   createEffect(() => {
     const handler = (event: Event) => {
-      const customEvent = event as CustomEvent<{
-        status?: string;
-        email?: string | null;
-        message?: string | null;
-      }>;
+      const customEvent = event as CustomEvent<DenSessionUpdatedDetail>;
       const nextSettings = readDenSettings();
-      setBaseUrl(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
-      setBaseUrlDraft(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
-      setAuthToken(nextSettings.authToken?.trim() || "");
+      const nextBaseUrl =
+        customEvent.detail?.baseUrl?.trim() ||
+        nextSettings.baseUrl ||
+        DEFAULT_DEN_BASE_URL;
+      const nextToken =
+        customEvent.detail?.token?.trim() ||
+        nextSettings.authToken?.trim() ||
+        "";
+      setBaseUrl(nextBaseUrl);
+      setBaseUrlDraft(nextBaseUrl);
+      setAuthToken(nextToken);
       setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
       if (customEvent.detail?.status === "success") {
+        clearSessionState();
+        if (customEvent.detail.user) {
+          setUser(customEvent.detail.user);
+        }
         setAuthError(null);
+        setSessionBusy(false);
         setStatusMessage(
           customEvent.detail.email?.trim()
             ? t("den.status_cloud_signed_in_as", currentLocale(), { email: customEvent.detail.email.trim() })
@@ -498,12 +497,12 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     };
 
     window.addEventListener(
-      "openwork-den-session-updated",
+      denSessionUpdatedEvent,
       handler as EventListener,
     );
     return () =>
       window.removeEventListener(
-        "openwork-den-session-updated",
+        denSessionUpdatedEvent,
         handler as EventListener,
       );
   });
@@ -828,7 +827,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                       const nextOrg = orgs().find((org) => org.id === nextId) ?? null;
                       setActiveOrgId(nextId);
                       writeDenSettings({
-                        baseUrl: props.developerMode ? baseUrl() : DEFAULT_DEN_BASE_URL,
+                        baseUrl: baseUrl(),
                         authToken: authToken() || null,
                         activeOrgId: nextId || null,
                         activeOrgSlug: nextOrg?.slug ?? null,

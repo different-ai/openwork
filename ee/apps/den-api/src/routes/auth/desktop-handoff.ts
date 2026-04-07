@@ -178,51 +178,75 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     const input = c.req.valid("json")
 
     const now = new Date()
-    const rows = await db
-      .select({
-        grant: DesktopHandoffGrantTable,
-        session: AuthSessionTable,
-        user: AuthUserTable,
-      })
-      .from(DesktopHandoffGrantTable)
-      .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
-      .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
-      .where(
-        and(
-          eq(DesktopHandoffGrantTable.id, input.grant),
-          isNull(DesktopHandoffGrantTable.consumed_at),
-          gt(DesktopHandoffGrantTable.expires_at, now),
-          gt(AuthSessionTable.expiresAt, now),
-        ),
-      )
-      .limit(1)
+    const exchange = await db.transaction(async (tx) => {
+      const rows = await tx
+        .select({
+          session: AuthSessionTable,
+          user: AuthUserTable,
+        })
+        .from(DesktopHandoffGrantTable)
+        .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
+        .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            isNull(DesktopHandoffGrantTable.consumed_at),
+            gt(DesktopHandoffGrantTable.expires_at, now),
+            gt(AuthSessionTable.expiresAt, now),
+          ),
+        )
+        .limit(1)
 
-    const row = rows[0]
-    if (!row) {
+      const row = rows[0]
+      if (!row) {
+        return null
+      }
+
+      const consumedAt = new Date()
+      await tx
+        .update(DesktopHandoffGrantTable)
+        .set({ consumed_at: consumedAt })
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            isNull(DesktopHandoffGrantTable.consumed_at),
+            gt(DesktopHandoffGrantTable.expires_at, now),
+          ),
+        )
+
+      const claimed = await tx
+        .select({ id: DesktopHandoffGrantTable.id })
+        .from(DesktopHandoffGrantTable)
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            eq(DesktopHandoffGrantTable.consumed_at, consumedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!claimed[0]) {
+        return null
+      }
+
+      return {
+        token: row.session.token,
+        user: {
+          id: row.user.id,
+          email: row.user.email,
+          name: row.user.name,
+        },
+      }
+    })
+
+    if (!exchange) {
       return c.json({
         error: "grant_not_found",
         message: "This desktop sign-in link is missing, expired, or already used.",
       }, 404)
     }
 
-    await db
-      .update(DesktopHandoffGrantTable)
-      .set({ consumed_at: now })
-      .where(
-        and(
-          eq(DesktopHandoffGrantTable.id, input.grant),
-          isNull(DesktopHandoffGrantTable.consumed_at),
-        ),
-      )
-
-    return c.json({
-      token: row.session.token,
-      user: {
-        id: row.user.id,
-        email: row.user.email,
-        name: row.user.name,
-      },
-    })
+    return c.json(exchange)
     },
   )
 }
