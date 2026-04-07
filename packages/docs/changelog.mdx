@@ -287,42 +287,40 @@ title: "Changelog"
 
 <Update label="March 12th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
 
-  ## [v0.11.144](https://github.com/different-ai/openwork/compare/v0.11.143...v0.11.144): Workspace shell recovery and clearer docs entrypoints
+  ## [v0.11.144](https://github.com/different-ai/openwork/compare/v0.11.140...v0.11.144): Workspace shell recovery and clearer docs entrypoints
 
-  Restores reliable workspace-shell navigation and reset recovery, seeds Chrome DevTools setup correctly, and splits docs paths for technical and non-technical readers.
+  - Improved workspace shell recovery and inline error sessions
+  - Cloud worker creation
+  - Deprecated soul mode
 
-  ## [v0.11.143](https://github.com/different-ai/openwork/compare/v0.11.142...v0.11.143): Free first Den worker and Google signup
-
-  Den now lets new users create one free cloud worker without billing and sign up with Google.
-
-  Also released:
-
-  - Retired remaining Soul-mode surfaces across the app and server.
-  - Showed session errors inline, removed raw markdown flashes, and refreshed share bundle pages and previews.
-
-  ## [v0.11.142](https://github.com/different-ai/openwork/compare/v0.11.141...v0.11.142): Version alignment patch
-
-  Republishes synchronized app, server, orchestrator, and router versions so shipped artifacts stay in lockstep, with no visible workflow changes.
-
-  ## [v0.11.141](https://github.com/different-ai/openwork/compare/v0.11.140...v0.11.141): App and worker opens stay on the new session screen
-
-  Keeps launch actions anchored on the new session flow while making oversized-context errors, share feedback, and support booking clearer.
+  <img src="/images/den-landing-page.png" alt="Den landing page showing always-on AI workers for teams" />
+  
 
 </Update>
 
-<Update label="March 11th" tags={["🐛 Bug Fixes"]}>
+<Update label="March 11th" tags={["🚀 New features", "🐛 Bug Fixes"]}> Improved workers, sharing skills, GOAuth
 
-  ## [v0.11.140](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.140): Shared bundle imports land on the intended worker
+  ## [v0.11.140](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.140): 
 
-  Makes shared bundle imports resolve to the exact active or newly created worker and adds more actionable sandbox startup diagnostics.
+  - Creating a new worker opens up an empty session instead of automations
+  - Share skills with one click at share.openworklabs.com
+  - Task list not sticking to the composer box
+  - Google and GitHub
 
-  ## [v0.11.138](https://github.com/different-ai/openwork/compare/v0.11.137...v0.11.138): Shared bundle links now open the blueprints worker flow
+  <table>
+    <tr>
+      <td>
+        <video controls className="w-full aspect-video rounded-xl" src="/images/improved-skills-march11th.mp4">
+        </video>
+        <p><em>New worker opens on an empty session</em></p>
+      </td>
+      <td>
+        <img src="/images/google-auth.png" alt="Google auth flow in the provider auth modal" />
+        <p><em>Google auth</em></p>
+      </td>
+    </tr>
+  </table>
 
-  Routes shared bundle imports into the blueprints-style worker creation path so new-worker links land in the setup flow users expect.
-
-  ## [v0.11.137](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.137): MCP sign-in retries and model setup get clearer
-
-  Makes MCP OAuth flows recover more reliably and reorganizes the model picker so disconnected providers route users straight to setup.
 
 </Update>
 
