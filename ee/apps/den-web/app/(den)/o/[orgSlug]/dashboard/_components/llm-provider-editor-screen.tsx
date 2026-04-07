@@ -7,6 +7,7 @@ import { ArrowLeft, CheckCircle2, Circle, Cpu, Search } from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
 import { DenCombobox } from "../../../../_components/ui/combobox";
 import { DenInput } from "../../../../_components/ui/input";
+import { DenSelectableRow } from "../../../../_components/ui/selectable-row";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DenTextarea } from "../../../../_components/ui/textarea";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
@@ -417,7 +418,14 @@ export function LlmProviderEditorScreen({ llmProviderId }: { llmProviderId?: str
         <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
           <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Models</h2>
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Models</h2>
+                {catalogDetail ? (
+                  <span className="rounded-full bg-gray-200 px-3 py-1 text-[12px] font-medium text-gray-700">
+                    {selectedModelIds.length} {selectedModelIds.length === 1 ? "model selected" : "models selected"}
+                  </span>
+                ) : null}
+              </div>
               <p className="mt-2 text-[15px] text-gray-500">Pick the exact models this provider should expose.</p>
             </div>
 
@@ -427,29 +435,39 @@ export function LlmProviderEditorScreen({ llmProviderId }: { llmProviderId?: str
               value={modelQuery}
               onChange={(event) => setModelQuery(event.target.value)}
               placeholder="Search models..."
+              className="lg:w-[360px]"
             />
           </div>
 
           {catalogDetail ? (
-            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-              {filteredModels.map((model) => {
-                const selected = selectedModelIds.includes(model.id);
-                return (
-                  <button
-                    key={model.id}
-                    type="button"
-                    onClick={() => setSelectedModelIds((current) => current.includes(model.id) ? current.filter((entry) => entry !== model.id) : [...current, model.id])}
-                    className={`flex items-start gap-4 rounded-[24px] border px-5 py-5 text-left transition ${selected ? "border-[#0f172a] bg-[#f8fafc]" : "border-gray-200 bg-white hover:border-gray-300"}`}
-                  >
-                    {selected ? <CheckCircle2 className="mt-0.5 h-7 w-7 shrink-0 text-[#0f172a]" /> : <Circle className="mt-0.5 h-7 w-7 shrink-0 text-gray-300" />}
-                    <div className="min-w-0">
-                      <p className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">{model.name}</p>
-                      <p className="mt-2 text-[13px] text-gray-500">{model.id}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            filteredModels.length ? (
+              <div>
+                <div className="overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                  {filteredModels.map((model) => {
+                    const selected = selectedModelIds.includes(model.id);
+                    return (
+                      <DenSelectableRow
+                        key={model.id}
+                        selected={selected}
+                        title={model.name}
+                        description={model.id}
+                        onClick={() =>
+                          setSelectedModelIds((current) =>
+                            current.includes(model.id)
+                              ? current.filter((entry) => entry !== model.id)
+                              : [...current, model.id],
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                No models match <span className="font-medium text-gray-700">&quot;{modelQuery}&quot;</span>.
+              </div>
+            )
           ) : (
             <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
               Select a provider to browse its models.
