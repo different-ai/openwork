@@ -541,6 +541,14 @@ export function createModelConfigStore(options: {
     return provider?.models?.[ref.modelID] ?? null;
   };
 
+  // Returns true if the model exists in the loaded provider list.
+  // Returns true when providers are not yet loaded (defer validation until they arrive).
+  const isModelRefValid = (ref: ModelRef) => {
+    const providers = options.providers();
+    if (!providers.length) return true;
+    return findProviderModel(ref) != null;
+  };
+
   const sanitizeModelVariantForRef = (ref: ModelRef, value: string | null) => {
     const modelInfo = findProviderModel(ref);
     if (!modelInfo) return normalizeModelBehaviorValue(value);
@@ -986,6 +994,12 @@ export function createModelConfigStore(options: {
         setPendingDefaultModelForWorkspace(workspaceId, null);
       }
 
+      // If providers are already loaded, validate that the configured model still exists.
+      // This handles workspaces whose opencode.jsonc references a removed model ID.
+      if (configDefault && !isModelRefValid(configDefault)) {
+        configDefault = null;
+      }
+
       setDefaultModelExplicit(Boolean(configDefault));
       const nextDefault = configDefault ?? legacyDefaultModel();
       const currentDefault = defaultModel();
@@ -1011,6 +1025,27 @@ export function createModelConfigStore(options: {
     onCleanup(() => {
       cancelled = true;
     });
+  });
+
+  // Race-condition fix: providers may load after the workspace default has been applied.
+  // Once providers arrive, re-validate the current default model. If it no longer exists
+  // (e.g. a removed alias like "opencode/big-pickle"), clear the explicit override so the
+  // user is prompted to pick a valid model from their connected providers.
+  createEffect(() => {
+    const allProviders = options.providers();
+    if (!allProviders.length) return;
+    if (!workspaceDefaultModelReady()) return;
+    if (!defaultModelExplicit()) return;
+
+    const current = defaultModel();
+    if (findProviderModel(current) != null) return; // model is valid
+
+    // Model no longer exists in any loaded provider — reset to the constant default.
+    // The user will see the model picker pre-selected to DEFAULT_MODEL and can pick
+    // something available from their connected providers.
+    setDefaultModelExplicit(false);
+    setDefaultModel(DEFAULT_MODEL);
+    setLegacyDefaultModel(DEFAULT_MODEL);
   });
 
   createEffect(() => {

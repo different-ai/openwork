@@ -7,9 +7,12 @@ export const VARIANT_PREF_KEY = "openwork.modelVariant";
 export const LANGUAGE_PREF_KEY = "openwork.language";
 export const HIDE_TITLEBAR_PREF_KEY = "openwork.hideTitlebar";
 
+// UI placeholder shown before providers load. Must reference a real, stable model.
+// If this model is not available for the user, the stale-model reconciliation in
+// model-config.ts will clear it and let the user pick from their connected providers.
 export const DEFAULT_MODEL: ModelRef = {
-  providerID: "opencode",
-  modelID: "big-pickle",
+  providerID: "anthropic",
+  modelID: "claude-sonnet-4-5",
 };
 
 export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
