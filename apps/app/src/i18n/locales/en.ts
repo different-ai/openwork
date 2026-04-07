@@ -2711,7 +2711,7 @@ export default {
   "settings.tab_description_updates":
     "Keep the app current with quiet background checks and install controls.",
   "settings.tab_model": "Model",
-  "settings.toolbar_ready_to_install": "Ready to install${version ? ",
+  "settings.toolbar_ready_to_install": "Ready to install",
   "settings.update_available_version": "Update available: v{version}",
   "settings.update_check_button": "Check",
   "settings.update_check_failed": "Update check failed",
