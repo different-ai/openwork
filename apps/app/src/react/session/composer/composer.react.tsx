@@ -91,6 +91,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [dropzoneActive, setDropzoneActive] = useState(false);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
@@ -402,6 +403,14 @@ export function ReactSessionComposer(props: ComposerProps) {
         ) : null}
         <div className="relative">
           <ReactComposerNotice notice={props.notice} />
+          {dropzoneActive ? (
+            <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[22px] border-2 border-dashed border-dls-accent bg-[color:color-mix(in_oklab,var(--dls-accent)_10%,transparent)]">
+              <div className="rounded-2xl border border-dls-border bg-dls-surface/95 px-5 py-4 text-center shadow-[var(--dls-card-shadow)] backdrop-blur-sm">
+                <div className="text-sm font-medium text-dls-text">Drop files to attach</div>
+                <div className="mt-1 text-xs text-dls-secondary">Images, text files, and PDFs are supported.</div>
+              </div>
+            </div>
+          ) : null}
           <LexicalPromptEditor
             value={props.draft}
             mentions={props.mentions}
@@ -461,10 +470,19 @@ export function ReactSessionComposer(props: ComposerProps) {
               }
             }}
             onDragOver={(event) => {
-              if (event.dataTransfer?.files?.length) event.preventDefault();
+              if (event.dataTransfer?.files?.length) {
+                event.preventDefault();
+                if (!dropzoneActive) setDropzoneActive(true);
+              }
+            }}
+            onDragLeave={(event) => {
+              const nextTarget = event.relatedTarget;
+              if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+              setDropzoneActive(false);
             }}
             onDrop={(event) => {
               const files = Array.from(event.dataTransfer?.files ?? []);
+              setDropzoneActive(false);
               if (!files.length) return;
               event.preventDefault();
               const supported = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("text/") || file.type === "application/pdf");

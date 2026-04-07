@@ -41,6 +41,7 @@ type EditorProps = {
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
+  onDragLeave?: React.DragEventHandler<HTMLDivElement>;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -424,6 +425,7 @@ export function LexicalPromptEditor(props: EditorProps) {
               onPaste={props.onPaste}
               onDrop={props.onDrop}
               onDragOver={props.onDragOver}
+              onDragLeave={props.onDragLeave}
             />
           }
           placeholder={
