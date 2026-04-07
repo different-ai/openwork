@@ -45,6 +45,90 @@ fn normalize_path(input: &str) -> String {
     trimmed.to_string()
 }
 
+fn path_distance(base: &str, candidate: &str) -> Option<usize> {
+    if base.is_empty() || candidate.is_empty() {
+        return None;
+    }
+
+    let base_path = Path::new(base);
+    let candidate_path = Path::new(candidate);
+    if candidate_path == base_path {
+        return Some(0);
+    }
+    if candidate_path.starts_with(base_path) || base_path.starts_with(candidate_path) {
+        let base_components = base_path.components().count();
+        let candidate_components = candidate_path.components().count();
+        return Some(base_components.abs_diff(candidate_components));
+    }
+
+    None
+}
+
+fn path_relation_rank(base: &str, candidate: &str) -> Option<(usize, usize)> {
+    if base.is_empty() || candidate.is_empty() {
+        return None;
+    }
+
+    let base_path = Path::new(base);
+    let candidate_path = Path::new(candidate);
+    if candidate_path == base_path {
+        return Some((0, 0));
+    }
+    if base_path.starts_with(candidate_path) {
+        return path_distance(base, candidate).map(|distance| (0, distance));
+    }
+    if candidate_path.starts_with(base_path) {
+        return path_distance(base, candidate).map(|distance| (1, distance));
+    }
+
+    None
+}
+
+fn select_entries_for_scope_root(
+    entries: Vec<JobEntry>,
+    scope_root: Option<&str>,
+) -> Vec<JobEntry> {
+    let filter_root = scope_root.map(normalize_path).unwrap_or_default();
+    if filter_root.is_empty() {
+        return entries;
+    }
+
+    let exact: Vec<JobEntry> = entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .job
+                .workdir
+                .as_deref()
+                .map(normalize_path)
+                .map(|wd| wd == filter_root)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    if !exact.is_empty() {
+        return exact;
+    }
+
+    let mut related: Vec<(usize, JobEntry)> = entries
+        .into_iter()
+        .filter_map(|entry| {
+            let wd = normalize_path(entry.job.workdir.as_deref().unwrap_or(""));
+            path_relation_rank(&filter_root, &wd)
+                .map(|(kind, distance)| ((kind * 1000) + distance, entry))
+        })
+        .collect();
+    related.sort_by(|a, b| {
+        a.0.cmp(&b.0).then_with(|| {
+            a.1.job
+                .name
+                .to_lowercase()
+                .cmp(&b.1.job.name.to_lowercase())
+        })
+    });
+    related.into_iter().map(|(_, entry)| entry).collect()
+}
+
 fn load_job_file(path: &Path) -> Option<ScheduledJob> {
     let raw = fs::read_to_string(path).ok()?;
     serde_json::from_str(&raw).ok()
@@ -178,20 +262,88 @@ fn collect_jobs_for_scope_root(scope_root: Option<&str>) -> Result<Vec<JobEntry>
     out.extend(collect_scoped_jobs(&scopes_dir));
     out.extend(collect_legacy_jobs(&legacy_dir));
 
-    let filter_root = scope_root.map(|s| normalize_path(s)).unwrap_or_default();
-    if !filter_root.is_empty() {
-        out.retain(|entry| {
-            entry
-                .job
-                .workdir
-                .as_deref()
-                .map(|wd| normalize_path(wd) == filter_root)
-                .unwrap_or(false)
-        });
-    }
+    out = select_entries_for_scope_root(out, scope_root);
 
     out.sort_by(|a, b| a.job.name.to_lowercase().cmp(&b.job.name.to_lowercase()));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{path_distance, path_relation_rank, select_entries_for_scope_root, JobEntry};
+    use crate::types::ScheduledJob;
+    use std::path::PathBuf;
+
+    fn job_entry(name: &str, workdir: Option<&str>) -> JobEntry {
+        JobEntry {
+            job: ScheduledJob {
+                slug: name.to_lowercase().replace(' ', "-"),
+                name: name.to_string(),
+                schedule: "0 9 * * *".to_string(),
+                prompt: None,
+                attach_url: None,
+                run: None,
+                source: None,
+                workdir: workdir.map(str::to_string),
+                created_at: "2026-04-07T00:00:00Z".to_string(),
+                updated_at: None,
+                last_run_at: None,
+                last_run_exit_code: None,
+                last_run_error: None,
+                last_run_source: None,
+                last_run_status: None,
+                scope_id: None,
+                timeout_seconds: None,
+            },
+            job_file: PathBuf::from(format!("/{name}.json")),
+        }
+    }
+
+    #[test]
+    fn path_distance_matches_exact_and_nested_paths() {
+        assert_eq!(path_distance("/repo", "/repo"), Some(0));
+        assert_eq!(path_distance("/repo", "/repo/app"), Some(1));
+        assert_eq!(path_distance("/repo/app", "/repo"), Some(1));
+        assert_eq!(path_distance("/repo", "/elsewhere"), None);
+    }
+
+    #[test]
+    fn path_relation_rank_prefers_ancestor_matches_before_descendants() {
+        assert_eq!(path_relation_rank("/repo/app", "/repo"), Some((0, 1)));
+        assert_eq!(
+            path_relation_rank("/repo/app", "/repo/app/nested"),
+            Some((1, 1))
+        );
+    }
+
+    #[test]
+    fn select_entries_prefers_exact_scope_matches() {
+        let entries = vec![
+            job_entry("Parent job", Some("/repo")),
+            job_entry("Exact job", Some("/repo/app")),
+        ];
+
+        let selected = select_entries_for_scope_root(entries, Some("/repo/app"));
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].job.name, "Exact job");
+    }
+
+    #[test]
+    fn select_entries_falls_back_to_related_scope_matches() {
+        let entries = vec![
+            job_entry("Parent job", Some("/repo")),
+            job_entry("Child job", Some("/repo/app/nested")),
+            job_entry("Elsewhere", Some("/elsewhere")),
+        ];
+
+        let selected = select_entries_for_scope_root(entries, Some("/repo/app"));
+        let names = selected
+            .iter()
+            .map(|entry| entry.job.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["Parent job", "Child job"]);
+    }
 }
 
 #[cfg(target_os = "macos")]

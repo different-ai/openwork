@@ -1,7 +1,7 @@
 import { readdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { ApiError } from "./errors.js";
 import { exists, readJsonFile } from "./utils.js";
@@ -84,6 +84,62 @@ function scopedJobFilePath(scopeId: string, slug: string): string {
 function normalizePathForCompare(value: string): string {
   const trimmed = value.trim();
   return trimmed ? resolve(trimmed) : "";
+}
+
+function pathDistance(base: string, candidate: string): number | null {
+  if (!base || !candidate) return null;
+  if (base === candidate) return 0;
+
+  const baseToCandidate = relative(base, candidate);
+  if (baseToCandidate && !baseToCandidate.startsWith("..") && !isAbsolute(baseToCandidate)) {
+    return baseToCandidate.split(/[\\/]+/).filter(Boolean).length;
+  }
+
+  const candidateToBase = relative(candidate, base);
+  if (candidateToBase && !candidateToBase.startsWith("..") && !isAbsolute(candidateToBase)) {
+    return candidateToBase.split(/[\\/]+/).filter(Boolean).length;
+  }
+
+  return null;
+}
+
+function pathRelationRank(base: string, candidate: string): [kind: number, distance: number] | null {
+  if (!base || !candidate) return null;
+  if (base === candidate) return [0, 0];
+
+  const candidateToBase = relative(candidate, base);
+  if (candidateToBase && !candidateToBase.startsWith("..") && !isAbsolute(candidateToBase)) {
+    const distance = pathDistance(base, candidate);
+    return distance === null ? null : [0, distance];
+  }
+
+  const baseToCandidate = relative(base, candidate);
+  if (baseToCandidate && !baseToCandidate.startsWith("..") && !isAbsolute(baseToCandidate)) {
+    const distance = pathDistance(base, candidate);
+    return distance === null ? null : [1, distance];
+  }
+
+  return null;
+}
+
+export function filterScheduledJobsForWorkdir<T extends { job: Pick<ScheduledJob, "workdir" | "name"> }>(
+  entries: T[],
+  workdir?: string
+): T[] {
+  const filterRoot = typeof workdir === "string" && workdir.trim() ? normalizePathForCompare(workdir) : "";
+  if (!filterRoot) return entries;
+
+  const exact = entries.filter((entry) => normalizePathForCompare(entry.job.workdir ?? "") === filterRoot);
+  if (exact.length > 0) return exact;
+
+  return entries
+    .map((entry) => {
+      const rank = pathRelationRank(filterRoot, normalizePathForCompare(entry.job.workdir ?? ""));
+      return rank === null ? null : { rank, entry };
+    })
+    .filter((value): value is { rank: [number, number]; entry: T } => value !== null)
+    .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.entry.job.name.localeCompare(b.entry.job.name))
+    .map(({ entry }) => entry);
 }
 
 async function loadJobFile(path: string): Promise<ScheduledJob | null> {
@@ -233,14 +289,7 @@ export async function listScheduledJobs(workdir?: string): Promise<ScheduledJob[
   ensureSchedulerSupported();
   const entries = await loadAllJobEntries();
 
-  const filterRoot = typeof workdir === "string" && workdir.trim() ? normalizePathForCompare(workdir) : null;
-  const jobs = entries
-    .map((entry) => entry.job)
-    .filter((job) => {
-      if (!filterRoot) return true;
-      if (!job.workdir) return false;
-      return normalizePathForCompare(job.workdir) === filterRoot;
-    });
+  const jobs = filterScheduledJobsForWorkdir(entries, workdir).map((entry) => entry.job);
 
   jobs.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   return jobs;
@@ -261,14 +310,7 @@ export async function resolveScheduledJob(
   }
 
   const entries = await loadAllJobEntries();
-  const filterRoot = typeof workdir === "string" && workdir.trim() ? normalizePathForCompare(workdir) : null;
-  const filtered = filterRoot
-    ? entries.filter((entry) => {
-        const wd = entry.job.workdir;
-        if (!wd) return false;
-        return normalizePathForCompare(wd) === filterRoot;
-      })
-    : entries;
+  const filtered = filterScheduledJobsForWorkdir(entries, workdir);
 
   const found = findJobEntryByName(filtered, trimmed);
   if (!found) {
