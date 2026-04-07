@@ -59,7 +59,7 @@
         ]
       },
       {
-        "tab": "API Reference",
+        "tab": "Cloud API",
         "openapi": "https://api.openworklabs.com/openapi.json"
       }
     ]

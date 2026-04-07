@@ -1601,7 +1601,7 @@ export default {
   "settings.theme_light": "浅色",
   "settings.theme_system": "系统",
   "settings.theme_system_hint": "系统模式自动跟随你的操作系统偏好。",
-  "settings.toolbar_ready_to_install": "Ready to install${version ? ",
+  "settings.toolbar_ready_to_install": "准备安装",
   "settings.update": "更新",
   "settings.update_available": "可用更新：v",
   "settings.update_available_version": "可用更新：v{version}",

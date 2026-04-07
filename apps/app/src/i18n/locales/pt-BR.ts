@@ -1598,7 +1598,7 @@ export default {
   "settings.theme_light": "Claro",
   "settings.theme_system": "Sistema",
   "settings.theme_system_hint": "O modo sistema segue automaticamente a preferência do seu SO.",
-  "settings.toolbar_ready_to_install": "Pronto para instalar${version ? ",
+  "settings.toolbar_ready_to_install": "Pronto para instalar",
   "settings.update": "Atualizar",
   "settings.update_available": "Atualização disponível: v",
   "settings.update_available_version": "Atualização disponível: v{version}",

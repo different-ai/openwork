@@ -3,546 +3,208 @@ title: "Changelog"
 ---
 <Update label="April 4th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.202](https://github.com/different-ai/openwork/compare/v0.11.201...v0.11.202): Translations fill out across the app and shared skill imports work again.
+  ## [v0.11.202](https://github.com/different-ai/openwork/compare/v0.11.200...v0.11.202): Translations support for several languages
 
-  Adds Thai, restores missing page translations, fixes migrated shared-skill links, and tightens docs and local desktop dev setup.
-
-  ## [v0.11.201](https://github.com/different-ai/openwork/compare/v0.11.200...v0.11.201): Workspace lists collapse cleanly and Den organization setup recovers more reliably.
-
-  Hides collapsed workspace task rows, steadies session loading, and fixes Den skill saving plus organization draft and invite recovery.
+  - Added Thai and Japanese in-app translations
+  - Additional documentation, privacy, terms and conditions.
 
 </Update>
 
 <Update label="April 3rd" tags={["🚀 New Features"]}>
 
-  ## [v0.11.200](https://github.com/different-ai/openwork/compare/v0.11.199...v0.11.200): Cloud skills and team limits move into the core flow
+  ## [v0.11.200](https://github.com/different-ai/openwork/compare/v0.11.199...v0.11.200): Minor improvements around Cloud skills
 
-  - Added an OpenWork Cloud skills catalog to the Skills page, with install and share-to-team flows.
-  - Added Den teams plus full skill hub and skill editing and visibility management.
-  - Moved billing into org creation and enforced organization member limits before setup finishes.
+  - Added an OpenWork Cloud skills catalog to the Skills page. 
 
 </Update>
 
 <Update label="April 2nd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
-  ## [v0.11.199](https://github.com/different-ai/openwork/compare/v0.11.198...v0.11.199): Pricing, skill hubs, and session recovery sharpen up
+  ## [v0.11.199](https://github.com/different-ai/openwork/compare/v0.11.198...v0.11.199): Paywall for windows, skillsHub
 
-  - Added a pricing page and paid Windows messaging, and sent Cloud navigation directly into the app.
-  - Expanded Den with skill hubs, a new `den-api`, and a smoother org-invite signup flow.
-  - Added developer log export, per-conversation draft persistence, and recovery after immediate send failures.
+  - Added a pricing page for Windows versions. 
+  - Expanded Den with skill hubs, a new `den-api`, and a simpler org-invite signup flow.
 
 </Update>
 
 <Update label="March 31st" tags={["🐛 Bug Fixes"]}>
 
-  ## [v0.11.198](https://github.com/different-ai/openwork/compare/v0.11.197...v0.11.198): Local workspace switches restart the right engine
-
-  Fixes a local-only switch bug so changing between local workspaces restarts the engine instead of reusing the old connection.
-
-  ## [v0.11.197](https://github.com/different-ai/openwork/compare/v0.11.196...v0.11.197): Sharing gets safer and startup gets less noisy
+  ## [v0.11.198](https://github.com/different-ai/openwork/compare/v0.11.196...v0.11.198): Improved workspace export security 
 
   - Blocked sensitive workspace exports and showed warnings before sharing risky config or secrets.
   - Trusted bundle imports only from the configured publisher unless users explicitly choose a warning-backed manual path.
-  - Moved OpenWork tokens off CLI args and logs, stopped auto-creating Welcome, and fixed collapsed sidebar session lists.
 
 </Update>
 
 <Update label="March 30th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
-  ## [v0.11.196](https://github.com/different-ai/openwork/compare/v0.11.195...v0.11.196): OpenWork resumes where you left off
+  ## [v0.11.196](https://github.com/different-ai/openwork/compare/v0.11.194...v0.11.196): OpenWork resumes where you left off
 
-  - Reopened the last session on workspace boot and routed straight into the session view.
-  - Moved automations onto a dedicated page backed by live local or remote scheduler jobs.
-  - Fixed bootstrap and workspace switching so Welcome setup and loading states stop interrupting startup.
-
-</Update>
-
-<Update label="March 27th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.195](https://github.com/different-ai/openwork/compare/v0.11.194...v0.11.195): Local workspace creation and Den worker setup get steadier
-
-  Routes new local workspaces through the local host, persists model defaults properly, and smooths Den worker-connect and billing flows.
+  - Moved automations onto a dedicated page inside settings.
+  - Got rid of the initial loading state on app open.
 
 </Update>
 
 <Update label="March 26th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.194](https://github.com/different-ai/openwork/compare/v0.11.193...v0.11.194): Auto compaction and live automations become real workflows
+  ## [v0.11.194](https://github.com/different-ai/openwork/compare/v0.11.192...v0.11.194): Team template sharing and autocompaction
 
-  Wires auto compaction to actual workspace config, keeps scheduled jobs live in-app, and adds a faster Den local-dev path.
-
-  ## [v0.11.193](https://github.com/different-ai/openwork/compare/v0.11.192...v0.11.193): Team template sharing reaches OpenWork Cloud
-
-  - Added Save-to-team flows for workspace templates, with org selection and Cloud sign-in prompts.
-  - Introduced Den organizations, member roles, invitations, custom roles, and org-scoped template APIs and screens.
-  - Added a manual Cloud sign-in fallback when automatic team-sharing auth stalls.
+  - Auto compaction is done into the workspace config.
+  - Keeps scheduled jobs live in-app, and adds a faster Den local-dev path.
+  - Introduces Den organizations, member roles, invitations, custom roles, and org-scoped template APIs and screens.
 
 </Update>
 
 <Update label="March 25th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.192](https://github.com/different-ai/openwork/compare/v0.11.191...v0.11.192): Workspace switching stops hijacking runtime state
+  ## [v0.11.192](https://github.com/different-ai/openwork/compare/v0.11.190...v0.11.192): Better Workspace switching and detached workers
 
-  - Split selected workspace from runtime-connected workspace so browsing no longer flips the active worker.
-  - Kept preferred local server ports sticky and avoided collisions across workspaces.
-  - Let templates carry extra `.opencode` files and starter sessions, and materialized seeded sessions correctly.
-
-  ## [v0.11.191](https://github.com/different-ai/openwork/compare/v0.11.190...v0.11.191): Shared detached workers survive restarts
-
-  Preserves share credentials for detached workers, hides disconnected config-backed providers, and adds clearer Slack and skill-import docs.
+  - Switching a workspace no longer  flips the active worker.
+  - Detached workers share credentials are now preserved across restarts
 
 </Update>
 
 <Update label="March 24th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
 
-  ## [v0.11.190](https://github.com/different-ai/openwork/compare/v0.11.189...v0.11.190): Connection guides expand while sharing and auth settle
+  ## [v0.11.190](https://github.com/different-ai/openwork/compare/v0.11.184...v0.11.190): More docs, improved safety around sharing.
 
-  Mostly docs-focused release that reorganizes onboarding around concrete connection guides, while fixing desktop publish routing and headless OpenAI auth timing.
-
-  ## [v0.11.189](https://github.com/different-ai/openwork/compare/v0.11.188...v0.11.189): Package metadata rolls forward only
-
-  Updates the release line with a lockfile and version sync only, without any visible product or workflow changes.
-
-  ## [v0.11.188](https://github.com/different-ai/openwork/compare/v0.11.187...v0.11.188): Landing feedback returns to the previous flow
-
-  Backs out the Loops feedback template so the landing feedback endpoint goes back to the simpler email-based path.
-
-  ## [v0.11.187](https://github.com/different-ai/openwork/compare/v0.11.186...v0.11.187): Windows workspace scoping handles verbatim paths
-
-  Normalizes Windows path transport, verbatim prefixes, and UNC comparisons so local session scope stays consistent across directory formats.
-
-  ## [v0.11.186](https://github.com/different-ai/openwork/compare/v0.11.185...v0.11.186): Local reconnects stay scoped to the right workspace
-
-  Fixes restart and reconnect flows so local sessions and starter workspaces stay attached to the intended directory.
-
-  ## [v0.11.185](https://github.com/different-ai/openwork/compare/v0.11.184...v0.11.185): Safer local sharing and messaging setup
-
-  Local workers now stay localhost-only unless users explicitly opt into remote exposure, messaging is disabled until enabled on purpose, public Telegram bot creation shows a risk warning, and Chrome DevTools MCP gets a guided setup flow.
+  - More docs regarding onboarding and connection guides
+  - Better restart and reconnect flows so it stays attached to the intended directory.
+  - Local workers now stay localhost-only unles users opt into remote exposure
 
 </Update>
 
 <Update label="March 23rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.184](https://github.com/different-ai/openwork/compare/v0.11.183...v0.11.184): CLI quickstart becomes the primary docs path
+  ## [v0.11.184](https://github.com/different-ai/openwork/compare/v0.11.181...v0.11.184): Docs reset, exa and local workspaces
 
-  Rebuilds the docs around a single CLI-first quickstart and removes older split onboarding paths that were harder to follow.
-
-  ## [v0.11.183](https://github.com/different-ai/openwork/compare/v0.11.182...v0.11.183): Exa moves into OpenCode settings
-
-  Surfaces the Exa search toggle in a clearer OpenCode settings section and rolls back an unready macOS path-normalization change.
-
-  ## [v0.11.182](https://github.com/different-ai/openwork/compare/v0.11.181...v0.11.182): Local workspaces move under OpenWork server control
-
-  - Local workspace create, rename, delete, config writes, and reload events now go through OpenWork server first.
-  - First-run starter bootstrap and reconnect logic are more reliable across onboarding and sidebar flows.
-  - Simplified the remote connect modal, moved tool-trace chevrons right, and added Windows ARM64 dev startup support.
+  - Rebuilt the docs around a single CLI-first quickstart.
+  - Enables Exa search from opencode settings.
+  - More reliable first-runs and simplified remote connect modal.
 
 </Update>
 
 <Update label="March 22nd" tags={["🐛 Bug Fixes", "🏗️ Refactoring", "🚀 New Features"]}>
 
-  ## [v0.11.181](https://github.com/different-ai/openwork/compare/v0.11.180...v0.11.181): Version metadata is republished in sync
+  ## [v0.11.181](https://github.com/different-ai/openwork/compare/v0.11.177...v0.11.181): Simplified den checkout and workspace sharing
 
-  Republishes synchronized package versions only, with no distinct user-facing or developer-facing workflow change.
-
-  ## [v0.11.179](https://github.com/different-ai/openwork/compare/v0.11.178...v0.11.179): Den checkout and workspace setup get leaner
-
-  Simplifies Den billing and dashboard surfaces, streamlines workspace creation flows, and removes the desktop tray path.
-
-  ## [v0.11.178](https://github.com/different-ai/openwork/compare/v0.11.177...v0.11.178): Workspace sharing and model controls get a major refresh
-
-  - Redesigned workspace sharing and the right sidebar, including cleaner remote credentials and nested child sessions.
+  - Simplifies Den billing, dashboard and workspace creation flows.
   - Made model pickers model-aware with provider icons and per-model reasoning or behavior controls.
-  - Moved app feedback to a hosted form, added an Exa toggle, and stopped forcing starter workspaces on desktop boot.
 
 </Update>
 
 <Update label="March 20th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
 
-  ## [v0.11.177](https://github.com/different-ai/openwork/compare/v0.11.176...v0.11.177): Downloads CTA and npm install fallback land
+  ## [v0.11.177](https://github.com/different-ai/openwork/compare/v0.11.172...v0.11.177): Cloud worker heartbeats
 
-  Gets desktop users to the right download path faster and lets `openwork-orchestrator` recover when npm skips its platform binary.
-
-  ## [v0.11.175](https://github.com/different-ai/openwork/compare/v0.11.174...v0.11.175): Authorized folders and first-run session guidance move into Settings
-
-  Adds Settings-based folder authorization and server-backed empty states, then tightens sidebar and composer labeling so navigation stays readable.
-
-  ## [v0.11.173](https://github.com/different-ai/openwork/compare/v0.11.172...v0.11.173): Daytona workers report activity and local Node tools spawn reliably
-
-  Adds worker heartbeats for Daytona-backed Cloud workers while making local MCP and tool launches work in nvm-managed Node environments.
+  - Adds worker heartbeats for Cloud workers
+  - Added Settings-based folder authorization and server-backed empty states
 
 </Update>
 
 <Update label="March 19th" tags={["🐛 Bug Fixes", "🏗️ Refactoring", "🚀 New Features"]}>
 
-  ## [v0.11.172](https://github.com/different-ai/openwork/compare/v0.11.171...v0.11.172): Server package naming and session traces line up
+  ## [v0.11.172](https://github.com/different-ai/openwork/compare/v0.11.168...v0.11.172): Remote reconnects and cloud flows
 
-  Renames the published server package to `openwork-server` and polishes trace-row icon and chevron alignment so session runs scan more cleanly.
-
-  ## [v0.11.170](https://github.com/different-ai/openwork/compare/v0.11.169...v0.11.170): OpenWork Cloud web flows and remote reconnects improve
-
-  - Rebuilt Den web auth, checkout, and dashboard routes so hosted onboarding and billing feel like the app instead of a one-off page.
-  - Persisted worker share tokens and repeated deeplinks across restarts, with stronger open-in-web auto-connect and connect overlays.
+  - Rebuilt Den webapp onboarding and billing.
+  - Persisted worker share tokens and repeated deeplinks across restarts.
   - Added self-serve Cloud settings, OpenAI headless auth, and tray-on-close desktop behavior.
-
-</Update>
-
-<Update label="March 18th" tags={["🐛 Bug Fixes"]}>
-
-  ## [v0.11.169](https://github.com/different-ai/openwork/compare/v0.11.168...v0.11.169): Den handoff and session chrome get steadier
-
-  Keeps Den browser handoff and worker naming in sync while cleaning up session focus, reload banners, run status, and broken sidebar affordances.
 
 </Update>
 
 <Update label="March 17th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
 
-  ## [v0.11.168](https://github.com/different-ai/openwork/compare/v0.11.167...v0.11.168): Release recovery with repaired installers
-
-  Republishes the release with repaired assets; the tagged diff itself is metadata-only, while the intended Cloud tab gating fix landed in `v0.11.167`.
-
-  ## [v0.11.166](https://github.com/different-ai/openwork/compare/v0.11.165...v0.11.166): Daytona-backed Den Docker flow ships
-
-  - Added a Daytona-backed Den Docker flow with a dedicated worker proxy and snapshot builder for preloaded runtimes.
-  - Introduced the `den-v2` control plane and shared Den DB packages for the new hosted-worker path.
-  - Fixed unique org slug generation and the `webdev:local` startup script.
-
-  ## [v0.11.165](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.165): Settings can sign into Cloud and open workers
-
-  - Added a Cloud tab in Settings for sign-in, org selection, worker lists, and opening ready Den workers into OpenWork.
-  - Routed desktop auth through the web handoff flow, including installed-app scheme support and bearer-session handling.
-  - Restored shared bundle installs and fully cleared disconnected provider credentials.
+  ## [v0.11.168](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.168): Release recovery with repaired installers
+  - Cloud Migration from render VMs to Daytona Sandbox workers
+  - pnpm web:dev-local working reliably when starting from scratch in a new worktree 
+  - Restored Shared bundle installs and better cache clearing of disconnected provider credentials.
 
 </Update>
 
 <Update label="March 16th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.164](https://github.com/different-ai/openwork/compare/v0.11.163...v0.11.164): Owner tokens and child sessions stay visible
+  ## [v0.11.164](https://github.com/different-ai/openwork/compare/v0.11.160...v0.11.164): Public skills and subagents
 
-  Clarifies remote approval access with owner tokens, keeps nested child sessions from disappearing in sidebar syncs, and broadens polish across sharing and localization.
-
-  ## [v0.11.163](https://github.com/different-ai/openwork/compare/v0.11.162...v0.11.163): Custom skill hub repos and steadier session actions
-
-  Lets teams browse and install skills from any GitHub hub repo while making session switching, composer focus, and reload prompts behave more predictably.
-
-  ## [v0.11.162](https://github.com/different-ai/openwork/compare/v0.11.161...v0.11.162): Docker dev prints LAN-ready OpenWork URLs
-
-  Makes local Docker testing easier from phones and other devices by printing public URLs and deriving Den auth and CORS defaults from the detected host.
-
+  - You can now add public repos as skill repository
+  - Simplified docker testing pipeline
+  - Minor sidebar bug fixes
+  
 </Update>
 
 <Update label="March 15th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
 
-  ## [v0.11.160](https://github.com/different-ai/openwork/compare/v0.11.159...v0.11.160): Den auth, downloads, and nested sessions polish
+  ## [v0.11.160](https://github.com/different-ai/openwork/compare/v0.11.159...v0.11.160): Bug fixes on den, telemetry and providers
 
-  Simplifies the Den auth entry flow, sends landing-page downloads to the right installer, and restores parent-child session browsing in the sidebar.
-
-  ## [v0.11.159](https://github.com/different-ai/openwork/compare/v0.11.158...v0.11.159): Den cloud billing and worker launch align
-
-  Aligns the app-hosted Den flow with landing-page messaging, restores checkout handling for extra workers, and fixes visible billing and marketing regressions.
-
-  ## [v0.11.155](https://github.com/different-ai/openwork/compare/v0.11.154...v0.11.155): Windows release diagnostics stop masking failures
-
-  Improves release-pipeline diagnostics and normalizes workflow action inputs so broken Windows packaging runs are easier to debug.
-
-  ## [v0.11.151](https://github.com/different-ai/openwork/compare/v0.11.150...v0.11.151): Feedback emails reach the team inbox again
-
-  Fixes the in-app feedback email target so reports reach the shared OpenWork inbox again.
-
-  ## [v0.11.150](https://github.com/different-ai/openwork/compare/v0.11.149...v0.11.150): Faster provider setup and steadier chat rendering
-
-  Prioritizes common providers in new-session setup, reduces inline image churn while chatting, and routes feedback straight to the team inbox.
+  - Checkout handling for additional den workers
+  - Landing page downloads points tot he right installer
+  - Fixed release-pipeline diagnostics and in-app feedback email
+  
 
 </Update>
 
-<Update label="March 14th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
+<Update label="March 14th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
 
-  ## [v0.11.149](https://github.com/different-ai/openwork/compare/v0.11.148...v0.11.149): Richer skill previews and steadier jump-to-latest
+  ## [v0.11.149](https://github.com/different-ai/openwork/compare/v0.11.146...v0.11.149): Better share page, den onboarding flow and Oath
 
-  Makes shared skill pages easier to evaluate before import, steadies the worker-selection flow, and keeps long chats pinned to the newest reply while thinking.
+  - Simplified Den onboarding flow and openworkshare page to publish a single skill
+  - More polished feedback card and telemetry around bug reporting. 
+  - Shared skills can now be imported into existing workers. 
+  - ChatGPT Oath added to "New chat Session"
 
-  ## [v0.11.148](https://github.com/different-ai/openwork/compare/v0.11.147...v0.11.148): Guided Den onboarding and single-skill Share
-
-  - Rebuilt Den onboarding as a guided flow with clearer naming, intent, loading, and browser-access states.
-  - Simplified OpenWork Share to publish a single skill, with cleaner frontmatter and fuller shared previews.
-  - Added a polished feedback card and clearer import and status feedback across app surfaces.
-
-  ## [v0.11.147](https://github.com/different-ai/openwork/compare/v0.11.146...v0.11.147): Existing-worker imports and local Share publishing
-
-  Lets shared skills install into existing workers, adds a local Docker-backed Share publisher for self-hosted testing, and keeps Den worker provisioning current.
+    <img src="/images/chatgptOauth.png" alt="ChatGPT Oauth" />
 
 </Update>
 
 <Update label="March 13th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.146](https://github.com/different-ai/openwork/compare/v0.11.145...v0.11.146): Failed worker redeploy and safer skill imports
+  ## [v0.11.146](https://github.com/different-ai/openwork/compare/v0.11.1444...v0.11.146): Den admin view and Aesthetic changes 
 
-  Adds direct Den worker redeploys, makes shared skills pick a destination worker before import, and improves both local Den setup and Chrome-first guidance.
-
-  ## [v0.11.145](https://github.com/different-ai/openwork/compare/v0.11.144...v0.11.145): Den admin backoffice and support routing
-
-  Adds a protected Den admin panel for support operations, routes enterprise contact submissions into Loops, and tightens desktop skill reload and settings diagnostics.
+  - Den worker redeploys, better dekstop skill reload and adjustable sidebar width. 
 
 </Update>
 
 <Update label="March 12th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
 
-  ## [v0.11.144](https://github.com/different-ai/openwork/compare/v0.11.143...v0.11.144): Workspace shell recovery and clearer docs entrypoints
+  ## [v0.11.144](https://github.com/different-ai/openwork/compare/v0.11.140...v0.11.144): Workspace shell recovery and clearer docs entrypoints
 
-  Restores reliable workspace-shell navigation and reset recovery, seeds Chrome DevTools setup correctly, and splits docs paths for technical and non-technical readers.
-
-  ## [v0.11.143](https://github.com/different-ai/openwork/compare/v0.11.142...v0.11.143): Free first Den worker and Google signup
-
-  Den now lets new users create one free cloud worker without billing and sign up with Google.
-
-  Also released:
-
-  - Retired remaining Soul-mode surfaces across the app and server.
-  - Showed session errors inline, removed raw markdown flashes, and refreshed share bundle pages and previews.
-
-  ## [v0.11.142](https://github.com/different-ai/openwork/compare/v0.11.141...v0.11.142): Version alignment patch
-
-  Republishes synchronized app, server, orchestrator, and router versions so shipped artifacts stay in lockstep, with no visible workflow changes.
-
-  ## [v0.11.141](https://github.com/different-ai/openwork/compare/v0.11.140...v0.11.141): App and worker opens stay on the new session screen
-
-  Keeps launch actions anchored on the new session flow while making oversized-context errors, share feedback, and support booking clearer.
+  - Improved workspace shell recovery and inline error sessions
+  - Cloud worker creation
+  - Deprecated soul mode
 
 </Update>
 
-<Update label="March 11th" tags={["🐛 Bug Fixes"]}>
+<Update label="March 11th" tags={["🚀 New features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.140](https://github.com/different-ai/openwork/compare/v0.11.138...v0.11.140): Shared bundle imports land on the intended worker
+  ## [v0.11.140](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.140): Improved workers, sharing skills, GOAuth
 
-  Makes shared bundle imports resolve to the exact active or newly created worker and adds more actionable sandbox startup diagnostics.
+  - Creating a new worker opens up an empty session instead of automations
+  - Share skills with one click at share.openworklabs.com
+  - Task list not sticking to the composer box
+  - Google and GitHub
 
-  ## [v0.11.138](https://github.com/different-ai/openwork/compare/v0.11.137...v0.11.138): Shared bundle links now open the blueprints worker flow
-
-  Routes shared bundle imports into the blueprints-style worker creation path so new-worker links land in the setup flow users expect.
-
-  ## [v0.11.137](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.137): MCP sign-in retries and model setup get clearer
-
-  Makes MCP OAuth flows recover more reliably and reorganizes the model picker so disconnected providers route users straight to setup.
+  <img src="/images/improved-skills-march11th.gif" alt="New worker opens on an empty session" />
 
 </Update>
 
 <Update label="March 10th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136): OpenWork Share turns dropped files into worker packages
+  ## [v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136): Improved model picker, Share and MCP auth
 
+  - Model picker now separates enabled and not-enabled providers, and clicking a disabled provider opens its settings.
   - OpenWork Share now packages dropped skills, agents, commands, and MCP or OpenWork config into worker bundles.
-  - The share site moves to the Next.js App Router with refreshed home and bundle pages.
-  - Settings now lets users disconnect providers, while OAuth completion and sandbox startup recover more reliably.
-
-</Update>
-
-<Update label="March 6th" tags={["🚀 New Features"]}>
-
-  ## [v0.11.135](https://github.com/different-ai/openwork/compare/v0.11.134...v0.11.135): Bundled OpenCode version stays aligned across release paths
-
-  Pins the packaged OpenCode fallback consistently across CI, prerelease, and release builds, with no notable new app workflow changes.
-
-  ## [v0.11.134](https://github.com/different-ai/openwork/compare/v0.11.133...v0.11.134): Remote MCP setup gets lighter, with exportable desktop diagnostics
-
-  Makes remote-workspace MCP connection setup clearer and adds in-app debug exports, sandbox probes, and config actions for faster troubleshooting.
-
-</Update>
-
-<Update label="March 5th" tags={["🐛 Bug Fixes"]}>
-
-  ## [v0.11.133](https://github.com/different-ai/openwork/compare/v0.11.132...v0.11.133): Chat transcripts stop flickering during typing
-
-  Keeps active and long-running sessions visually stable by fixing typing flicker, remount churn, and collapsed long-message resets.
-
-  ## [v0.11.132](https://github.com/different-ai/openwork/compare/v0.11.131...v0.11.132): Chat-first startup and faster long-session loading
-
-  Preserves the new-session launch state, fixes first-run setup, and makes long chats load from the latest messages with less lag.
-
-</Update>
-
-<Update label="March 4th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.131](https://github.com/different-ai/openwork/compare/v0.11.130...v0.11.131): Virtualized chats and clearer runtime status
-
-  - Virtualized long transcripts so large chats stay responsive instead of rendering every message at once.
-  - Replaced split engine and server badges with one Ready indicator that opens a detailed status popover.
-  - Added automatic context compaction after runs, plus persistent language selection and sturdier file opening.
-
-</Update>
-
-<Update label="March 2nd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.130](https://github.com/different-ai/openwork/compare/v0.11.129...v0.11.130): Service restarts and steadier local connectivity
-
-  Adds in-app restart controls, makes router startup recover from local port conflicts, and smooths billing returns from checkout.
-
-  ## [v0.11.129](https://github.com/different-ai/openwork/compare/v0.11.128...v0.11.129): Self-serve billing and media-rich messaging
-
-  Expands cloud billing into a self-serve management flow and lets Slack and Telegram carry richer OpenWork Router messages.
-
-</Update>
-
-<Update label="March 1st" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.128](https://github.com/different-ai/openwork/compare/v0.11.127...v0.11.128): Remote file sessions, Obsidian sync, and long-chat readability
-
-  Adds live remote file sessions with Obsidian-backed editing, then makes long desktop conversations easier to read and follow.
-
-</Update>
-
-<Update label="February 28th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.127](https://github.com/different-ai/openwork/compare/v0.11.126...v0.11.127): Get back online recovery and smarter Docker dev-up
-
-  Makes worker recovery clearer and preserves existing access, while smoothing Docker dev stacks for developers using local OpenCode config.
-
-</Update>
-
-<Update label="February 27th" tags={["🚀 New Features", "🏗️ Refactoring"]}>
-
-  ## [v0.11.126](https://github.com/different-ai/openwork/compare/v0.11.125...v0.11.126): Simpler artifacts and direct workspace actions
-
-  Simplifies artifact handling and adds direct worker and plugin actions so common cleanup and file workflows take fewer steps.
-
-</Update>
-
-<Update label="February 26th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
-
-  ## [v0.11.125](https://github.com/different-ai/openwork/compare/v0.11.124...v0.11.125): Unified workspace navigation and smoother downloads
-
-  Unifies workspace navigation across dashboard and session views while preventing download-heavy operations from freezing the app.
-
-  ## [v0.11.124](https://github.com/different-ai/openwork/compare/v0.11.123...v0.11.124): Orbita gives sessions a clearer three-pane workspace
-
-  Reworks the main session screen with a stronger left rail, cleaner timeline canvas, and floating composer while preserving readability across themes.
-
-  ## [v0.11.123](https://github.com/different-ai/openwork/compare/v0.11.122...v0.11.123): Clearer share links and local server recovery in Settings
-
-  Refreshes both the in-app share modal and public bundle pages, and adds a one-click local server restart when a local worker gets stuck.
-
-  ## [v0.11.122](https://github.com/different-ai/openwork/compare/v0.11.121...v0.11.122): Hosted onboarding and share links become app handoffs
-
-  Hosted OpenWork now hands people straight from the web into the app for connect and import flows.
-
-  Also released:
-
-  - GitHub sign-in plus a dedicated download page for faster first-time setup.
-  - Share links for workspace profiles and skill sets, with deep links that default to a new worker.
-  - Long sessions render more smoothly, local file links resolve correctly, and desktop shutdown is cleaner.
-
-</Update>
-
-<Update label="February 23rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.121](https://github.com/different-ai/openwork/compare/v0.11.120...v0.11.121): Session timelines read naturally, and search hits stand out
-
-  Removes meta-heavy timeline labels, highlights search hits inside messages, and makes quick actions and composing feel faster in active chats.
-
-  ## [v0.11.120](https://github.com/different-ai/openwork/compare/v0.11.119...v0.11.120): Worker switching keeps session lists stable
-
-  Preserves sidebar sessions while moving between workers and refreshes the landing hero with higher contrast, calmer motion, and lighter nav chrome.
-
-  ## [v0.11.119](https://github.com/different-ai/openwork/compare/v0.11.118...v0.11.119): Long chats stay snappier, and web onboarding looks cleaner
-
-  Further trims typing lag while tightening the landing hero, Get started path, and hosted worker layout across the web experience.
-
-  ## [v0.11.118](https://github.com/different-ai/openwork/compare/v0.11.117...v0.11.118): Large sessions type faster, and cloud worker setup stays simpler
-
-  Cuts composer lag in big chats, renames timeline labels in plainer language, and keeps manual worker controls tucked behind advanced options.
-
-  ## [v0.11.117](https://github.com/different-ai/openwork/compare/v0.11.116...v0.11.117): Hosted worker connect and cleanup flows get clearer
-
-  Reworks the web worker shell with clearer status, delete, and custom-domain handling, then makes session runs easier to scan by separating request, work, and result.
-
-</Update>
-
-<Update label="February 22nd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.116](https://github.com/different-ai/openwork/compare/v0.11.115...v0.11.116): Cleaner cloud-worker connect with desktop deep links
-
-  Turns the hosted worker page into a simpler list-detail picker and adds one-click desktop handoff into OpenWork's remote connect flow.
-
-  ## [v0.11.115](https://github.com/different-ai/openwork/compare/v0.11.114...v0.11.115): Private Telegram bot pairing and sturdier hosted sign-in
-
-  Requires explicit pairing before a private Telegram chat can control a worker and lets hosted auth recover from broken upstream HTML responses.
-
-  ## [v0.11.114](https://github.com/different-ai/openwork/compare/v0.11.113...v0.11.114): OpenWork Cloud worker setup and reconnect flows
-
-  Adds the first full OpenWork Cloud worker setup flow in the web app.
-
-  Also released:
-
-  - A 3-step sign-in, checkout, and launch flow.
-  - Saved workers plus reusable tokens and workspace-scoped connect URLs.
-  - Background provisioning with polling and completed provider OAuth in the app.
-
-</Update>
-
-<Update label="February 21st" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.113](https://github.com/different-ai/openwork/compare/v0.11.112...v0.11.113): Cmd+K quick actions for session work
-
-  Adds a keyboard-first palette for jumping between sessions and changing model or thinking settings without leaving chat.
-
-  ## [v0.11.112](https://github.com/different-ai/openwork/compare/v0.11.111...v0.11.112): Cleaner session tool timelines
-
-  Hides step lifecycle noise and separates reasoning from tool runs so active sessions are easier to scan.
-
-</Update>
-
-<Update label="February 20th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.111](https://github.com/different-ai/openwork/compare/v0.11.110...v0.11.111): Version metadata sync only
-
-  Republishes synchronized package and desktop version metadata, with no intended OpenWork app, server, or workflow changes.
-
-  ## [v0.11.110](https://github.com/different-ai/openwork/compare/v0.11.109...v0.11.110): Release packaging and deploy hardening only
-
-  Hardens updater metadata generation and share-service deploy behavior, with no visible OpenWork app or workflow changes.
-
-  ## [v0.11.109](https://github.com/different-ai/openwork/compare/v0.11.108...v0.11.109): Safer automation setup, grouped skills, and global MCP config
-
-  Keeps automations hidden until the scheduler is installed and lets OpenWork pick up domain-organized skills plus machine-level MCP servers.
-
-  ## [v0.11.108](https://github.com/different-ai/openwork/compare/v0.11.107...v0.11.108): Readable share pages, sturdier Soul flows, safer drafts
-
-  Makes shared bundles inspectable in the browser, preserves unsent draft text across tab switches, and strengthens Soul activation and audit flows.
-
-  ## [v0.11.107](https://github.com/different-ai/openwork/compare/v0.11.106...v0.11.107): Reopening sessions no longer snaps you back to the top
-
-  Fixes a revisit-specific session bug so returning to an existing conversation preserves a steadier reading position.
-
-  ## [v0.11.106](https://github.com/different-ai/openwork/compare/v0.11.105...v0.11.106): Packaging-only release lockfile maintenance
-
-  Refreshes package lock metadata for the release line, with no clear app, desktop, web, or workflow change.
-
-  ## [v0.11.105](https://github.com/different-ai/openwork/compare/v0.11.104...v0.11.105): Session timelines stop auto-following altogether
-
-  Removes the remaining automatic follow behavior so live output no longer drags the view while you read older messages.
-
-  ## [v0.11.104](https://github.com/different-ai/openwork/compare/v0.11.103...v0.11.104): Session follow mode is now in your hands
-
-  Adds explicit follow-latest and jump-to-latest controls so streaming output stops interrupting people who scroll back to read.
-
-  ## [v0.11.103](https://github.com/different-ai/openwork/compare/v0.11.102...v0.11.103): Soul setup now runs safely, and sidebar sessions stay scoped
-
-  - Switched Soul enable flows to run through the slash-command path instead of sending template text directly.
-  - Scoped sidebar session sync by workspace root so session state does not bleed across workspaces.
-
-  ## [v0.11.102](https://github.com/different-ai/openwork/compare/v0.11.101...v0.11.102): Migration recovery explains when it can help
-
-  Clarifies when repair is actually available in the app and resets the landing page back to broader OpenWork messaging.
-
-</Update>
-
-<Update label="February 19th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
-
-  ## [v0.11.101](https://github.com/different-ai/openwork/compare/v0.11.100...v0.11.101): Local migration repair and clearer Soul controls
-
-  Adds a desktop recovery path for broken local OpenCode migrations and makes Soul setup plus compact action buttons easier to steer.
-
-  ## [v0.11.100](https://github.com/different-ai/openwork/compare/v0.11.99...v0.11.100): Composer drafts stop disappearing mid-prompt
-
-  Fixes a session composer race so long prompts stay intact instead of getting replaced by stale draft echoes.
+  - MCP auth now waits for agents to stop or finish before continuing.
+
+  <table>
+    <tr>
+      <td>
+        <img src="/images/10thMarch-model-picker.gif" alt="Model picker grouped by enabled and not-enabled providers" />
+        <p><em>Model picker</em></p>
+      </td>
+      <td>
+        <img src="/images/10thMarch-better-mcp-auth.gif" alt="MCP settings with connected provider and improved auth handling" />
+        <p><em>MCP auth</em></p>
+      </td>
+    </tr>
+  </table>
 
 </Update>

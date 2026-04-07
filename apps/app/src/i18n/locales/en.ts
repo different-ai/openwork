@@ -1598,7 +1598,7 @@ export default {
   "settings.theme_light": "Light",
   "settings.theme_system": "System",
   "settings.theme_system_hint": "System mode follows your OS preference automatically.",
-  "settings.toolbar_ready_to_install": "Ready to install${version ? ",
+  "settings.toolbar_ready_to_install": "Ready to install",
   "settings.update": "Update",
   "settings.update_available": "Update available: v",
   "settings.update_available_version": "Update available: v{version}",
