@@ -9,9 +9,10 @@
  *   node scripts/i18n-audit.mjs --unused     # only unused keys (in EN but never referenced in source)
  *   node scripts/i18n-audit.mjs --hardcoded  # only hardcoded English strings in source files
  *   node scripts/i18n-audit.mjs --summary    # counts only, no key lists
+ *   node scripts/i18n-audit.mjs --prune      # remove unused keys from EN and all locales
  */
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
 import { join, basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -204,11 +205,14 @@ if (shouldRun("--summary")) {
 }
 
 // --- 5. Unused keys ---
-if (shouldRun("--unused", "--summary")) {
-  console.log("=== Unused keys (in en.ts but never referenced in source) ===");
+if (shouldRun("--unused", "--summary", "--prune")) {
+  console.log("=== Unused keys (in en.ts but never referenced in repo) ===");
 
-  const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
-  const allSource = sourceFiles.map((f) => readFileSync(f, "utf-8")).join("\n");
+  // Search the ENTIRE repo (not just apps/app/src) for key references
+  const repoSourceFiles = collectSourceFiles(REPO_ROOT, (dir) =>
+    ["node_modules", ".git", "target", "dist", ".next", "locales"].some((x) => dir.includes(x)),
+  );
+  const allSource = repoSourceFiles.map((f) => readFileSync(f, "utf-8")).join("\n");
 
   const unused = [...enKeys].filter((key) => !allSource.includes(key));
 
@@ -217,8 +221,50 @@ if (shouldRun("--unused", "--summary")) {
   } else {
     console.log(`  ⚠ ${unused.length} potentially unused keys`);
     if (mode !== "--summary") {
-      for (const key of unused.slice(0, 20)) console.log(`    ${key}`);
-      if (unused.length > 20) console.log(`    ... and ${unused.length - 20} more`);
+      for (const [prefix, count] of groupByPrefix(unused).slice(0, 15)) {
+        console.log(`    ${String(count).padStart(4)}  ${prefix}.*`);
+      }
+      if (mode === "--unused") {
+        console.log();
+        for (const key of unused) console.log(`    ${key}`);
+      }
+    }
+  }
+
+  // --- Prune mode ---
+  if (mode === "--prune" && unused.length > 0) {
+    console.log();
+    console.log(`  Pruning ${unused.length} unused keys from all locale files...`);
+    const unusedSet = new Set(unused);
+    const allLocaleFiles = ["en", ...LOCALES].map((l) => join(LOCALES_DIR, `${l}.ts`));
+
+    for (const file of allLocaleFiles) {
+      if (!existsSync(file)) continue;
+      const content = readFileSync(file, "utf-8");
+      const lines = content.split("\n");
+      const filtered = [];
+      let skipNextLine = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        if (skipNextLine) {
+          skipNextLine = false;
+          continue;
+        }
+        const keyMatch = lines[i].match(/^\s*"([^"]+)"\s*:/);
+        if (keyMatch && unusedSet.has(keyMatch[1])) {
+          // Check if value is on the next line (multi-line entry)
+          if (!lines[i].includes('",') && !lines[i].includes('": "') && i + 1 < lines.length) {
+            skipNextLine = true;
+          }
+          continue; // skip this line
+        }
+        filtered.push(lines[i]);
+      }
+
+      writeFileSync(file, filtered.join("\n"));
+      const locale = basename(file, ".ts");
+      const removed = lines.length - filtered.length;
+      console.log(`    ${locale}: removed ${removed} lines`);
     }
   }
   console.log();
@@ -308,5 +354,5 @@ if (shouldRun("--hardcoded")) {
 
 // --- Done ---
 console.log("=== Done ===");
-console.log("Run with --missing, --orphan, --unused, --hardcoded, or --summary for focused output.");
+console.log("Run with --missing, --orphan, --unused, --hardcoded, --prune, or --summary for focused output.");
 process.exit(exitCode);
