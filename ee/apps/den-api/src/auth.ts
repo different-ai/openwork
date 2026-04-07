@@ -1,21 +1,27 @@
-import { db } from "./db.js"
-import { env } from "./env.js"
-import { sendDenOrganizationInvitationEmail, sendDenVerificationEmail } from "./email.js"
-import { syncDenSignupContact } from "./loops.js"
+import { db } from "./db.js";
+import { env } from "./env.js";
+import {
+  sendDenOrganizationInvitationEmail,
+  sendDenVerificationEmail,
+} from "./email.js";
+import { syncDenSignupContact } from "./loops.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
-} from "./api-keys.js"
-import { denOrganizationAccess, denOrganizationStaticRoles } from "./organization-access.js"
-import { seedDefaultOrganizationRoles } from "./orgs.js"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import * as schema from "@openwork-ee/den-db/schema"
-import { apiKey } from "@better-auth/api-key"
-import { APIError } from "better-call"
-import { betterAuth } from "better-auth"
-import { drizzleAdapter } from "better-auth/adapters/drizzle"
-import { emailOTP, organization } from "better-auth/plugins"
+} from "./api-keys.js";
+import {
+  denOrganizationAccess,
+  denOrganizationStaticRoles,
+} from "./organization-access.js";
+import { seedDefaultOrganizationRoles } from "./orgs.js";
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
+import * as schema from "@openwork-ee/den-db/schema";
+import { apiKey } from "@better-auth/api-key";
+import { APIError } from "better-call";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { emailOTP, organization } from "better-auth/plugins";
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -34,29 +40,39 @@ const socialProviders = {
         },
       }
     : {}),
-}
+};
 
 function hasRole(roleValue: string, roleName: string) {
   return roleValue
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean)
-    .includes(roleName)
+    .includes(roleName);
 }
 
 function getInvitationOrigin() {
-  return env.betterAuthTrustedOrigins.find((origin) => origin !== "*") ?? env.betterAuthUrl
+  return (
+    env.betterAuthTrustedOrigins.find((origin) => origin !== "*") ??
+    env.betterAuthUrl
+  );
 }
 
 function buildInvitationLink(invitationId: string) {
-  return new URL(`/join-org?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
+  return new URL(
+    `/join-org?invite=${encodeURIComponent(invitationId)}`,
+    getInvitationOrigin(),
+  ).toString();
 }
 
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
-  trustedOrigins: env.betterAuthTrustedOrigins.length > 0 ? env.betterAuthTrustedOrigins : undefined,
-  socialProviders: Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
+  trustedOrigins:
+    env.betterAuthTrustedOrigins.length > 0
+      ? env.betterAuthTrustedOrigins
+      : undefined,
+  socialProviders:
+    Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
   database: drizzleAdapter(db, {
     provider: "mysql",
     schema,
@@ -70,32 +86,32 @@ export const auth = betterAuth({
       generateId: (options) => {
         switch (options.model) {
           case "user":
-            return createDenTypeId("user")
+            return createDenTypeId("user");
           case "session":
-            return createDenTypeId("session")
+            return createDenTypeId("session");
           case "account":
-            return createDenTypeId("account")
+            return createDenTypeId("account");
           case "verification":
-            return createDenTypeId("verification")
+            return createDenTypeId("verification");
           case "apikey":
           case "apiKey":
-            return createDenTypeId("apiKey")
+            return createDenTypeId("apiKey");
           case "rateLimit":
-            return createDenTypeId("rateLimit")
+            return createDenTypeId("rateLimit");
           case "organization":
-            return createDenTypeId("organization")
+            return createDenTypeId("organization");
           case "member":
-            return createDenTypeId("member")
+            return createDenTypeId("member");
           case "invitation":
-            return createDenTypeId("invitation")
+            return createDenTypeId("invitation");
           case "team":
-            return createDenTypeId("team")
+            return createDenTypeId("team");
           case "teamMember":
-            return createDenTypeId("teamMember")
+            return createDenTypeId("teamMember");
           case "organizationRole":
-            return createDenTypeId("organizationRole")
+            return createDenTypeId("organizationRole");
           default:
-            return false
+            return false;
         }
       },
     },
@@ -135,7 +151,7 @@ export const auth = betterAuth({
       await syncDenSignupContact({
         email: user.email,
         name: user.name,
-      })
+      });
     },
   },
   emailAndPassword: {
@@ -150,14 +166,10 @@ export const auth = betterAuth({
       expiresIn: 600,
       allowedAttempts: 5,
       async sendVerificationOTP({ email, otp, type }) {
-        if (type !== "email-verification") {
-          return
-        }
-
         await sendDenVerificationEmail({
           email,
           verificationCode: otp,
-        })
+        });
       },
     }),
     organization({
@@ -182,30 +194,33 @@ export const auth = betterAuth({
           invitedByEmail: data.inviter.user.email,
           organizationName: data.organization.name,
           role: data.role,
-        })
+        });
       },
       organizationHooks: {
         afterCreateOrganization: async ({ organization }) => {
-          await seedDefaultOrganizationRoles(normalizeDenTypeId("organization", organization.id))
+          await seedDefaultOrganizationRoles(
+            normalizeDenTypeId("organization", organization.id),
+          );
         },
         beforeRemoveMember: async ({ member }) => {
           if (hasRole(member.role, "owner")) {
             throw new APIError("BAD_REQUEST", {
               message: "The organization owner cannot be removed.",
-            })
+            });
           }
         },
         beforeUpdateMemberRole: async ({ member, newRole }) => {
           if (hasRole(member.role, "owner")) {
             throw new APIError("BAD_REQUEST", {
               message: "The organization owner role cannot be changed.",
-            })
+            });
           }
 
           if (hasRole(newRole, "owner")) {
             throw new APIError("BAD_REQUEST", {
-              message: "Owner can only be assigned during organization creation.",
-            })
+              message:
+                "Owner can only be assigned during organization creation.",
+            });
           }
         },
       },
@@ -224,4 +239,4 @@ export const auth = betterAuth({
       },
     }),
   ],
-})
+});
