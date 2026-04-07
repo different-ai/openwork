@@ -42,6 +42,10 @@ function extractDiff(output: unknown) {
   return null;
 }
 
+async function copyText(text: string) {
+  await navigator.clipboard.writeText(text);
+}
+
 export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const summary = useMemo(
@@ -120,7 +124,16 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
         <div className="space-y-3 pl-[22px]">
           {Boolean(diff) ? (
             <div className="rounded-lg border bg-gray-2/30 p-2">
-              <div className="text-[11px] font-medium text-gray-11">Diff</div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-medium text-gray-11">Diff</div>
+                <button
+                  type="button"
+                  className="rounded-full border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+                  onClick={() => void copyText(diff ?? "")}
+                >
+                  Copy
+                </button>
+              </div>
               <div className="mt-2 grid gap-1 overflow-hidden rounded-md">
                 {diffLines.map((line, index) => (
                   <div
@@ -136,7 +149,16 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
 
           {hasStructuredValue(input) ? (
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Tool request</div>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Tool request</div>
+                <button
+                  type="button"
+                  className="rounded-full border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+                  onClick={() => void copyText(formatStructuredValue(input))}
+                >
+                  Copy
+                </button>
+              </div>
               <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
                 {formatStructuredValue(input)}
               </pre>
@@ -145,7 +167,16 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
 
           {hasStructuredValue(output) && normalizeToolText(output) !== normalizeToolText(diff) ? (
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Tool result</div>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Tool result</div>
+                <button
+                  type="button"
+                  className="rounded-full border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+                  onClick={() => void copyText(formatStructuredValue(output))}
+                >
+                  Copy
+                </button>
+              </div>
               <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
                 {formatStructuredValue(output)}
               </pre>

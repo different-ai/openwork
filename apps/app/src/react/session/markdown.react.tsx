@@ -1,8 +1,35 @@
 /** @jsxImportSource react */
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Streamdown } from "streamdown";
+
+function MarkdownCodeBlock(props: { className?: string; children: React.ReactNode }) {
+  const text = Array.isArray(props.children) ? props.children.join("") : String(props.children ?? "");
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <div className="my-4 overflow-hidden rounded-[18px] border border-dls-border/70 bg-gray-1/80">
+      <div className="flex items-center justify-end border-b border-dls-border/70 px-3 py-2">
+        <button
+          type="button"
+          className="rounded-full border border-dls-border bg-dls-surface px-3 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+          onClick={async () => {
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1200);
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre className="overflow-x-auto px-4 py-3 text-[12px] leading-6 text-gray-12">
+        <code className={props.className}>{props.children}</code>
+      </pre>
+    </div>
+  );
+}
 
 const markdownComponents: Components = {
   a({ href, children }) {
@@ -27,7 +54,7 @@ const markdownComponents: Components = {
   code({ className, children }) {
     const isBlock = Boolean(className?.includes("language-"));
     if (isBlock) {
-      return <code className={className}>{children}</code>;
+      return <MarkdownCodeBlock className={className}>{children}</MarkdownCodeBlock>;
     }
     return (
       <code className="rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-[0.92em] text-gray-12">
