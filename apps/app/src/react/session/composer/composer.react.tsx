@@ -89,6 +89,8 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [agentMenuIndex, setAgentMenuIndex] = useState(0);
+  const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
@@ -109,6 +111,15 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!agentMenuOpen) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
   }, [agentMenuOpen, props]);
+
+  useEffect(() => {
+    setAgentMenuIndex(0);
+  }, [agentMenuOpen]);
+
+  useEffect(() => {
+    const target = agentItemRefs.current[agentMenuIndex];
+    target?.scrollIntoView({ block: "nearest" });
+  }, [agentMenuIndex, agentMenuOpen]);
 
   useEffect(() => {
     if (!slashOpen) return;
@@ -182,6 +193,32 @@ export function ReactSessionComposer(props: ComposerProps) {
   };
 
   const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if (agentMenuOpen) {
+      const total = agents.length + 1;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setAgentMenuIndex((current) => (current + 1) % total);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setAgentMenuIndex((current) => (current - 1 + total) % total);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        const selected = agentMenuIndex === 0 ? null : agents[agentMenuIndex - 1]?.name ?? null;
+        props.onSelectAgent(selected);
+        setAgentMenuOpen(false);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setAgentMenuOpen(false);
+        return;
+      }
+    }
+
     if (!activeMenu || !activeItems.length) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -242,8 +279,12 @@ export function ReactSessionComposer(props: ComposerProps) {
               {agentMenuOpen ? (
                 <div className="absolute left-0 top-full z-20 mt-2 w-64 rounded-2xl border border-dls-border bg-dls-surface p-2 shadow-[var(--dls-card-shadow)]">
                   <button
+                    ref={(element) => {
+                      agentItemRefs.current[0] = element;
+                    }}
                     type="button"
-                    className={`mb-1 w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.selectedAgent === null ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
+                    className={`mb-1 w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.selectedAgent === null || agentMenuIndex === 0 ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
+                    onMouseEnter={() => setAgentMenuIndex(0)}
                     onClick={() => {
                       props.onSelectAgent(null);
                       setAgentMenuOpen(false);
@@ -251,11 +292,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                   >
                     Default agent
                   </button>
-                  {agents.map((agent) => (
+                  {agents.map((agent, index) => (
                     <button
                       key={agent.name}
+                      ref={(element) => {
+                        agentItemRefs.current[index + 1] = element;
+                      }}
                       type="button"
-                      className={`w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.selectedAgent === agent.name ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
+                      className={`w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.selectedAgent === agent.name || agentMenuIndex === index + 1 ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
+                      onMouseEnter={() => setAgentMenuIndex(index + 1)}
                       onClick={() => {
                         props.onSelectAgent(agent.name);
                         setAgentMenuOpen(false);
