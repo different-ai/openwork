@@ -246,7 +246,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   return (
     <div className="mx-auto w-full max-w-[800px] px-4" onKeyDownCapture={handleKeyDownCapture}>
-      <div className="rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
+      <div className="rounded-[28px] border border-dls-border bg-dls-surface">
         <div className="flex items-center justify-between gap-3 border-b border-dls-border px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
             <button
