@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
 import type { ComposerAttachment } from "../../../app/types";
@@ -88,6 +88,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
+  const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
@@ -155,6 +156,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
     setMenuIndex((current) => Math.max(0, Math.min(current, activeItems.length - 1)));
   }, [activeItems.length]);
+
+  useEffect(() => {
+    const target = menuItemRefs.current[menuIndex];
+    target?.scrollIntoView({ block: "nearest" });
+  }, [menuIndex, activeItems.length]);
 
   const acceptActiveItem = () => {
     if (!activeItems.length) return false;
@@ -388,11 +394,18 @@ export function ReactSessionComposer(props: ComposerProps) {
 
               if (!text.trim()) return;
               if ((props.isRemoteWorkspace || props.isSandboxWorkspace) && /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)) {
+                const attachedFiles = props.attachments.map((attachment) => attachment.file);
                 props.onNotice({
                   title: "Pasted local paths may not exist on the connected worker.",
                   tone: "warning",
-                  actionLabel: props.onUploadInboxFiles ? "Upload to shared folder" : undefined,
-                  onAction: props.onUploadInboxFiles ? () => void props.onUploadInboxFiles?.([]) : undefined,
+                  actionLabel:
+                    props.onUploadInboxFiles && attachedFiles.length > 0
+                      ? `Upload ${attachedFiles.length === 1 ? "attached file" : `${attachedFiles.length} attached files`}`
+                      : undefined,
+                  onAction:
+                    props.onUploadInboxFiles && attachedFiles.length > 0
+                      ? () => void props.onUploadInboxFiles?.(attachedFiles)
+                      : undefined,
                 });
               }
 
@@ -430,6 +443,9 @@ export function ReactSessionComposer(props: ComposerProps) {
               {slashFiltered.map((command, index) => (
                 <button
                   key={command.id}
+                  ref={(element) => {
+                    menuItemRefs.current[index] = element;
+                  }}
                   type="button"
                   className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-dls-hover" : ""}`}
                   onMouseEnter={() => setMenuIndex(index)}
@@ -451,6 +467,9 @@ export function ReactSessionComposer(props: ComposerProps) {
               {mentionFiltered.map((item, index) => (
                 <button
                   key={item.id}
+                  ref={(element) => {
+                    menuItemRefs.current[index] = element;
+                  }}
                   type="button"
                   className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "mention" && mentionFiltered[menuIndex]?.id === item.id ? "bg-dls-hover" : ""}`}
                   onMouseEnter={() => setMenuIndex(index)}
