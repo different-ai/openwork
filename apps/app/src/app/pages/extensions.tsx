@@ -75,7 +75,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               <div class="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
                 <div class="w-2 h-2 rounded-full bg-green-9" />
                 <span class="text-xs font-medium text-green-11">
-                  {connectedAppsCount()} {connectedAppsCount() === 1 ? t("extensions.app_count_one") : t("extensions.app_count_many")}
+                  {t(connectedAppsCount() === 1 ? "extensions.app_count_one" : "extensions.app_count_many", undefined, { count: connectedAppsCount() })}
                 </span>
               </div>
             </Show>
@@ -83,7 +83,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               <div class="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
                 <Cpu size={14} class="text-gray-11" />
                 <span class="text-xs font-medium text-gray-11">
-                  {pluginCount()} {pluginCount() === 1 ? t("extensions.plugin_count_one") : t("extensions.plugin_count_many")}
+                  {t(pluginCount() === 1 ? "extensions.plugin_count_one" : "extensions.plugin_count_many", undefined, { count: pluginCount() })}
                 </span>
               </div>
             </Show>

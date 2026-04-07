@@ -432,7 +432,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const providerStatusLabel = createMemo(() => {
     if (!providerAvailableCount()) return t("config.unavailable");
     if (!providerConnectedCount()) return t("config.status_not_connected");
-    return t("settings.connected_count", { count: providerConnectedCount() });
+    return t("settings.connected_count", undefined, { count: providerConnectedCount() });
   });
   const providerStatusStyle = createMemo(() => {
     if (!providerAvailableCount())
@@ -446,8 +446,8 @@ export default function SettingsView(props: SettingsViewProps) {
       return t("settings.connect_opencode_hint");
     const connected = providerConnectedCount();
     const available = providerAvailableCount();
-    if (!connected) return t("settings.available_count", { count: available });
-    return `${t("settings.connected_count", { count: connected })} · ${t("settings.available_count", { count: available })}`;
+    if (!connected) return t("settings.available_count", undefined, { count: available });
+    return `${t("settings.connected_count", undefined, { count: connected })} · ${t("settings.available_count", undefined, { count: available })}`;
   });
 
   const handleOpenProviderAuth = async () => {

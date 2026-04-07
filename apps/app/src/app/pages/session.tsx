@@ -92,7 +92,7 @@ import {
   defaultBlueprintCopyForPreset,
   defaultBlueprintStartersForPreset,
 } from "../lib/workspace-blueprints";
-import { DEFAULT_SESSION_TITLE, getDisplaySessionTitle } from "../lib/session-title";
+import { getDisplaySessionTitle } from "../lib/session-title";
 import { useSessionDisplayPreferences } from "../app-settings/session-display-preferences";
 
 import MessageList from "../components/session/message-list";
@@ -455,7 +455,7 @@ export default function SessionView(props: SessionViewProps) {
       for (const session of group.sessions) {
         const sessionId = session.id?.trim() ?? "";
         if (!sessionId) continue;
-        const title = getDisplaySessionTitle(session.title, DEFAULT_SESSION_TITLE);
+        const title = getDisplaySessionTitle(session.title);
         const slug = session.slug?.trim() ?? "";
         const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
         out.push({
@@ -2123,7 +2123,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!id) return "";
     for (const group of props.workspaceSessionGroups) {
       const match = group.sessions.find((session) => session.id === id);
-      if (match) return getDisplaySessionTitle(match.title, DEFAULT_SESSION_TITLE);
+      if (match) return getDisplaySessionTitle(match.title);
     }
     return "";
   }
@@ -2209,7 +2209,7 @@ export default function SessionView(props: SessionViewProps) {
     if (showPendingSessionTransition()) {
       return pendingSessionTransitionTitle() || t("session.loading_session");
     }
-    return selectedSessionTitle() || DEFAULT_SESSION_TITLE;
+    return selectedSessionTitle() || t("session.default_title");
   });
 
   createEffect(() => {

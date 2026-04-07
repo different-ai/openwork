@@ -14,7 +14,7 @@ import {
   Plus,
 } from "lucide-solid";
 
-import { DEFAULT_SESSION_TITLE, getDisplaySessionTitle } from "../../lib/session-title";
+import { getDisplaySessionTitle } from "../../lib/session-title";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type {
   WorkspaceConnectionState,
@@ -348,7 +348,7 @@ export default function WorkspaceSessionList(props: Props) {
     const depth = () => row.depth;
     const isSelected = () => props.selectedSessionId === session().id;
     const displayTitle = () =>
-      getDisplaySessionTitle(session().title, DEFAULT_SESSION_TITLE);
+      getDisplaySessionTitle(session().title);
     const hasChildren = () =>
       (tree.descendantCountBySessionId.get(session().id) ?? 0) > 0;
     const hiddenChildCount = () =>
