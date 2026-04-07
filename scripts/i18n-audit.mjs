@@ -9,7 +9,8 @@
  *   node scripts/i18n-audit.mjs --unused     # only unused keys (in EN but never referenced in source)
  *   node scripts/i18n-audit.mjs --hardcoded  # only hardcoded English strings in source files
  *   node scripts/i18n-audit.mjs --summary    # counts only, no key lists
- *   node scripts/i18n-audit.mjs --prune      # remove unused keys from EN and all locales
+ *   node scripts/i18n-audit.mjs --prune      # remove unused keys from all locales
+ *   node scripts/i18n-audit.mjs --sort       # alphabetically sort keys in all locales
  */
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
@@ -352,7 +353,64 @@ if (shouldRun("--hardcoded")) {
   console.log();
 }
 
+// --- 8. Sort ---
+if (mode === "--sort") {
+  console.log("=== Sorting all locale files alphabetically ===");
+  const allLocaleFiles = ["en", ...LOCALES].map((l) => join(LOCALES_DIR, `${l}.ts`));
+
+  const PLURAL_ORDER = { _zero: 0, _one: 1, _two: 2, _few: 3, _many: 4, _other: 5 };
+
+  function sortKey(key) {
+    let normalized = key.replace(/\./g, "\x00");
+    for (const [suffix, order] of Object.entries(PLURAL_ORDER)) {
+      if (normalized.endsWith(suffix)) {
+        normalized = normalized.slice(0, -suffix.length) + `\x01${order}`;
+        break;
+      }
+    }
+    return normalized;
+  }
+
+  for (const file of allLocaleFiles) {
+    if (!existsSync(file)) continue;
+    const content = readFileSync(file, "utf-8");
+
+    // Extract preamble (header comment) and body
+    const exportMatch = content.match(/^([\s\S]*?)(export default \{)([\s\S]*?)(\} as const;\s*)$/);
+    if (!exportMatch) {
+      console.log(`  ${basename(file, ".ts")}: ⚠ could not parse, skipped`);
+      continue;
+    }
+    const [, preamble, , body] = exportMatch;
+
+    // Eval the body as a JS object to get all key-value pairs
+    let obj;
+    try {
+      obj = new Function(`return {${body}}`)();
+    } catch (e) {
+      console.log(`  ${basename(file, ".ts")}: ⚠ eval failed, skipped (${e.message})`);
+      continue;
+    }
+
+    // Sort keys
+    const sortedKeys = Object.keys(obj).sort((a, b) => {
+      const ak = sortKey(a);
+      const bk = sortKey(b);
+      return ak < bk ? -1 : ak > bk ? 1 : 0;
+    });
+
+    // Rebuild — JSON.stringify handles all escaping (\n, quotes, etc.)
+    const lines = sortedKeys.map((key) =>
+      `  ${JSON.stringify(key)}: ${JSON.stringify(obj[key])},`
+    );
+    writeFileSync(file, `${preamble}export default {\n${lines.join("\n")}\n} as const;\n`);
+    const locale = basename(file, ".ts");
+    console.log(`  ${locale}: ${sortedKeys.length} keys sorted`);
+  }
+  console.log();
+}
+
 // --- Done ---
 console.log("=== Done ===");
-console.log("Run with --missing, --orphan, --unused, --hardcoded, --prune, or --summary for focused output.");
+console.log("Run with --missing, --orphan, --unused, --hardcoded, --prune, --sort, or --summary for focused output.");
 process.exit(exitCode);
