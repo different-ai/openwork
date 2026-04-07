@@ -338,15 +338,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   return (
-    <div className="space-y-5 pb-4">
+    <div className="flex min-h-full flex-col">
       {model.transitionState === "switching" ? (
-        <div className="flex justify-center px-6">
+        <div className="flex justify-center px-6 pt-4">
           <div className="rounded-full border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary">
             {model.renderSource === "cache" ? "Switching session from cache..." : "Switching session..."}
           </div>
         </div>
       ) : null}
 
+      <div className="flex-1 space-y-4 pb-6 pt-4">
       {!snapshot && snapshotQuery.isLoading && renderedMessages.length === 0 ? (
         <div className="px-6 py-16">
           <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
@@ -380,7 +381,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
           <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
         </div>
       )}
+      </div>
 
+      <div className="sticky bottom-0 z-10 border-t border-dls-border/70 bg-[linear-gradient(180deg,rgba(250,250,252,0),rgba(250,250,252,0.94)_28%,rgba(250,250,252,0.98)_100%)] px-0 pb-4 pt-3 backdrop-blur-sm dark:bg-[linear-gradient(180deg,rgba(14,15,18,0),rgba(14,15,18,0.92)_28%,rgba(14,15,18,0.98)_100%)]">
         <ReactSessionComposer
           draft={draft}
           mentions={mentions}
@@ -417,9 +420,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onRevealPastedText={handleRevealPastedText}
         onRemovePastedText={handleRemovePastedText}
         isRemoteWorkspace={props.isRemoteWorkspace}
-        isSandboxWorkspace={props.isSandboxWorkspace}
-        onUploadInboxFiles={props.onUploadInboxFiles}
-      />
+          isSandboxWorkspace={props.isSandboxWorkspace}
+          onUploadInboxFiles={props.onUploadInboxFiles}
+        />
+      </div>
       {error ? (
         <div className="mx-auto w-full max-w-[800px] px-4">
           <div className="rounded-b-[20px] border border-t-0 border-red-6/30 px-4 py-3 text-sm text-red-11">{error}</div>
