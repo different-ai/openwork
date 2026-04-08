@@ -3,15 +3,17 @@
  * i18n-audit.mjs — Find missing translations and improperly used translation keys.
  *
  * Usage:
- *   node scripts/i18n-audit.mjs              # full audit
- *   node scripts/i18n-audit.mjs --missing    # only missing keys
- *   node scripts/i18n-audit.mjs --orphan     # only orphan keys (in locale but not in EN)
- *   node scripts/i18n-audit.mjs --unused     # only unused keys (in EN but never referenced in source)
- *   node scripts/i18n-audit.mjs --hardcoded  # only hardcoded English strings in source files
- *   node scripts/i18n-audit.mjs --summary    # counts only, no key lists
- *   node scripts/i18n-audit.mjs --dangling   # find t() calls referencing keys not in en.ts
- *   node scripts/i18n-audit.mjs --prune      # remove unused keys from all locales
- *   node scripts/i18n-audit.mjs --sort       # alphabetically sort keys in all locales
+ *   node scripts/i18n-audit.mjs              # full audit (default, excludes --hardcoded, --aliases, --prune, --sort)
+ *   node scripts/i18n-audit.mjs --missing    # missing keys (in EN but not in locale)
+ *   node scripts/i18n-audit.mjs --orphan     # orphan keys (in locale but not in EN)
+ *   node scripts/i18n-audit.mjs --duplicates # duplicate keys in any locale
+ *   node scripts/i18n-audit.mjs --unused     # unused keys (in EN but not referenced in repo)
+ *   node scripts/i18n-audit.mjs --dangling   # t() calls referencing keys not in en.ts
+ *   node scripts/i18n-audit.mjs --aliases    # aliased t() calls (translate/tr instead of t)
+ *   node scripts/i18n-audit.mjs --placeholders # placeholder integrity check
+ *   node scripts/i18n-audit.mjs --hardcoded  # hardcoded English strings in source files
+ *   node scripts/i18n-audit.mjs --prune      # (destructive) remove unused keys from all locales
+ *   node scripts/i18n-audit.mjs --sort       # (destructive) alphabetically sort keys in all locales
  */
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
@@ -26,45 +28,30 @@ const APP_SRC = join(REPO_ROOT, "apps/app/src");
 const LOCALES = ["ja", "zh", "vi", "pt-BR", "th"];
 const EN_FILE = join(LOCALES_DIR, "en.ts");
 
-const mode = process.argv[2] ?? "all";
-const shouldRun = (...modes) => mode === "all" || modes.includes(mode);
+const mode = process.argv[2] ?? "--all";
+const EXCLUDED_FROM_ALL = new Set(["--hardcoded", "--aliases"]);
+const shouldRun = (...modes) => (mode === "--all" && !modes.some((m) => EXCLUDED_FROM_ALL.has(m))) || modes.includes(mode);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Extract translation keys from a locale .ts file. */
-function extractKeys(filePath) {
+/** Parse a locale .ts file into a JS object via eval. */
+function parseLocale(filePath) {
   const content = readFileSync(filePath, "utf-8");
-  const keys = new Set();
-  for (const match of content.matchAll(/^\s*"([^"]+)"\s*:/gm)) {
-    keys.add(match[1]);
-  }
-  return keys;
+  const match = content.match(/export default \{([\s\S]*?)\} as const;/);
+  if (!match) throw new Error(`Could not parse ${filePath}`);
+  return new Function(`return {${match[1]}}`)();
+}
+
+/** Extract translation keys from a locale .ts file (as a Set). */
+function extractKeys(filePath) {
+  return new Set(Object.keys(parseLocale(filePath)));
 }
 
 /** Extract key→value map from a locale .ts file. */
 function extractKeyValues(filePath) {
-  const content = readFileSync(filePath, "utf-8");
-  const map = new Map();
-  // Match single-line: "key": "value",  and  "key": "value"
-  // Also match multi-line: "key":\n    "value",
-  const lines = content.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const singleLine = lines[i].match(/^\s*"([^"]+)"\s*:\s*"(.*)"/);
-    if (singleLine) {
-      map.set(singleLine[1], singleLine[2]);
-      continue;
-    }
-    const keyOnly = lines[i].match(/^\s*"([^"]+)"\s*:\s*$/);
-    if (keyOnly && i + 1 < lines.length) {
-      const valLine = lines[i + 1].match(/^\s*"(.*)"/);
-      if (valLine) {
-        map.set(keyOnly[1], valLine[1]);
-      }
-    }
-  }
-  return map;
+  return new Map(Object.entries(parseLocale(filePath)));
 }
 
 /** Find all {placeholders} in a string. */
@@ -97,7 +84,7 @@ function groupByPrefix(keys) {
   return [...groups.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-/** Find duplicate keys in a file. */
+/** Find duplicate keys in a file (must use regex — JSON.parse dedupes silently). */
 function findDuplicates(filePath) {
   const content = readFileSync(filePath, "utf-8");
   const seen = new Map();
@@ -139,7 +126,7 @@ for (const locale of LOCALES) {
 console.log();
 
 // --- 2. Missing keys ---
-if (shouldRun("--missing", "--summary")) {
+if (shouldRun("--missing")) {
   console.log("=== Missing keys (in en.ts but not in locale) ===");
   for (const locale of LOCALES) {
     const file = join(LOCALES_DIR, `${locale}.ts`);
@@ -148,7 +135,7 @@ if (shouldRun("--missing", "--summary")) {
     const missing = [...enKeys].filter((k) => !localeKeys.has(k));
 
     if (missing.length === 0) {
-      console.log(`  ${locale}: ✓ complete`);
+      console.log(`  ${locale}: ✓ no missing`);
     } else {
       console.log(`  ${locale}: ✗ ${missing.length} missing`);
       exitCode = 1;
@@ -165,7 +152,7 @@ if (shouldRun("--missing", "--summary")) {
 }
 
 // --- 3. Orphan keys ---
-if (shouldRun("--orphan", "--summary")) {
+if (shouldRun("--orphan")) {
   console.log("=== Orphan keys (in locale but not in en.ts) ===");
   for (const locale of LOCALES) {
     const file = join(LOCALES_DIR, `${locale}.ts`);
@@ -187,7 +174,7 @@ if (shouldRun("--orphan", "--summary")) {
 }
 
 // --- 4. Duplicate keys ---
-if (shouldRun("--summary")) {
+if (shouldRun("--duplicates")) {
   console.log("=== Duplicate keys ===");
   for (const locale of ["en", ...LOCALES]) {
     const file = join(LOCALES_DIR, `${locale}.ts`);
@@ -207,7 +194,7 @@ if (shouldRun("--summary")) {
 }
 
 // --- 5. Unused keys ---
-if (shouldRun("--unused", "--summary", "--prune")) {
+if (shouldRun("--unused", "--prune")) {
   console.log("=== Unused keys (in en.ts but never referenced in repo) ===");
 
   // Search the ENTIRE repo (not just apps/app/src) for key references
@@ -272,40 +259,8 @@ if (shouldRun("--unused", "--summary", "--prune")) {
   console.log();
 }
 
-// --- 6. Placeholder integrity ---
-if (shouldRun("--summary")) {
-  console.log("=== Placeholder integrity ===");
-  let problems = 0;
-
-  for (const [key, enValue] of enKeyValues) {
-    const enPh = findPlaceholders(enValue);
-    if (enPh.length === 0) continue;
-
-    for (const locale of LOCALES) {
-      const file = join(LOCALES_DIR, `${locale}.ts`);
-      if (!existsSync(file)) continue;
-      const localeKV = extractKeyValues(file);
-      const localeValue = localeKV.get(key);
-      if (!localeValue) continue;
-
-      const localePh = findPlaceholders(localeValue);
-      for (const ph of enPh) {
-        if (!localePh.includes(ph)) {
-          console.log(`  ✗ ${locale}/${key}: missing placeholder ${ph}`);
-          problems++;
-          exitCode = 1;
-        }
-      }
-    }
-  }
-
-  if (problems === 0) console.log("  ✓ all placeholders preserved");
-  else console.log(`  ✗ ${problems} placeholder issues`);
-  console.log();
-}
-
-// --- 7. Dangling t() calls (referencing keys not in en.ts) ---
-if (shouldRun("--dangling", "--summary")) {
+// --- 6. Dangling t() calls (referencing keys not in en.ts) ---
+if (shouldRun("--dangling")) {
   console.log("=== Dangling t() calls (keys not in en.ts) ===");
 
   const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
@@ -338,37 +293,120 @@ if (shouldRun("--dangling", "--summary")) {
     }
   }
   console.log();
+
+  // --- 7. Dynamic t() calls (keys built at runtime) ---
+  console.log("=== Dynamic t() calls (keys built at runtime) ===");
+  const dynamicPattern = /\b(?:t|translate|tr)\(\s*(`[^`]*\$\{|[^"'][^,)]*\+)/g;
+  const dynamicHits = [];
+  for (const file of sourceFiles) {
+    const content = readFileSync(file, "utf-8");
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (dynamicPattern.test(lines[i])) {
+        dynamicHits.push({ file: file.replace(REPO_ROOT + "/", ""), line: i + 1, text: lines[i].trim() });
+      }
+      dynamicPattern.lastIndex = 0;
+    }
+  }
+
+  if (dynamicHits.length === 0) {
+    console.log("  ✓ no dynamic key construction");
+  } else {
+    console.log(`  ✗ ${dynamicHits.length} dynamic key constructions (should be static strings)`);
+    exitCode = 1;
+    for (const { file, line, text } of dynamicHits) {
+      console.log(`    ${file}:${line}`);
+      console.log(`      ${text.slice(0, 120)}`);
+    }
+  }
+  console.log();
 }
 
-// --- 8. Hardcoded English scan ---
-if (shouldRun("--hardcoded")) {
-  console.log("=== Hardcoded English scan (key source files) ===");
+// --- 8. Aliased t() calls (should use t() directly, not translate/tr wrappers) ---
+if (shouldRun("--aliases")) {
+  console.log("=== Aliased t() calls (should use t() directly) ===");
 
-  const hardcodedFiles = [
-    "apps/app/src/app/app-settings/authorized-folders-panel.tsx",
-    "apps/app/src/app/components/model-picker-modal.tsx",
-    "apps/app/src/app/lib/workspace-blueprints.ts",
-    "apps/app/src/app/lib/model-behavior.ts",
-    "apps/app/src/app/lib/session-title.ts",
-    "apps/app/src/app/constants.ts",
-    "apps/app/src/app/system-state.ts",
-    "apps/app/src/app/pages/settings.tsx",
-  ];
+  const aliasSourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
+  const aliasPattern = /\b(?:translate|tr)\s*\(/g;
+  const aliasDefPattern = /(?:const|function)\s+(?:translate|tr)\s*[=(]/;
+  const hits = [];
+
+  for (const file of aliasSourceFiles) {
+    const content = readFileSync(file, "utf-8");
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      // Skip alias definitions themselves
+      if (aliasDefPattern.test(lines[i])) continue;
+      if (aliasPattern.test(lines[i])) {
+        hits.push({ file: file.replace(REPO_ROOT + "/", ""), line: i + 1, text: lines[i].trim() });
+      }
+      aliasPattern.lastIndex = 0;
+    }
+  }
+
+  if (hits.length === 0) {
+    console.log("  ✓ all calls use t() directly");
+  } else {
+    console.log(`  ⚠ ${hits.length} aliased calls (translate/tr instead of t)`);
+    for (const { file, line, text } of hits) {
+      console.log(`    ${file}:${line}`);
+      console.log(`      ${text.slice(0, 120)}`);
+    }
+  }
+  console.log();
+}
+
+// --- 9. Placeholder integrity ---
+if (shouldRun("--placeholders")) {
+  console.log("=== Placeholder integrity ===");
+  let problems = 0;
+
+  for (const [key, enValue] of enKeyValues) {
+    const enPh = findPlaceholders(enValue);
+    if (enPh.length === 0) continue;
+
+    for (const locale of LOCALES) {
+      const file = join(LOCALES_DIR, `${locale}.ts`);
+      if (!existsSync(file)) continue;
+      const localeKV = extractKeyValues(file);
+      const localeValue = localeKV.get(key);
+      if (!localeValue) continue;
+
+      const localePh = findPlaceholders(localeValue);
+      for (const ph of enPh) {
+        if (!localePh.includes(ph)) {
+          console.log(`  ✗ ${locale}/${key}: missing placeholder ${ph}`);
+          problems++;
+          exitCode = 1;
+        }
+      }
+    }
+  }
+
+  if (problems === 0) console.log("  ✓ all placeholders preserved");
+  else console.log(`  ✗ ${problems} placeholder issues`);
+  console.log();
+}
+
+// --- 10. Hardcoded English scan ---
+if (shouldRun("--hardcoded")) {
+  console.log("=== Hardcoded English scan ===");
+
+  const hardcodedFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
 
   const excludePatterns = [
     /import\b/, /from\s+"/, /class=/, /\btype\s/, /\bconst\s/, /variant=/,
     /\bt\(/, /translate\(/, /"connected"/, /"allow"/, /"local"/, /"remote"/,
     /"object"/, /"string"/, /"user"/, /"assistant"/, /"Escape"/, /"Arrow/,
     /"Enter"/, /"prompt"/, /"session"/, /"automation"/, /"minimal"/, /"starter"/,
-    /"docker"/, /"opencode"/, /"simple"/,
+    /"docker"/, /"opencode"/, /"simple"/, /"Started"/, /"Progress"/,
+    /^\s*\/\//, /^\s*\/\*/,
   ];
 
   const englishPattern = />[A-Z][a-z]{2,}[^<]*<|"[A-Z][a-z]{3,}[a-z ]+[.!?]?"/;
 
-  for (const rel of hardcodedFiles) {
-    const full = join(REPO_ROOT, rel);
-    if (!existsSync(full)) continue;
-    const name = basename(rel);
+  for (const full of hardcodedFiles) {
+    const name = full.replace(APP_SRC + "/", "");
     const lines = readFileSync(full, "utf-8").split("\n");
     const hits = [];
 
@@ -390,7 +428,7 @@ if (shouldRun("--hardcoded")) {
   console.log();
 }
 
-// --- 8. Sort ---
+// --- 11. Sort ---
 if (mode === "--sort") {
   console.log("=== Sorting all locale files alphabetically ===");
   const allLocaleFiles = ["en", ...LOCALES].map((l) => join(LOCALES_DIR, `${l}.ts`));
@@ -449,5 +487,5 @@ if (mode === "--sort") {
 
 // --- Done ---
 console.log("=== Done ===");
-console.log("Run with --missing, --orphan, --unused, --dangling, --hardcoded, --prune, --sort, or --summary for focused output.");
+console.log("Run with --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.");
 process.exit(exitCode);

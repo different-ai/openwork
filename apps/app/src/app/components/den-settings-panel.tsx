@@ -799,7 +799,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!result.ok) {
         throw new Error(result.message);
       }
-      setStatusMessage(`${result.message} ${t("reload.toast_description", currentLocale())}`);
+      setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
     } catch (error) {
       setSkillHubActionError(error instanceof Error ? error.message : `Failed to import ${hub.name}.`);
     } finally {
@@ -821,7 +821,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!result.ok) {
         throw new Error(result.message);
       }
-      setStatusMessage(`${result.message} ${t("reload.toast_description", currentLocale())}`);
+      setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
     } catch (error) {
       setSkillHubActionError(error instanceof Error ? error.message : `Failed to remove ${imported.name}.`);
     } finally {
@@ -843,7 +843,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!result.ok) {
         throw new Error(result.message);
       }
-      setStatusMessage(`${result.message} ${t("reload.toast_description", currentLocale())}`);
+      setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
     } catch (error) {
       setSkillHubActionError(error instanceof Error ? error.message : `Failed to sync ${hub.name}.`);
     } finally {
@@ -861,9 +861,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     try {
       const message = await props.connectCloudProvider(cloudProviderId);
-      setStatusMessage(`${message || `Imported ${providerName}.`} ${t("reload.toast_description", currentLocale())}`);
+      setStatusMessage(`${message || t("den.imported_provider", undefined, { name: providerName })} ${t("den.reload_workspace")}`);
     } catch (error) {
-      setProviderActionError(error instanceof Error ? error.message : `Failed to import ${providerName}.`);
+      setProviderActionError(error instanceof Error ? error.message : t("den.import_provider_failed", undefined, { name: providerName }));
     } finally {
       setProviderActionId(null);
       setProviderActionKind(null);
@@ -879,9 +879,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     try {
       const message = await props.removeCloudProvider(cloudProviderId);
-      setStatusMessage(`${message || `Removed ${providerName}.`} ${t("reload.toast_description", currentLocale())}`);
+      setStatusMessage(`${message || t("den.removed_provider", undefined, { name: providerName })} ${t("den.reload_workspace")}`);
     } catch (error) {
-      setProviderActionError(error instanceof Error ? error.message : `Failed to remove ${providerName}.`);
+      setProviderActionError(error instanceof Error ? error.message : t("den.remove_provider_failed", undefined, { name: providerName }));
     } finally {
       setProviderActionId(null);
       setProviderActionKind(null);
@@ -897,9 +897,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     try {
       await props.connectCloudProvider(cloudProviderId);
-      setStatusMessage(`Synced ${providerName}. ${t("reload.toast_description", currentLocale())}`);
+      setStatusMessage(`${t("den.synced_provider", undefined, { name: providerName })} ${t("den.reload_workspace")}`);
     } catch (error) {
-      setProviderActionError(error instanceof Error ? error.message : `Failed to sync ${providerName}.`);
+      setProviderActionError(error instanceof Error ? error.message : t("den.sync_provider_failed", undefined, { name: providerName }));
     } finally {
       setProviderActionId(null);
       setProviderActionKind(null);

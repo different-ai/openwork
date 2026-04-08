@@ -1160,24 +1160,24 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const copyDeveloperLog = async () => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-      setDevLogStatus("Clipboard is unavailable in this environment.");
+      setDevLogStatus(t("settings.devlog_clipboard_unavailable"));
       return;
     }
     try {
       await navigator.clipboard.writeText(developerLogText());
-      setDevLogStatus("Copied developer log output.");
+      setDevLogStatus(t("settings.devlog_copied"));
     } catch (error) {
       setDevLogStatus(
         error instanceof Error
           ? error.message
-          : "Failed to copy developer log output.",
+          : t("settings.devlog_copy_failed"),
       );
     }
   };
 
   const exportDeveloperLog = () => {
     if (typeof window === "undefined" || typeof document === "undefined") {
-      setDevLogStatus("Export is unavailable in this environment.");
+      setDevLogStatus(t("settings.devlog_export_unavailable"));
       return;
     }
     try {
@@ -1194,19 +1194,19 @@ export default function SettingsView(props: SettingsViewProps) {
       anchor.download = `openwork-dev-log-${stamp}.log`;
       anchor.click();
       window.URL.revokeObjectURL(url);
-      setDevLogStatus("Exported developer log output.");
+      setDevLogStatus(t("settings.devlog_exported"));
     } catch (error) {
       setDevLogStatus(
         error instanceof Error
           ? error.message
-          : "Failed to export developer log output.",
+          : t("settings.devlog_export_failed"),
       );
     }
   };
 
   const clearDeveloperLog = () => {
     clearDevLogs();
-    setDevLogStatus("Cleared developer log output.");
+    setDevLogStatus(t("settings.devlog_cleared"));
   };
 
   const revealWorkspaceConfig = async () => {

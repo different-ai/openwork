@@ -145,7 +145,7 @@ export function createSystemState(options: {
 
   function openResetModal(mode: ResetOpenworkMode) {
     if (anyActiveRuns()) {
-      options.setError("Stop active runs before resetting.");
+      options.setError(t("system.stop_active_runs_before_reset"));
       return;
     }
 
@@ -159,7 +159,7 @@ export function createSystemState(options: {
     if (resetModalBusy()) return;
 
     if (anyActiveRuns()) {
-      options.setError("Stop active runs before resetting.");
+      options.setError(t("system.stop_active_runs_before_reset"));
       return;
     }
 
@@ -217,60 +217,20 @@ export function createSystemState(options: {
   }
 
   const reloadCopy = createMemo(() => {
+    const title = t("system.reload_required");
     const reasons = reloadReasons();
-    if (!reasons.length) {
-      return {
-        title: "Reload required",
-        body: "OpenWork detected changes that require reloading the OpenCode instance.",
-      };
-    }
 
-    if (reasons.length === 1 && reasons[0] === "plugins") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads npm plugins at startup. Reload the engine to apply opencode.json changes.",
-      };
-    }
+    const bodyKey =
+      reasons.length === 1 && reasons[0] === "plugins" ? "system.reload_body_plugins"
+      : reasons.length === 1 && reasons[0] === "skills" ? "system.reload_body_skills"
+      : reasons.length === 1 && reasons[0] === "agents" ? "system.reload_body_agents"
+      : reasons.length === 1 && reasons[0] === "commands" ? "system.reload_body_commands"
+      : reasons.length === 1 && reasons[0] === "config" ? "system.reload_body_config"
+      : reasons.length === 1 && reasons[0] === "mcp" ? "system.reload_body_mcp"
+      : reasons.length > 0 ? "system.reload_body_mixed"
+      : "system.reload_body_default";
 
-    if (reasons.length === 1 && reasons[0] === "skills") {
-      return {
-        title: "Reload required",
-        body: "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.",
-      };
-    }
-
-    if (reasons.length === 1 && reasons[0] === "agents") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads agents at startup. Reload the engine to make updated agents available.",
-      };
-    }
-
-    if (reasons.length === 1 && reasons[0] === "commands") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads commands at startup. Reload the engine to make updated commands available.",
-      };
-    }
-
-    if (reasons.length === 1 && reasons[0] === "config") {
-      return {
-        title: "Reload required",
-        body: "OpenCode reads opencode.json at startup. Reload the engine to apply configuration changes.",
-      };
-    }
-
-    if (reasons.length === 1 && reasons[0] === "mcp") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads MCP servers at startup. Reload the engine to activate the new connection.",
-      };
-    }
-
-    return {
-      title: "Reload required",
-      body: "OpenWork detected OpenCode configuration changes. Reload the engine to apply them.",
-    };
+    return { title, body: t(bodyKey) };
   });
 
   const canReloadEngine = createMemo(() => {
@@ -294,7 +254,7 @@ export function createSystemState(options: {
 
     const override = options.canReloadWorkspaceEngine?.();
     if (override === false) {
-      setReloadError("Reload is unavailable for this worker.");
+      setReloadError(t("system.reload_unavailable"));
       return;
     }
 
@@ -310,7 +270,7 @@ export function createSystemState(options: {
       if (options.reloadWorkspaceEngine) {
         const ok = await options.reloadWorkspaceEngine();
         if (ok === false) {
-          setReloadError("Failed to reload the engine.");
+          setReloadError(t("system.reload_failed"));
           return;
         }
       } else {
@@ -380,7 +340,7 @@ export function createSystemState(options: {
 
   async function repairOpencodeCache() {
     if (!isTauriRuntime()) {
-      setCacheRepairResult("Cache repair requires the desktop app.");
+      setCacheRepairResult(t("system.cache_repair_requires_desktop"));
       return;
     }
 
@@ -411,7 +371,7 @@ export function createSystemState(options: {
 
   async function cleanupOpenworkDockerContainers() {
     if (!isTauriRuntime()) {
-      setDockerCleanupResult("Docker cleanup requires the desktop app.");
+      setDockerCleanupResult(t("system.docker_cleanup_requires_desktop"));
       return;
     }
 
@@ -464,7 +424,7 @@ export function createSystemState(options: {
             updateStatus().state === "idle"
               ? (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
               : null,
-          message: env.reason ?? "Updates are not supported in this environment.",
+          message: env.reason ?? t("system.updates_not_supported"),
         });
       }
       return;
@@ -579,7 +539,7 @@ export function createSystemState(options: {
     if (!pending) return;
 
     if (anyActiveRuns()) {
-      options.setError("Stop active runs before installing an update.");
+      options.setError(t("system.stop_runs_before_update"));
       return;
     }
 
