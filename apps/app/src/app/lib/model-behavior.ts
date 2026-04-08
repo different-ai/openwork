@@ -1,6 +1,6 @@
 import type { ProviderListItem } from "../types";
 import type { ModelBehaviorOption } from "../types";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 
 type ProviderModel = ProviderListItem["models"][string];
 
@@ -17,8 +17,8 @@ const WELL_KNOWN_VARIANT_ORDER = [
 function defaultBehaviorOption(): ModelBehaviorOption {
   return {
     value: null,
-    label: t("settings.provider_default_label"),
-    description: t("settings.provider_default_desc"),
+    label: td("settings.provider_default_label", "Provider default"),
+    description: td("settings.provider_default_desc", "Use the model's built-in default reasoning behavior."),
   };
 }
 
@@ -72,28 +72,28 @@ const sortVariantKeys = (keys: string[]) =>
 
 const getBehaviorTitle = (providerID: string, model: ProviderModel, variantKeys: string[]) => {
   if (variantKeys.length > 0) {
-    if (providerID === "anthropic") return t("model_behavior.title_extended_thinking");
-    if (providerID === "google") return t("model_behavior.title_reasoning_budget");
+    if (providerID === "anthropic") return td("model_behavior.title_extended_thinking", "Extended thinking");
+    if (providerID === "google") return td("model_behavior.title_reasoning_budget", "Reasoning budget");
     if (
       providerID === "openai" ||
       providerID === "opencode" ||
       variantKeys.some((key) => ["none", "minimal", "low", "medium", "high", "xhigh"].includes(key))
     ) {
-      return t("model_behavior.title_reasoning_effort");
+      return td("model_behavior.title_reasoning_effort", "Reasoning effort");
     }
-    return t("app.model_behavior_title");
+    return td("app.model_behavior_title", "Model behavior");
   }
-  if (model.reasoning) return t("model_behavior.title_builtin_reasoning");
-  return t("model_behavior.title_standard_generation");
+  if (model.reasoning) return td("model_behavior.title_builtin_reasoning", "Built-in reasoning");
+  return td("model_behavior.title_standard_generation", "Standard generation");
 };
 
 const getVariantLabel = (providerID: string, key: string) => {
-  if (key === "none") return t("model_behavior.label_fast");
-  if (key === "minimal") return t("model_behavior.label_quick");
-  if (key === "low") return t("model_behavior.label_light");
-  if (key === "medium") return t("model_behavior.label_balanced");
-  if (key === "high") return providerID === "anthropic" ? t("model_behavior.label_extended") : t("model_behavior.label_deep");
-  if (key === "xhigh" || key === "max") return t("model_behavior.label_maximum");
+  if (key === "none") return td("model_behavior.label_fast", "Fast");
+  if (key === "minimal") return td("model_behavior.label_quick", "Quick");
+  if (key === "low") return td("model_behavior.label_light", "Light");
+  if (key === "medium") return td("model_behavior.label_balanced", "Balanced");
+  if (key === "high") return providerID === "anthropic" ? td("model_behavior.label_extended", "Extended") : td("model_behavior.label_deep", "Deep");
+  if (key === "xhigh" || key === "max") return td("model_behavior.label_maximum", "Maximum");
   return humanize(key);
 };
 
@@ -104,19 +104,19 @@ export const formatGenericBehaviorLabel = (value: string | null) => {
 };
 
 const getVariantDescription = (providerID: string, key: string, label: string) => {
-  if (key === "none") return t("model_behavior.desc_none");
-  if (key === "minimal") return t("model_behavior.desc_minimal");
+  if (key === "none") return td("model_behavior.desc_none", "Favor speed with the lightest reasoning path.");
+  if (key === "minimal") return td("model_behavior.desc_minimal", "Use a very small amount of reasoning.");
   if (key === "low") return providerID === "google"
-    ? t("model_behavior.desc_low_google")
-    : t("model_behavior.desc_low");
-  if (key === "medium") return t("model_behavior.desc_medium");
+    ? td("model_behavior.desc_low_google", "Use a lighter reasoning budget for quicker responses.")
+    : td("model_behavior.desc_low", "Use a lighter reasoning pass before answering.");
+  if (key === "medium") return td("model_behavior.desc_medium", "Balance speed and reasoning depth.");
   if (key === "high") return providerID === "anthropic"
-    ? t("model_behavior.desc_high_anthropic")
-    : t("model_behavior.desc_high");
+    ? td("model_behavior.desc_high_anthropic", "Use the standard extended-thinking budget.")
+    : td("model_behavior.desc_high", "Spend more time reasoning before answering.");
   if (key === "xhigh" || key === "max") return providerID === "anthropic"
-    ? t("model_behavior.desc_max_anthropic")
-    : t("model_behavior.desc_max");
-  return t("model_behavior.desc_generic", undefined, { label: label.toLowerCase() });
+    ? td("model_behavior.desc_max_anthropic", "Use the largest extended-thinking budget available.")
+    : td("model_behavior.desc_max", "Use the provider's deepest reasoning profile.");
+  return td("model_behavior.desc_generic", "Use the {label} profile.", { label: label.toLowerCase() });
 };
 
 export const getModelBehaviorOptions = (
@@ -172,16 +172,16 @@ export const getModelBehaviorSummary = (
   if (model.reasoning) {
     return {
       title,
-      label: t("model_behavior.label_builtin"),
-      description: t("model_behavior.desc_builtin"),
+      label: td("model_behavior.label_builtin", "Built in"),
+      description: td("model_behavior.desc_builtin", "This model decides its own reasoning path and does not expose profiles here."),
       options,
     };
   }
 
   return {
     title,
-    label: t("model_behavior.label_standard"),
-    description: t("model_behavior.desc_standard"),
+    label: td("model_behavior.label_standard", "Standard"),
+    description: td("model_behavior.desc_standard", "This model does not expose extra reasoning controls."),
     options,
   };
 };

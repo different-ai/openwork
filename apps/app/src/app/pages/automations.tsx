@@ -4,7 +4,7 @@ import type { ScheduledJob } from "../types";
 import { useAutomations } from "../automations/provider";
 import { usePlatform } from "../context/platform";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 
 import {
   BookOpen,
@@ -52,7 +52,7 @@ const pillGhostClass = `${pillButtonClass} border border-dls-border bg-dls-surfa
 const tagClass =
   "inline-flex items-center rounded-md border border-dls-border bg-dls-hover px-2 py-1 text-[11px] text-dls-secondary";
 
-const DEFAULT_AUTOMATION_NAME = () => t("scheduled.default_automation_name");
+const DEFAULT_AUTOMATION_NAME = () => td("scheduled.default_automation_name", "Daily bug scan");
 const DEFAULT_AUTOMATION_PROMPT =
   "Scan recent commits and flag riskier diffs with the most important follow-ups.";
 const DEFAULT_SCHEDULE_TIME = "09:00";
@@ -62,79 +62,79 @@ const DEFAULT_INTERVAL_HOURS = 6;
 const automationTemplates: AutomationTemplate[] = [
   {
     icon: Calendar,
-    name: t("scheduled.tpl_daily_planning_name"),
-    description: t("scheduled.tpl_daily_planning_desc"),
+    name: td("scheduled.tpl_daily_planning_name", "Daily planning brief"),
+    description: td("scheduled.tpl_daily_planning_desc", "Build a focused plan from your tasks and calendar."),
     prompt:
       "Review my pending tasks and calendar, then draft a practical plan for today with top priorities and one follow-up reminder.",
     scheduleMode: "daily",
     scheduleTime: "08:30",
     scheduleDays: ["mo", "tu", "we", "th", "fr"],
-    badge: t("scheduled.badge_weekday_morning"),
+    badge: td("scheduled.badge_weekday_morning", "Weekday morning"),
   },
   {
     icon: BookOpen,
-    name: t("scheduled.tpl_inbox_zero_name"),
-    description: t("scheduled.tpl_inbox_zero_desc"),
+    name: td("scheduled.tpl_inbox_zero_name", "Inbox zero helper"),
+    description: td("scheduled.tpl_inbox_zero_desc", "Summarize unread messages and draft short replies."),
     prompt:
       "Summarize unread inbox messages, suggest priority order, and draft concise reply options for the top conversations.",
     scheduleMode: "daily",
     scheduleTime: "17:30",
     scheduleDays: ["mo", "tu", "we", "th", "fr"],
-    badge: t("scheduled.badge_end_of_day"),
+    badge: td("scheduled.badge_end_of_day", "End-of-day"),
   },
   {
     icon: MessageSquare,
-    name: t("scheduled.tpl_meeting_prep_name"),
-    description: t("scheduled.tpl_meeting_prep_desc"),
+    name: td("scheduled.tpl_meeting_prep_name", "Meeting prep notes"),
+    description: td("scheduled.tpl_meeting_prep_desc", "Generate prep bullets for tomorrow's meetings."),
     prompt:
       "Prepare meeting briefs for tomorrow with context, talking points, and questions to unblock decisions.",
     scheduleMode: "daily",
     scheduleTime: "18:00",
     scheduleDays: ["mo", "tu", "we", "th", "fr"],
-    badge: t("scheduled.badge_weekday_evening"),
+    badge: td("scheduled.badge_weekday_evening", "Weekday evening"),
   },
   {
     icon: TrendingUp,
-    name: t("scheduled.tpl_weekly_wins_name"),
-    description: t("scheduled.tpl_weekly_wins_desc"),
+    name: td("scheduled.tpl_weekly_wins_name", "Weekly wins recap"),
+    description: td("scheduled.tpl_weekly_wins_desc", "Create a Friday recap of wins, blockers, and next steps."),
     prompt:
       "Summarize the week into wins, blockers, and clear next steps I can share with the team.",
     scheduleMode: "daily",
     scheduleTime: "16:00",
     scheduleDays: ["fr"],
-    badge: t("scheduled.badge_friday_wrapup"),
+    badge: td("scheduled.badge_friday_wrapup", "Friday wrap-up"),
   },
   {
     icon: Trophy,
-    name: t("scheduled.tpl_learning_digest_name"),
-    description: t("scheduled.tpl_learning_digest_desc"),
+    name: td("scheduled.tpl_learning_digest_name", "Learning digest"),
+    description: td("scheduled.tpl_learning_digest_desc", "Turn saved links and notes into a weekly digest."),
     prompt:
       "Collect my saved links and notes, then draft a weekly learning digest with key ideas and follow-up actions.",
     scheduleMode: "daily",
     scheduleTime: "10:00",
     scheduleDays: ["su"],
-    badge: t("scheduled.badge_weekend_review"),
+    badge: td("scheduled.badge_weekend_review", "Weekend review"),
   },
   {
     icon: Brain,
-    name: t("scheduled.tpl_habit_checkin_name"),
-    description: t("scheduled.tpl_habit_checkin_desc"),
+    name: td("scheduled.tpl_habit_checkin_name", "Habit check-in"),
+    description: td("scheduled.tpl_habit_checkin_desc", "Run a quick accountability check through the day."),
     prompt:
       "Ask me for a quick progress check-in, capture blockers, and suggest one concrete next action.",
     scheduleMode: "interval",
     intervalHours: 6,
-    badge: t("scheduled.badge_every_few_hours"),
+    badge: td("scheduled.badge_every_few_hours", "Every few hours"),
   },
 ];
 
 const dayOptions = [
-  { id: "mo", label: () => t("scheduled.day_mon"), cron: "1" },
-  { id: "tu", label: () => t("scheduled.day_tue"), cron: "2" },
-  { id: "we", label: () => t("scheduled.day_wed"), cron: "3" },
-  { id: "th", label: () => t("scheduled.day_thu"), cron: "4" },
-  { id: "fr", label: () => t("scheduled.day_fri"), cron: "5" },
-  { id: "sa", label: () => t("scheduled.day_sat"), cron: "6" },
-  { id: "su", label: () => t("scheduled.day_sun"), cron: "0" },
+  { id: "mo", label: () => td("scheduled.day_mon", "Mon"), cron: "1" },
+  { id: "tu", label: () => td("scheduled.day_tue", "Tue"), cron: "2" },
+  { id: "we", label: () => td("scheduled.day_wed", "Wed"), cron: "3" },
+  { id: "th", label: () => td("scheduled.day_thu", "Thu"), cron: "4" },
+  { id: "fr", label: () => td("scheduled.day_fri", "Fri"), cron: "5" },
+  { id: "sa", label: () => td("scheduled.day_sat", "Sat"), cron: "6" },
+  { id: "su", label: () => td("scheduled.day_sun", "Sun"), cron: "0" },
 ];
 
 export type AutomationsViewProps = {
@@ -180,9 +180,9 @@ const parseCronNumbers = (value: string) => {
 
 const humanizeCron = (cron: string) => {
   const parts = cron.trim().split(/\s+/);
-  if (parts.length < 5) return t("scheduled.custom_schedule");
+  if (parts.length < 5) return td("scheduled.custom_schedule", "Custom schedule");
   const [minuteRaw, hourRaw, dom, mon, dowRaw] = parts;
-  if (!minuteRaw || !hourRaw || !dom || !mon || !dowRaw) return t("scheduled.custom_schedule");
+  if (!minuteRaw || !hourRaw || !dom || !mon || !dowRaw) return td("scheduled.custom_schedule", "Custom schedule");
 
   if (
     minuteRaw === "0" &&
@@ -193,19 +193,19 @@ const humanizeCron = (cron: string) => {
   ) {
     const interval = Number.parseInt(hourRaw.slice(2), 10);
     if (Number.isFinite(interval) && interval > 0) {
-      return interval === 1 ? t("scheduled.every_hour") : t("scheduled.every_n_hours", undefined, { interval });
+      return interval === 1 ? td("scheduled.every_hour", "Every hour") : td("scheduled.every_n_hours", "Every {interval} hours", { interval });
     }
   }
 
   const hour = Number.parseInt(hourRaw, 10);
   const minute = Number.parseInt(minuteRaw, 10);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return t("scheduled.custom_schedule");
-  if (dom !== "*" || mon !== "*") return t("scheduled.custom_schedule");
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return td("scheduled.custom_schedule", "Custom schedule");
+  if (dom !== "*" || mon !== "*") return td("scheduled.custom_schedule", "Custom schedule");
 
   const timeLabel = `${pad2(hour)}:${pad2(minute)}`;
 
   if (dowRaw === "*") {
-    return t("scheduled.every_day_at", undefined, { time: timeLabel });
+    return td("scheduled.every_day_at", "Every day at {time}", { time: timeLabel });
   }
 
   const days = parseCronNumbers(dowRaw);
@@ -214,28 +214,28 @@ const humanizeCron = (cron: string) => {
   const weekdayDays = [1, 2, 3, 4, 5];
   const weekendDays = [0, 6];
 
-  if (allDays.every((d) => normalized.has(d))) return t("scheduled.every_day_at", undefined, { time: timeLabel });
+  if (allDays.every((d) => normalized.has(d))) return td("scheduled.every_day_at", "Every day at {time}", { time: timeLabel });
   if (
     weekdayDays.every((d) => normalized.has(d)) &&
     !weekendDays.some((d) => normalized.has(d))
   ) {
-    return t("scheduled.weekdays_at", undefined, { time: timeLabel });
+    return td("scheduled.weekdays_at", "Weekdays at {time}", { time: timeLabel });
   }
   if (
     weekendDays.every((d) => normalized.has(d)) &&
     !weekdayDays.some((d) => normalized.has(d))
   ) {
-    return t("scheduled.weekends_at", undefined, { time: timeLabel });
+    return td("scheduled.weekends_at", "Weekends at {time}", { time: timeLabel });
   }
 
   const labels: Record<number, string> = {
-    0: t("scheduled.day_sun"),
-    1: t("scheduled.day_mon"),
-    2: t("scheduled.day_tue"),
-    3: t("scheduled.day_wed"),
-    4: t("scheduled.day_thu"),
-    5: t("scheduled.day_fri"),
-    6: t("scheduled.day_sat"),
+    0: td("scheduled.day_sun", "Sun"),
+    1: td("scheduled.day_mon", "Mon"),
+    2: td("scheduled.day_tue", "Tue"),
+    3: td("scheduled.day_wed", "Wed"),
+    4: td("scheduled.day_thu", "Thu"),
+    5: td("scheduled.day_fri", "Fri"),
+    6: td("scheduled.day_sat", "Sat"),
   };
 
   const list = Array.from(normalized)
@@ -244,7 +244,7 @@ const humanizeCron = (cron: string) => {
     .map((d) => labels[d] ?? String(d))
     .join(", ");
 
-  return list ? t("scheduled.days_at", undefined, { days: list, time: timeLabel }) : t("scheduled.at_time", undefined, { time: timeLabel });
+  return list ? td("scheduled.days_at", "{days} at {time}", { days: list, time: timeLabel }) : td("scheduled.at_time", "At {time}", { time: timeLabel });
 };
 
 const buildCronFromDaily = (timeValue: string, days: string[]) => {
@@ -277,20 +277,20 @@ const taskSummary = (job: ScheduledJob) => {
     return `${run.command}${args}`;
   }
   const prompt = run?.prompt ?? job.prompt;
-  return prompt?.trim() || t("scheduled.task_summary_no_prompt");
+  return prompt?.trim() || td("scheduled.task_summary_no_prompt", "No prompt or command found.");
 };
 
 const toRelative = (value?: string | null) => {
-  if (!value) return t("scheduled.never");
+  if (!value) return td("scheduled.never", "Never");
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return t("scheduled.never");
+  if (!Number.isFinite(parsed)) return td("scheduled.never", "Never");
   return formatRelativeTime(parsed);
 };
 
 const templateScheduleLabel = (template: AutomationTemplate) => {
   if (template.scheduleMode === "interval") {
     const interval = template.intervalHours ?? DEFAULT_INTERVAL_HOURS;
-    return interval === 1 ? t("scheduled.every_hour") : t("scheduled.every_n_hours", undefined, { interval });
+    return interval === 1 ? td("scheduled.every_hour", "Every hour") : td("scheduled.every_n_hours", "Every {interval} hours", { interval });
   }
   return humanizeCron(
     buildCronFromDaily(
@@ -301,10 +301,10 @@ const templateScheduleLabel = (template: AutomationTemplate) => {
 };
 
 const statusLabel = (status?: string | null) => {
-  if (!status) return t("scheduled.not_run_yet");
-  if (status === "running") return t("scheduled.running_status");
-  if (status === "success") return t("scheduled.success_status");
-  if (status === "failed") return t("scheduled.failed_status");
+  if (!status) return td("scheduled.not_run_yet", "Not run yet");
+  if (status === "running") return td("scheduled.running_status", "Running");
+  if (status === "success") return td("scheduled.success_status", "Success");
+  if (status === "failed") return td("scheduled.failed_status", "Failed");
   return status;
 };
 
@@ -346,10 +346,10 @@ const TemplateCard = (props: {
       </div>
 
       <div class="flex items-center justify-between gap-3 border-t border-dls-border pt-4">
-        <span class={tagClass}>{t("scheduled.template_badge")}</span>
+        <span class={tagClass}>{td("scheduled.template_badge", "Template")}</span>
         <button type="button" class={pillPrimaryClass} onClick={props.onUse} disabled={props.disabled}>
           <Sparkles size={14} />
-          {t("scheduled.explore_more")}
+          {td("scheduled.explore_more", "Explore more")}
         </button>
       </div>
     </div>
@@ -389,22 +389,22 @@ const JobCard = (props: {
             </Show>
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-4 text-[12px] text-dls-secondary">
-            <div>{t("scheduled.last_run_prefix")} {toRelative(props.job.lastRunAt)}</div>
-            <div>{t("scheduled.created_prefix")} {toRelative(props.job.createdAt)}</div>
+            <div>{td("scheduled.last_run_prefix", "Last run")} {toRelative(props.job.lastRunAt)}</div>
+            <div>{td("scheduled.created_prefix", "Created")} {toRelative(props.job.createdAt)}</div>
           </div>
         </div>
       </div>
 
       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-dls-border pt-4">
-        <span class={tagClass}>{t("scheduled.filter_scheduled")}</span>
+        <span class={tagClass}>{td("scheduled.filter_scheduled", "Scheduled")}</span>
         <div class="flex flex-wrap gap-2">
           <button type="button" class={pillSecondaryClass} onClick={props.onRun} disabled={props.busy}>
             <Play size={14} />
-            {t("scheduled.run_label")}
+            {td("scheduled.run_label", "Run")}
           </button>
           <button type="button" class={pillGhostClass} onClick={props.onDelete} disabled={props.busy}>
             <Trash2 size={14} />
-            {t("scheduled.delete_label")}
+            {td("scheduled.delete_label", "Delete")}
           </button>
         </div>
       </div>
@@ -471,25 +471,25 @@ export default function AutomationsView(props: AutomationsViewProps) {
   );
 
   const sourceLabel = createMemo(() =>
-    automations.jobsSource() === "remote" ? t("scheduled.source_remote") : t("scheduled.source_local"),
+    automations.jobsSource() === "remote" ? td("scheduled.source_remote", "From OpenWork server") : td("scheduled.source_local", "From local scheduler"),
   );
 
   const sourceDescription = createMemo(() =>
     automations.jobsSource() === "remote"
-      ? t("scheduled.subtitle_remote")
-      : t("scheduled.subtitle_local"),
+      ? td("scheduled.subtitle_remote", "Automations that run on a schedule from the connected OpenWork server.")
+      : td("scheduled.subtitle_local", "Automations that run on a schedule from this device."),
   );
 
   const supportNote = createMemo(() => {
     if (automations.jobsSource() === "remote") return null;
-    if (!isTauriRuntime()) return t("scheduled.desktop_required");
+    if (!isTauriRuntime()) return td("scheduled.desktop_required", "Scheduled tasks require the desktop app.");
     if (!props.schedulerInstalled || schedulerInstallRequested()) return null;
     return null;
   });
 
   const lastUpdatedLabel = createMemo(() => {
     lastUpdatedNow();
-    if (!automations.jobsUpdatedAt()) return t("scheduled.not_synced_yet");
+    if (!automations.jobsUpdatedAt()) return td("scheduled.not_synced_yet", "Not synced yet");
     return formatRelativeTime(automations.jobsUpdatedAt() as number);
   });
 
@@ -550,7 +550,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
     setSchedulerInstallRequested(true);
     try {
       await Promise.resolve(props.addPlugin("opencode-scheduler"));
-      showToast(t("scheduled.scheduler_install_requested"), "success");
+      showToast(td("scheduled.scheduler_install_requested", "Scheduler install requested."), "success");
     } finally {
       setInstallingScheduler(false);
     }
@@ -592,10 +592,10 @@ export default function AutomationsView(props: AutomationsViewProps) {
     try {
       await Promise.resolve(props.createSessionAndOpen(plan.prompt));
       setCreateModalOpen(false);
-      showToast(t("scheduled.prepared_automation_in_chat"), "success");
+      showToast(td("scheduled.prepared_automation_in_chat", "Prepared automation in chat."), "success");
     } catch (error) {
       setCreateError(
-        error instanceof Error ? error.message : t("scheduled.prepare_error_fallback"),
+        error instanceof Error ? error.message : td("scheduled.prepare_error_fallback", "Failed to prepare automation in chat."),
       );
     } finally {
       setCreateBusy(false);
@@ -610,7 +610,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
       return;
     }
     await Promise.resolve(props.createSessionAndOpen(plan.prompt));
-    showToast(t("scheduled.prepared_job_in_chat", undefined, { name: job.name }), "success");
+    showToast(td("scheduled.prepared_job_in_chat", "Prepared {name} in chat.", { name: job.name }), "success");
   };
 
   const confirmDelete = async () => {
@@ -621,10 +621,10 @@ export default function AutomationsView(props: AutomationsViewProps) {
     try {
       await automations.remove(target.slug);
       setDeleteTarget(null);
-      showToast(t("scheduled.removed_job", undefined, { name: target.name }), "success");
+      showToast(td("scheduled.removed_job", "Removed {name}.", { name: target.name }), "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setDeleteError(message || t("scheduled.delete_error_fallback"));
+      setDeleteError(message || td("scheduled.delete_error_fallback", "Failed to delete job."));
     } finally {
       setDeleteBusy(false);
     }
@@ -648,9 +648,9 @@ export default function AutomationsView(props: AutomationsViewProps) {
 
   const jobsEmptyMessage = createMemo(() => {
     const query = searchQuery().trim();
-    if (query) return t("scheduled.no_automations_match", undefined, { query });
-    if (schedulerGateActive()) return t("scheduled.install_scheduler_hint");
-    return t("scheduled.empty_hint");
+    if (query) return td("scheduled.no_automations_match", "No automations match this search.", { query });
+    if (schedulerGateActive()) return td("scheduled.install_scheduler_hint", "Automations run through the opencode-scheduler plugin. Add it to this workspace to enable scheduling.");
+    return td("scheduled.empty_hint", "No automations yet. Pick a template or create your own automation prompt.");
   });
 
   return (
@@ -659,21 +659,21 @@ export default function AutomationsView(props: AutomationsViewProps) {
         <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div class="min-w-0">
             <Show when={props.showHeader !== false}>
-              <h2 class={pageTitleClass}>{t("scheduled.title")}</h2>
+              <h2 class={pageTitleClass}>{td("scheduled.title", "Automations")}</h2>
             </Show>
             <p class="mt-2 max-w-2xl text-[14px] leading-relaxed text-dls-secondary">
-              {t("scheduled.page_description")}
+              {td("scheduled.page_description", "Schedule recurring tasks for this worker, monitor what is already registered, and start from a reusable template.")}
             </p>
           </div>
 
           <div class="flex flex-wrap gap-3 lg:justify-end">
             <button type="button" onClick={openSchedulerDocs} class={pillSecondaryClass}>
               <PlugZap size={14} />
-              {t("scheduled.view_scheduler_docs")}
+              {td("scheduled.view_scheduler_docs", "View scheduler docs")}
             </button>
             <button type="button" onClick={refreshJobs} disabled={props.busy} class={pillSecondaryClass}>
               <RefreshCw size={14} />
-              {props.busy ? t("scheduled.refreshing") : t("common.refresh")}
+              {props.busy ? td("scheduled.refreshing", "Refreshing") : td("common.refresh", "Refresh")}
             </button>
             <button
               type="button"
@@ -682,7 +682,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
               class={pillPrimaryClass}
             >
               <Plus size={14} />
-              {t("scheduled.new_automation")}
+              {td("scheduled.new_automation", "New automation")}
             </button>
           </div>
         </div>
@@ -694,7 +694,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
               type="text"
               value={searchQuery()}
               onInput={(event) => setSearchQuery(event.currentTarget.value)}
-              placeholder={t("scheduled.search_placeholder")}
+              placeholder={td("scheduled.search_placeholder", "Search automations or templates")}
               class="w-full rounded-xl border border-dls-border bg-dls-surface py-3 pl-11 pr-4 text-[14px] text-dls-text focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.12)]"
             />
           </div>
@@ -708,10 +708,10 @@ export default function AutomationsView(props: AutomationsViewProps) {
                   class={activeFilter() === filter ? pillPrimaryClass : pillGhostClass}
                 >
                   {filter === "all"
-                    ? t("scheduled.filter_all")
+                    ? td("scheduled.filter_all", "All")
                     : filter === "scheduled"
-                      ? t("scheduled.filter_scheduled")
-                      : t("scheduled.filter_templates")}
+                      ? td("scheduled.filter_scheduled", "Scheduled")
+                      : td("scheduled.filter_templates", "Templates")}
                 </button>
               )}
             </For>
@@ -729,13 +729,13 @@ export default function AutomationsView(props: AutomationsViewProps) {
               <div>
                 <div class="text-[15px] font-medium tracking-[-0.2px] text-dls-text">
                   {props.schedulerInstalled
-                    ? t("scheduled.reload_activate_title")
-                    : t("scheduled.install_scheduler_title")}
+                    ? td("scheduled.reload_activate_title", "Reload OpenWork to activate automations")
+                    : td("scheduled.install_scheduler_title", "Install the scheduler to unlock automations")}
                 </div>
                 <p class="mt-1 text-[13px] leading-relaxed text-dls-secondary">
                   {props.schedulerInstalled
-                    ? t("scheduled.reload_activate_hint")
-                    : t("scheduled.install_scheduler_hint")}
+                    ? td("scheduled.reload_activate_hint", "OpenCode loads plugins at startup. Reload OpenWork to activate opencode-scheduler.")
+                    : td("scheduled.install_scheduler_hint", "Automations run through the opencode-scheduler plugin. Add it to this workspace to enable scheduling.")}
                 </p>
               </div>
             </div>
@@ -747,7 +747,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
                 class={pillSecondaryClass}
               >
                 <Plus size={14} />
-                {installingScheduler() ? t("scheduled.installing") : t("scheduled.install_scheduler")}
+                {installingScheduler() ? td("scheduled.installing", "Installing...") : td("scheduled.install_scheduler", "Install scheduler")}
               </button>
               <button
                 type="button"
@@ -756,7 +756,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
                 class={pillSecondaryClass}
               >
                 <RefreshCw size={14} />
-                {props.reloadBusy ? t("scheduled.reloading") : t("scheduled.reload_openwork")}
+                {props.reloadBusy ? td("scheduled.reloading", "Reloading...") : td("scheduled.reload_openwork", "Reload OpenWork")}
               </button>
             </div>
           </div>
@@ -785,11 +785,11 @@ export default function AutomationsView(props: AutomationsViewProps) {
         <div class="space-y-4">
           <div class="flex items-end justify-between gap-3">
             <div>
-              <h3 class={sectionTitleClass}>{t("scheduled.your_automations")}</h3>
+              <h3 class={sectionTitleClass}>{td("scheduled.your_automations", "Your automations")}</h3>
               <p class="mt-1 text-[13px] text-dls-secondary">{sourceDescription()}</p>
             </div>
             <div class="text-[12px] text-dls-secondary">
-              {sourceLabel()} · {t("scheduled.last_updated_prefix")} {lastUpdatedLabel()}
+              {sourceLabel()} · {td("scheduled.last_updated_prefix", "Last updated")} {lastUpdatedLabel()}
             </div>
           </div>
 
@@ -824,19 +824,19 @@ export default function AutomationsView(props: AutomationsViewProps) {
         <div class="space-y-4">
           <div class="flex items-end justify-between gap-3">
             <div>
-              <h3 class={sectionTitleClass}>{t("scheduled.quick_start_templates")}</h3>
+              <h3 class={sectionTitleClass}>{td("scheduled.quick_start_templates", "Quick start templates")}</h3>
               <p class="mt-1 text-[13px] text-dls-secondary">
-                {t("scheduled.quick_start_templates_desc")}
+                {td("scheduled.quick_start_templates_desc", "Start from a proven recurring workflow, then tailor the prompt before you prepare it in chat.")}
               </p>
             </div>
-            <div class="text-[12px] text-dls-secondary">{t("scheduled.template_count", undefined, { count: filteredTemplates().length })}</div>
+            <div class="text-[12px] text-dls-secondary">{td("scheduled.template_count", "{count} templates", { count: filteredTemplates().length })}</div>
           </div>
 
           <Show
             when={filteredTemplates().length}
             fallback={
               <div class="rounded-[20px] border border-dashed border-dls-border bg-dls-surface px-5 py-8 text-[14px] text-dls-secondary">
-                {t("scheduled.no_templates_match")}
+                {td("scheduled.no_templates_match", "No templates match this search.")}
               </div>
             }
           >
@@ -862,9 +862,9 @@ export default function AutomationsView(props: AutomationsViewProps) {
           <div class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
             <div class="p-6 space-y-4">
               <div>
-                <h3 class="text-lg font-semibold text-dls-text">{t("scheduled.delete_confirm_title")}</h3>
+                <h3 class="text-lg font-semibold text-dls-text">{td("scheduled.delete_confirm_title", "Delete automation?")}</h3>
                 <p class="mt-1 text-sm text-dls-secondary">
-                  {t("scheduled.delete_confirm_desc", undefined, { source: sourceLabel().toLowerCase() })}
+                  {td("scheduled.delete_confirm_desc", "This removes the schedule and deletes the job definition from {source}.", { source: sourceLabel().toLowerCase() })}
                 </p>
               </div>
 
@@ -874,10 +874,10 @@ export default function AutomationsView(props: AutomationsViewProps) {
 
               <div class="flex justify-end gap-2">
                 <button type="button" class={pillGhostClass} onClick={() => setDeleteTarget(null)} disabled={deleteBusy()}>
-                  {t("common.cancel")}
+                  {td("common.cancel", "Cancel")}
                 </button>
                 <button type="button" class={pillPrimaryClass} onClick={() => void confirmDelete()} disabled={deleteBusy()}>
-                  {deleteBusy() ? t("scheduled.deleting") : t("scheduled.delete_label")}
+                  {deleteBusy() ? td("scheduled.deleting", "Deleting") : td("scheduled.delete_label", "Delete")}
                 </button>
               </div>
             </div>
@@ -890,9 +890,9 @@ export default function AutomationsView(props: AutomationsViewProps) {
           <div class="w-full max-w-2xl rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden">
             <div class="px-5 py-4 border-b border-dls-border flex items-center justify-between gap-3">
               <div>
-                <div class="text-sm font-semibold text-dls-text">{t("scheduled.create_title")}</div>
+                <div class="text-sm font-semibold text-dls-text">{td("scheduled.create_title", "Create automation")}</div>
                 <p class="mt-1 text-xs text-dls-secondary">
-                  {t("scheduled.create_desc")}
+                  {td("scheduled.create_desc", "Automations are scheduled by running a prompt in a new thread. We'll prefill a prompt for you to send.")}
                 </p>
               </div>
               <button
@@ -906,7 +906,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
 
             <div class="p-5 space-y-5">
               <div class="space-y-1.5">
-                <label class="text-[13px] font-medium text-dls-text">{t("scheduled.name_label")}</label>
+                <label class="text-[13px] font-medium text-dls-text">{td("scheduled.name_label", "Name")}</label>
                 <input
                   type="text"
                   value={automationName()}
@@ -916,7 +916,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
               </div>
 
               <div class="space-y-1.5">
-                <label class="text-[13px] font-medium text-dls-text">{t("scheduled.task_summary_prompt")}</label>
+                <label class="text-[13px] font-medium text-dls-text">{td("scheduled.task_summary_prompt", "Prompt")}</label>
                 <textarea
                   rows={4}
                   value={automationPrompt()}
@@ -927,21 +927,21 @@ export default function AutomationsView(props: AutomationsViewProps) {
 
               <div class="space-y-3">
                 <div class="flex items-center justify-between gap-3">
-                  <label class="text-[13px] font-medium text-dls-text">{t("scheduled.schedule_label")}</label>
+                  <label class="text-[13px] font-medium text-dls-text">{td("scheduled.schedule_label", "Schedule")}</label>
                   <div class="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => setScheduleMode("daily")}
                       class={scheduleMode() === "daily" ? pillPrimaryClass : pillGhostClass}
                     >
-                      {t("scheduled.daily_mode")}
+                      {td("scheduled.daily_mode", "Daily")}
                     </button>
                     <button
                       type="button"
                       onClick={() => setScheduleMode("interval")}
                       class={scheduleMode() === "interval" ? pillPrimaryClass : pillGhostClass}
                     >
-                      {t("scheduled.interval_mode")}
+                      {td("scheduled.interval_mode", "Interval")}
                     </button>
                   </div>
                 </div>
@@ -950,7 +950,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
                   when={scheduleMode() === "daily"}
                   fallback={
                     <div class="flex flex-wrap items-center gap-3 rounded-[20px] border border-dls-border bg-dls-hover p-4">
-                      <div class="text-[13px] text-dls-secondary">{t("scheduled.every_prefix")}</div>
+                      <div class="text-[13px] text-dls-secondary">{td("scheduled.every_prefix", "Every")}</div>
                       <input
                         type="number"
                         min={1}
@@ -959,7 +959,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
                         onInput={(event) => updateIntervalHours(event.currentTarget.value)}
                         class="w-20 rounded-xl border border-dls-border bg-dls-surface px-3 py-2 text-[14px] text-dls-text focus:outline-none"
                       />
-                      <div class="text-[13px] text-dls-secondary">{t("scheduled.hours_suffix")}</div>
+                      <div class="text-[13px] text-dls-secondary">{td("scheduled.hours_suffix", "hours")}</div>
                     </div>
                   }
                 >
@@ -1008,10 +1008,10 @@ export default function AutomationsView(props: AutomationsViewProps) {
             </div>
 
             <div class="px-5 py-4 border-t border-dls-border flex items-center justify-between gap-3">
-              <div class="text-[12px] text-dls-secondary">{t("scheduled.worker_root_hint")}</div>
+              <div class="text-[12px] text-dls-secondary">{td("scheduled.worker_root_hint", "Worker root is inferred from the selected workspace.")}</div>
               <div class="flex items-center gap-2">
                 <button type="button" class={pillGhostClass} onClick={closeCreateModal} disabled={createBusy()}>
-                  {t("common.cancel")}
+                  {td("common.cancel", "Cancel")}
                 </button>
                 <button
                   type="button"
@@ -1019,7 +1019,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
                   onClick={() => void handleCreateAutomation()}
                   disabled={createBusy() || automationDisabled()}
                 >
-                  {createBusy() ? t("scheduled.create_button") : t("scheduled.create_button")}
+                  {createBusy() ? td("scheduled.create_button", "Create") : td("scheduled.create_button", "Create")}
                 </button>
               </div>
             </div>

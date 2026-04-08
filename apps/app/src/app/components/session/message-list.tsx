@@ -31,7 +31,7 @@ import {
 } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
-import { t } from "../../../i18n";
+import { t, td } from "../../../i18n";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -229,57 +229,57 @@ function toolHeadline(part: Part) {
     const description = pick("description");
     if (description) return compactText(description);
     const command = pick("command", "cmd");
-    return command ? compactText(t("message_list.tool_run_command", undefined, { command }), 48) : t("message_list.tool_run_command_fallback");
+    return command ? compactText(td("message_list.tool_run_command", "Run {command}", { command }), 48) : td("message_list.tool_run_command_fallback", "Run command");
   }
 
   if (tool === "read") {
     const file = target("filePath", "path", "file");
-    return file ? t("message_list.tool_reviewed_file", undefined, { file }) : t("message_list.tool_reviewed_file_fallback");
+    return file ? td("message_list.tool_reviewed_file", "Reviewed {file}", { file }) : td("message_list.tool_reviewed_file_fallback", "Reviewed file");
   }
 
   if (tool === "edit") {
     const file = target("filePath", "path", "file");
-    return file ? t("message_list.tool_updated_file", undefined, { file }) : t("message_list.tool_updated_file_fallback");
+    return file ? td("message_list.tool_updated_file", "Updated {file}", { file }) : td("message_list.tool_updated_file_fallback", "Updated file");
   }
 
   if (tool === "write" || tool === "apply_patch") {
     const file = target("filePath", "path", "file");
-    return file ? t("message_list.tool_update_file", undefined, { file }) : t("message_list.tool_update_file_fallback");
+    return file ? td("message_list.tool_update_file", "Update {file}", { file }) : td("message_list.tool_update_file_fallback", "Update file");
   }
 
   if (tool === "grep" || tool === "glob" || tool === "search") {
     const pattern = pick("pattern", "query");
-    return pattern ? t("message_list.tool_searched_pattern", undefined, { pattern: compactText(pattern, 36) }) : t("message_list.tool_searched_code_fallback");
+    return pattern ? td("message_list.tool_searched_pattern", "Searched {pattern}", { pattern: compactText(pattern, 36) }) : td("message_list.tool_searched_code_fallback", "Searched code");
   }
 
   if (tool === "list" || tool === "list_files") {
     const path = target("path");
-    return path ? t("message_list.tool_reviewed_path", undefined, { path }) : t("message_list.tool_reviewed_files_fallback");
+    return path ? td("message_list.tool_reviewed_path", "Reviewed {path}", { path }) : td("message_list.tool_reviewed_files_fallback", "Reviewed files");
   }
 
   if (tool === "task") {
     const description = pick("description");
     if (description) return compactText(description);
     const agent = pick("subagent_type");
-    return agent ? t("message_list.tool_delegate_agent", undefined, { agent }) : t("message_list.tool_delegate_task_fallback");
+    return agent ? td("message_list.tool_delegate_agent", "Delegate {agent}", { agent }) : td("message_list.tool_delegate_task_fallback", "Delegate task");
   }
 
   if (tool === "todowrite") {
-    return t("message_list.tool_update_todo");
+    return td("message_list.tool_update_todo", "Update todo list");
   }
 
   if (tool === "todoread") {
-    return t("message_list.tool_read_todo");
+    return td("message_list.tool_read_todo", "Read todo list");
   }
 
   if (tool === "webfetch") {
     const url = pick("url");
-    return url ? t("message_list.tool_checked_url", undefined, { url: compactText(url, 36) }) : t("message_list.tool_checked_web_fallback");
+    return url ? td("message_list.tool_checked_url", "Checked {url}", { url: compactText(url, 36) }) : td("message_list.tool_checked_web_fallback", "Checked web page");
   }
 
   if (tool === "skill") {
     const name = pick("name");
-    return name ? t("message_list.tool_load_skill_named", undefined, { name }) : t("message_list.tool_load_skill_fallback");
+    return name ? td("message_list.tool_load_skill_named", "Load skill {name}", { name }) : td("message_list.tool_load_skill_fallback", "Load skill");
   }
 
   const fallback = tool
@@ -696,17 +696,17 @@ export default function MessageList(props: MessageListProps) {
       const title = session()?.title?.trim();
       if (title) return title;
       if (task().description) return task().description!;
-      if (task().agentType) return t("message_list.subagent_type_task", undefined, { agentType: task().agentType! });
-      return t("message_list.subagent_session_fallback");
+      if (task().agentType) return td("message_list.subagent_type_task", "{agentType} task", { agentType: task().agentType! });
+      return td("message_list.subagent_session_fallback", "Subagent session");
     });
     const statusLabel = createMemo(() => {
-      if (loading()) return t("message_list.subagent_loading_transcript");
-      if (streaming()) return t("message_list.subagent_running");
+      if (loading()) return td("message_list.subagent_loading_transcript", "Loading transcript");
+      if (streaming()) return td("message_list.subagent_running", "Running");
       if (childMessages().length > 0) {
         const count = childMessages().length;
-        return t("message_list.subagent_message_count", undefined, { count, plural: count === 1 ? "" : "s" });
+        return td("message_list.subagent_message_count", "{count} message{plural}", { count, plural: count === 1 ? "" : "s" });
       }
-      return t("message_list.subagent_waiting_transcript");
+      return td("message_list.subagent_waiting_transcript", "Waiting for transcript");
     });
 
     createEffect(() => {
@@ -746,7 +746,7 @@ export default function MessageList(props: MessageListProps) {
                   props.openSessionById?.(id);
                 }}
               >
-                {t("message_list.open_session")}
+                {td("message_list.open_session", "Open session")}
               </button>
             </Show>
           </div>
@@ -754,7 +754,7 @@ export default function MessageList(props: MessageListProps) {
             <div class="mt-3 rounded-[18px] border border-dls-border/70 bg-dls-surface px-3 py-3">
               <Show
                 when={childMessages().length > 0}
-                fallback={<div class="text-[12px] leading-5 text-gray-9">{t("message.waiting_subagent")}</div>}
+                fallback={<div class="text-[12px] leading-5 text-gray-9">{td("message.waiting_subagent", "Waiting for the subagent transcript to arrive.")}</div>}
               >
                 <MessageList
                   messages={childMessages()}
@@ -813,7 +813,7 @@ export default function MessageList(props: MessageListProps) {
       const title = summary().title?.trim() ?? "";
       if (title) return title;
       const fromTool = toolHeadline(rowProps.part);
-      return fromTool || t("message_list.step_updates_progress");
+      return fromTool || td("message_list.step_updates_progress", "Updates progress");
     });
     const reasoningText = createMemo(() => {
       if (rowProps.part.type !== "reasoning") return "";
@@ -855,13 +855,13 @@ export default function MessageList(props: MessageListProps) {
           <div class="mt-3 ml-[22px] space-y-3">
             <Show when={hasStructuredValue(toolInput())}>
               <div>
-                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{t("message.tool_request_label")}</div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{td("message.tool_request_label", "Request")}</div>
                 <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolInput())}</pre>
               </div>
             </Show>
             <Show when={hasStructuredValue(toolOutput())}>
               <div>
-                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{t("message.tool_result_label")}</div>
+                <div class="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">{td("message.tool_result_label", "Result")}</div>
                 <pre class="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">{formatStructuredValue(toolOutput())}</pre>
               </div>
             </Show>
@@ -1143,7 +1143,7 @@ export default function MessageList(props: MessageListProps) {
             <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
               <button
                 class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                title={t("message_list.copy_message")}
+                title={td("message_list.copy_message", "Copy message")}
                 onClick={() => {
                   const text = block.renderableParts
                     .map((part) => partToText(part))

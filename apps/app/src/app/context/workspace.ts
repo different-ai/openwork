@@ -69,7 +69,7 @@ import {
 import type { BootPhase, StartupBranch } from "../lib/startup-boot";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
-import { t, currentLocale } from "../../i18n";
+import { t, currentLocale, td } from "../../i18n";
 import { filterProviderList, mapConfigProvidersToList } from "../utils/providers";
 import { buildDefaultWorkspaceBlueprint, normalizeWorkspaceOpenworkConfig } from "../lib/workspace-blueprints";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
@@ -1551,7 +1551,7 @@ export function createWorkspaceStore(options: {
           }
 
           if (!resolvedBaseUrl) {
-            options.setError(t("app.error.remote_base_url_required", currentLocale()));
+            options.setError(td("app.error.remote_base_url_required", "Add a server URL to continue.", currentLocale()));
             updateWorkspaceConnectionState(id, {
               status: "error",
               message: "Remote base URL is required.",
@@ -1583,7 +1583,7 @@ export function createWorkspaceStore(options: {
         }
 
         if (!baseUrl) {
-          options.setError(t("app.error.remote_base_url_required", currentLocale()));
+          options.setError(td("app.error.remote_base_url_required", "Add a server URL to continue.", currentLocale()));
           updateWorkspaceConnectionState(id, {
             status: "error",
             message: "Remote base URL is required.",
@@ -2171,12 +2171,12 @@ export function createWorkspaceStore(options: {
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null): Promise<boolean> {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
       return false;
     }
 
     if (!folder) {
-      options.setError(t("app.error.choose_folder", currentLocale()));
+      options.setError(td("app.error.choose_folder", "Choose a folder to continue.", currentLocale()));
       return false;
     }
 
@@ -2190,7 +2190,7 @@ export function createWorkspaceStore(options: {
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
+        options.setError(td("app.error.choose_folder", "Choose a folder to continue.", currentLocale()));
         return false;
       }
 
@@ -2275,12 +2275,12 @@ export function createWorkspaceStore(options: {
     input?: { onReady?: () => Promise<void> | void },
   ): Promise<boolean> {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
       return false;
     }
 
     if (!folder) {
-      options.setError(t("app.error.choose_folder", currentLocale()));
+      options.setError(td("app.error.choose_folder", "Choose a folder to continue.", currentLocale()));
       return false;
     }
 
@@ -2346,7 +2346,7 @@ export function createWorkspaceStore(options: {
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
+        options.setError(td("app.error.choose_folder", "Choose a folder to continue.", currentLocale()));
         setSandboxStep("workspace", { status: "error", detail: "No folder selected" });
         setSandboxError("No folder selected");
         return false;
@@ -2559,7 +2559,7 @@ export function createWorkspaceStore(options: {
     const displayName = input.displayName?.trim() || null;
 
     if (!hostUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(td("app.error.remote_base_url_required", "Add a server URL to continue.", currentLocale()));
       return false;
     }
 
@@ -2632,7 +2632,7 @@ export function createWorkspaceStore(options: {
     }
 
     if (!resolvedBaseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(td("app.error.remote_base_url_required", "Add a server URL to continue.", currentLocale()));
       return false;
     }
 
@@ -2798,7 +2798,7 @@ export function createWorkspaceStore(options: {
     const displayName = input.displayName?.trim() || null;
 
     if (!hostUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(td("app.error.remote_base_url_required", "Add a server URL to continue.", currentLocale()));
       return false;
     }
 
@@ -2840,7 +2840,7 @@ export function createWorkspaceStore(options: {
     }
 
     if (!resolvedBaseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(td("app.error.remote_base_url_required", "Add a server URL to continue.", currentLocale()));
       return false;
     }
 
@@ -2928,7 +2928,7 @@ export function createWorkspaceStore(options: {
 
   async function forgetWorkspace(workspaceId: string) {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
       return;
     }
 
@@ -3018,10 +3018,10 @@ export function createWorkspaceStore(options: {
       }
 
       if (!isTauriRuntime()) {
-        options.setError(t("app.error.tauri_required", currentLocale()));
+        options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: t("app.error.tauri_required", currentLocale()),
+          message: td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()),
         });
         return false;
       }
@@ -3106,12 +3106,12 @@ export function createWorkspaceStore(options: {
 
   async function pickWorkspaceFolder() {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
       return null;
     }
 
     try {
-      const selection = await pickDirectory({ title: t("onboarding.choose_workspace_folder", currentLocale()) });
+      const selection = await pickDirectory({ title: td("onboarding.choose_workspace_folder", "Choose workspace folder", currentLocale()) });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 
@@ -3142,7 +3142,7 @@ export function createWorkspaceStore(options: {
   async function exportWorkspaceConfig(workspaceId?: string) {
     if (exportingWorkspaceConfig()) return;
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
       return;
     }
 
@@ -3200,7 +3200,7 @@ export function createWorkspaceStore(options: {
   async function importWorkspaceConfig() {
     if (importingWorkspaceConfig()) return;
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
       return;
     }
 
@@ -3225,7 +3225,7 @@ export function createWorkspaceStore(options: {
 
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
+        options.setError(td("app.error.choose_folder", "Choose a folder to continue.", currentLocale()));
         return;
       }
 
@@ -3254,19 +3254,19 @@ export function createWorkspaceStore(options: {
 
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale()));
       return false;
     }
 
     const overrideWorkspacePath = optionsOverride?.workspacePath?.trim() ?? "";
     if (selectedWorkspaceInfo()?.workspaceType === "remote" && !overrideWorkspacePath) {
-      options.setError(t("app.error.host_requires_local", currentLocale()));
+      options.setError(td("app.error.host_requires_local", "Select a local workspace to start the engine.", currentLocale()));
       return false;
     }
 
     const dir = (overrideWorkspacePath || selectedWorkspacePath() || projectDir()).trim();
     if (!dir) {
-      options.setError(t("app.error.pick_workspace_folder", currentLocale()));
+      options.setError(td("app.error.pick_workspace_folder", "Pick a workspace folder first.", currentLocale()));
       return false;
     }
 
@@ -3477,10 +3477,10 @@ export function createWorkspaceStore(options: {
         closeWorkspaceConnectionSettings();
         return;
       }
-      setEditRemoteWorkspaceError(t("app.error_connection_failed_url", currentLocale()));
+      setEditRemoteWorkspaceError(td("app.error_connection_failed_url", "Connection failed. Check the URL and token.", currentLocale()));
       options.setError(null);
     } catch (e) {
-      const message = e instanceof Error ? e.message : t("app.error_connection_failed", currentLocale());
+      const message = e instanceof Error ? e.message : td("app.error_connection_failed", "Connection failed", currentLocale());
       setEditRemoteWorkspaceError(message);
       options.setError(null);
     }
@@ -3657,7 +3657,7 @@ export function createWorkspaceStore(options: {
       setEngineInstallLogs(combined || null);
 
       if (!result.ok) {
-        options.setError(result.stderr.trim() || t("app.error.install_failed", currentLocale()));
+        options.setError(result.stderr.trim() || td("app.error.install_failed", "OpenCode install failed. See logs above.", currentLocale()));
       }
 
       await refreshEngineDoctor();
@@ -3750,7 +3750,7 @@ export function createWorkspaceStore(options: {
     if (selectedWorkspaceInfo()?.workspaceType === "remote") return;
 
     try {
-      const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
+      const selection = await pickDirectory({ title: td("onboarding.authorize_folder", "Authorize folder", currentLocale()) });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
       if (!folder) return;

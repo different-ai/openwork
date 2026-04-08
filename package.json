@@ -19,6 +19,7 @@
     "build:web": "pnpm --filter @openwork-ee/den-web build",
     "preview": "pnpm --filter @openwork/app preview",
     "i18n:find": "node scripts/i18n-audit.mjs --find",
+    "i18n:sync-en": "node scripts/i18n-audit.mjs --extract-source-first",
     "typecheck": "pnpm --filter @openwork/app typecheck",
     "test:health": "pnpm --filter @openwork/app test:health",
     "test:i18n:find": "node --test scripts/i18n-audit-find.test.mjs",

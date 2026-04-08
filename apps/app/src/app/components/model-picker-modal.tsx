@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { CheckCircle2, Circle, Search, X } from "lucide-solid";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 
 import Button from "./button";
 import ProviderIcon from "./provider-icon";
@@ -24,7 +24,7 @@ export type ModelPickerModalProps = {
 
 export default function ModelPickerModal(props: ModelPickerModalProps) {
   let searchInputRef: HTMLInputElement | undefined;
-  const translate = (key: string, params?: Record<string, string | number>) => t(key, undefined, params);
+  const translate = (key: string, defaultValue: string, params?: Record<string, string | number>) => td(key, defaultValue, params);
 
   type RenderedItem =
     | { kind: "model"; opt: ModelOption }
@@ -306,9 +306,11 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             <span class="truncate">{provider.title}</span>
           </div>
           <div class={`mt-0.5 flex items-center gap-3 text-[11px] ${index === activeIndex() ? 'text-gray-10' : 'text-gray-9 group-hover:text-gray-10'}`}>
-            <span class="truncate">{translate("model_picker.connect_provider_hint")}</span>
+            <span class="truncate">{translate("model_picker.connect_provider_hint", "Connect this provider to browse and save models")}</span>
             <span class="ml-auto opacity-70">
-              {translate(provider.matchCount === 1 ? "model_picker.model_count_one" : "model_picker.model_count", { count: provider.matchCount })}
+              {provider.matchCount === 1
+                ? translate("model_picker.model_count_one", "1 model")
+                : translate("model_picker.model_count", "{count} models", { count: provider.matchCount })}
             </span>
           </div>
         </div>
@@ -324,12 +326,14 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-lg font-semibold text-gray-12">
-                  {translate(props.target === "default" ? "model_picker.default_model_title" : "model_picker.chat_model_title")}
+                  {props.target === "default"
+                    ? translate("model_picker.default_model_title", "Default model")
+                    : translate("model_picker.chat_model_title", "Chat model")}
                 </h3>
                 <p class="text-sm text-gray-11 mt-1">
-                  {translate(props.target === "default"
-                    ? "model_picker.default_model_desc"
-                    : "model_picker.chat_model_desc")}
+                  {props.target === "default"
+                    ? translate("model_picker.default_model_desc", "Choose the default model for new chats, then fine-tune reasoning profiles on its card before pressing Done.")
+                    : translate("model_picker.chat_model_desc", "Choose the model for this chat. If a model supports reasoning profiles, configure them on its card.")}
                 </p>
               </div>
               <Button
@@ -349,13 +353,13 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                   type="text"
                   value={props.query}
                   onInput={(e) => props.setQuery(e.currentTarget.value)}
-                  placeholder={translate("settings.search_models")}
+                  placeholder={translate("settings.search_models", "Search models…")}
                   class="w-full bg-dls-surface border border-dls-border rounded-xl py-2.5 pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-1 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] focus:border-dls-accent"
                 />
               </div>
               <Show when={props.query.trim()}>
                 <div class="mt-2 text-xs text-dls-secondary">
-                  {translate("settings.showing_models", { count: props.filteredOptions.length, total: props.options.length })}
+                  {translate("settings.showing_models", "Showing {count} of {total}", { count: props.filteredOptions.length, total: props.options.length })}
                 </div>
               </Show>
             </div>
@@ -364,7 +368,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={recommendedOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    {translate("model_picker.recommended")}
+                    {translate("model_picker.recommended", "Recommended")}
                   </div>
                   <For each={recommendedOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
                 </section>
@@ -373,7 +377,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={otherEnabledOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    {translate("model_picker.other_connected_models")}
+                    {translate("model_picker.other_connected_models", "Other connected models")}
                   </div>
                   <For each={otherEnabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
                 </section>
@@ -382,7 +386,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <Show when={otherOptions().length > 0}>
                 <section class="space-y-2">
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    {translate("model_picker.more_providers")}
+                    {translate("model_picker.more_providers", "More providers")}
                   </div>
                   <For each={otherOptions()}>
                     {(provider) => renderProviderLink(provider, provider.index)}
@@ -392,14 +396,14 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
 
               <Show when={renderedItems().length === 0}>
                 <div class="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
-                  {translate("model_picker.no_results")}
+                  {translate("model_picker.no_results", "No models match your search.")}
                 </div>
               </Show>
             </div>
 
             <div class="mt-5 flex justify-end shrink-0">
               <Button variant="outline" onClick={() => props.onClose()}>
-                {translate("settings.done")}
+                {translate("settings.done", "Done")}
               </Button>
             </div>
           </div>

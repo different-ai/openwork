@@ -1,7 +1,7 @@
 import { Show, createEffect, createSignal } from "solid-js";
 import { Check, ExternalLink, Loader2, MonitorSmartphone, Settings2, X } from "lucide-solid";
 import Button from "./button";
-import { t, type Language } from "../../i18n";
+import { t, type Language, td } from "../../i18n";
 
 export type ControlChromeSetupModalProps = {
   open: boolean;
@@ -14,7 +14,7 @@ export type ControlChromeSetupModalProps = {
 };
 
 export default function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
-  const tr = (key: string) => t(key, props.language);
+  const tr = (key: string, defaultValue: string) => td(key, defaultValue, props.language);
   const [useExistingProfile, setUseExistingProfile] = createSignal(props.initialUseExistingProfile);
 
   createEffect(() => {
@@ -37,10 +37,10 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 </div>
                 <div>
                   <h2 class="text-xl font-semibold text-gray-12 sm:text-2xl">
-                    {tr("mcp.control_chrome_setup_title")}
+                    {tr("mcp.control_chrome_setup_title", "Set up Control Chrome")}
                   </h2>
                   <p class="mt-1 max-w-xl text-sm leading-6 text-gray-11">
-                    {tr("mcp.control_chrome_setup_subtitle")}
+                    {tr("mcp.control_chrome_setup_subtitle", "Turn on Chrome access, then choose whether OpenWork should use its own clean profile or attach to the Chrome you already use.")}
                   </p>
                 </div>
               </div>
@@ -48,7 +48,7 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 type="button"
                 class="rounded-xl p-2 text-gray-11 transition-colors hover:bg-gray-4 hover:text-gray-12"
                 onClick={props.onClose}
-                aria-label={tr("common.cancel")}
+                aria-label={tr("common.cancel", "Cancel")}
               >
                 <X size={20} />
               </button>
@@ -63,15 +63,15 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 </div>
                 <div class="min-w-0 flex-1">
                   <h3 class="text-sm font-semibold text-gray-12">
-                    {tr("mcp.control_chrome_browser_title")}
+                    {tr("mcp.control_chrome_browser_title", "1. Turn on Chrome access")}
                   </h3>
                   <p class="mt-1 text-sm text-gray-11">
-                    {tr("mcp.control_chrome_browser_hint")}
+                    {tr("mcp.control_chrome_browser_hint", "In Chrome 144 or newer, do this first:")}
                   </p>
                   <ol class="mt-3 space-y-2 text-sm leading-6 text-gray-12">
-                    <li>1. {tr("mcp.control_chrome_browser_step_one")}</li>
-                    <li>2. {tr("mcp.control_chrome_browser_step_two")}</li>
-                    <li>3. {tr("mcp.control_chrome_browser_step_three")}</li>
+                    <li>1. {tr("mcp.control_chrome_browser_step_one", "Open chrome://inspect/#remote-debugging.")}</li>
+                    <li>2. {tr("mcp.control_chrome_browser_step_two", "Enable remote debugging.")}</li>
+                    <li>3. {tr("mcp.control_chrome_browser_step_three", "Allow incoming debugging connections when Chrome asks.")}</li>
                   </ol>
                   <a
                     href="https://github.com/ChromeDevTools/chrome-devtools-mcp"
@@ -79,7 +79,7 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                     rel="noopener noreferrer"
                     class="mt-3 inline-flex items-center gap-1 text-xs font-medium text-blue-11 transition-colors hover:text-blue-12"
                   >
-                    {tr("mcp.control_chrome_docs")}
+                    {tr("mcp.control_chrome_docs", "Official MCP guide")}
                     <ExternalLink size={12} />
                   </a>
                 </div>
@@ -93,10 +93,10 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 </div>
                 <div class="min-w-0 flex-1">
                   <h3 class="text-sm font-semibold text-gray-12">
-                    {tr("mcp.control_chrome_profile_title")}
+                    {tr("mcp.control_chrome_profile_title", "2. Choose which Chrome to use")}
                   </h3>
                   <p class="mt-1 text-sm leading-6 text-gray-11">
-                    {tr("mcp.control_chrome_profile_hint")}
+                    {tr("mcp.control_chrome_profile_hint", "Control Chrome normally opens a separate Chrome profile. Turn this on if you want OpenWork to reuse the Chrome window you already have open.")}
                   </p>
 
                   <button
@@ -108,10 +108,10 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                   >
                     <div class="space-y-1">
                       <div class="text-sm font-semibold text-gray-12">
-                        {tr("mcp.control_chrome_toggle_label")}
+                        {tr("mcp.control_chrome_toggle_label", "Use my existing Chrome profile")}
                       </div>
                       <div class="text-xs leading-5 text-gray-11">
-                        {tr("mcp.control_chrome_toggle_hint")}
+                        {tr("mcp.control_chrome_toggle_hint", "When this is on, OpenWork adds --autoConnect so the MCP attaches to a Chrome instance you already started.")}
                       </div>
                     </div>
 
@@ -122,8 +122,8 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
 
                   <div class="mt-3 rounded-2xl border border-dashed border-gray-6 bg-gray-2/70 px-4 py-3 text-xs leading-5 text-gray-11">
                     {useExistingProfile()
-                      ? tr("mcp.control_chrome_toggle_on")
-                      : tr("mcp.control_chrome_toggle_off")}
+                      ? tr("mcp.control_chrome_toggle_on", "OpenWork will reuse your current tabs, cookies, and sign-ins.")
+                      : tr("mcp.control_chrome_toggle_off", "OpenWork will launch a separate Chrome profile just for automation.")}
                   </div>
                 </div>
               </div>
@@ -132,13 +132,13 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
 
           <div class="flex flex-col-reverse gap-3 border-t border-gray-6 bg-gray-2/80 px-6 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-7">
             <Button variant="ghost" onClick={props.onClose}>
-              {tr("mcp.auth.cancel")}
+              {tr("mcp.auth.cancel", "Cancel")}
             </Button>
             <Button variant="secondary" onClick={() => props.onSave(useExistingProfile())} disabled={props.busy}>
-              <Show when={props.busy} fallback={props.mode === "edit" ? tr("mcp.control_chrome_save") : tr("mcp.control_chrome_connect")}>
+              <Show when={props.busy} fallback={props.mode === "edit" ? tr("mcp.control_chrome_save", "Save settings") : tr("mcp.control_chrome_connect", "Add Control Chrome")}>
                 <>
                   <Loader2 size={16} class="animate-spin" />
-                  {props.mode === "edit" ? tr("mcp.control_chrome_save") : tr("mcp.control_chrome_connect")}
+                  {props.mode === "edit" ? tr("mcp.control_chrome_save", "Save settings") : tr("mcp.control_chrome_connect", "Add Control Chrome")}
                 </>
               </Show>
             </Button>

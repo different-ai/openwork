@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { ArrowLeft, MonitorUp, Rocket, X } from "lucide-solid";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 
 import ShareWorkspaceAccessPanel from "./share-workspace-access-panel";
 import ShareWorkspaceTemplatePanel from "./share-workspace-template-panel";
@@ -24,9 +24,9 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   const [remoteAccessEnabled, setRemoteAccessEnabled] = createSignal(false);
   const [teamTemplateName, setTeamTemplateName] = createSignal("");
 
-  const title = createMemo(() => props.title ?? t("share.title"));
+  const title = createMemo(() => props.title ?? td("share.title", "Share workspace"));
   const workspaceBadge = createMemo(() => {
-    const raw = props.workspaceName?.trim() || t("share.workspace_fallback");
+    const raw = props.workspaceName?.trim() || td("share.workspace_fallback", "Workspace");
     const parts = raw.split(/[\\/]/).filter(Boolean);
     return parts[parts.length - 1] || raw;
   });
@@ -41,7 +41,7 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
         setCopiedKey(null);
         setCollaboratorExpanded(false);
         setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
-        setTeamTemplateName(`${props.workspaceName.trim() || t("share.workspace_fallback")} template`);
+        setTeamTemplateName(`${props.workspaceName.trim() || td("share.workspace_fallback", "Workspace")} template`);
       },
     ),
   );
@@ -102,13 +102,13 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   const headerTitle = createMemo(() => {
     switch (activeView()) {
       case "template":
-        return t("share.view_template");
+        return td("share.view_template", "Share a template");
       case "template-public":
-        return t("share.view_template_public");
+        return td("share.view_template_public", "Public template");
       case "template-team":
-        return t("share.view_template_team");
+        return td("share.view_template_team", "Share with team");
       case "access":
-        return t("share.view_access");
+        return td("share.view_access", "Access workspace remotely");
       default:
         return title();
     }
@@ -117,15 +117,15 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   const headerSubtitle = createMemo(() => {
     switch (activeView()) {
       case "template":
-        return t("share.template_intro");
+        return td("share.template_intro", "Share a reusable setup without granting live access to this running workspace.");
       case "template-public":
-        return t("share.subtitle_template_public");
+        return td("share.subtitle_template_public", "Create a public workspace template link anyone can import.");
       case "template-team":
-        return t("share.subtitle_template_team");
+        return td("share.subtitle_template_team", "Save a workspace template to your active OpenWork Cloud organization.");
       case "access":
-        return t("share.subtitle_access");
+        return td("share.subtitle_access", "Reveal the live connection details needed to reach this workspace from another machine.");
       default:
-        return props.workspaceDetail?.trim() || t("share.chooser_subtitle");
+        return props.workspaceDetail?.trim() || td("share.chooser_subtitle", "Choose how you want to share this workspace.");
     }
   });
 
@@ -136,7 +136,7 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
           <div class={modalHeaderClass}>
             <div class="flex min-w-0 items-start gap-3">
               <Show when={activeView() !== "chooser"}>
-                <button onClick={goBack} class={modalHeaderButtonClass} aria-label={t("share.back_hint")}>
+                <button onClick={goBack} class={modalHeaderButtonClass} aria-label={td("share.back_hint", "Back to share options")}>
                   <ArrowLeft size={16} />
                 </button>
               </Show>
@@ -151,7 +151,7 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
               </div>
             </div>
 
-            <button onClick={props.onClose} class={modalHeaderButtonClass} aria-label={t("share.close_hint")} title={t("share.close_hint")}>
+            <button onClick={props.onClose} class={modalHeaderButtonClass} aria-label={td("share.close_hint", "Close")} title={td("share.close_hint", "Close")}>
               <X size={16} />
             </button>
           </div>
@@ -160,14 +160,14 @@ export default function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
             <Show when={activeView() === "chooser"}>
               <div class="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
                 <WorkspaceOptionCard
-                  title={t("share.option_template_title")}
-                  description={t("share.option_template_desc")}
+                  title={td("share.option_template_title", "Share a template")}
+                  description={td("share.option_template_desc", "Package this setup so someone else can start from the same environment.")}
                   icon={Rocket}
                   onClick={() => setActiveView("template")}
                 />
                 <WorkspaceOptionCard
-                  title={t("share.option_access_title")}
-                  description={t("share.option_access_desc")}
+                  title={td("share.option_access_title", "Access workspace remotely")}
+                  description={td("share.option_access_desc", "Reveal the live connection details needed to reach this running workspace from another machine.")}
                   icon={MonitorUp}
                   onClick={() => setActiveView("access")}
                 />

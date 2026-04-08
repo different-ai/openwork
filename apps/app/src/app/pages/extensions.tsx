@@ -7,7 +7,7 @@ import McpView from "../connections/mcp-view";
 import { useConnections } from "../connections/provider";
 import { useExtensions } from "../extensions/provider";
 import PluginsView, { type PluginsViewProps } from "./plugins";
-import { t } from "../../i18n";
+import { td } from "../../i18n";
 
 export type ExtensionsSection = "all" | "mcp" | "plugins";
 
@@ -65,9 +65,9 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
       <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div class="space-y-1">
           <Show when={props.showHeader !== false}>
-            <h2 class="text-3xl font-bold text-dls-text">{t("extensions.title")}</h2>
+            <h2 class="text-3xl font-bold text-dls-text">{td("extensions.title", "Extensions")}</h2>
             <p class="text-sm text-dls-secondary mt-1.5">
-              {t("extensions.subtitle")}
+              {td("extensions.subtitle", "Apps (MCP) and OpenCode plugins live in one place.")}
             </p>
           </Show>
           <div class={`${props.showHeader === false ? "" : "mt-3"} flex flex-wrap items-center gap-2`}>
@@ -75,7 +75,9 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               <div class="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
                 <div class="w-2 h-2 rounded-full bg-green-9" />
                 <span class="text-xs font-medium text-green-11">
-                  {t(connectedAppsCount() === 1 ? "extensions.app_count_one" : "extensions.app_count_many", undefined, { count: connectedAppsCount() })}
+                  {connectedAppsCount() === 1
+                    ? td("extensions.app_count_one", "{count} app connected", { count: connectedAppsCount() })
+                    : td("extensions.app_count_many", "{count} apps connected", { count: connectedAppsCount() })}
                 </span>
               </div>
             </Show>
@@ -83,7 +85,9 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               <div class="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
                 <Cpu size={14} class="text-gray-11" />
                 <span class="text-xs font-medium text-gray-11">
-                  {t(pluginCount() === 1 ? "extensions.plugin_count_one" : "extensions.plugin_count_many", undefined, { count: pluginCount() })}
+                  {pluginCount() === 1
+                    ? td("extensions.plugin_count_one", "{count} plugin", { count: pluginCount() })
+                    : td("extensions.plugin_count_many", "{count} plugins", { count: pluginCount() })}
                 </span>
               </div>
             </Show>
@@ -98,7 +102,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               aria-pressed={section() === "all"}
               onClick={() => selectSection("all")}
             >
-              {t("extensions.filter_all")}
+              {td("extensions.filter_all", "All")}
             </button>
             <button
               type="button"
@@ -107,7 +111,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               onClick={() => selectSection("mcp")}
             >
               <Box size={14} />
-              {t("extensions.filter_apps")}
+              {td("extensions.filter_apps", "Apps")}
             </button>
             <button
               type="button"
@@ -116,11 +120,11 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               onClick={() => selectSection("plugins")}
             >
               <Cpu size={14} />
-              {t("extensions.filter_plugins")}
+              {td("extensions.filter_plugins", "Plugins")}
             </button>
           </div>
           <Button variant="ghost" onClick={refreshAll}>
-            {t("common.refresh")}
+            {td("common.refresh", "Refresh")}
           </Button>
         </div>
       </div>
@@ -129,7 +133,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
         <div class="space-y-4">
           <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
             <Box size={16} class="text-gray-11" />
-            <span>{t("extensions.apps_mcp_header")}</span>
+            <span>{td("extensions.apps_mcp_header", "Apps (MCP)")}</span>
           </div>
           <McpView
             showHeader={false}
@@ -144,7 +148,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
         <div class="space-y-4">
           <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
             <Cpu size={16} class="text-gray-11" />
-            <span>{t("extensions.plugins_opencode_header")}</span>
+            <span>{td("extensions.plugins_opencode_header", "Plugins (OpenCode)")}</span>
           </div>
           <PluginsView
             busy={props.busy}

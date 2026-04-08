@@ -3,7 +3,7 @@ import { Loader2, Plus, X } from "lucide-solid";
 import Button from "./button";
 import TextInput from "./text-input";
 import type { McpDirectoryInfo } from "../constants";
-import { t, type Language } from "../../i18n";
+import { t, type Language, td } from "../../i18n";
 
 export type AddMcpModalProps = {
   open: boolean;
@@ -15,7 +15,7 @@ export type AddMcpModalProps = {
 };
 
 export default function AddMcpModal(props: AddMcpModalProps) {
-  const tr = (key: string) => t(key, props.language);
+  const tr = (key: string, defaultValue: string) => td(key, defaultValue, props.language);
 
   const [name, setName] = createSignal("");
   const [serverType, setServerType] = createSignal<"remote" | "local">("remote");
@@ -46,7 +46,7 @@ export default function AddMcpModal(props: AddMcpModalProps) {
 
     const trimmedName = name().trim();
     if (!trimmedName) {
-      setError(tr("mcp.name_required"));
+      setError(tr("mcp.name_required", "Enter a server name."));
       return;
     }
 
@@ -55,7 +55,7 @@ export default function AddMcpModal(props: AddMcpModalProps) {
     if (serverType() === "remote") {
       const trimmedUrl = url().trim();
       if (!trimmedUrl) {
-        setError(tr("mcp.url_or_command_required"));
+        setError(tr("mcp.url_or_command_required", "Enter a URL for remote or a command for local servers."));
         setSubmitting(false);
         return;
       }
@@ -74,7 +74,7 @@ export default function AddMcpModal(props: AddMcpModalProps) {
     } else {
       const trimmedCommand = command().trim();
       if (!trimmedCommand) {
-        setError(tr("mcp.url_or_command_required"));
+        setError(tr("mcp.url_or_command_required", "Enter a URL for remote or a command for local servers."));
         setSubmitting(false);
         return;
       }
@@ -111,9 +111,9 @@ export default function AddMcpModal(props: AddMcpModalProps) {
           <div class="flex items-center justify-between px-6 py-4 border-b border-gray-6">
             <div>
               <h2 class="text-lg font-semibold text-gray-12">
-                {tr("mcp.add_modal_title")}
+                {tr("mcp.add_modal_title", "Add Custom App")}
               </h2>
-              <p class="text-sm text-gray-11">{tr("mcp.add_modal_subtitle")}</p>
+              <p class="text-sm text-gray-11">{tr("mcp.add_modal_subtitle", "Connect a custom MCP server by URL or local command.")}</p>
             </div>
             <button
               type="button"
@@ -127,15 +127,15 @@ export default function AddMcpModal(props: AddMcpModalProps) {
           {/* Content */}
           <div class="px-6 py-5 space-y-4">
             <TextInput
-              label={tr("mcp.server_name")}
-              placeholder={tr("mcp.server_name_placeholder")}
+              label={tr("mcp.server_name", "App name")}
+              placeholder={tr("mcp.server_name_placeholder", "github-copilot")}
               value={name()}
               onInput={(e) => setName(e.currentTarget.value)}
               autofocus
             />
 
             <div>
-              <div class="mb-1 text-xs font-medium text-dls-secondary">{tr("mcp.server_type")}</div>
+              <div class="mb-1 text-xs font-medium text-dls-secondary">{tr("mcp.server_type", "Type")}</div>
               <div class="flex items-center gap-1.5">
                 <button
                   type="button"
@@ -146,7 +146,7 @@ export default function AddMcpModal(props: AddMcpModalProps) {
                   }`}
                   onClick={() => setServerType("remote")}
                 >
-                  {tr("mcp.type_remote")}
+                  {tr("mcp.type_remote", "Remote (URL)")}
                 </button>
                 <button
                   type="button"
@@ -161,24 +161,24 @@ export default function AddMcpModal(props: AddMcpModalProps) {
                     setServerType("local");
                   }}
                 >
-                  {tr("mcp.type_local_cmd")}
+                  {tr("mcp.type_local_cmd", "Local (command)")}
                 </button>
               </div>
               <Show when={props.isRemoteWorkspace}>
-                <div class="mt-2 text-[11px] text-dls-secondary">{tr("mcp.remote_workspace_url_hint")}</div>
+                <div class="mt-2 text-[11px] text-dls-secondary">{tr("mcp.remote_workspace_url_hint", "Remote workers connect fastest with URL-based MCP servers.")}</div>
               </Show>
             </div>
 
             <Show when={serverType() === "remote"}>
               <div class="space-y-3">
                 <TextInput
-                  label={tr("mcp.server_url")}
-                  placeholder={tr("mcp.server_url_placeholder")}
+                  label={tr("mcp.server_url", "Server URL")}
+                  placeholder={tr("mcp.server_url_placeholder", "https://api.githubcopilot.com/mcp/")}
                   value={url()}
                   onInput={(e) => setUrl(e.currentTarget.value)}
                 />
                 <div class="rounded-xl border border-dls-border bg-dls-hover/40 px-3 py-3">
-                  <div class="mb-2 text-xs font-medium text-dls-text">{tr("mcp.sign_in_section_label")}</div>
+                  <div class="mb-2 text-xs font-medium text-dls-text">{tr("mcp.sign_in_section_label", "Sign-in")}</div>
                   <label class="flex items-start gap-2 text-xs text-dls-secondary">
                     <input
                       type="checkbox"
@@ -187,8 +187,8 @@ export default function AddMcpModal(props: AddMcpModalProps) {
                       onChange={(event) => setOauthRequired(event.currentTarget.checked)}
                     />
                     <span>
-                      <span class="block text-dls-text">{tr("mcp.oauth_optional_label")}</span>
-                      <span class="mt-0.5 block text-dls-secondary">{tr("mcp.oauth_optional_hint")}</span>
+                      <span class="block text-dls-text">{tr("mcp.oauth_optional_label", "This app requires sign-in")}</span>
+                      <span class="mt-0.5 block text-dls-secondary">{tr("mcp.oauth_optional_hint", "Uses OAuth in the browser to connect your account.")}</span>
                     </span>
                   </label>
                 </div>
@@ -197,9 +197,9 @@ export default function AddMcpModal(props: AddMcpModalProps) {
 
             <Show when={serverType() === "local"}>
               <TextInput
-                label={tr("mcp.server_command")}
-                placeholder={tr("mcp.server_command_placeholder")}
-                hint={tr("mcp.server_command_hint")}
+                label={tr("mcp.server_command", "Command")}
+                placeholder={tr("mcp.server_command_placeholder", "npx -y @modelcontextprotocol/server-sequential-thinking")}
+                hint={tr("mcp.server_command_hint", "The shell command to start the server.")}
                 value={command()}
                 onInput={(e) => setCommand(e.currentTarget.value)}
               />
@@ -215,13 +215,13 @@ export default function AddMcpModal(props: AddMcpModalProps) {
           {/* Footer */}
           <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-6 bg-gray-2/50">
             <Button variant="ghost" onClick={handleClose} disabled={submitting()}>
-              {tr("mcp.auth.cancel")}
+              {tr("mcp.auth.cancel", "Cancel")}
             </Button>
             <Button variant="secondary" onClick={() => void handleSubmit()} disabled={props.busy || submitting()}>
               <Show when={props.busy || submitting()} fallback={<Plus size={16} />}>
                 <Loader2 size={16} class="animate-spin" />
               </Show>
-              {tr("mcp.add_server_button")}
+              {tr("mcp.add_server_button", "Add App")}
             </Button>
           </div>
         </div>

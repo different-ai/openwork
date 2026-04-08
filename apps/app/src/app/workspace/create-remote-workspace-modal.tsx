@@ -20,7 +20,7 @@ import type { CreateRemoteWorkspaceModalProps } from "./types";
 
 export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceModalProps) {
   let inputRef: HTMLInputElement | undefined;
-  const translate = (key: string, defaultValue: string) => td(key, defaultValue, undefined, currentLocale());
+  const translate = (key: string, defaultValue: string) => td(key, defaultValue, currentLocale());
 
   const [openworkHostUrl, setOpenworkHostUrl] = createSignal("");
   const [openworkToken, setOpenworkToken] = createSignal("");
@@ -106,7 +106,7 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
               disabled={submitting()}
               class={pillGhostClass}
             >
-              {t("common.cancel", currentLocale())}
+              {td("common.cancel", "Cancel", currentLocale())}
             </button>
           </Show>
           <button

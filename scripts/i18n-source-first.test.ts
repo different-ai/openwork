@@ -16,6 +16,10 @@ describe("source-first i18n helper", () => {
     expect(td("config.server_url_input_label", "OpenWork server URL")).toBe("URL do servidor OpenWork");
   });
 
+  test("accepts locale override as the third argument", () => {
+    expect(td("config.server_url_input_label", "OpenWork server URL", "ja")).toBe("OpenWorkサーバーURL");
+  });
+
   test("falls back to inline English when locale entries are missing", () => {
     setLocale("th");
     expect(td("tests.missing_source_first_key", "Source-first fallback")).toBe("Source-first fallback");
@@ -23,6 +27,10 @@ describe("source-first i18n helper", () => {
 
   test("formats placeholder params with inline English defaults", () => {
     expect(td("tests.greeting", "Hello {name}", { name: "Jan" })).toBe("Hello Jan");
+  });
+
+  test("accepts locale override before placeholder params", () => {
+    expect(td("skills.trigger_label", "Trigger: {trigger}", "pt-BR", { trigger: "build" })).toBe("Gatilho: build");
   });
 
   test("keeps the original key-first helper behavior intact", () => {

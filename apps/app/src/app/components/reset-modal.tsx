@@ -1,7 +1,7 @@
 import { Match, Show, Switch } from "solid-js";
 
 import { X } from "lucide-solid";
-import { t, type Language } from "../../i18n";
+import { t, type Language, td } from "../../i18n";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -23,9 +23,9 @@ export type ResetModalProps = {
 };
 
 export default function ResetModal(props: ResetModalProps) {
-  const translate = (key: string) => t(key, props.language);
+  const translate = (key: string, defaultValue: string) => td(key, defaultValue, props.language);
   const resetConfirmationHint = () => {
-    const template = translate("settings.reset_confirmation_hint");
+    const template = translate("settings.reset_confirmation_hint", "Type {resetWord} to confirm. OpenWork will restart.");
     const parts = template.split(RESET_CONFIRM_PLACEHOLDER);
 
     if (parts.length === 1) return template;
@@ -46,8 +46,8 @@ export default function ResetModal(props: ResetModalProps) {
               <div>
                 <h3 class="text-lg font-semibold text-gray-12">
                   <Switch>
-                    <Match when={props.mode === "onboarding"}>{translate("settings.reset_onboarding_title")}</Match>
-                    <Match when={true}>{translate("settings.reset_app_data_title")}</Match>
+                    <Match when={props.mode === "onboarding"}>{translate("settings.reset_onboarding_title", "Reset onboarding")}</Match>
+                    <Match when={true}>{translate("settings.reset_app_data_title", "Reset app data")}</Match>
                   </Switch>
                 </h3>
                 <p class="text-sm text-gray-11 mt-1">{resetConfirmationHint()}</p>
@@ -66,19 +66,19 @@ export default function ResetModal(props: ResetModalProps) {
               <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11">
                 <Switch>
                   <Match when={props.mode === "onboarding"}>
-                    {translate("settings.reset_onboarding_warning")}
+                    {translate("settings.reset_onboarding_warning", "Clears OpenWork local preferences and workspace onboarding markers.")}
                   </Match>
-                  <Match when={true}>{translate("settings.reset_app_data_warning")}</Match>
+                  <Match when={true}>{translate("settings.reset_app_data_warning", "Clears OpenWork cache and app data on this device.")}</Match>
                 </Switch>
               </div>
 
               <Show when={props.hasActiveRuns}>
-                <div class="text-xs text-red-11">{translate("settings.reset_stop_active_runs")}</div>
+                <div class="text-xs text-red-11">{translate("settings.reset_stop_active_runs", "Stop active runs before resetting.")}</div>
               </Show>
 
               <TextInput
-                label={translate("settings.reset_confirmation_label")}
-                placeholder={translate("settings.reset_confirmation_placeholder")}
+                label={translate("settings.reset_confirmation_label", "Confirmation")}
+                placeholder={translate("settings.reset_confirmation_placeholder", "Type RESET")}
                 value={props.text}
                 onInput={(e) => props.onTextChange(e.currentTarget.value)}
                 disabled={props.busy}
@@ -87,10 +87,10 @@ export default function ResetModal(props: ResetModalProps) {
 
             <div class="mt-6 flex justify-end gap-2">
               <Button variant="outline" onClick={props.onClose} disabled={props.busy}>
-                {translate("settings.reset_cancel")}
+                {translate("settings.reset_cancel", "Cancel")}
               </Button>
               <Button variant="danger" onClick={props.onConfirm} disabled={!props.canReset}>
-                {translate("settings.reset_confirm_button")}
+                {translate("settings.reset_confirm_button", "Reset & Restart")}
               </Button>
             </div>
           </div>

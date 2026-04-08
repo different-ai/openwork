@@ -41,7 +41,7 @@ import type {
     SlashCommandOption,
 } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
-import { t } from "../../../i18n";
+import { t, td } from "../../../i18n";
 
 type MentionOption = {
     id: string;
@@ -348,17 +348,17 @@ const mergeSlashCommandsWithSkills = (
 const formatMcpStatusLabel = (status: McpStatus | undefined) => {
     switch (status?.status) {
         case "connected":
-            return t("context_panel.mcp_connected");
+            return td("context_panel.mcp_connected", "Connected");
         case "needs_auth":
-            return t("context_panel.mcp_needs_auth");
+            return td("context_panel.mcp_needs_auth", "Needs auth");
         case "needs_client_registration":
-            return t("context_panel.mcp_register_client");
+            return td("context_panel.mcp_register_client", "Register client");
         case "failed":
-            return t("context_panel.mcp_failed");
+            return td("context_panel.mcp_failed", "Failed");
         case "disabled":
-            return t("context_panel.mcp_disabled");
+            return td("context_panel.mcp_disabled", "Disabled");
         default:
-            return t("mcp.configured");
+            return td("mcp.configured", "configured");
     }
 };
 
@@ -660,7 +660,7 @@ export default function Composer(props: ComposerProps) {
         span.dataset.pasteId = part.id;
         span.dataset.pasteLabel = part.label;
         span.dataset.pasteLines = String(part.lines);
-        span.title = t("composer.expand_pasted");
+        span.title = td("composer.expand_pasted", "Click to expand pasted text");
         span.className =
             "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-gray-3 text-gray-10 border border-gray-6 cursor-pointer hover:bg-gray-4 hover:text-gray-11";
         return span;
@@ -789,9 +789,9 @@ export default function Composer(props: ComposerProps) {
                 status: statuses[entry.name],
                 details:
                     entry.config.type === "remote"
-                        ? (entry.config.url ?? t("mcp.config_source"))
+                        ? (entry.config.url ?? td("mcp.config_source", "From config"))
                         : (entry.config.command?.join(" ") ??
-                          t("mcp.config_source")),
+                          td("mcp.config_source", "From config")),
             }));
     });
 
@@ -1285,7 +1285,7 @@ export default function Composer(props: ComposerProps) {
             props.onNotice({
                 title:
                     props.attachmentsDisabledReason ??
-                    t("composer.attachments_unavailable"),
+                    td("composer.attachments_unavailable", "Attachments are unavailable."),
                 tone: "warning",
             });
             return;
@@ -1309,7 +1309,7 @@ export default function Composer(props: ComposerProps) {
         for (const file of supportedFiles) {
             if (file.size > MAX_ATTACHMENT_BYTES) {
                 props.onNotice({
-                    title: t("composer.file_exceeds_limit", undefined, {
+                    title: td("composer.file_exceeds_limit", "{name} exceeds the 8MB limit.", {
                         name: file.name,
                     }),
                     tone: "warning",
@@ -1325,11 +1325,7 @@ export default function Composer(props: ComposerProps) {
                     estimateInlineAttachmentBytes(processed);
                 if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
                     props.onNotice({
-                        title: t(
-                            "composer.file_too_large_encoding",
-                            undefined,
-                            { name: file.name },
-                        ),
+                        title: td("composer.file_too_large_encoding", "{name} is too large after encoding. Try a smaller image.", { name: file.name }),
                         tone: "warning",
                     });
                     continue;
@@ -1350,7 +1346,7 @@ export default function Composer(props: ComposerProps) {
                     title:
                         error instanceof Error
                             ? error.message
-                            : t("composer.failed_read_attachment"),
+                            : td("composer.failed_read_attachment", "Failed to read attachment"),
                     tone: "error",
                 });
             }
@@ -1477,23 +1473,15 @@ export default function Composer(props: ComposerProps) {
                     props.onNotice({
                         title:
                             links.length === 1
-                                ? t(
-                                      "composer.uploaded_single_file",
-                                      undefined,
-                                      { name: links[0].name },
-                                  )
-                                : t(
-                                      "composer.uploaded_multiple_files",
-                                      undefined,
-                                      { count: links.length },
-                                  ),
+                                ? td("composer.uploaded_single_file", "Uploaded {name} to the shared folder and inserted a link.", { name: links[0].name })
+                                : td("composer.uploaded_multiple_files", "Uploaded {count} files to the shared folder and inserted links.", { count: links.length }),
                         tone: "success",
                     });
                     return;
                 }
             }
             props.onNotice({
-                title: t("composer.upload_failed_local_links"),
+                title: td("composer.upload_failed_local_links", "Couldn't upload to the shared folder. Inserted local links instead."),
                 tone: "warning",
             });
         }
@@ -1501,7 +1489,7 @@ export default function Composer(props: ComposerProps) {
         const text = formatLinks(fallbackLinks());
         if (!text) {
             props.onNotice({
-                title: t("composer.unsupported_attachment_type"),
+                title: td("composer.unsupported_attachment_type", "Unsupported attachment type."),
                 tone: "warning",
             });
             return;
@@ -1511,7 +1499,7 @@ export default function Composer(props: ComposerProps) {
         updateSlashQuery();
         emitDraftChange();
         props.onNotice({
-            title: t("composer.inserted_links_unsupported"),
+            title: td("composer.inserted_links_unsupported", "Inserted links for unsupported files."),
             tone: "info",
         });
     };
@@ -1561,10 +1549,10 @@ export default function Composer(props: ComposerProps) {
             );
             if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
                 props.onNotice({
-                    title: t("composer.remote_worker_paste_warning"),
+                    title: td("composer.remote_worker_paste_warning", "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Shared folder in the sidebar."),
                     tone: "warning",
                     actionLabel: props.onUploadInboxFiles
-                        ? t("composer.upload_to_shared_folder")
+                        ? td("composer.upload_to_shared_folder", "Upload to shared folder")
                         : undefined,
                     onAction: props.onUploadInboxFiles
                         ? () => inboxFileInputRef?.click()
@@ -1911,7 +1899,7 @@ export default function Composer(props: ComposerProps) {
                                         when={mentionVisible().length}
                                         fallback={
                                             <div class="px-3 py-2 text-xs text-gray-10">
-                                                {t("composer.no_matches")}
+                                                {td("composer.no_matches", "No matches found.")}
                                             </div>
                                         }
                                     >
@@ -2054,10 +2042,8 @@ export default function Composer(props: ComposerProps) {
                                         fallback={
                                             <div class="px-3 py-2 text-xs text-gray-10">
                                                 {slashLoading()
-                                                    ? t(
-                                                          "composer.loading_commands",
-                                                      )
-                                                    : t("composer.no_commands")}
+                                                    ? td("composer.loading_commands", "Loading commands...")
+                                                    : td("composer.no_commands", "No commands found.")}
                                             </div>
                                         }
                                     >
@@ -2123,9 +2109,7 @@ export default function Composer(props: ComposerProps) {
                                                             <span class="text-[10px] uppercase tracking-wider text-gray-10 shrink-0">
                                                                 {cmd.source ===
                                                                 "skill"
-                                                                    ? t(
-                                                                          "composer.skill_source",
-                                                                      )
+                                                                    ? td("composer.skill_source", "Skill")
                                                                     : cmd.source ===
                                                                         "mcp"
                                                                       ? "MCP"
@@ -2176,13 +2160,9 @@ export default function Composer(props: ComposerProps) {
                                                 </div>
                                                 <div class="text-[10px] text-gray-10">
                                                     {attachment.kind === "image"
-                                                        ? t(
-                                                              "composer.image_kind",
-                                                          )
+                                                        ? td("composer.image_kind", "Image")
                                                         : attachment.mimeType ||
-                                                          t(
-                                                              "composer.file_kind",
-                                                          )}
+                                                          td("composer.file_kind", "File")}
                                                 </div>
                                             </div>
                                             <button
@@ -2210,7 +2190,7 @@ export default function Composer(props: ComposerProps) {
                                     <div class="relative flex min-h-0 flex-1 min-w-0 flex-col">
                                         <Show when={!hasDraftContent()}>
                                             <div class="pointer-events-none absolute inset-x-0 top-0 text-[15px] leading-relaxed text-gray-9">
-                                                {t("composer.placeholder")}
+                                                {td("composer.placeholder", "Describe your task...")}
                                             </div>
                                         </Show>
                                         <div
@@ -2299,12 +2279,8 @@ export default function Composer(props: ComposerProps) {
                                                     title={
                                                         attachmentsDisabled()
                                                             ? (props.attachmentsDisabledReason ??
-                                                              t(
-                                                                  "composer.attachments_unavailable",
-                                                              ))
-                                                            : t(
-                                                                  "composer.attach_files",
-                                                              )
+                                                              td("composer.attachments_unavailable", "Attachments are unavailable."))
+                                                            : td("composer.attach_files", "Attach files")
                                                     }
                                                 >
                                                     <Paperclip size={16} />
@@ -2318,9 +2294,7 @@ export default function Composer(props: ComposerProps) {
                                                     }`}
                                                     aria-expanded={toolMenuOpen()}
                                                     aria-haspopup="dialog"
-                                                    title={t(
-                                                        "composer.tools_label",
-                                                    )}
+                                                    title={td("composer.tools_label", "Commands, skills, and MCPs")}
                                                     onClick={() => {
                                                         setMentionOpen(false);
                                                         setMentionQuery("");
@@ -2344,21 +2318,15 @@ export default function Composer(props: ComposerProps) {
                                                                 each={[
                                                                     {
                                                                         id: "commands" as const,
-                                                                        label: t(
-                                                                            "dashboard.commands",
-                                                                        ),
+                                                                        label: td("dashboard.commands", "Commands"),
                                                                     },
                                                                     {
                                                                         id: "skills" as const,
-                                                                        label: t(
-                                                                            "dashboard.skills",
-                                                                        ),
+                                                                        label: td("dashboard.skills", "Skills"),
                                                                     },
                                                                     {
                                                                         id: "mcps" as const,
-                                                                        label: t(
-                                                                            "composer.mcps_label",
-                                                                        ),
+                                                                        label: td("composer.mcps_label", "MCPs"),
                                                                     },
                                                                 ]}
                                                             >
@@ -2427,9 +2395,7 @@ export default function Composer(props: ComposerProps) {
                                                                     <Settings
                                                                         size={12}
                                                                     />
-                                                                    {t(
-                                                                        "composer.configure",
-                                                                    )}
+                                                                    {td("composer.configure", "Configure")}
                                                                 </button>
                                                             </div>
                                                             <Show
@@ -2446,12 +2412,8 @@ export default function Composer(props: ComposerProps) {
                                                                     fallback={
                                                                         <div class="px-3 py-2 text-xs text-gray-10">
                                                                             {slashLoading()
-                                                                                ? t(
-                                                                                      "composer.loading_commands",
-                                                                                  )
-                                                                                : t(
-                                                                                      "composer.no_commands",
-                                                                                  )}
+                                                                                ? td("composer.loading_commands", "Loading commands...")
+                                                                                : td("composer.no_commands", "No commands found.")}
                                                                         </div>
                                                                     }
                                                                 >
@@ -2516,12 +2478,8 @@ export default function Composer(props: ComposerProps) {
                                                                     fallback={
                                                                         <div class="px-3 py-2 text-xs text-gray-10">
                                                                             {slashLoading()
-                                                                                ? t(
-                                                                                      "composer.loading_commands",
-                                                                                  )
-                                                                                : t(
-                                                                                      "context_panel.no_skills",
-                                                                                  )}
+                                                                                ? td("composer.loading_commands", "Loading commands...")
+                                                                                : td("context_panel.no_skills", "No skills loaded.")}
                                                                         </div>
                                                                     }
                                                                 >
@@ -2586,9 +2544,7 @@ export default function Composer(props: ComposerProps) {
                                                                     fallback={
                                                                         <div class="px-3 py-2 text-xs text-gray-10">
                                                                             {connections.mcpStatus() ??
-                                                                                t(
-                                                                                    "context_panel.no_mcp",
-                                                                                )}
+                                                                                td("context_panel.no_mcp", "No MCP servers loaded.")}
                                                                         </div>
                                                                     }
                                                                 >
@@ -2655,15 +2611,11 @@ export default function Composer(props: ComposerProps) {
                                                             ? "bg-gray-4 text-gray-10"
                                                             : "bg-dls-accent text-white hover:bg-[var(--dls-accent-hover)]"
                                                     }`}
-                                                    title={t(
-                                                        "composer.run_task",
-                                                    )}
+                                                    title={td("composer.run_task", "Run task")}
                                                 >
                                                     <ArrowUp size={15} />
                                                     <span>
-                                                        {t(
-                                                            "composer.run_task",
-                                                        )}
+                                                        {td("composer.run_task", "Run task")}
                                                     </span>
                                                 </button>
                                             }
@@ -2672,15 +2624,13 @@ export default function Composer(props: ComposerProps) {
                                                 type="button"
                                                 onClick={() => props.onStop()}
                                                 class="inline-flex h-9 max-h-9 items-center gap-2 rounded-full bg-gray-12 px-4 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
-                                                title={t(
-                                                    "composer.stop",
-                                                )}
+                                                title={td("composer.stop", "Stop")}
                                             >
                                                 <Square
                                                     size={12}
                                                     fill="currentColor"
                                                 />
-                                                <span>{t("composer.stop")}</span>
+                                                <span>{td("composer.stop", "Stop")}</span>
                                             </button>
                                         </Show>
                                     </div>
@@ -2702,7 +2652,7 @@ export default function Composer(props: ComposerProps) {
                                 onClick={props.onToggleAgentPicker}
                                 disabled={props.busy}
                                 aria-expanded={props.agentPickerOpen}
-                                title={t("composer.agent_label")}
+                                title={td("composer.agent_label", "Agent")}
                             >
                                 <span class="max-w-[140px] truncate">
                                     {props.agentLabel}
@@ -2713,7 +2663,7 @@ export default function Composer(props: ComposerProps) {
                             <Show when={props.agentPickerOpen}>
                                 <div class="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                                     <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                                        {t("composer.agent_label")}
+                                        {td("composer.agent_label", "Agent")}
                                     </div>
 
                                     <div
@@ -2726,9 +2676,7 @@ export default function Composer(props: ComposerProps) {
                                             when={!props.agentPickerBusy}
                                             fallback={
                                                 <div class="px-3 py-2 text-xs text-gray-10">
-                                                    {t(
-                                                        "composer.loading_agents",
-                                                    )}
+                                                    {td("composer.loading_agents", "Loading agents...")}
                                                 </div>
                                             }
                                         >
@@ -2752,9 +2700,7 @@ export default function Composer(props: ComposerProps) {
                                                     }}
                                                 >
                                                     <span>
-                                                        {t(
-                                                            "composer.default_agent",
-                                                        )}
+                                                        {td("composer.default_agent", "Default agent")}
                                                     </span>
                                                     <Show
                                                         when={
@@ -2868,7 +2814,7 @@ export default function Composer(props: ComposerProps) {
                                 <Show when={variantMenuOpen()}>
                                     <div class="absolute left-0 bottom-full z-40 mb-2 w-48 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                                         <div class="border-b border-dls-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                                            {t("composer.behavior_label")}
+                                            {td("composer.behavior_label", "Behavior")}
                                         </div>
                                         <div class="p-2 space-y-1">
                                             <For

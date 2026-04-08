@@ -66,7 +66,7 @@ import {
   isTauriRuntime,
   normalizeDirectoryPath,
 } from "./utils";
-import { currentLocale, setLocale, t } from "../i18n";
+import { currentLocale, setLocale, t, td } from "../i18n";
 import {
   isWindowsPlatform,
   lastUserModelFromMessages,
@@ -1307,7 +1307,7 @@ export default function App() {
     const workspacePath = activeLocalPath || runningProjectDir;
 
     if (!workspacePath) {
-      setError(t("app.error_pick_local_folder"));
+      setError(td("app.error_pick_local_folder", "Pick a local worker folder before restarting the local server."));
       return false;
     }
 
@@ -1335,7 +1335,7 @@ export default function App() {
     const client = openworkServerClient();
     const workspaceId = runtimeWorkspaceId();
     if (!client || !workspaceId || openworkServerStatus() !== "connected") {
-      setError(t("app.error_connect_first"));
+      setError(td("app.error_connect_first", "Connect to this worker before applying runtime changes."));
       return false;
     }
 
@@ -1345,7 +1345,7 @@ export default function App() {
       await refreshMcpServers();
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("app.error_runtime_changes");
+      const message = error instanceof Error ? error.message : td("app.error_runtime_changes", "Failed to apply runtime changes.");
       setError(message);
       return false;
     }
@@ -1428,9 +1428,9 @@ export default function App() {
 
       resetOpenworkServerSettings();
 
-      return { ok: true, message: t("app.reset_config_ok") };
+      return { ok: true, message: td("app.reset_config_ok", "Reset app config defaults. Restart OpenWork if any stale settings remain.") };
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("app.error_reset_config");
+      const message = error instanceof Error ? error.message : td("app.error_reset_config", "Failed to reset app config defaults.");
       return { ok: false, message };
     }
   };
@@ -1985,16 +1985,27 @@ export default function App() {
   });
 
   const headerStatus = createMemo(() => {
-    if (!client() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
-    const bits = [`${t("status.connected", currentLocale())} · ${headerConnectedVersion()}`];
-    if (sseConnected()) bits.push(t("status.live", currentLocale()));
+    if (!client() || !headerConnectedVersion()) return td("status.disconnected", "Disconnected", currentLocale());
+    const bits = [`${td("status.connected", "Connected", currentLocale())} · ${headerConnectedVersion()}`];
+    if (sseConnected()) bits.push(td("status.live", "Live", currentLocale()));
     return bits.join(" · ");
   });
 
   const busyHint = createMemo(() => {
     if (!busy() || !busyLabel()) return null;
     const seconds = busySeconds();
-    const label = t(busyLabel()!, currentLocale());
+    const label =
+      busyLabel() === "status.connecting" ? td("status.connecting", "Connecting", currentLocale())
+      : busyLabel() === "status.creating_task" ? td("status.creating_task", "Creating new task", currentLocale())
+      : busyLabel() === "status.creating_workspace" ? td("status.creating_workspace", "Creating workspace", currentLocale())
+      : busyLabel() === "status.disconnecting" ? td("status.disconnecting", "Disconnecting", currentLocale())
+      : busyLabel() === "status.installing_opencode" ? td("status.installing_opencode", "Installing OpenCode", currentLocale())
+      : busyLabel() === "status.loading_session" ? td("status.loading_session", "Loading session", currentLocale())
+      : busyLabel() === "status.reloading_engine" ? td("status.reloading_engine", "Reloading engine", currentLocale())
+      : busyLabel() === "status.restarting_engine" ? td("status.restarting_engine", "Restarting engine", currentLocale())
+      : busyLabel() === "status.running" ? td("status.running", "Running", currentLocale())
+      : busyLabel() === "status.starting_engine" ? td("status.starting_engine", "Starting engine", currentLocale())
+      : t(busyLabel()!, currentLocale());
     return seconds > 0 ? `${label} · ${seconds}s` : label;
   });
 
@@ -2029,21 +2040,21 @@ export default function App() {
     const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
     const skillsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
-        ? t("app.skills_hint_disconnected")
+        ? td("app.skills_hint_disconnected", "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills.")
         : openworkStatus === "limited"
-          ? t("app.skills_hint_limited")
+          ? td("app.skills_hint_limited", "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect.")
           : openworkServerCanWriteSkills()
             ? null
-            : t("app.skills_hint_readonly")
+            : td("app.skills_hint_readonly", "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs.")
       : null;
     const pluginsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
-        ? t("app.plugins_hint_disconnected")
+        ? td("app.plugins_hint_disconnected", "OpenWork server unavailable. Plugins are read-only.")
         : openworkStatus === "limited"
-          ? t("app.plugins_hint_limited")
+          ? td("app.plugins_hint_limited", "OpenWork server needs a token to edit plugins.")
           : openworkServerCanWritePlugins()
             ? null
-            : t("app.plugins_hint_readonly")
+            : td("app.plugins_hint_readonly", "OpenWork server is read-only for plugins.")
       : null;
 
     return {
@@ -2490,8 +2501,8 @@ export default function App() {
 
       <BundleImportModal
         open={Boolean(bundlesStore.bundleImportChoice())}
-        title={bundlesStore.bundleImportSummary()?.title ?? t("app.import_shared_bundle")}
-        description={bundlesStore.bundleImportSummary()?.description ?? t("app.import_bundle_desc")}
+        title={bundlesStore.bundleImportSummary()?.title ?? td("app.import_shared_bundle", "Import shared bundle")}
+        description={bundlesStore.bundleImportSummary()?.description ?? td("app.import_bundle_desc", "Choose how to import this bundle.")}
         items={bundlesStore.bundleImportSummary()?.items ?? []}
         workers={bundlesStore.bundleWorkerOptions()}
         busy={bundlesStore.bundleImportBusy()}
@@ -2572,17 +2583,17 @@ export default function App() {
           return !doctor?.ready;
         })()}
         workerDisabledReason={(() => {
-          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
+          if (!isTauriRuntime()) return td("app.error.tauri_required", "This action requires the Tauri app runtime.", currentLocale());
           if (workspaceStore.sandboxDoctorBusy?.()) {
-            return t("dashboard.sandbox_checking_docker", currentLocale());
+            return td("dashboard.sandbox_checking_docker", "Checking Docker...", currentLocale());
           }
           const doctor = workspaceStore.sandboxDoctorResult?.();
           if (!doctor || doctor.ready) return null;
           const message = doctor?.error?.trim();
-          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
+          return message || td("dashboard.sandbox_get_ready_desc", "Run this workspace in an isolated Docker container for safer, more reproducible runs.", currentLocale());
         })()}
-        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
-        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
+        workerCtaLabel={td("dashboard.sandbox_get_ready_action", "Get your system ready", currentLocale())}
+        workerCtaDescription={td("dashboard.sandbox_get_ready_desc", "Run this workspace in an isolated Docker container for safer, more reproducible runs.", currentLocale())}
         onWorkerCta={async () => {
           const url = "https://www.docker.com/products/docker-desktop/";
           if (isTauriRuntime()) {
@@ -2592,7 +2603,7 @@ export default function App() {
             window.open(url, "_blank", "noopener,noreferrer");
           }
         }}
-        workerRetryLabel={t("common.retry", currentLocale())}
+        workerRetryLabel={td("common.retry", "Retry", currentLocale())}
         workerDebugLines={(() => {
           const doctor = workspaceStore.sandboxDoctorResult?.();
           const lines: string[] = [];
@@ -2621,7 +2632,7 @@ export default function App() {
         localDisabled={!isTauriRuntime()}
         localDisabledReason={
           !isTauriRuntime()
-            ? t("app.local_disabled_reason")
+            ? td("app.local_disabled_reason", "Create local workspaces in the desktop app. Remote and shared workspaces still work here.")
             : null
         }
         remoteSubmitting={busy() && busyLabel() === "status.connecting"}
@@ -2686,8 +2697,8 @@ export default function App() {
         reloadDescription={reloadCopy().body}
         reloadTrigger={reloadTrigger()}
         reloadError={reloadError()}
-        reloadLabel={activeReloadBlockingSessions().length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")}
-        dismissLabel={t("app.reload_later")}
+        reloadLabel={activeReloadBlockingSessions().length > 0 ? td("app.reload_stop_tasks", "Reload & Stop Tasks") : td("app.reload_now", "Reload now")}
+        dismissLabel={td("app.reload_later", "Later")}
         reloadBusy={reloadBusy()}
         canReload={canReloadWorkspace()}
         hasActiveRuns={activeReloadBlockingSessions().length > 0}
@@ -2718,9 +2729,9 @@ export default function App() {
         initialValues={workspaceStore.editRemoteWorkspaceDefaults() ?? undefined}
         submitting={busy() && busyLabel() === "status.connecting"}
         error={workspaceStore.editRemoteWorkspaceError()}
-        title={t("dashboard.edit_remote_workspace_title", currentLocale())}
-        subtitle={t("dashboard.edit_remote_workspace_subtitle", currentLocale())}
-        confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
+        title={td("dashboard.edit_remote_workspace_title", "Edit Remote Connection", currentLocale())}
+        subtitle={td("dashboard.edit_remote_workspace_subtitle", "Update the OpenWork server details for this workspace.", currentLocale())}
+        confirmLabel={td("dashboard.edit_remote_workspace_confirm", "Save connection", currentLocale())}
       />
                 </StatusToastsProvider>
               </AutomationsProvider>

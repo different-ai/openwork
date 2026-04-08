@@ -1,7 +1,7 @@
 import { Show, createMemo } from "solid-js";
 import { MessageCircle, Settings } from "lucide-solid";
 
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 import { useConnections } from "../connections/provider";
 import type { OpenworkServerStatus } from "../lib/openwork-server";
 
@@ -45,19 +45,19 @@ export default function StatusBar(props: StatusBarProps) {
     if (props.clientConnected) {
       const detailBits: string[] = [];
       if (providers > 0) {
-        detailBits.push(t("status.providers_connected", undefined, { count: providers, plural: providers === 1 ? "" : "s" }));
+        detailBits.push(td("status.providers_connected", "{count} provider{plural} connected", { count: providers, plural: providers === 1 ? "" : "s" }));
       }
       if (mcp > 0) {
-        detailBits.push(t("status.mcp_connected", undefined, { count: mcp }));
+        detailBits.push(td("status.mcp_connected", "{count} MCP connected", { count: mcp }));
       }
       if (!detailBits.length) {
-        detailBits.push(t("status.ready_for_tasks"));
+        detailBits.push(td("status.ready_for_tasks", "Ready for new tasks"));
       }
       if (props.developerMode) {
-        detailBits.push(t("status.developer_mode"));
+        detailBits.push(td("status.developer_mode", "Developer mode"));
       }
       return {
-        label: t("status.openwork_ready"),
+        label: td("status.openwork_ready", "OpenWork Ready"),
         detail: detailBits.join(" · "),
         dotClass: "bg-green-9",
         pingClass: "bg-green-9/45 animate-ping",
@@ -67,11 +67,11 @@ export default function StatusBar(props: StatusBarProps) {
 
     if (props.openworkServerStatus === "limited") {
       return {
-        label: t("status.limited_mode"),
+        label: td("status.limited_mode", "Limited Mode"),
         detail:
           mcp > 0
-            ? t("status.limited_mcp_hint", undefined, { count: mcp })
-            : t("status.limited_hint"),
+            ? td("status.limited_mcp_hint", "{count} MCP connected · reconnect for full features", { count: mcp })
+            : td("status.limited_hint", "Reconnect to restore full OpenWork features"),
         dotClass: "bg-amber-9",
         pingClass: "bg-amber-9/35",
         pulse: false,
@@ -79,8 +79,8 @@ export default function StatusBar(props: StatusBarProps) {
     }
 
     return {
-      label: t("status.disconnected_label"),
-      detail: t("status.disconnected_hint"),
+      label: td("status.disconnected_label", "Disconnected"),
+      detail: td("status.disconnected_hint", "Open settings to reconnect"),
       dotClass: "bg-red-9",
       pingClass: "bg-red-9/35",
       pulse: false,
@@ -106,19 +106,19 @@ export default function StatusBar(props: StatusBarProps) {
             type="button"
             class="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
             onClick={props.onSendFeedback}
-            title={t("status.send_feedback")}
-            aria-label={t("status.send_feedback")}
+            title={td("status.send_feedback", "Send feedback")}
+            aria-label={td("status.send_feedback", "Send feedback")}
           >
             <MessageCircle class="h-4 w-4" />
-            <span class="text-[11px] font-medium">{t("status.feedback")}</span>
+            <span class="text-[11px] font-medium">{td("status.feedback", "Feedback")}</span>
           </button>
           <Show when={props.showSettingsButton !== false}>
             <button
               type="button"
               class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
               onClick={props.onOpenSettings}
-              title={props.settingsOpen ? t("status.back") : t("status.settings")}
-              aria-label={props.settingsOpen ? t("status.back") : t("status.settings")}
+              title={props.settingsOpen ? td("status.back", "Back to previous screen") : td("status.settings", "Settings")}
+              aria-label={props.settingsOpen ? td("status.back", "Back to previous screen") : td("status.settings", "Settings")}
             >
               <Settings class="h-4 w-4" />
             </button>

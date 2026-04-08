@@ -1,5 +1,5 @@
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 import type {
   ArtifactItem,
   MessageGroup,
@@ -257,19 +257,19 @@ export function formatRelativeTime(timestampMs: number) {
   const delta = Date.now() - timestampMs;
 
   if (delta < 0) {
-    return t("time.just_now");
+    return td("time.just_now", "just now");
   }
 
   if (delta < 60_000) {
-    return t("time.seconds_ago", undefined, { count: Math.max(1, Math.round(delta / 1000)) });
+    return td("time.seconds_ago", "{count}s ago", { count: Math.max(1, Math.round(delta / 1000)) });
   }
 
   if (delta < 60 * 60_000) {
-    return t("time.minutes_ago", undefined, { count: Math.max(1, Math.round(delta / 60_000)) });
+    return td("time.minutes_ago", "{count}m ago", { count: Math.max(1, Math.round(delta / 60_000)) });
   }
 
   if (delta < 24 * 60 * 60_000) {
-    return t("time.hours_ago", undefined, { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
+    return td("time.hours_ago", "{count}h ago", { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
   }
 
   return new Date(timestampMs).toLocaleDateString();

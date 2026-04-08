@@ -1,6 +1,6 @@
 import { Show, createEffect } from "solid-js";
 import { X } from "lucide-solid";
-import { t, currentLocale } from "../../i18n";
+import { t, currentLocale, td } from "../../i18n";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -17,7 +17,7 @@ export type RenameSessionModalProps = {
 
 export default function RenameSessionModal(props: RenameSessionModalProps) {
   let inputRef: HTMLInputElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = (key: string, defaultValue: string) => td(key, defaultValue, currentLocale());
 
   createEffect(() => {
     if (props.open) {
@@ -37,8 +37,8 @@ export default function RenameSessionModal(props: RenameSessionModalProps) {
           <div class="p-6">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-gray-12">{translate("session.rename_title")}</h3>
-                <p class="text-sm text-gray-11 mt-1">{translate("session.rename_description")}</p>
+                <h3 class="text-lg font-semibold text-gray-12">{translate("session.rename_title", "Rename session")}</h3>
+                <p class="text-sm text-gray-11 mt-1">{translate("session.rename_description", "Update the name for this session.")}</p>
               </div>
               <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
                 <X size={16} />
@@ -48,10 +48,10 @@ export default function RenameSessionModal(props: RenameSessionModalProps) {
             <div class="mt-6">
               <TextInput
                 ref={inputRef}
-                label={translate("session.rename_label")}
+                label={translate("session.rename_label", "Session name")}
                 value={props.title}
                 onInput={(e) => props.onTitleChange(e.currentTarget.value)}
-                placeholder={translate("session.rename_placeholder")}
+                placeholder={translate("session.rename_placeholder", "Enter a new name")}
                 class="bg-gray-3"
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
@@ -63,10 +63,10 @@ export default function RenameSessionModal(props: RenameSessionModalProps) {
 
             <div class="mt-6 flex justify-end gap-2">
               <Button variant="outline" onClick={props.onClose} disabled={props.busy}>
-                {translate("common.cancel")}
+                {translate("common.cancel", "Cancel")}
               </Button>
               <Button onClick={props.onSave} disabled={!props.canSave}>
-                {translate("common.save")}
+                {translate("common.save", "Save")}
               </Button>
             </div>
           </div>

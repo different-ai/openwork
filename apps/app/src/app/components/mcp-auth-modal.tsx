@@ -7,7 +7,7 @@ import type { McpDirectoryInfo } from "../constants";
 import { unwrap } from "../lib/opencode";
 import { opencodeMcpAuth } from "../lib/tauri";
 import { validateMcpServerName } from "../mcp";
-import { t, type Language } from "../../i18n";
+import { t, type Language, td } from "../../i18n";
 import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
@@ -31,8 +31,8 @@ export type McpAuthModalProps = {
 };
 
 export default function McpAuthModal(props: McpAuthModalProps) {
-  const translate = (key: string, replacements?: Record<string, string>) => {
-    let result = t(key, props.language);
+  const translate = (key: string, defaultValue: string, replacements?: Record<string, string>) => {
+    let result = td(key, defaultValue, props.language);
     if (replacements) {
       Object.entries(replacements).forEach(([placeholder, value]) => {
         result = result.replace(`{${placeholder}}`, value);
@@ -168,7 +168,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     statusPoll = window.setInterval(async () => {
       if (Date.now() - startedAt >= MCP_AUTH_TIMEOUT_MS) {
         stopStatusPolling();
-        setError(translate("mcp.auth.request_timed_out"));
+        setError(translate("mcp.auth.request_timed_out", "Request timed out."));
         return;
       }
 
@@ -193,7 +193,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     try {
       slug = resolveSlug(entry.name);
     } catch (err) {
-      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth", "Failed to start OAuth flow");
       setError(message);
       setLoading(false);
       setAuthInProgress(false);
@@ -217,7 +217,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     try {
       const directory = await resolveDirectory();
       if (!directory) {
-        setError(translate("mcp.pick_workspace_first"));
+        setError(translate("mcp.pick_workspace_first", "Choose a workspace folder first."));
         return;
       }
 
@@ -226,8 +226,8 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         setNeedsReload(true);
         setReloadNotice(
           props.reloadBlocked
-            ? translate("mcp.auth.reload_blocked")
-            : translate("mcp.auth.reload_notice")
+            ? translate("mcp.auth.reload_blocked", "Reload is paused while a session is running. Stop the run to finish setup.")
+            : translate("mcp.auth.reload_notice", "For this to take effect, OpenWork needs to refresh the worker service. This can interrupt a running session.")
         );
         return;
       }
@@ -251,13 +251,13 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         }
 
         if (status.status === "needs_client_registration") {
-          setError(status.error ?? translate("mcp.auth.client_registration_required"));
+          setError(status.error ?? translate("mcp.auth.client_registration_required", "Client registration is required before OAuth can continue."));
         } else if (status.status === "disabled") {
-          setError(translate("mcp.auth.server_disabled"));
+          setError(translate("mcp.auth.server_disabled", "This MCP server is disabled. Enable it and try again."));
         } else if (status.status === "failed") {
-          setError(status.error ?? translate("mcp.auth.oauth_failed"));
+          setError(status.error ?? translate("mcp.auth.oauth_failed", "OAuth authentication failed."));
         } else {
-          setError(translate("mcp.auth.authorization_still_required"));
+          setError(translate("mcp.auth.authorization_still_required", "Authorization is still required. Try again to restart the flow."));
         }
         return;
       }
@@ -277,7 +277,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       await openAuthorizationUrl(auth.authorizationUrl);
       startStatusPolling(slug);
     } catch (err) {
-      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth", "Failed to start OAuth flow");
 
       if (message.toLowerCase().includes("does not support oauth")) {
         const serverSlug = props.entry?.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "server";
@@ -293,18 +293,18 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         if (props.reloadRequired && !reloadSatisfied()) {
           setReloadNotice(
             props.reloadBlocked
-              ? translate("mcp.auth.reload_blocked")
-              : translate("mcp.auth.reload_notice")
+              ? translate("mcp.auth.reload_blocked", "Reload is paused while a session is running. Stop the run to finish setup.")
+              : translate("mcp.auth.reload_notice", "For this to take effect, OpenWork needs to refresh the worker service. This can interrupt a running session.")
           );
         } else {
           setError(
-            `${message}\n\n` + translate("mcp.auth.oauth_not_supported_hint", { server: serverSlug })
+            `${message}\n\n` + translate("mcp.auth.oauth_not_supported_hint", "This could mean:\n• The MCP server doesn't advertise OAuth capabilities\n• The engine needs to reload to discover server capabilities\n• Try: opencode mcp auth {server} from the CLI", { server: serverSlug })
           );
         }
         setNeedsReload(true);
       } else if (message.toLowerCase().includes("not found") || message.toLowerCase().includes("unknown")) {
         setNeedsReload(true);
-        setError(translate("mcp.auth.try_reload_engine", { message }));
+        setError(translate("mcp.auth.try_reload_engine", "{message}. Try reloading the engine first.", { message }));
       } else {
         setError(message);
       }
@@ -339,12 +339,12 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       if (result.ok) {
         setError(null);
         setNeedsReload(true);
-        setReloadNotice(translate("mcp.auth.oauth_completed_reload"));
+        setReloadNotice(translate("mcp.auth.oauth_completed_reload", "OAuth completed. Reload the engine to activate the MCP."));
       } else {
-        setCliAuthResult(result.stderr || result.stdout || translate("mcp.auth.reauth_failed"));
+        setCliAuthResult(result.stderr || result.stdout || translate("mcp.auth.reauth_failed", "Reauthorization failed."));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : translate("mcp.auth.reauth_failed");
+      const message = err instanceof Error ? err.message : translate("mcp.auth.reauth_failed", "Reauthorization failed.");
       setCliAuthResult(message);
     } finally {
       setCliAuthBusy(false);
@@ -396,8 +396,8 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           setNeedsReload(true);
           setReloadNotice(
             props.reloadBlocked
-              ? translate("mcp.auth.reload_blocked")
-              : translate("mcp.auth.reload_notice")
+              ? translate("mcp.auth.reload_blocked", "Reload is paused while a session is running. Stop the run to finish setup.")
+              : translate("mcp.auth.reload_notice", "For this to take effect, OpenWork needs to refresh the worker service. This can interrupt a running session.")
           );
           return;
         }
@@ -405,7 +405,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         setAwaitingReload(false);
         startAuth(false, false);
       } catch (err) {
-        const message = err instanceof Error ? err.message : translate("mcp.auth.reload_failed");
+        const message = err instanceof Error ? err.message : translate("mcp.auth.reload_failed", "Failed to reload the worker before sign-in.");
         setAwaitingReload(false);
         setNeedsReload(true);
         setError(message);
@@ -426,7 +426,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   const handleReloadAndRetry = async () => {
     if (!props.onReloadEngine) return;
     if (props.isRemoteWorkspace && typeof window !== "undefined") {
-      const proceed = window.confirm(translate("mcp.auth.reload_remote_confirm"));
+      const proceed = window.confirm(translate("mcp.auth.reload_remote_confirm", "For this to take effect, OpenWork needs to refresh the worker service. This might stop your running session. Continue?"));
       if (!proceed) return;
     }
     await props.onReloadEngine();
@@ -497,14 +497,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       const safeName = validateMcpServerName(entry.name);
       slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     } catch (err) {
-      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth", "Failed to start OAuth flow");
       setError(message);
       return;
     }
 
     const code = parseAuthCode(callbackInput());
     if (!code) {
-      setError(translate("mcp.auth.callback_invalid"));
+      setError(translate("mcp.auth.callback_invalid", "Paste the callback URL or the code parameter to finish OAuth."));
       return;
     }
 
@@ -515,7 +515,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     try {
       const directory = await resolveDirectory();
       if (!directory) {
-        setError(translate("mcp.pick_workspace_first"));
+        setError(translate("mcp.pick_workspace_first", "Choose a workspace folder first."));
         return;
       }
 
@@ -533,16 +533,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       }
 
       if (status.status === "needs_client_registration") {
-        setError(status.error ?? translate("mcp.auth.client_registration_required"));
+        setError(status.error ?? translate("mcp.auth.client_registration_required", "Client registration is required before OAuth can continue."));
       } else if (status.status === "disabled") {
-        setError(translate("mcp.auth.server_disabled"));
+        setError(translate("mcp.auth.server_disabled", "This MCP server is disabled. Enable it and try again."));
       } else if (status.status === "failed") {
-        setError(status.error ?? translate("mcp.auth.oauth_failed"));
+        setError(status.error ?? translate("mcp.auth.oauth_failed", "OAuth authentication failed."));
       } else {
-        setError(translate("mcp.auth.authorization_still_required"));
+        setError(translate("mcp.auth.authorization_still_required", "Authorization is still required. Try again to restart the flow."));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : translate("mcp.auth.oauth_failed");
+      const message = err instanceof Error ? err.message : translate("mcp.auth.oauth_failed", "OAuth authentication failed.");
       setError(message);
     } finally {
       setManualAuthBusy(false);
@@ -562,7 +562,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       const safeName = validateMcpServerName(entry.name);
       slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     } catch (err) {
-      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth", "Failed to start OAuth flow");
       setError(message);
       setStatusChecking(false);
       return;
@@ -577,13 +577,13 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     }
 
     if (statusEntry?.status === "needs_client_registration") {
-      setError(statusEntry.error ?? translate("mcp.auth.client_registration_required"));
+      setError(statusEntry.error ?? translate("mcp.auth.client_registration_required", "Client registration is required before OAuth can continue."));
     } else if (statusEntry?.status === "disabled") {
-      setError(translate("mcp.auth.server_disabled"));
+      setError(translate("mcp.auth.server_disabled", "This MCP server is disabled. Enable it and try again."));
     } else if (statusEntry?.status === "failed") {
-      setError(statusEntry.error ?? translate("mcp.auth.oauth_failed"));
+      setError(statusEntry.error ?? translate("mcp.auth.oauth_failed", "OAuth authentication failed."));
     } else {
-      setError(translate("mcp.auth.authorization_still_required"));
+      setError(translate("mcp.auth.authorization_still_required", "Authorization is still required. Try again to restart the flow."));
     }
 
     setStatusChecking(false);
@@ -606,9 +606,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           <div class="flex items-center justify-between px-6 py-4 border-b border-gray-6">
             <div>
               <h2 class="text-lg font-semibold text-gray-12">
-                  {translate("mcp.auth.connect_server", { server: serverName() })}
+                  {translate("mcp.auth.connect_server", "Connect {server}", { server: serverName() })}
               </h2>
-              <p class="text-sm text-gray-11">{translate("mcp.auth.open_browser_signin")}</p>
+              <p class="text-sm text-gray-11">{translate("mcp.auth.open_browser_signin", "We'll open your browser to finish sign-in.")}</p>
             </div>
             <button
               type="button"
@@ -628,17 +628,17 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 </div>
                 <div class="space-y-2">
                   <p class="text-sm font-medium text-gray-12">
-                    {translate("mcp.auth.waiting_authorization")}
+                    {translate("mcp.auth.waiting_authorization", "Waiting for authorization to complete in your browser...")}
                   </p>
                   <p class="text-xs text-gray-10">
-                    {translate("mcp.auth.follow_browser_steps")}
+                    {translate("mcp.auth.follow_browser_steps", "Follow the authorization steps in the browser.")}
                   </p>
                   <button
                     type="button"
                     class="text-xs text-gray-10 underline underline-offset-2 hover:text-gray-11 transition-colors"
                     onClick={handleReopenBrowser}
                   >
-                    {translate("mcp.auth.reopen_browser_link")}
+                    {translate("mcp.auth.reopen_browser_link", "Click here to re-open the browser")}
                   </button>
                 </div>
               </div>
@@ -652,13 +652,13 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 <div class="space-y-2">
                   <p class="text-sm font-medium text-gray-12">
                     {props.reloadBlocked
-                      ? translate("mcp.auth.waiting_for_conversation_title")
-                      : translate("mcp.auth.applying_changes_title")}
+                      ? translate("mcp.auth.waiting_for_conversation_title", "Waiting for conversation to complete")
+                      : translate("mcp.auth.applying_changes_title", "Applying changes before sign-in")}
                   </p>
                   <p class="text-xs text-gray-10">
                     {props.reloadBlocked
-                      ? translate("mcp.auth.waiting_for_conversation_body")
-                      : translate("mcp.auth.applying_changes_body")}
+                      ? translate("mcp.auth.waiting_for_conversation_body", "We will redirect you to authenticate as soon as possible.")
+                      : translate("mcp.auth.applying_changes_body", "We are restarting the worker so the new MCP is ready to authenticate.")}
                   </p>
                 </div>
                 <Show when={props.reloadBlocked && (props.activeSessions?.length ?? 0) > 0}>
@@ -667,7 +667,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                       {(session) => (
                         <div class="flex items-center justify-between gap-3 rounded-lg border border-amber-6/50 bg-amber-1/40 px-3 py-2">
                           <span class="text-xs text-gray-11">
-                            {translate("mcp.auth.waiting_for_session", { session: session.title })}
+                            {translate("mcp.auth.waiting_for_session", "Waiting for {session} to finish working", { session: session.title })}
                           </span>
                           <button
                             type="button"
@@ -676,8 +676,8 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                             disabled={forceStopBusySessionID() === session.id}
                           >
                             {forceStopBusySessionID() === session.id
-                              ? translate("mcp.auth.force_stopping")
-                              : translate("mcp.auth.force_stop")}
+                              ? translate("mcp.auth.force_stopping", "Stopping...")
+                              : translate("mcp.auth.force_stop", "Force stop")}
                           </button>
                         </div>
                       )}
@@ -694,14 +694,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <CheckCircle2 size={24} class="text-green-11" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.already_connected")}</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.already_connected", "Already Connected")}</p>
                     <p class="text-xs text-gray-11">
-                        {translate("mcp.auth.already_connected_description", { server: serverName() })}
+                        {translate("mcp.auth.already_connected_description", "{server} is already authenticated and ready to use.", { server: serverName() })}
                     </p>
                   </div>
                 </div>
                 <p class="text-xs text-gray-10">
-                    {translate("mcp.auth.configured_previously")}
+                    {translate("mcp.auth.configured_previously", "The MCP may have been configured globally or in a previous session. You can close this modal and start using the MCP tools right away.")}
                 </p>
               </div>
             </Show>
@@ -716,14 +716,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                       variant="secondary"
                       onClick={handleReloadAndRetry}
                       disabled={props.reloadBlocked}
-                      title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                      title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint", "Stop the running task to activate.") : undefined}
                     >
                       <RefreshCcw size={14} />
-                      {translate("mcp.auth.reload_engine_retry")}
+                      {translate("mcp.auth.reload_engine_retry", "Apply changes and retry")}
                     </Button>
                   </Show>
                   <Button variant="ghost" onClick={handleRetry}>
-                    {translate("mcp.auth.retry_now")}
+                    {translate("mcp.auth.retry_now", "Retry Now")}
                   </Button>
                 </div>
               </div>
@@ -740,14 +740,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                         variant="secondary"
                         onClick={handleReloadAndRetry}
                         disabled={props.reloadBlocked}
-                        title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                        title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint", "Stop the running task to activate.") : undefined}
                       >
                         <RefreshCcw size={14} />
-                        {translate("mcp.auth.reload_engine_retry")}
+                        {translate("mcp.auth.reload_engine_retry", "Apply changes and retry")}
                       </Button>
                     </Show>
                     <Button variant="ghost" onClick={handleRetry}>
-                      {translate("mcp.auth.retry_now")}
+                      {translate("mcp.auth.retry_now", "Retry Now")}
                     </Button>
                   </div>
                 </Show>
@@ -755,35 +755,35 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 <Show when={!needsReload()}>
                   <div class="pt-2">
                     <Button variant="ghost" onClick={handleRetry}>
-                      {translate("mcp.auth.retry")}
+                      {translate("mcp.auth.retry", "Retry")}
                     </Button>
                   </div>
                 </Show>
 
                 <Show when={isInvalidRefreshToken()}>
                   <div class="pt-2 space-y-2">
-                    <p class="text-xs text-red-11">{translate("mcp.auth.invalid_refresh_token")}</p>
+                    <p class="text-xs text-red-11">{translate("mcp.auth.invalid_refresh_token", "The OAuth refresh token is invalid or expired. Reauthorize to continue.")}</p>
                     <Show when={!props.isRemoteWorkspace}>
                       <Show when={isTauriRuntime()}>
                         <Button variant="secondary" onClick={handleCliReauth} disabled={cliAuthBusy()}>
                           <Show
                             when={cliAuthBusy()}
-                            fallback={translate("mcp.auth.reauth_action")}
+                            fallback={translate("mcp.auth.reauth_action", "Reauthorize OAuth")}
                           >
                             <Loader2 size={14} class="animate-spin" />
-                            {translate("mcp.auth.reauth_running")}
+                            {translate("mcp.auth.reauth_running", "Reauthorizing...")}
                           </Show>
                         </Button>
                       </Show>
                       <Show when={!isTauriRuntime()}>
                         <div class="text-[11px] text-red-10">
-                          {translate("mcp.auth.reauth_cli_hint", { server: serverName() })}
+                          {translate("mcp.auth.reauth_cli_hint", "Run: opencode mcp auth {server}", { server: serverName() })}
                         </div>
                       </Show>
                     </Show>
                     <Show when={props.isRemoteWorkspace}>
                       <div class="text-[11px] text-red-10">
-                        {translate("mcp.auth.reauth_remote_hint")}
+                        {translate("mcp.auth.reauth_remote_hint", "Reauthorize from the machine running this worker.")}
                       </div>
                     </Show>
                     <Show when={cliAuthResult()}>
@@ -797,14 +797,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             <Show when={!isBusy() && authorizationUrl() && props.isRemoteWorkspace && !alreadyConnected()}>
               <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
                 <div class="text-xs font-medium text-gray-12">
-                  {translate("mcp.auth.manual_finish_title")}
+                  {translate("mcp.auth.manual_finish_title", "Remote server?")}
                 </div>
                 <div class="text-xs text-gray-10">
-                  {translate("mcp.auth.manual_finish_hint")}
+                  {translate("mcp.auth.manual_finish_hint", "Paste the callback URL (localhost:19876) or just the code to finish connecting.")}
                 </div>
                 <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2 flex items-center gap-3">
                   <div class="flex-1 min-w-0">
-                    <div class="text-[10px] uppercase tracking-wide text-gray-8">{translate("mcp.auth.authorization_link")}</div>
+                    <div class="text-[10px] uppercase tracking-wide text-gray-8">{translate("mcp.auth.authorization_link", "Authorization link")}</div>
                     <div class="text-[11px] text-gray-11 font-mono truncate">
                       {authorizationUrl()}
                     </div>
@@ -814,17 +814,17 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     class="text-xs"
                     onClick={handleCopyAuthorizationUrl}
                   >
-                    {authUrlCopied() ? translate("mcp.auth.copied") : translate("mcp.auth.copy_link")}
+                    {authUrlCopied() ? translate("mcp.auth.copied", "Copied") : translate("mcp.auth.copy_link", "Copy link")}
                   </Button>
                 </div>
                 <TextInput
-                  label={translate("mcp.auth.callback_label")}
-                  placeholder={translate("mcp.auth.callback_placeholder")}
+                  label={translate("mcp.auth.callback_label", "Callback URL or code")}
+                  placeholder={translate("mcp.auth.callback_placeholder", "http://127.0.0.1:19876/mcp/oauth/callback?code=...")}
                   value={callbackInput()}
                   onInput={(event) => setCallbackInput(event.currentTarget.value)}
                 />
                 <div class="text-[11px] text-gray-9">
-                  {translate("mcp.auth.port_forward_hint")}
+                  {translate("mcp.auth.port_forward_hint", "Tip: forward the callback port if needed: ssh -L 19876:127.0.0.1:19876 user@host")}
                 </div>
                 <div class="flex justify-end">
                   <Button
@@ -834,10 +834,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                   >
                     <Show
                       when={manualAuthBusy()}
-                      fallback={translate("mcp.auth.complete_connection")}
+                      fallback={translate("mcp.auth.complete_connection", "Complete connection")}
                     >
                       <Loader2 size={14} class="animate-spin" />
-                      {translate("mcp.auth.complete_connection")}
+                      {translate("mcp.auth.complete_connection", "Complete connection")}
                     </Show>
                   </Button>
                 </div>
@@ -851,9 +851,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     1
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step1_title")}</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step1_title", "Opening your browser")}</p>
                     <p class="text-xs text-gray-10 mt-1">
-                        {translate("mcp.auth.step1_description", { server: serverName() })}
+                        {translate("mcp.auth.step1_description", "We'll launch {server}'s sign-in flow automatically.", { server: serverName() })}
                     </p>
                   </div>
                 </div>
@@ -863,9 +863,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     2
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step2_title")}</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step2_title", "Authorize OpenWork")}</p>
                     <p class="text-xs text-gray-10 mt-1">
-                        {translate("mcp.auth.step2_description")}
+                        {translate("mcp.auth.step2_description", "Sign in and approve access when prompted.")}
                     </p>
                   </div>
                 </div>
@@ -875,9 +875,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     3
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step3_title")}</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step3_title", "Return here when you're done")}</p>
                     <p class="text-xs text-gray-10 mt-1">
-                        {translate("mcp.auth.step3_description")}
+                        {translate("mcp.auth.step3_description", "We'll finish connecting as soon as authorization completes.")}
                     </p>
                   </div>
                 </div>
@@ -885,16 +885,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
               <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-11">
                 <div class="space-y-3">
-                  <p>{translate("mcp.auth.waiting_authorization")}</p>
+                  <p>{translate("mcp.auth.waiting_authorization", "Waiting for authorization to complete in your browser...")}</p>
                   <p class="text-xs text-gray-10">
-                    {translate("mcp.auth.follow_browser_steps")}
+                    {translate("mcp.auth.follow_browser_steps", "Follow the authorization steps in the browser.")}
                   </p>
                   <button
                     type="button"
                     class="text-xs text-gray-10 underline underline-offset-2 hover:text-gray-11 transition-colors text-left"
                     onClick={handleReopenBrowser}
                   >
-                    {translate("mcp.auth.reopen_browser_link")}
+                    {translate("mcp.auth.reopen_browser_link", "Click here to re-open the browser")}
                   </button>
                 </div>
               </div>
@@ -906,16 +906,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             <Show when={alreadyConnected()}>
               <Button variant="primary" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
-                {translate("mcp.auth.done")}
+                {translate("mcp.auth.done", "Done")}
               </Button>
             </Show>
             <Show when={!alreadyConnected()}>
               <Button variant="ghost" onClick={handleClose}>
-                {translate("mcp.auth.cancel")}
+                {translate("mcp.auth.cancel", "Cancel")}
               </Button>
               <Button variant="secondary" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
-                {translate("mcp.auth.im_done")}
+                {translate("mcp.auth.im_done", "I'm done")}
               </Button>
             </Show>
           </div>

@@ -25,7 +25,7 @@ import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
 } from "../../utils";
-import { t } from "../../../i18n";
+import { t, td } from "../../../i18n";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -161,16 +161,16 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.openworkWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
-  t("workspace_list.workspace_fallback");
+  td("workspace_list.workspace_fallback", "Workspace");
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
     ? workspace.sandboxBackend === "docker" ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim())
-      ? t("workspace.sandbox_badge")
-      : t("workspace.remote_badge")
-    : t("workspace.local_badge");
+      ? td("workspace.sandbox_badge", "Sandbox")
+      : td("workspace.remote_badge", "Remote")
+    : td("workspace.local_badge", "Local");
 
 const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 
@@ -186,8 +186,8 @@ const workspaceSwatchColor = (seed: string) => {
 
 export default function WorkspaceSessionList(props: Props) {
   const revealLabel = () => isWindowsPlatform()
-    ? t("workspace_list.reveal_explorer")
-    : t("workspace_list.reveal_finder");
+    ? td("workspace_list.reveal_explorer", "Reveal in Explorer")
+    : td("workspace_list.reveal_finder", "Reveal in Finder");
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<
     Set<string>
   >(new Set());
@@ -283,7 +283,7 @@ export default function WorkspaceSessionList(props: Props) {
   const showMoreLabel = (workspaceId: string, totalRoots: number) => {
     const remaining = Math.max(0, totalRoots - previewCount(workspaceId));
     const nextCount = Math.min(MAX_SESSIONS_PREVIEW, remaining);
-    return nextCount > 0 ? t("workspace_list.show_more", undefined, { count: nextCount }) : t("workspace_list.show_more_fallback");
+    return nextCount > 0 ? td("workspace_list.show_more", "Show {count} more", { count: nextCount }) : td("workspace_list.show_more_fallback", "Show more");
   };
 
   createEffect(() => {
@@ -407,7 +407,7 @@ export default function WorkspaceSessionList(props: Props) {
               <button
                 type="button"
                 class="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
-                aria-label={isExpanded() ? t("workspace_list.hide_child_sessions") : t("workspace_list.show_child_sessions")}
+                aria-label={isExpanded() ? td("workspace_list.hide_child_sessions", "Hide child sessions") : td("workspace_list.show_child_sessions", "Show child sessions")}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -437,7 +437,7 @@ export default function WorkspaceSessionList(props: Props) {
               <button
                 type="button"
                 class="flex h-7 w-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
-                aria-label={t("workspace_list.session_actions")}
+                aria-label={td("workspace_list.session_actions", "Session actions")}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -465,7 +465,7 @@ export default function WorkspaceSessionList(props: Props) {
                   props.onOpenRenameSession?.();
                 }}
               >
-                {t("workspace_list.rename_session")}
+                {td("workspace_list.rename_session", "Rename session")}
               </button>
             </Show>
 
@@ -478,7 +478,7 @@ export default function WorkspaceSessionList(props: Props) {
                   props.onOpenDeleteSession?.();
                 }}
               >
-                {t("workspace_list.delete_session")}
+                {td("workspace_list.delete_session", "Delete session")}
               </button>
             </Show>
           </div>
@@ -520,9 +520,9 @@ export default function WorkspaceSessionList(props: Props) {
               getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
             const statusLabel = () => {
               if (group.status === "error") return taskLoadError().label;
-              if (isConnectionActionBusy()) return t("workspace_list.connecting");
+              if (isConnectionActionBusy()) return td("workspace_list.connecting", "Connecting...");
               if (!props.developerMode) return "";
-              if (props.selectedWorkspaceId === workspace().id) return t("workspace.selected");
+              if (props.selectedWorkspaceId === workspace().id) return td("workspace.selected", "Selected");
               return workspaceKindLabel(workspace());
             };
             const statusTone = () => {
@@ -596,7 +596,7 @@ export default function WorkspaceSessionList(props: Props) {
                             props.onCreateTaskInWorkspace(workspace().id);
                           }}
                           disabled={props.newTaskDisabled}
-                          aria-label={t("session.new_task")}
+                          aria-label={td("session.new_task", "New task")}
                         >
                           <Plus size={14} />
                         </button>
@@ -612,7 +612,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 : workspace().id,
                             );
                           }}
-                          aria-label={t("workspace_list.workspace_options")}
+                          aria-label={td("workspace_list.workspace_options", "Workspace options")}
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -623,8 +623,8 @@ export default function WorkspaceSessionList(props: Props) {
                         class="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
                         aria-label={
                           isWorkspaceExpanded(workspace().id)
-                            ? t("sidebar.collapse")
-                            : t("sidebar.expand")
+                            ? td("sidebar.collapse", "Collapse")
+                            : td("sidebar.expand", "Expand")
                         }
                         onClick={(event) => {
                           event.stopPropagation();
@@ -655,7 +655,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {t("workspace_list.edit_name")}
+                        {td("workspace_list.edit_name", "Edit name")}
                       </button>
                       <button
                         type="button"
@@ -665,7 +665,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {t("workspace_list.share")}
+                        {td("workspace_list.share", "Share...")}
                       </button>
                       <Show when={workspace().workspaceType === "local"}>
                         <button
@@ -692,7 +692,7 @@ export default function WorkspaceSessionList(props: Props) {
                             }}
                             disabled={isConnectionActionBusy()}
                           >
-                            {t("workspace_list.recover")}
+                            {td("workspace_list.recover", "Recover")}
                           </button>
                         </Show>
                         <button
@@ -706,7 +706,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          {t("workspace_list.test_connection")}
+                          {td("workspace_list.test_connection", "Test connection")}
                         </button>
                         <button
                           type="button"
@@ -717,7 +717,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          {t("workspace_list.edit_connection")}
+                          {td("workspace_list.edit_connection", "Edit connection")}
                         </button>
                       </Show>
                       <button
@@ -728,7 +728,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {t("workspace_list.remove_workspace")}
+                        {td("workspace_list.remove_workspace", "Remove workspace")}
                       </button>
                     </div>
                   </Show>
@@ -795,10 +795,10 @@ export default function WorkspaceSessionList(props: Props) {
                                     disabled={props.newTaskDisabled}
                                   >
                                     <span class="group-hover/empty:hidden">
-                                      {t("workspace.no_tasks")}
+                                      {td("workspace.no_tasks", "No tasks yet.")}
                                     </span>
                                     <span class="hidden group-hover/empty:inline font-medium">
-                                      {t("workspace.new_task_inline")}
+                                      {td("workspace.new_task_inline", "+ New task")}
                                     </span>
                                   </button>
                                 </Show>
@@ -829,7 +829,7 @@ export default function WorkspaceSessionList(props: Props) {
                             }
                           >
                             <div class="w-full rounded-[15px] px-3 py-2.5 text-left text-[11px] text-gray-10">
-                              {t("workspace.loading_tasks")}
+                              {td("workspace.loading_tasks", "Loading tasks...")}
                             </div>
                           </Show>
                         }
@@ -864,7 +864,7 @@ export default function WorkspaceSessionList(props: Props) {
           onClick={props.onOpenCreateWorkspace}
         >
           <Plus size={14} />
-          {t("workspace_list.add_workspace")}
+          {td("workspace_list.add_workspace", "Add workspace")}
         </button>
       </div>
     </div>

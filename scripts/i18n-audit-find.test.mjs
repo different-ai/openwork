@@ -54,6 +54,16 @@ test("source-first audit passes for inline English defaults", () => {
   assert.match(result.stdout, /Source-first defaults/);
 });
 
+test("source-first extraction command succeeds", () => {
+  const result = spawnSync("node", ["scripts/i18n-audit.mjs", "--extract-source-first"], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /synced .* td\(\) defaults into en\.ts/);
+});
+
 test("find mode exits non-zero when nothing matches", () => {
   const result = runFind("definitely not a real openwork translation string");
 

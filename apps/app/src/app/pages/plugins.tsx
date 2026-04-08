@@ -5,7 +5,7 @@ import { useExtensions } from "../extensions/provider";
 import Button from "../components/button";
 import TextInput from "../components/text-input";
 import { Cpu } from "lucide-solid";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 
 export type PluginsViewProps = {
   busy: boolean;
@@ -38,8 +38,8 @@ export default function PluginsView(props: PluginsViewProps) {
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div class="flex items-start justify-between gap-4">
           <div class="space-y-1">
-            <div class="text-sm font-medium text-gray-12">{t("plugins.title")}</div>
-            <div class="text-xs text-gray-10">{t("plugins.desc")}</div>
+            <div class="text-sm font-medium text-gray-12">{td("plugins.title", "OpenCode plugins")}</div>
+            <div class="text-xs text-gray-10">{td("plugins.desc", "Manage `opencode.json` for your project or global OpenCode plugins.")}</div>
           </div>
           <div class="flex items-center gap-2">
             <button
@@ -53,7 +53,7 @@ export default function PluginsView(props: PluginsViewProps) {
                 void extensions.refreshPlugins("project");
               }}
             >
-              {t("plugins.scope_project")}
+              {td("plugins.scope_project", "Project")}
             </button>
             <button
               disabled={!props.canUseGlobalScope}
@@ -68,24 +68,24 @@ export default function PluginsView(props: PluginsViewProps) {
                 void extensions.refreshPlugins("global");
               }}
             >
-              {t("plugins.scope_global")}
+              {td("plugins.scope_global", "Global")}
             </button>
             <Button variant="ghost" onClick={() => void extensions.refreshPlugins()}>
-              {t("common.refresh")}
+              {td("common.refresh", "Refresh")}
             </Button>
           </div>
         </div>
 
         <div class="flex flex-col gap-1 text-xs text-gray-10">
-          <div>{t("plugins.config_label")}</div>
-          <div class="text-gray-7 font-mono truncate">{extensions.pluginConfigPath() ?? extensions.pluginConfig()?.path ?? t("plugins.not_loaded_yet")}</div>
+          <div>{td("plugins.config_label", "Config")}</div>
+          <div class="text-gray-7 font-mono truncate">{extensions.pluginConfigPath() ?? extensions.pluginConfig()?.path ?? td("plugins.not_loaded_yet", "Not loaded yet")}</div>
           <Show when={props.accessHint}>
             <div class="text-gray-9">{props.accessHint}</div>
           </Show>
         </div>
 
         <div class="space-y-3">
-          <div class="text-xs font-medium text-gray-11 uppercase tracking-wider">{t("plugins.suggested_heading")}</div>
+          <div class="text-xs font-medium text-gray-11 uppercase tracking-wider">{td("plugins.suggested_heading", "Suggested plugins")}</div>
           <div class="grid gap-3">
             <For each={props.suggestedPlugins}>
               {(plugin) => {
@@ -109,7 +109,7 @@ export default function PluginsView(props: PluginsViewProps) {
                             variant="ghost"
                             onClick={() => extensions.setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)}
                           >
-                            {isGuideOpen() ? t("plugins.hide_setup") : t("plugins.setup")}
+                            {isGuideOpen() ? td("plugins.hide_setup", "Hide setup") : td("plugins.setup", "Setup")}
                           </Button>
                         </Show>
                         <Button
@@ -122,7 +122,7 @@ export default function PluginsView(props: PluginsViewProps) {
                             (extensions.pluginScope() === "project" && !props.selectedWorkspaceRoot.trim())
                           }
                         >
-                          {isInstalled() ? t("plugins.added") : t("plugins.add")}
+                          {isInstalled() ? td("plugins.added", "Added") : td("plugins.add", "Add")}
                         </Button>
                       </div>
                     </div>
@@ -178,7 +178,7 @@ export default function PluginsView(props: PluginsViewProps) {
           when={extensions.pluginList().length}
           fallback={
             <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-10">
-              {t("plugins.empty")}
+              {td("plugins.empty", "No plugins configured yet.")}
             </div>
           }
         >
@@ -188,14 +188,14 @@ export default function PluginsView(props: PluginsViewProps) {
                 <div class="flex items-center justify-between rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-2.5">
                   <div class="text-sm text-gray-12 font-mono">{pluginName}</div>
                   <div class="flex items-center gap-2">
-                    <div class="text-[10px] uppercase tracking-wide text-gray-10">{t("plugins.enabled")}</div>
+                    <div class="text-[10px] uppercase tracking-wide text-gray-10">{td("plugins.enabled", "Enabled")}</div>
                     <Button
                       variant="ghost"
                       class="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
                       onClick={() => extensions.removePlugin(pluginName)}
                       disabled={props.busy || !props.canEditPlugins}
                     >
-                      {t("plugins.remove")}
+                      {td("plugins.remove", "Remove")}
                     </Button>
                   </div>
                 </div>
@@ -208,11 +208,11 @@ export default function PluginsView(props: PluginsViewProps) {
           <div class="flex flex-col md:flex-row gap-3">
             <div class="flex-1">
               <TextInput
-                label={t("plugins.add_label")}
+                label={td("plugins.add_label", "Add plugin")}
                 placeholder="opencode-wakatime"
                 value={extensions.pluginInput()}
                 onInput={(e) => extensions.setPluginInput(e.currentTarget.value)}
-                hint={t("plugins.add_hint")}
+                hint={td("plugins.add_hint", "Add npm package names, e.g. opencode-wakatime")}
               />
             </div>
             <Button
@@ -221,7 +221,7 @@ export default function PluginsView(props: PluginsViewProps) {
               disabled={props.busy || !extensions.pluginInput().trim() || !props.canEditPlugins}
               class="md:mt-6"
             >
-              {t("plugins.add")}
+              {td("plugins.add", "Add")}
             </Button>
           </div>
           <Show when={extensions.pluginStatus()}>

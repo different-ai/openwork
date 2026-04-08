@@ -10,6 +10,7 @@
  *   node scripts/i18n-audit.mjs --unused     # unused keys (in EN but not referenced in repo)
  *   node scripts/i18n-audit.mjs --dangling   # t() calls referencing keys not in en.ts
  *   node scripts/i18n-audit.mjs --source-first # verify td() inline EN defaults match en.ts
+ *   node scripts/i18n-audit.mjs --extract-source-first # update en.ts from td() defaults
  *   node scripts/i18n-audit.mjs --aliases    # aliased t() calls (translate/tr instead of t)
  *   node scripts/i18n-audit.mjs --placeholders # placeholder integrity check
  *   node scripts/i18n-audit.mjs --hardcoded  # hardcoded English strings in source files
@@ -20,12 +21,14 @@
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
 import { join, basename, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 const LOCALES_DIR = join(REPO_ROOT, "apps/app/src/i18n/locales");
 const APP_SRC = join(REPO_ROOT, "apps/app/src");
+const tsModule = await import(pathToFileURL(join(REPO_ROOT, "apps/app/node_modules/typescript/lib/typescript.js")).href);
+const ts = tsModule.default ?? tsModule;
 
 const LOCALES = ["ja", "zh", "vi", "pt-BR", "th"];
 const EN_FILE = join(LOCALES_DIR, "en.ts");
@@ -34,7 +37,7 @@ const args = process.argv.slice(2);
 const mode = args[0] ?? "--all";
 const queryArgs = mode === "--find" ? args.slice(1).filter((arg) => arg !== "--") : args.slice(1);
 const query = queryArgs.join(" ").trim();
-const EXCLUDED_FROM_ALL = new Set(["--hardcoded", "--aliases", "--find"]);
+const EXCLUDED_FROM_ALL = new Set(["--hardcoded", "--aliases", "--find", "--extract-source-first"]);
 const shouldRun = (...modes) => (mode === "--all" && !modes.some((m) => EXCLUDED_FROM_ALL.has(m))) || modes.includes(mode);
 
 // ---------------------------------------------------------------------------
@@ -146,6 +149,99 @@ function extractSourceFirstDefaults(sourceFiles) {
   }
 
   return { defaults, conflicts };
+}
+
+function readLocaleFile(filePath) {
+  const content = readFileSync(filePath, "utf-8");
+  const exportMatch = content.match(/^([\s\S]*?)(export default \{)([\s\S]*?)(\} as const;\s*)$/);
+  if (!exportMatch) {
+    throw new Error(`Could not parse ${filePath}`);
+  }
+
+  const [, preamble, , body] = exportMatch;
+  const values = new Function(`return {${body}}`)();
+  return { preamble, values };
+}
+
+function writeLocaleFile(filePath, preamble, values) {
+  const lines = Object.keys(values)
+    .map((key) => `  ${JSON.stringify(key)}: ${JSON.stringify(values[key])},`);
+  writeFileSync(filePath, `${preamble}export default {\n${lines.join("\n")}\n} as const;\n`);
+}
+
+function scriptKind(filePath) {
+  return filePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+}
+
+function literalKey(node) {
+  if (!node) return null;
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
+}
+
+function findAliasNames(sourceFile) {
+  const aliases = new Set();
+
+  function visit(node) {
+    let fn = null;
+    let name = null;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
+      fn = node.initializer;
+      name = node.name.text;
+    } else if (ts.isFunctionDeclaration(node) && node.name) {
+      fn = node;
+      name = node.name.text;
+    }
+
+    if (fn && name && ["translate", "tr"].includes(name) && fn.parameters[0] && ts.isIdentifier(fn.parameters[0].name) && fn.parameters[0].name.text === "key") {
+      aliases.add(name);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return aliases;
+}
+
+function collectSourceFirstCoverageIssues(sourceFiles, keyValues) {
+  const keyFirstCalls = [];
+  const aliasMissingDefaults = [];
+
+  for (const file of sourceFiles) {
+    const content = readFileSync(file, "utf-8");
+    const sourceFile = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, scriptKind(file));
+    const aliases = findAliasNames(sourceFile);
+
+    function visit(node) {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const key = literalKey(node.arguments[0]);
+        if (key) {
+          const fileRef = toRelativePath(file);
+          const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+
+          if (node.expression.text === "t") {
+            keyFirstCalls.push({ file: fileRef, line, key, text: node.getText(sourceFile) });
+            return;
+          }
+
+          if (aliases.has(node.expression.text)) {
+            const defaultValue = literalKey(node.arguments[1]);
+            if (defaultValue !== keyValues.get(key)) {
+              aliasMissingDefaults.push({ file: fileRef, line, key, text: node.getText(sourceFile) });
+              return;
+            }
+          }
+        }
+      }
+
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  return { keyFirstCalls, aliasMissingDefaults };
 }
 
 function toRelativePath(filePath) {
@@ -309,6 +405,7 @@ if (shouldRun("--source-first")) {
   console.log("=== Source-first defaults (td) ===");
   const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
   const { defaults: sourceFirstDefaults, conflicts } = extractSourceFirstDefaults(sourceFiles);
+  const { keyFirstCalls, aliasMissingDefaults } = collectSourceFirstCoverageIssues(sourceFiles, enKeyValues);
   const missing = [];
   const mismatched = [];
 
@@ -324,8 +421,9 @@ if (shouldRun("--source-first")) {
     }
   }
 
-  if (conflicts.length === 0 && missing.length === 0 && mismatched.length === 0) {
+  if (conflicts.length === 0 && missing.length === 0 && mismatched.length === 0 && keyFirstCalls.length === 0 && aliasMissingDefaults.length === 0) {
     console.log(`  ✓ ${sourceFirstDefaults.size} source-first defaults match en.ts`);
+    console.log("  ✓ all static i18n callsites carry inline English defaults");
   } else {
     exitCode = 1;
 
@@ -359,7 +457,55 @@ if (shouldRun("--source-first")) {
         }
       }
     }
+
+    if (keyFirstCalls.length > 0) {
+      console.log(`  ✗ ${keyFirstCalls.length} static t() calls still need inline English defaults`);
+      if (mode !== "--summary") {
+        for (const entry of keyFirstCalls.slice(0, 10)) {
+          console.log(`    ${entry.file}:${entry.line} -> ${entry.text.slice(0, 140)}`);
+        }
+      }
+    }
+
+    if (aliasMissingDefaults.length > 0) {
+      console.log(`  ✗ ${aliasMissingDefaults.length} translate/tr callsites still need inline English defaults`);
+      if (mode !== "--summary") {
+        for (const entry of aliasMissingDefaults.slice(0, 10)) {
+          console.log(`    ${entry.file}:${entry.line} -> ${entry.text.slice(0, 140)}`);
+        }
+      }
+    }
   }
+  console.log();
+}
+
+if (mode === "--extract-source-first") {
+  console.log("=== Extract source-first defaults into en.ts ===");
+  const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
+  const { defaults: sourceFirstDefaults, conflicts } = extractSourceFirstDefaults(sourceFiles);
+
+  if (conflicts.length > 0) {
+    console.log(`  ✗ ${conflicts.length} conflicting td() defaults; resolve before extracting`);
+    for (const conflict of conflicts.slice(0, 10)) {
+      console.log(`    ${conflict.key}`);
+      console.log(`      first:  ${conflict.original.file}:${conflict.original.line} -> ${JSON.stringify(conflict.expected)}`);
+      console.log(`      second: ${conflict.conflicting.file}:${conflict.conflicting.line} -> ${JSON.stringify(conflict.actual)}`);
+    }
+    process.exit(1);
+  }
+
+  const { preamble, values } = readLocaleFile(EN_FILE);
+  let updated = 0;
+  let added = 0;
+
+  for (const [key, data] of sourceFirstDefaults) {
+    if (!(key in values)) added++;
+    else if (values[key] !== data.value) updated++;
+    values[key] = data.value;
+  }
+
+  writeLocaleFile(EN_FILE, preamble, values);
+  console.log(`  ✓ synced ${sourceFirstDefaults.size} td() defaults into en.ts (${updated} updated, ${added} added)`);
   console.log();
 }
 
@@ -725,5 +871,5 @@ if (mode === "--sort") {
 
 // --- Done ---
 console.log("=== Done ===");
-console.log('Run with --find "text", --source-first, --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.');
+console.log('Run with --find "text", --source-first, --extract-source-first, --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.');
 process.exit(exitCode);

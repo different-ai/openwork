@@ -9,7 +9,7 @@ import {
 
 import { Folder, FolderLock, FolderSearch, X } from "lucide-solid";
 
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 import Button from "../components/button";
 import type {
   OpenworkServerCapabilities,
@@ -88,8 +88,8 @@ const buildAuthorizedFoldersStatus = (preservedCount: number, action?: string) =
   const preservedLabel =
     preservedCount > 0
       ? preservedCount === 1
-        ? t("context_panel.preserving_entry")
-        : t("context_panel.preserving_entries", undefined, { count: preservedCount })
+        ? td("context_panel.preserving_entry", "Preserving 1 non-folder permission entry.")
+        : td("context_panel.preserving_entries", "Preserving {count} non-folder permission entries.", { count: preservedCount })
       : null;
   if (action && preservedLabel) return `${action} ${preservedLabel}`;
   return action ?? preservedLabel;
@@ -135,13 +135,13 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
       (props.openworkServerCapabilities?.config?.write ?? false),
   );
   const authorizedFoldersHint = createMemo(() => {
-    if (!openworkServerReady()) return t("context_panel.server_disconnected");
-    if (!openworkServerWorkspaceReady()) return t("context_panel.no_server_workspace");
+    if (!openworkServerReady()) return td("context_panel.server_disconnected", "OpenWork server is disconnected.");
+    if (!openworkServerWorkspaceReady()) return td("context_panel.no_server_workspace", "No active server workspace is selected.");
     if (!canReadConfig()) {
-      return t("context_panel.config_access_unavailable");
+      return td("context_panel.config_access_unavailable", "OpenWork server config access is unavailable for this workspace.");
     }
     if (!canWriteConfig()) {
-      return t("context_panel.config_read_only");
+      return td("context_panel.config_read_only", "OpenWork server is connected read-only for workspace config.");
     }
     return null;
   });
@@ -208,14 +208,14 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
     const openworkWorkspaceId = props.runtimeWorkspaceId;
     if (!openworkClient || !openworkWorkspaceId || !canWriteConfig()) {
       setAuthorizedFoldersError(
-        t("context_panel.writable_workspace_required"),
+        td("context_panel.writable_workspace_required", "A writable OpenWork server workspace is required to update authorized folders."),
       );
       return false;
     }
 
     setAuthorizedFoldersSaving(true);
     setAuthorizedFoldersError(null);
-    setAuthorizedFoldersStatus(t("context_panel.saving_folders"));
+    setAuthorizedFoldersStatus(td("context_panel.saving_folders", "Saving authorized folders..."));
 
     try {
       const currentConfig = await openworkClient.getConfig(openworkWorkspaceId);
@@ -238,7 +238,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
       setAuthorizedFoldersStatus(
         buildAuthorizedFoldersStatus(
           Object.keys(currentAuthorizedFolders.hiddenEntries).length,
-          t("context_panel.folders_updated"),
+          td("context_panel.folders_updated", "Authorized folders updated."),
         ),
       );
       props.onConfigUpdated();
@@ -259,13 +259,13 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
     if (!normalized) return;
     if (workspaceRoot && normalized === workspaceRoot) {
       setAuthorizedFolderDraft("");
-      setAuthorizedFoldersStatus(t("context_panel.workspace_root_available"));
+      setAuthorizedFoldersStatus(td("context_panel.workspace_root_available", "Workspace root is already available."));
       setAuthorizedFoldersError(null);
       return;
     }
     if (authorizedFolders().includes(normalized)) {
       setAuthorizedFolderDraft("");
-      setAuthorizedFoldersStatus(t("context_panel.folder_already_authorized"));
+      setAuthorizedFoldersStatus(td("context_panel.folder_already_authorized", "Folder is already authorized."));
       setAuthorizedFoldersError(null);
       return;
     }
@@ -285,7 +285,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
     if (!isTauriRuntime()) return;
     try {
       const selection = await pickDirectory({
-        title: t("onboarding.authorize_folder"),
+        title: td("onboarding.authorize_folder", "Authorize folder"),
       });
       const folder =
         typeof selection === "string"
@@ -299,12 +299,12 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
       setAuthorizedFolderDraft(normalized);
       if (workspaceRoot && normalized === workspaceRoot) {
         setAuthorizedFolderDraft("");
-        setAuthorizedFoldersStatus(t("context_panel.workspace_root_available"));
+        setAuthorizedFoldersStatus(td("context_panel.workspace_root_available", "Workspace root is already available."));
         setAuthorizedFoldersError(null);
         return;
       }
       if (authorizedFolders().includes(normalized)) {
-        setAuthorizedFoldersStatus(t("context_panel.folder_already_authorized"));
+        setAuthorizedFoldersStatus(td("context_panel.folder_already_authorized", "Folder is already authorized."));
         setAuthorizedFoldersError(null);
         return;
       }
@@ -323,10 +323,10 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
       <div class="space-y-1">
         <div class="flex items-center gap-2 text-sm font-semibold text-gray-12">
           <FolderLock size={16} class="text-gray-10" />
-          {t("context_panel.authorized_folders")}
+          {td("context_panel.authorized_folders", "Authorized folders")}
         </div>
         <div class="text-xs text-gray-9 leading-relaxed max-w-[65ch]">
-          {t("context_panel.authorized_folders_desc")}
+          {td("context_panel.authorized_folders_desc", "Grant this workspace access to read and edit files in directories outside of its root.")}
         </div>
       </div>
 
@@ -335,7 +335,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
         fallback={
           <div class={`${softPanelClass} px-3 py-3 text-xs text-gray-10`}>
             {authorizedFoldersHint() ??
-              t("context_panel.authorized_folders_no_access")}
+              td("context_panel.authorized_folders_no_access", "Connect to a writable OpenWork server workspace to edit authorized folders.")}
           </div>
         }
       >
@@ -355,9 +355,9 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                 <div class="flex h-10 w-10 items-center justify-center rounded-full bg-blue-3/30 text-blue-11 mb-3">
                   <Folder size={20} />
                 </div>
-                <div class="text-sm font-medium text-gray-11">{t("context_panel.no_external_folders")}</div>
+                <div class="text-sm font-medium text-gray-11">{td("context_panel.no_external_folders", "No external folders authorized")}</div>
                 <div class="text-[11px] text-gray-9 mt-1 max-w-[40ch]">
-                  {t("context_panel.add_folder_hint")}
+                  {td("context_panel.add_folder_hint", "Add a folder to let this workspace read and edit files outside its root directory.")}
                 </div>
               </div>
             }
@@ -382,7 +382,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                             <span class="truncate text-sm font-medium text-gray-12">{folderName}</span>
                             <Show when={isWorkspaceRoot}>
                               <span class="rounded-full border border-blue-7/30 bg-blue-3/25 px-2 py-0.5 text-[10px] font-medium text-blue-11">
-                                {t("context_panel.workspace_root_badge")}
+                                {td("context_panel.workspace_root_badge", "Workspace root")}
                               </span>
                             </Show>
                           </div>
@@ -393,7 +393,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                         when={!isWorkspaceRoot}
                         fallback={
                           <span class="shrink-0 text-[10px] font-medium text-gray-8">
-                            {t("context_panel.always_available")}
+                            {td("context_panel.always_available", "Always available")}
                           </span>
                         }
                       >
@@ -406,7 +406,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                             authorizedFoldersSaving() ||
                             !canWriteConfig()
                           }
-                          aria-label={t("context_panel.remove_folder", undefined, { name: folderName })}
+                          aria-label={td("context_panel.remove_folder", "Remove {name}", { name: folderName })}
                         >
                           <X size={16} class="text-current" />
                         </Button>
@@ -448,7 +448,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                 onPaste={(event) => {
                   event.preventDefault();
                 }}
-                placeholder={t("context_panel.input_placeholder")}
+                placeholder={td("context_panel.input_placeholder", "Type a folder path to authorize...")}
                 disabled={
                   authorizedFoldersLoading() ||
                   authorizedFoldersSaving() ||
@@ -469,7 +469,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                   !canWriteConfig()
                 }
               >
-                <FolderSearch size={13} class="mr-1.5" /> {t("context_panel.browse_button")}
+                <FolderSearch size={13} class="mr-1.5" /> {td("context_panel.browse_button", "Browse")}
               </Button>
             </Show>
 
@@ -484,7 +484,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                 !authorizedFolderDraft().trim()
               }
             >
-              {authorizedFoldersSaving() ? t("context_panel.adding_button") : t("context_panel.add_button")}
+              {authorizedFoldersSaving() ? td("context_panel.adding_button", "Adding...") : td("context_panel.add_button", "Add")}
             </Button>
           </form>
         </div>

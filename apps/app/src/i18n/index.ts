@@ -13,6 +13,11 @@ import { LANGUAGE_PREF_KEY } from "../app/constants";
 export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th";
 export type Locale = Language;
 export type TranslationParams = Record<string, string | number>;
+export type SourceFirstTranslate = (key: string, defaultValue: string, params?: TranslationParams) => string;
+type TranslationArgs = {
+  localeOverride?: Language;
+  params?: TranslationParams;
+};
 
 /**
  * All supported languages - single source of truth
@@ -70,6 +75,17 @@ const formatTranslation = (value: string, params?: TranslationParams): string =>
   }
 
   return result;
+};
+
+const parseTranslationArgs = (
+  localeOrParams?: Language | TranslationParams,
+  params?: TranslationParams,
+): TranslationArgs => {
+  if (typeof localeOrParams === "string") {
+    return { localeOverride: localeOrParams, params };
+  }
+
+  return { localeOverride: undefined, params: localeOrParams };
 };
 
 const resolveTranslation = (key: string, localeOverride?: Language, defaultValue?: string): string => {
@@ -135,9 +151,20 @@ export const t = (key: string, localeOverride?: Language, params?: TranslationPa
  * Source-first translation helper.
  * Keeps the English source string at the callsite while still using locale keys.
  */
-export const td = (key: string, defaultValue: string, params?: TranslationParams, localeOverride?: Language): string => {
-  return formatTranslation(resolveTranslation(key, localeOverride, defaultValue), params);
-};
+export function td(key: string, defaultValue: string): string;
+export function td(key: string, defaultValue: string, params: TranslationParams): string;
+export function td(key: string, defaultValue: string, localeOverride: Language): string;
+export function td(key: string, defaultValue: string, localeOverride: Language, params: TranslationParams): string;
+export function td(key: string, defaultValue: string, localeOrParams?: Language | TranslationParams, params?: TranslationParams): string;
+export function td(
+  key: string,
+  defaultValue: string,
+  localeOrParams?: Language | TranslationParams,
+  params?: TranslationParams,
+): string {
+  const parsed = parseTranslationArgs(localeOrParams, params);
+  return formatTranslation(resolveTranslation(key, parsed.localeOverride, defaultValue), parsed.params);
+}
 
 /**
  * Initialize locale from localStorage

@@ -1,6 +1,6 @@
 import { Show, createEffect } from "solid-js";
 import { X } from "lucide-solid";
-import { t, currentLocale } from "../../i18n";
+import { t, currentLocale, td } from "../../i18n";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -17,7 +17,7 @@ export type RenameWorkspaceModalProps = {
 
 export default function RenameWorkspaceModal(props: RenameWorkspaceModalProps) {
   let inputRef: HTMLInputElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = (key: string, defaultValue: string) => td(key, defaultValue, currentLocale());
 
   createEffect(() => {
     if (props.open) {
@@ -37,8 +37,8 @@ export default function RenameWorkspaceModal(props: RenameWorkspaceModalProps) {
           <div class="p-6">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-gray-12">{translate("workspace.rename_title")}</h3>
-                <p class="text-sm text-gray-11 mt-1">{translate("workspace.rename_description")}</p>
+                <h3 class="text-lg font-semibold text-gray-12">{translate("workspace.rename_title", "Edit workspace name")}</h3>
+                <p class="text-sm text-gray-11 mt-1">{translate("workspace.rename_description", "Update the name shown in the sidebar.")}</p>
               </div>
               <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
                 <X size={16} />
@@ -48,10 +48,10 @@ export default function RenameWorkspaceModal(props: RenameWorkspaceModalProps) {
             <div class="mt-6">
               <TextInput
                 ref={inputRef}
-                label={translate("workspace.rename_label")}
+                label={translate("workspace.rename_label", "Workspace name")}
                 value={props.title}
                 onInput={(e) => props.onTitleChange(e.currentTarget.value)}
-                placeholder={translate("workspace.rename_placeholder")}
+                placeholder={translate("workspace.rename_placeholder", "Design team workspace")}
                 class="bg-gray-3"
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
@@ -63,10 +63,10 @@ export default function RenameWorkspaceModal(props: RenameWorkspaceModalProps) {
 
             <div class="mt-6 flex justify-end gap-2">
               <Button variant="outline" onClick={props.onClose} disabled={props.busy}>
-                {translate("common.cancel")}
+                {translate("common.cancel", "Cancel")}
               </Button>
               <Button onClick={props.onSave} disabled={!props.canSave}>
-                {translate("common.save")}
+                {translate("common.save", "Save")}
               </Button>
             </div>
           </div>

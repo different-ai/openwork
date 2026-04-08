@@ -1,6 +1,6 @@
 import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
-import { t, currentLocale } from "../../i18n";
+import { t, currentLocale, td } from "../../i18n";
 import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
@@ -532,7 +532,7 @@ export function createSessionStore(options: {
     });
   };
 
-  const addError = (error: unknown, fallback = t("app.unknown_error", currentLocale())) => {
+  const addError = (error: unknown, fallback = td("app.unknown_error", "Unknown error", currentLocale())) => {
     const message = error instanceof Error ? error.message : fallback;
     if (!message) return;
     options.setError(addOpencodeCacheHint(message));
@@ -701,14 +701,14 @@ export function createSessionStore(options: {
     const heading = (() => {
       if (errorName === "ProviderAuthError") return `Provider auth error${providerID ? ` (${providerID})` : ""}`;
       if (errorName === "APIError") {
-        if (effectiveStatus === 401 || effectiveStatus === 403) return t("app.error_auth_failed", currentLocale());
+        if (effectiveStatus === 401 || effectiveStatus === 403) return td("app.error_auth_failed", "Authentication failed", currentLocale());
         if (effectiveStatus === 413) return "Context too large";
-        if (effectiveStatus === 429) return t("app.error_rate_limit", currentLocale());
+        if (effectiveStatus === 429) return td("app.error_rate_limit", "Rate limit exceeded", currentLocale());
         return `API error${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
       }
-      if (effectiveStatus === 401 || effectiveStatus === 403) return t("app.error_auth_failed", currentLocale());
+      if (effectiveStatus === 401 || effectiveStatus === 403) return td("app.error_auth_failed", "Authentication failed", currentLocale());
       if (effectiveStatus === 413) return "Context too large";
-      if (effectiveStatus === 429) return t("app.error_rate_limit", currentLocale());
+      if (effectiveStatus === 429) return td("app.error_rate_limit", "Rate limit exceeded", currentLocale());
       if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
       return errorName.replace(/([a-z])([A-Z])/g, "$1 $2");
     })();
@@ -1047,7 +1047,7 @@ export function createSessionStore(options: {
     if (!c) return;
     const trimmed = title.trim();
     if (!trimmed) {
-      throw new Error(t("app.error_session_name_required", currentLocale()));
+      throw new Error(td("app.error_session_name_required", "Session name is required", currentLocale()));
     }
     const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
     rememberSession(next);
@@ -1225,7 +1225,7 @@ export function createSessionStore(options: {
           mark("health FAILED", {
             error: error instanceof Error ? error.message : safeStringify(error),
           });
-          throw new Error(t("app.connection_lost", currentLocale()));
+          throw new Error(td("app.connection_lost", "Server connection lost. Please reload.", currentLocale()));
         }
       }
       if (abortIfStale("selection changed after health")) return;

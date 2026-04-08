@@ -3,6 +3,7 @@ import { For, Show } from "solid-js";
 import { Boxes, FolderPlus, Loader2, XCircle } from "lucide-solid";
 
 import type { DenTemplate } from "../lib/den";
+import type { SourceFirstTranslate } from "../../i18n";
 import type { WorkspacePreset } from "../types";
 import {
   errorBannerClass,
@@ -21,7 +22,7 @@ import {
 } from "./modal-styles";
 
 export default function CreateWorkspaceLocalPanel(props: {
-  translate: (key: string) => string;
+  translate: SourceFirstTranslate;
   selectedFolder: string | null;
   hasSelectedFolder: boolean;
   pickingFolder: boolean;
@@ -90,7 +91,7 @@ export default function CreateWorkspaceLocalPanel(props: {
                 <Show when={props.pickingFolder} fallback={<FolderPlus size={14} />}>
                   <Loader2 size={14} class="animate-spin" />
                 </Show>
-                {props.hasSelectedFolder ? props.translate("dashboard.change") : "Select folder"}
+                {props.hasSelectedFolder ? props.translate("dashboard.change", "Change") : "Select folder"}
               </button>
             </div>
           </div>
@@ -238,7 +239,7 @@ export default function CreateWorkspaceLocalPanel(props: {
 
         <Show when={props.onConfirmWorker && props.workerDisabled && props.workerDisabledReason}>
           <div class={warningBannerClass}>
-            <div class="font-semibold text-amber-12">{props.translate("dashboard.sandbox_get_ready_title")}</div>
+            <div class="font-semibold text-amber-12">{props.translate("dashboard.sandbox_get_ready_title", "Sandboxes need Docker")}</div>
             <div class="mt-1 leading-relaxed">{props.workerDisabledReason || props.workerCtaDescription}</div>
             <div class="mt-3 flex flex-wrap items-center gap-2">
               <Show when={props.onWorkerCta && props.workerCtaLabel?.trim()}>
@@ -265,20 +266,20 @@ export default function CreateWorkspaceLocalPanel(props: {
 
         <div class="flex justify-end gap-3">
           <button type="button" onClick={props.onClose} disabled={props.submitting} class={pillGhostClass}>
-            {props.translate("common.cancel")}
+            {props.translate("common.cancel", "Cancel")}
           </button>
           <Show when={props.onConfirmWorker}>
             <button
               type="button"
               onClick={() => props.onConfirmWorker?.(props.preset, props.selectedFolder)}
               disabled={!props.selectedFolder || props.submitting || props.workerSubmitting || props.workerDisabled}
-              title={!props.selectedFolder ? props.translate("dashboard.choose_folder_continue") : props.workerDisabledReason || undefined}
+              title={!props.selectedFolder ? props.translate("dashboard.choose_folder_continue", "Choose a folder to continue.") : props.workerDisabledReason || undefined}
               class={pillSecondaryClass}
             >
-              <Show when={props.workerSubmitting} fallback={props.workerLabel ?? props.translate("dashboard.create_sandbox_confirm")}>
+              <Show when={props.workerSubmitting} fallback={props.workerLabel ?? props.translate("dashboard.create_sandbox_confirm", "Create as sandbox")}>
                 <span class="inline-flex items-center gap-2">
                   <Loader2 size={16} class="animate-spin" />
-                  {props.translate("dashboard.sandbox_checking_docker")}
+                  {props.translate("dashboard.sandbox_checking_docker", "Checking Docker...")}
                 </span>
               </Show>
             </button>
@@ -287,10 +288,10 @@ export default function CreateWorkspaceLocalPanel(props: {
             type="button"
             onClick={() => void props.onSubmit()}
             disabled={!props.selectedFolder || props.submitting}
-            title={!props.selectedFolder ? props.translate("dashboard.choose_folder_continue") : undefined}
+            title={!props.selectedFolder ? props.translate("dashboard.choose_folder_continue", "Choose a folder to continue.") : undefined}
             class={pillPrimaryClass}
           >
-            <Show when={props.submitting} fallback={props.confirmLabel ?? props.translate("dashboard.create_workspace_confirm")}>
+            <Show when={props.submitting} fallback={props.confirmLabel ?? props.translate("dashboard.create_workspace_confirm", "Create Workspace")}>
               <span class="inline-flex items-center gap-2">
                 <Loader2 size={16} class="animate-spin" />
                 Creating…

@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { ProviderListItem } from "./types";
-import { t } from "../i18n";
+import { t, td } from "../i18n";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -145,7 +145,7 @@ export function createSystemState(options: {
 
   function openResetModal(mode: ResetOpenworkMode) {
     if (anyActiveRuns()) {
-      options.setError(t("system.stop_active_runs_before_reset"));
+      options.setError(td("system.stop_active_runs_before_reset", "Stop active runs before resetting."));
       return;
     }
 
@@ -159,7 +159,7 @@ export function createSystemState(options: {
     if (resetModalBusy()) return;
 
     if (anyActiveRuns()) {
-      options.setError(t("system.stop_active_runs_before_reset"));
+      options.setError(td("system.stop_active_runs_before_reset", "Stop active runs before resetting."));
       return;
     }
 
@@ -217,20 +217,20 @@ export function createSystemState(options: {
   }
 
   const reloadCopy = createMemo(() => {
-    const title = t("system.reload_required");
+    const title = td("system.reload_required", "Reload required");
     const reasons = reloadReasons();
 
-    const bodyKey =
-      reasons.length === 1 && reasons[0] === "plugins" ? "system.reload_body_plugins"
-      : reasons.length === 1 && reasons[0] === "skills" ? "system.reload_body_skills"
-      : reasons.length === 1 && reasons[0] === "agents" ? "system.reload_body_agents"
-      : reasons.length === 1 && reasons[0] === "commands" ? "system.reload_body_commands"
-      : reasons.length === 1 && reasons[0] === "config" ? "system.reload_body_config"
-      : reasons.length === 1 && reasons[0] === "mcp" ? "system.reload_body_mcp"
-      : reasons.length > 0 ? "system.reload_body_mixed"
-      : "system.reload_body_default";
+    const body =
+      reasons.length === 1 && reasons[0] === "plugins" ? td("system.reload_body_plugins", "OpenCode loads npm plugins at startup. Reload the engine to apply opencode.json changes.")
+      : reasons.length === 1 && reasons[0] === "skills" ? td("system.reload_body_skills", "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.")
+      : reasons.length === 1 && reasons[0] === "agents" ? td("system.reload_body_agents", "OpenCode loads agents at startup. Reload the engine to make updated agents available.")
+      : reasons.length === 1 && reasons[0] === "commands" ? td("system.reload_body_commands", "OpenCode loads commands at startup. Reload the engine to make updated commands available.")
+      : reasons.length === 1 && reasons[0] === "config" ? td("system.reload_body_config", "OpenCode reads opencode.json at startup. Reload the engine to apply configuration changes.")
+      : reasons.length === 1 && reasons[0] === "mcp" ? td("system.reload_body_mcp", "OpenCode loads MCP servers at startup. Reload the engine to activate the new connection.")
+      : reasons.length > 0 ? td("system.reload_body_mixed", "OpenWork detected OpenCode configuration changes. Reload the engine to apply them.")
+      : td("system.reload_body_default", "OpenWork detected changes that require reloading the OpenCode instance.");
 
-    return { title, body: t(bodyKey) };
+    return { title, body };
   });
 
   const canReloadEngine = createMemo(() => {
@@ -254,7 +254,7 @@ export function createSystemState(options: {
 
     const override = options.canReloadWorkspaceEngine?.();
     if (override === false) {
-      setReloadError(t("system.reload_unavailable"));
+      setReloadError(td("system.reload_unavailable", "Reload is unavailable for this worker."));
       return;
     }
 
@@ -270,7 +270,7 @@ export function createSystemState(options: {
       if (options.reloadWorkspaceEngine) {
         const ok = await options.reloadWorkspaceEngine();
         if (ok === false) {
-          setReloadError(t("system.reload_failed"));
+          setReloadError(td("system.reload_failed", "Failed to reload the engine."));
           return;
         }
       } else {
@@ -340,7 +340,7 @@ export function createSystemState(options: {
 
   async function repairOpencodeCache() {
     if (!isTauriRuntime()) {
-      setCacheRepairResult(t("system.cache_repair_requires_desktop"));
+      setCacheRepairResult(td("system.cache_repair_requires_desktop", "Cache repair requires the desktop app."));
       return;
     }
 
@@ -358,9 +358,9 @@ export function createSystemState(options: {
       }
 
       if (result.removed.length) {
-        setCacheRepairResult(t("settings.cache_repaired"));
+        setCacheRepairResult(td("settings.cache_repaired", "OpenCode cache repaired. Restart the engine if it was running."));
       } else {
-        setCacheRepairResult(t("settings.cache_nothing_to_repair"));
+        setCacheRepairResult(td("settings.cache_nothing_to_repair", "No OpenCode cache found. Nothing to repair."));
       }
     } catch (e) {
       setCacheRepairResult(e instanceof Error ? e.message : safeStringify(e));
@@ -371,7 +371,7 @@ export function createSystemState(options: {
 
   async function cleanupOpenworkDockerContainers() {
     if (!isTauriRuntime()) {
-      setDockerCleanupResult(t("system.docker_cleanup_requires_desktop"));
+      setDockerCleanupResult(td("system.docker_cleanup_requires_desktop", "Docker cleanup requires the desktop app."));
       return;
     }
 
@@ -424,7 +424,7 @@ export function createSystemState(options: {
             updateStatus().state === "idle"
               ? (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
               : null,
-          message: env.reason ?? t("system.updates_not_supported"),
+          message: env.reason ?? td("system.updates_not_supported", "Updates are not supported in this environment."),
         });
       }
       return;
@@ -539,7 +539,7 @@ export function createSystemState(options: {
     if (!pending) return;
 
     if (anyActiveRuns()) {
-      options.setError(t("system.stop_runs_before_update"));
+      options.setError(td("system.stop_runs_before_update", "Stop active runs before installing an update."));
       return;
     }
 

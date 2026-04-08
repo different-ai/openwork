@@ -2,7 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-j
 
 import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2, X } from "lucide-solid";
 
-import { currentLocale, t } from "../../i18n";
+import { currentLocale, t, td, type SourceFirstTranslate } from "../../i18n";
 import { usePlatform } from "../context/platform";
 import {
   buildDenAuthUrl,
@@ -41,34 +41,34 @@ import type {
   RemoteWorkspaceInput,
 } from "./types";
 
-function workerStatusMeta(status: string, translate: (key: string) => string) {
+function workerStatusMeta(status: string, translate: SourceFirstTranslate) {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "healthy":
-      return { label: translate("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
+      return { label: translate("dashboard.worker_status_ready", "Ready"), tone: "ready" as const, canOpen: true };
     case "provisioning":
     case "starting":
-      return { label: translate("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
+      return { label: translate("dashboard.worker_status_starting", "Starting"), tone: "warning" as const, canOpen: false };
     case "failed":
     case "error":
-      return { label: translate("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
+      return { label: translate("dashboard.worker_status_attention", "Attention"), tone: "error" as const, canOpen: false };
     case "stopped":
-      return { label: translate("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
+      return { label: translate("dashboard.worker_status_stopped", "Stopped"), tone: "neutral" as const, canOpen: false };
     default:
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : translate("common.unknown"),
+          : translate("common.unknown", "Unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
   }
 }
 
-function formatTemplateTimestamp(value: string | null, translate: (key: string) => string) {
-  if (!value) return translate("dashboard.recently_updated");
+function formatTemplateTimestamp(value: string | null, translate: SourceFirstTranslate) {
+  if (!value) return translate("dashboard.recently_updated", "Recently updated");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return translate("dashboard.recently_updated");
+  if (Number.isNaN(date.getTime())) return translate("dashboard.recently_updated", "Recently updated");
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
@@ -76,21 +76,21 @@ function formatTemplateTimestamp(value: string | null, translate: (key: string) 
   }).format(date);
 }
 
-function templateCreatorLabel(template: DenTemplate, translate: (key: string) => string) {
+function templateCreatorLabel(template: DenTemplate, translate: SourceFirstTranslate) {
   const creator = template.creator;
-  if (!creator) return translate("dashboard.unknown_creator");
-  return creator.name?.trim() || creator.email?.trim() || translate("dashboard.unknown_creator");
+  if (!creator) return translate("dashboard.unknown_creator", "Unknown creator");
+  return creator.name?.trim() || creator.email?.trim() || translate("dashboard.unknown_creator", "Unknown creator");
 }
 
-function workerSecondaryLine(worker: DenWorkerSummary, translate: (key: string) => string) {
-  const parts = [worker.provider?.trim() || translate("dashboard.cloud_worker")];
+function workerSecondaryLine(worker: DenWorkerSummary, translate: SourceFirstTranslate) {
+  const parts = [worker.provider?.trim() || translate("dashboard.cloud_worker", "Cloud worker")];
   if (worker.instanceUrl?.trim()) parts.push(worker.instanceUrl.trim());
   return parts.join(" · ");
 }
 
 export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   let remoteUrlRef: HTMLInputElement | undefined;
-  const translate = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
+  const translate = (key: string, defaultValue: string, params?: Record<string, string | number>) => td(key, defaultValue, currentLocale(), params);
   const platform = usePlatform();
 
   const [screen, setScreen] = createSignal<CreateWorkspaceScreen>("chooser");
@@ -186,28 +186,28 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const headerTitle = createMemo(() => {
     switch (screen()) {
       case "local":
-        return translate("dashboard.create_local_workspace_title");
+        return translate("dashboard.create_local_workspace_title", "Local workspace");
       case "remote":
-        return translate("dashboard.create_remote_custom_title");
+        return translate("dashboard.create_remote_custom_title", "Connect custom remote");
       case "shared":
-        return translate("dashboard.create_shared_title");
+        return translate("dashboard.create_shared_title", "Shared workspaces");
       default:
-        return props.title ?? translate("dashboard.create_workspace_title");
+        return props.title ?? translate("dashboard.create_workspace_title", "Create Workspace");
     }
   });
 
   const headerSubtitle = createMemo(() => {
     switch (screen()) {
       case "local":
-        return translate("dashboard.create_local_workspace_subtitle");
+        return translate("dashboard.create_local_workspace_subtitle", "Create a workspace on this device and optionally start from a team template.");
       case "remote":
-        return translate("dashboard.create_remote_custom_subtitle");
+        return translate("dashboard.create_remote_custom_subtitle", "Attach to a self-hosted OpenWork worker.");
       case "shared":
         return isSignedIn()
-          ? translate("dashboard.create_shared_subtitle_signed_in")
-          : translate("dashboard.create_shared_subtitle_signed_out");
+          ? translate("dashboard.create_shared_subtitle_signed_in", "Browse cloud workers shared with your organization and connect in one step.")
+          : translate("dashboard.create_shared_subtitle_signed_out", "Sign in to OpenWork Cloud to access workers shared with your organization.");
       default:
-        return props.subtitle ?? translate("dashboard.create_workspace_subtitle");
+        return props.subtitle ?? translate("dashboard.create_workspace_subtitle", "Initialize a new folder-based workspace.");
     }
   });
 
@@ -324,7 +324,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       applyActiveOrg(nextActive);
     } catch (error) {
       setOrgsError(
-        error instanceof Error ? error.message : translate("dashboard.error_load_orgs"),
+        error instanceof Error ? error.message : translate("dashboard.error_load_orgs", "Failed to load organizations."),
       );
     } finally {
       setOrgsBusy(false);
@@ -340,7 +340,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       setWorkers(nextWorkers);
     } catch (error) {
       setWorkersError(
-        error instanceof Error ? error.message : translate("dashboard.error_load_shared_workspaces"),
+        error instanceof Error ? error.message : translate("dashboard.error_load_shared_workspaces", "Failed to load shared workspaces."),
       );
     } finally {
       setWorkersBusy(false);
@@ -372,7 +372,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     if (!props.onConfirmRemote) return;
     const orgId = activeOrgId().trim();
     if (!orgId) {
-      setWorkersError(translate("dashboard.error_choose_org"));
+      setWorkersError(translate("dashboard.error_choose_org", "Choose an organization before opening a workspace."));
       return;
     }
     setOpeningWorkerId(worker.workerId);
@@ -383,7 +383,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       const accessToken =
         tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
       if (!openworkUrl || !accessToken) {
-        throw new Error(translate("dashboard.error_workspace_not_ready"));
+        throw new Error(translate("dashboard.error_workspace_not_ready", "Workspace is not ready to connect yet. Try again in a moment."));
       }
       const ok = await Promise.resolve(
         props.onConfirmRemote({
@@ -397,13 +397,13 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         }),
       );
       if (ok === false) {
-        throw new Error(translate("dashboard.error_connect_worker", { name: worker.workerName }));
+        throw new Error(translate("dashboard.error_connect_worker", "Failed to connect to {name}.", { name: worker.workerName }));
       }
     } catch (error) {
       setWorkersError(
         error instanceof Error
           ? error.message
-          : translate("dashboard.error_connect_worker", { name: worker.workerName }),
+          : translate("dashboard.error_connect_worker", "Failed to connect to {name}.", { name: worker.workerName }),
       );
     } finally {
       setOpeningWorkerId(null);
@@ -420,7 +420,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         setTemplateError(
           error instanceof Error
             ? error.message
-            : translate("dashboard.error_create_template", { name: template.name }),
+            : translate("dashboard.error_create_template", "Failed to create {name}.", { name: template.name }),
         );
       }
       return;
@@ -438,7 +438,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               onClick={() => setScreen("chooser")}
               disabled={submitting() || remoteSubmitting()}
               class={modalHeaderButtonClass}
-              aria-label={translate("dashboard.modal_back")}
+              aria-label={translate("dashboard.modal_back", "Back")}
             >
               <ArrowLeft size={18} />
             </button>
@@ -454,7 +454,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             onClick={props.onClose}
             disabled={submitting() || remoteSubmitting()}
             class={modalHeaderButtonClass}
-            aria-label={translate("dashboard.modal_close")}
+            aria-label={translate("dashboard.modal_close", "Close add workspace modal")}
           >
             <X size={18} />
           </button>
@@ -465,26 +465,26 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         <div class={modalBodyClass}>
           <div class="space-y-3">
             <WorkspaceOptionCard
-              title={translate("dashboard.create_local_workspace_title")}
+              title={translate("dashboard.create_local_workspace_title", "Local workspace")}
               description={
                 props.localDisabled
-                  ? props.localDisabledReason?.trim() || translate("dashboard.chooser_local_desc")
-                  : translate("dashboard.chooser_local_desc")
+                  ? props.localDisabledReason?.trim() || translate("dashboard.chooser_local_desc", "Create a workspace on this device and optionally start from a team template.")
+                  : translate("dashboard.chooser_local_desc", "Create a workspace on this device and optionally start from a team template.")
               }
               icon={FolderPlus}
               onClick={() => setScreen("local")}
               disabled={props.localDisabled}
-              endAdornment={props.localDisabled ? <span class={tagClass}>{translate("dashboard.desktop_badge")}</span> : undefined}
+              endAdornment={props.localDisabled ? <span class={tagClass}>{translate("dashboard.desktop_badge", "Desktop")}</span> : undefined}
             />
             <WorkspaceOptionCard
-              title={translate("dashboard.create_remote_custom_title")}
-              description={translate("dashboard.chooser_remote_desc")}
+              title={translate("dashboard.create_remote_custom_title", "Connect custom remote")}
+              description={translate("dashboard.chooser_remote_desc", "Attach to a self-hosted OpenWork worker using a URL and access token.")}
               icon={Globe}
               onClick={() => setScreen("remote")}
             />
             <WorkspaceOptionCard
-              title={translate("dashboard.create_shared_title")}
-              description={translate("dashboard.chooser_shared_desc")}
+              title={translate("dashboard.create_shared_title", "Shared workspaces")}
+              description={translate("dashboard.chooser_shared_desc", "Browse cloud workers shared with your organization and connect in one step.")}
               icon={Cloud}
               onClick={() => setScreen("shared")}
             />
@@ -497,10 +497,10 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                   disabled={props.importingConfig}
                   class={pillGhostClass}
                 >
-                  <Show when={props.importingConfig} fallback={translate("dashboard.import_config")}>
+                  <Show when={props.importingConfig} fallback={translate("dashboard.import_config", "Import config")}>
                     <span class="inline-flex items-center gap-2">
                       <Loader2 size={14} class="animate-spin" />
-                      {translate("dashboard.importing")}
+                      {translate("dashboard.importing", "Importing…")}
                     </span>
                   </Show>
                 </button>
@@ -563,15 +563,15 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               onDisplayNameInput={setRemoteDisplayName}
               submitting={remoteSubmitting()}
               hostInputRef={remoteUrlRef}
-              title={translate("dashboard.remote_server_details_title")}
-              description={translate("dashboard.remote_server_details_hint")}
+              title={translate("dashboard.remote_server_details_title", "Remote server details")}
+              description={translate("dashboard.remote_server_details_hint", "Attach to a self-hosted OpenWork worker.")}
             />
           </div>
           <div class="space-y-3 border-t border-dls-border px-6 py-5">
             <Show when={remoteError()}>{(value) => <div class="rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">{value()}</div>}</Show>
             <div class="flex justify-end gap-3">
               <button type="button" class={pillGhostClass} onClick={props.onClose} disabled={remoteSubmitting()}>
-                {translate("common.cancel")}
+                {translate("common.cancel", "Cancel")}
               </button>
               <button
                 type="button"
@@ -579,10 +579,10 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                 disabled={!remoteUrl().trim() || remoteSubmitting()}
                 onClick={() => void handleRemoteSubmit()}
               >
-                <Show when={remoteSubmitting()} fallback={translate("dashboard.connect_remote_button")}>
+                <Show when={remoteSubmitting()} fallback={translate("dashboard.connect_remote_button", "Connect remote")}>
                   <span class="inline-flex items-center gap-2">
                     <Loader2 size={16} class="animate-spin" />
-                    {translate("dashboard.connecting")}
+                    {translate("dashboard.connecting", "Connecting...")}
                   </span>
                 </Show>
               </button>

@@ -28,7 +28,7 @@ import type {
   WorkspaceInfo,
 } from "../lib/tauri";
 import type { OpenworkServerSettings } from "../lib/openwork-server";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
 
 export type ShareWorkspaceState = ReturnType<typeof createShareWorkspaceState>;
@@ -196,34 +196,34 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         options.openworkServerHostInfo()?.clientToken?.trim() || "";
       return [
         {
-          label: t("session.share_worker_url"),
+          label: td("session.share_worker_url", "Worker URL"),
           value: url,
           placeholder: !isTauriRuntime()
-            ? t("session.share_desktop_app_required")
-            : t("session.share_starting_server"),
+            ? td("session.share_desktop_app_required", "Desktop app required")
+            : td("session.share_starting_server", "Starting server..."),
           hint: mountedUrl
-            ? t("session.share_worker_url_phones_hint")
+            ? td("session.share_worker_url_phones_hint", "Use on phones or laptops connecting to this worker.")
             : hostUrl
-              ? t("session.share_worker_url_resolving_hint")
+              ? td("session.share_worker_url_resolving_hint", "Worker URL is resolving; host URL shown as fallback.")
               : undefined,
         },
         {
-          label: t("session.share_password"),
+          label: td("session.share_password", "Password"),
           value: ownerToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
+          placeholder: isTauriRuntime() ? "-" : td("session.share_desktop_app_required", "Desktop app required"),
           hint: mountedUrl
-            ? t("session.share_worker_url_phones_hint")
-            : t("session.share_owner_permission_hint"),
+            ? td("session.share_worker_url_phones_hint", "Use on phones or laptops connecting to this worker.")
+            : td("session.share_owner_permission_hint", "Use when the remote client must answer permission prompts."),
         },
         {
-          label: t("session.share_collaborator_label"),
+          label: td("session.share_collaborator_label", "Collaborator token"),
           value: collaboratorToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
+          placeholder: isTauriRuntime() ? "-" : td("session.share_desktop_app_required", "Desktop app required"),
           hint: mountedUrl
-            ? t("session.share_collaborator_hint")
-            : t("session.share_collaborator_host_hint"),
+            ? td("session.share_collaborator_hint", "Routine remote access when you do not need owner-only actions.")
+            : td("session.share_collaborator_host_hint", "Routine remote access to this host without owner-only actions."),
         },
       ];
     }
@@ -239,15 +239,15 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         "";
       return [
         {
-          label: t("session.share_worker_url"),
+          label: td("session.share_worker_url", "Worker URL"),
           value: url,
         },
         {
-          label: t("session.share_password"),
+          label: td("session.share_password", "Password"),
           value: token,
           secret: true,
-          placeholder: token ? undefined : t("session.share_set_token_hint"),
-          hint: t("session.share_connected_with_hint"),
+          placeholder: token ? undefined : td("session.share_set_token_hint", "Set token in workspace settings"),
+          hint: td("session.share_connected_with_hint", "This workspace is currently connected with this password."),
         },
       ];
     }
@@ -256,13 +256,13 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
     const directory = workspace.directory?.trim() || "";
     return [
       {
-        label: t("session.share_opencode_base_url"),
+        label: td("session.share_opencode_base_url", "OpenCode base URL"),
         value: baseUrl,
       },
       {
-        label: t("common.path"),
+        label: td("common.path", "Path"),
         value: directory,
-        placeholder: t("common.default_parens"),
+        placeholder: td("common.default_parens", "(default)"),
       },
     ];
   });
@@ -274,16 +274,16 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       workspace.workspaceType === "local" &&
       options.engineInfo()?.runtime === "direct"
     ) {
-      return t("session.share_note_direct_runtime");
+      return td("session.share_note_direct_runtime", "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.");
     }
     return null;
   });
 
   const shareServiceDisabledReason = createMemo(() => {
     const workspace = shareWorkspace();
-    if (!workspace) return t("session.share_select_workspace");
+    if (!workspace) return td("session.share_select_workspace", "Select a workspace first.");
     if (workspace.workspaceType === "remote" && workspace.remoteType !== "openwork") {
-      return t("session.share_openwork_workers_only");
+      return td("session.share_openwork_workers_only", "Share service links are available for OpenWork workers.");
     }
     if (workspace.workspaceType !== "remote") {
       const baseUrl = options.openworkServerHostInfo()?.baseUrl?.trim() ?? "";
@@ -292,7 +292,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         options.openworkServerHostInfo()?.clientToken?.trim() ||
         "";
       if (!baseUrl || !token) {
-        return t("session.share_local_host_not_ready");
+        return td("session.share_local_host_not_ready", "Local OpenWork host is not ready yet.");
       }
     } else {
       const hostUrl = workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
@@ -300,8 +300,8 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         workspace.openworkToken?.trim() ||
         options.openworkServerSettings().token?.trim() ||
         "";
-      if (!hostUrl) return t("session.share_missing_host_url");
-      if (!token) return t("session.share_missing_token");
+      if (!hostUrl) return td("session.share_missing_host_url", "Missing OpenWork host URL.");
+      if (!token) return td("session.share_missing_token", "Missing OpenWork token.");
     }
     return null;
   });
@@ -330,7 +330,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
   const shareWorkspaceProfileTeamOrgName = createMemo(() => {
     const orgName = shareCloudSettings().activeOrgName?.trim();
     if (orgName) return orgName;
-    return t("session.share_active_cloud_org");
+    return td("session.share_active_cloud_org", "Active Cloud org");
   });
 
   const shareWorkspaceProfileToTeamNeedsSignIn = createMemo(
@@ -343,7 +343,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
     if (shareWorkspaceProfileToTeamNeedsSignIn()) return null;
     const settings = shareCloudSettings();
     if (!settings.activeOrgId?.trim() && !settings.activeOrgSlug?.trim()) {
-      return t("session.share_choose_org");
+      return td("session.share_choose_org", "Choose an organization in Settings -> Cloud before sharing with your team.");
     }
     return null;
   });
@@ -360,7 +360,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
   }> => {
     const workspace = shareWorkspace();
     if (!workspace) {
-      throw new Error(t("session.share_select_workspace"));
+      throw new Error(td("session.share_select_workspace", "Select a workspace first."));
     }
 
     if (workspace.workspaceType !== "remote") {
@@ -370,7 +370,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         options.openworkServerHostInfo()?.clientToken?.trim() ||
         "";
       if (!baseUrl || !token) {
-        throw new Error(t("session.share_local_host_not_ready"));
+        throw new Error(td("session.share_local_host_not_ready", "Local OpenWork host is not ready yet."));
       }
       const client = createOpenworkServerClient({ baseUrl, token });
 
@@ -387,14 +387,14 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       }
 
       if (!workspaceId) {
-        throw new Error(t("session.share_resolve_local_workspace_failed"));
+        throw new Error(td("session.share_resolve_local_workspace_failed", "Could not resolve this workspace on the local OpenWork host."));
       }
 
       return { client, workspaceId, workspace };
     }
 
     if (workspace.remoteType !== "openwork") {
-      throw new Error(t("session.share_openwork_workers_only"));
+      throw new Error(td("session.share_openwork_workers_only", "Share service links are available for OpenWork workers."));
     }
 
     const hostUrl = workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
@@ -403,7 +403,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       options.openworkServerSettings().token?.trim() ||
       "";
     if (!hostUrl || !token) {
-      throw new Error(t("session.share_host_url_and_token_required"));
+      throw new Error(td("session.share_host_url_and_token_required", "OpenWork host URL and token are required."));
     }
 
     const client = createOpenworkServerClient({ baseUrl: hostUrl, token });
@@ -438,7 +438,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
     }
 
     if (!workspaceId) {
-      throw new Error(t("session.share_resolve_remote_workspace_failed"));
+      throw new Error(td("session.share_resolve_remote_workspace_failed", "Could not resolve this workspace on the OpenWork host."));
     }
 
     return { client, workspaceId, workspace };
@@ -475,7 +475,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       setShareWorkspaceProfileError(
         error instanceof Error
           ? error.message
-          : t("session.share_publish_workspace_failed"),
+          : td("session.share_publish_workspace_failed", "Failed to publish workspace profile"),
       );
     } finally {
       setShareWorkspaceProfileBusy(false);
@@ -499,7 +499,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       });
 
       setShareWorkspaceProfileTeamSuccess(
-        t("session.share_saved_to_org", undefined, { name: created.name, org: orgName || t("session.share_team_fallback_name") }),
+        td("session.share_saved_to_org", "Saved {name} to {org}.", { name: created.name, org: orgName || td("session.share_team_fallback_name", "your team templates") }),
       );
     } catch (error) {
       const warnings = readWorkspaceExportWarnings(error);
@@ -509,7 +509,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         return;
       }
       setShareWorkspaceProfileTeamError(
-        error instanceof Error ? error.message : t("session.share_save_team_template_failed"),
+        error instanceof Error ? error.message : td("session.share_save_team_template_failed", "Failed to save team template"),
       );
     } finally {
       setShareWorkspaceProfileTeamBusy(false);
@@ -538,7 +538,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       }
     } catch (error) {
       setShareSkillsSetError(
-        error instanceof Error ? error.message : t("session.share_publish_skills_failed"),
+        error instanceof Error ? error.message : td("session.share_publish_skills_failed", "Failed to publish skills set"),
       );
     } finally {
       setShareSkillsSetBusy(false);
@@ -547,12 +547,12 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
 
   const exportDisabledReason = createMemo(() => {
     const workspace = shareWorkspace();
-    if (!workspace) return t("session.export_desktop_only_local");
+    if (!workspace) return td("session.export_desktop_only_local", "Export is available for local workers in the desktop app.");
     if (workspace.workspaceType === "remote") {
-      return t("session.export_local_only");
+      return td("session.export_local_only", "Export is only supported for local workers.");
     }
-    if (!isTauriRuntime()) return t("session.export_desktop_only");
-    if (options.exportWorkspaceBusy()) return t("session.export_already_running");
+    if (!isTauriRuntime()) return td("session.export_desktop_only", "Export is available in the desktop app.");
+    if (options.exportWorkspaceBusy()) return td("session.export_already_running", "Export is already running.");
     return null;
   });
 

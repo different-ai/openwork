@@ -9,7 +9,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   ComposerDraft,
@@ -265,10 +265,10 @@ type CommandPaletteMode = "root" | "sessions";
 function describePermissionRequest(permission: PendingPermission | null) {
   if (!permission) {
     return {
-      title: t("session.permission_required"),
-      message: t("session.permission_message"),
+      title: td("session.permission_required", "Permission Required"),
+      message: td("session.permission_message", "OpenCode is requesting permission to continue."),
       permissionLabel: "",
-      scopeLabel: t("session.scope_label"),
+      scopeLabel: td("session.scope_label", "Scope"),
       scopeValue: "",
       isDoomLoop: false,
       note: null as string | null,
@@ -282,21 +282,21 @@ function describePermissionRequest(permission: PendingPermission | null) {
         ? permission.metadata.tool
         : null;
     return {
-      title: t("session.doom_loop_title"),
-      message: t("session.doom_loop_message"),
-      permissionLabel: t("session.doom_loop_label"),
-      scopeLabel: tool ? t("session.doom_loop_tool_label") : t("session.doom_loop_repeated_call_label"),
-      scopeValue: tool ?? (patterns.length ? patterns.join(", ") : t("session.doom_loop_repeated_tool_call")),
+      title: td("session.doom_loop_title", "Doom Loop Detected"),
+      message: td("session.doom_loop_message", "OpenCode detected repeated tool calls with identical input and is asking whether it should continue after repeated failures."),
+      permissionLabel: td("session.doom_loop_label", "Doom Loop"),
+      scopeLabel: tool ? td("session.doom_loop_tool_label", "Tool") : td("session.doom_loop_repeated_call_label", "Repeated call"),
+      scopeValue: tool ?? (patterns.length ? patterns.join(", ") : td("session.doom_loop_repeated_tool_call", "Repeated tool call")),
       isDoomLoop: true,
-      note: t("session.doom_loop_note"),
+      note: td("session.doom_loop_note", "Reject to stop the loop, or allow if you want the agent to keep trying."),
     };
   }
 
   return {
-    title: t("session.permission_required"),
-    message: t("session.permission_message"),
+    title: td("session.permission_required", "Permission Required"),
+    message: td("session.permission_message", "OpenCode is requesting permission to continue."),
     permissionLabel: permission.permission,
-    scopeLabel: t("session.scope_label"),
+    scopeLabel: td("session.scope_label", "Scope"),
     scopeValue: patterns.join(", "),
     isDoomLoop: false,
     note: null as string | null,
@@ -421,7 +421,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const agentLabel = createMemo(() => {
-    const name = sessionActions.selectedSessionAgent() ?? t("session.default_agent");
+    const name = sessionActions.selectedSessionAgent() ?? td("session.default_agent", "Default agent");
     return name.charAt(0).toUpperCase() + name.slice(1);
   });
   const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -429,7 +429,7 @@ export default function SessionView(props: SessionViewProps) {
     workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    t("session.workspace_label");
+    td("session.workspace_label", "Workspace");
   const todoList = createMemo(() =>
     props.todos.filter((todo) => todo.content.trim()),
   );
@@ -623,11 +623,11 @@ export default function SessionView(props: SessionViewProps) {
 
   const activeSearchPositionLabel = createMemo(() => {
     const hits = searchHits();
-    if (!hits.length) return t("session.no_matches");
+    if (!hits.length) return td("session.no_matches", "No matches");
     const size = hits.length;
     const raw = activeSearchHitIndex();
     const index = ((raw % size) + size) % size;
-    return t("session.search_position", undefined, { current: index + 1, total: size });
+    return td("session.search_position", "{current} of {total}", { current: index + 1, total: size });
   });
 
   const searchActive = createMemo(
@@ -1023,7 +1023,7 @@ export default function SessionView(props: SessionViewProps) {
         : "";
     return {
       ok: false as const,
-      reason: `${lastError instanceof Error ? lastError.message : t("session.file_open_failed")}${suffix}`,
+      reason: `${lastError instanceof Error ? lastError.message : td("session.file_open_failed", "File open failed")}${suffix}`,
     };
   };
 
@@ -1033,11 +1033,11 @@ export default function SessionView(props: SessionViewProps) {
     if (!workspace || workspace.workspaceType !== "local") return;
     const target = workspace.path?.trim() ?? "";
     if (!target) {
-      showStatusToast(t("session.workspace_path_unavailable"), "warning");
+      showStatusToast(td("session.workspace_path_unavailable", "Workspace path is unavailable."), "warning");
       return;
     }
     if (!isTauriRuntime()) {
-      showStatusToast(t("session.reveal_desktop_only"), "warning");
+      showStatusToast(td("session.reveal_desktop_only", "Reveal is available in the desktop app."), "warning");
       return;
     }
     try {
@@ -1050,14 +1050,14 @@ export default function SessionView(props: SessionViewProps) {
       }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : t("session.unable_to_reveal");
+        error instanceof Error ? error.message : td("session.unable_to_reveal", "Unable to reveal workspace");
       showStatusToast(message, "error");
     }
   };
   const todoLabel = createMemo(() => {
     const total = todoCount();
     if (!total) return "";
-    return t("session.todo_progress", undefined, { completed: todoCompletedCount(), total });
+    return td("session.todo_progress", "{completed} out of {total} tasks completed", { completed: todoCompletedCount(), total });
   });
   const shareWorkspaceState = createShareWorkspaceState({
     workspaces: () => props.workspaces,
@@ -1076,9 +1076,9 @@ export default function SessionView(props: SessionViewProps) {
   const attachmentsDisabledReason = createMemo(() => {
     if (attachmentsEnabled()) return null;
     if (props.openworkServerStatus === "limited") {
-      return t("session.attachments_add_token");
+      return td("session.attachments_add_token", "Add a server token to attach files.");
     }
-    return t("session.attachments_connect_server");
+    return td("session.attachments_connect_server", "Connect to OpenWork server to attach files.");
   });
 
   onCleanup(() => {
@@ -1154,12 +1154,12 @@ export default function SessionView(props: SessionViewProps) {
     if (!trimmed) return;
 
     if (props.selectedWorkspaceDisplay.workspaceType === "remote") {
-      showStatusToast(t("session.file_open_remote_unavailable"), "warning");
+      showStatusToast(td("session.file_open_remote_unavailable", "File open is unavailable for remote workspaces."), "warning");
       return;
     }
 
     if (!isTauriRuntime()) {
-      showStatusToast(t("session.file_open_desktop_only"), "warning");
+      showStatusToast(td("session.file_open_desktop_only", "File open is available in the desktop app."), "warning");
       return;
     }
 
@@ -1173,7 +1173,7 @@ export default function SessionView(props: SessionViewProps) {
         },
       );
       if (!result.ok && result.reason === "missing-root") {
-        showStatusToast(t("session.pick_workspace_to_open"), "warning");
+        showStatusToast(td("session.pick_workspace_to_open", "Pick a workspace to open files."), "warning");
         return;
       }
       if (!result.ok) {
@@ -1182,7 +1182,7 @@ export default function SessionView(props: SessionViewProps) {
       }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : t("session.unable_to_open_file");
+        error instanceof Error ? error.message : td("session.unable_to_open_file", "Unable to open file");
       showStatusToast(message, "error");
     }
   };
@@ -1202,7 +1202,7 @@ export default function SessionView(props: SessionViewProps) {
       return sorted;
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : t("session.failed_to_load_agents");
+        error instanceof Error ? error.message : td("session.failed_to_load_agents", "Failed to load agents");
       setAgentPickerError(message);
       setAgentOptions([]);
       return [];
@@ -1329,13 +1329,13 @@ export default function SessionView(props: SessionViewProps) {
   const compactionStatusDetail = createMemo(() => {
     if (!showCompactionIndicator()) return "";
     return props.sessionCompactionState?.mode === "auto"
-      ? t("session.compacting_auto")
-      : t("session.compacting_manual");
+      ? td("session.compacting_auto", "OpenCode is auto-compacting this session")
+      : td("session.compacting_manual", "OpenCode is compacting this session");
   });
   const statusBarCopy = createMemo(() => {
     if (showCompactionIndicator()) {
       return {
-        label: t("session.status_compacting"),
+        label: td("session.status_compacting", "Compacting Context"),
         detail: compactionStatusDetail(),
         dotClass: "bg-blue-9",
         pingClass: "bg-blue-9/35 animate-ping",
@@ -1345,7 +1345,7 @@ export default function SessionView(props: SessionViewProps) {
 
     if (showRunIndicator()) {
       return {
-        label: t("session.status_active"),
+        label: td("session.status_active", "Session Active"),
         detail: undefined,
         dotClass: "bg-green-9",
         pingClass: "bg-green-9/45 animate-ping",
@@ -1358,7 +1358,7 @@ export default function SessionView(props: SessionViewProps) {
 
     if (props.selectedSessionId) {
       return {
-        label: t("session.status_ready_session"),
+        label: td("session.status_ready_session", "Session Ready"),
         detail: undefined,
         dotClass: "bg-green-9",
         pingClass: "bg-green-9/35",
@@ -1367,7 +1367,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     return {
-      label: t("session.status_ready"),
+      label: td("session.status_ready", "Ready"),
       detail: undefined,
       dotClass: "bg-gray-8",
       pingClass: "bg-green-9/35",
@@ -1381,7 +1381,7 @@ export default function SessionView(props: SessionViewProps) {
       (startedAt, previous) => {
         if (!startedAt || startedAt === previous) return;
         if (props.sessionCompactionState?.mode === "manual") return;
-        showStatusToast(t("session.compaction_started"), "info");
+        showStatusToast(td("session.compaction_started", "OpenCode started compacting the session context."), "info");
       },
     ),
   );
@@ -1392,7 +1392,7 @@ export default function SessionView(props: SessionViewProps) {
       (finishedAt, previous) => {
         if (!finishedAt || finishedAt === previous) return;
         if (props.sessionCompactionState?.mode === "manual") return;
-        showStatusToast(t("session.compaction_finished"), "success");
+        showStatusToast(td("session.compaction_finished", "OpenCode finished compacting the session context."), "success");
       },
     ),
   );
@@ -1440,30 +1440,30 @@ export default function SessionView(props: SessionViewProps) {
       const tool = typeof record.tool === "string" ? record.tool : "";
       switch (tool) {
         case "task":
-          return t("session.status_delegating");
+          return td("session.status_delegating", "Delegating");
         case "todowrite":
         case "todoread":
-          return t("session.status_planning");
+          return td("session.status_planning", "Planning");
         case "read":
-          return t("session.status_gathering_context");
+          return td("session.status_gathering_context", "Gathering context");
         case "list":
         case "grep":
         case "glob":
-          return t("session.status_searching_codebase");
+          return td("session.status_searching_codebase", "Searching codebase");
         case "webfetch":
-          return t("session.status_searching_web");
+          return td("session.status_searching_web", "Searching the web");
         case "edit":
         case "write":
         case "apply_patch":
-          return t("session.status_writing_file");
+          return td("session.status_writing_file", "Writing file");
         case "bash":
-          return t("session.status_running_shell");
+          return td("session.status_running_shell", "Running shell");
         default:
-          return t("session.status_working");
+          return td("session.status_working", "Working");
       }
     }
     if (part.type === "reasoning") {
-      return t("session.status_thinking");
+      return td("session.status_thinking", "Thinking");
     }
     if (part.type === "text") {
       return null;
@@ -1474,7 +1474,7 @@ export default function SessionView(props: SessionViewProps) {
   const thinkingStatus = createMemo(() => {
     const status = computeStatusFromPart(latestRunPart());
     if (status) return status;
-    if (runPhase() === "thinking") return t("session.status_thinking");
+    if (runPhase() === "thinking") return td("session.status_thinking", "Thinking");
     return null;
   });
 
@@ -1519,15 +1519,15 @@ export default function SessionView(props: SessionViewProps) {
   const runLabel = createMemo(() => {
     switch (runPhase()) {
       case "sending":
-        return t("session.phase_sending");
+        return td("session.phase_sending", "Sending");
       case "retrying":
-        return t("session.phase_retrying");
+        return td("session.phase_retrying", "Retrying");
       case "responding":
-        return t("session.phase_responding");
+        return td("session.phase_responding", "Responding");
       case "thinking":
-        return t("session.status_thinking");
+        return td("session.status_thinking", "Thinking");
       case "error":
-        return t("session.phase_run_failed");
+        return td("session.phase_run_failed", "Run failed");
       default:
         return "";
     }
@@ -1851,17 +1851,17 @@ export default function SessionView(props: SessionViewProps) {
   const cancelRun = async () => {
     if (abortBusy()) return;
     if (!props.selectedSessionId) {
-      showStatusToast(t("session.no_session_selected"), "warning");
+      showStatusToast(td("session.no_session_selected", "No session selected"), "warning");
       return;
     }
 
     setAbortBusy(true);
-    showStatusToast(t("session.stopping_run"), "info");
+    showStatusToast(td("session.stopping_run", "Stopping the run..."), "info");
     try {
       await sessionActions.abortSession(props.selectedSessionId);
-      showStatusToast(t("session.stopped"), "success");
+      showStatusToast(td("session.stopped", "Stopped."), "success");
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("session.failed_to_stop");
+      const message = error instanceof Error ? error.message : td("session.failed_to_stop", "Failed to stop");
       showStatusToast(message, "error");
     } finally {
       setAbortBusy(false);
@@ -1871,13 +1871,13 @@ export default function SessionView(props: SessionViewProps) {
   const retryRun = async () => {
     const text = sessionActions.lastPromptSent().trim();
     if (!text) {
-      showStatusToast(t("session.nothing_to_retry"), "warning");
+      showStatusToast(td("session.nothing_to_retry", "Nothing to retry yet"), "warning");
       return;
     }
 
     if (abortBusy()) return;
     setAbortBusy(true);
-    showStatusToast(t("session.trying_again"), "info");
+    showStatusToast(td("session.trying_again", "Trying again..."), "info");
     try {
       if (showRunIndicator() && props.selectedSessionId) {
         await sessionActions.abortSession(props.selectedSessionId);
@@ -1970,18 +1970,18 @@ export default function SessionView(props: SessionViewProps) {
   const undoLastMessage = async () => {
     if (historyActionBusy()) return;
     if (!canUndoLastMessage()) {
-      showStatusToast(t("session.nothing_to_undo"), "warning");
+      showStatusToast(td("session.nothing_to_undo", "Nothing to undo yet."), "warning");
       return;
     }
 
     setHistoryActionBusy("undo");
     try {
       await sessionActions.undoLastUserMessage();
-      showStatusToast(t("session.reverted_last_message"), "success");
+      showStatusToast(td("session.reverted_last_message", "Reverted the last user message."), "success");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
-      showStatusToast(message || t("session.failed_to_undo"), "error");
+      showStatusToast(message || td("session.failed_to_undo", "Failed to undo"), "error");
     } finally {
       setHistoryActionBusy(null);
     }
@@ -1990,18 +1990,18 @@ export default function SessionView(props: SessionViewProps) {
   const redoLastMessage = async () => {
     if (historyActionBusy()) return;
     if (!canRedoLastMessage()) {
-      showStatusToast(t("session.nothing_to_redo"), "warning");
+      showStatusToast(td("session.nothing_to_redo", "Nothing to redo."), "warning");
       return;
     }
 
     setHistoryActionBusy("redo");
     try {
       await sessionActions.redoLastUserMessage();
-      showStatusToast(t("session.restored_message"), "success");
+      showStatusToast(td("session.restored_message", "Restored the reverted message."), "success");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
-      showStatusToast(message || t("session.failed_to_redo"), "error");
+      showStatusToast(message || td("session.failed_to_redo", "Failed to redo"), "error");
     } finally {
       setHistoryActionBusy(null);
     }
@@ -2010,24 +2010,24 @@ export default function SessionView(props: SessionViewProps) {
   const compactSessionHistory = async () => {
     if (historyActionBusy()) return;
     if (!canCompactSession()) {
-      showStatusToast(t("session.nothing_to_compact"), "warning");
+      showStatusToast(td("session.nothing_to_compact", "Nothing to compact yet."), "warning");
       return;
     }
 
     const sessionID = props.selectedSessionId;
     const startedAt = perfNow();
     setHistoryActionBusy("compact");
-    showStatusToast(t("session.compacting"), "info");
+    showStatusToast(td("session.compacting", "Compacting session context..."), "info");
     try {
       await sessionActions.compactCurrentSession();
-      showStatusToast(t("session.compacted"), "success");
+      showStatusToast(td("session.compacted", "Session compacted."), "success");
       finishPerf(props.developerMode, "session.compact", "ui-done", startedAt, {
         sessionID,
       });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
-      showStatusToast(message || t("session.failed_to_compact"), "error");
+      showStatusToast(message || td("session.failed_to_compact", "Failed to compact session"), "error");
       finishPerf(
         props.developerMode,
         "session.compact",
@@ -2090,7 +2090,7 @@ export default function SessionView(props: SessionViewProps) {
       const lastMsg = chatContainerEl?.querySelector(
         '[data-message-role="assistant"]:last-child',
       );
-      triggerFlyout(lastMsg ?? null, "sidebar-progress", t("session.flyout_new_task"), "check");
+      triggerFlyout(lastMsg ?? null, "sidebar-progress", td("session.flyout_new_task", "New Task"), "check");
     }
     setPrevTodoCount(count);
   });
@@ -2106,7 +2106,7 @@ export default function SessionView(props: SessionViewProps) {
       triggerFlyout(
         lastMsg ?? null,
         "sidebar-context",
-        t("session.flyout_file_modified"),
+        td("session.flyout_file_modified", "File Modified"),
         "folder",
       );
     }
@@ -2205,11 +2205,11 @@ export default function SessionView(props: SessionViewProps) {
     return sessionTitleForId(pending.sessionId);
   });
   const sessionHeaderTitle = createMemo(() => {
-    if (showWorkspaceSetupEmptyState()) return t("session.create_or_connect_workspace");
+    if (showWorkspaceSetupEmptyState()) return td("session.create_or_connect_workspace", "Create or connect a workspace");
     if (showPendingSessionTransition()) {
-      return pendingSessionTransitionTitle() || t("session.loading_session");
+      return pendingSessionTransitionTitle() || td("session.loading_session", "Loading session");
     }
-    return selectedSessionTitle() || t("session.default_title");
+    return selectedSessionTitle() || td("session.default_title", "New session");
   });
 
   createEffect(() => {
@@ -2289,7 +2289,7 @@ export default function SessionView(props: SessionViewProps) {
   const openRenameModal = (options?: { returnFocusToComposer?: boolean }) => {
     const sessionId = props.selectedSessionId;
     if (!sessionId) {
-      showStatusToast(t("session.no_session_selected"), "warning");
+      showStatusToast(td("session.no_session_selected", "No session selected"), "warning");
       if (options?.returnFocusToComposer) {
         focusComposer();
       }
@@ -2327,7 +2327,7 @@ export default function SessionView(props: SessionViewProps) {
   const openDeleteSessionModal = () => {
     const sessionId = props.selectedSessionId;
     if (!sessionId) {
-      showStatusToast(t("session.no_session_selected"), "warning");
+      showStatusToast(td("session.no_session_selected", "No session selected"), "warning");
       return;
     }
     setDeleteSessionId(sessionId);
@@ -2349,13 +2349,13 @@ export default function SessionView(props: SessionViewProps) {
       await sessionActions.deleteSessionById(sessionId);
       setDeleteSessionOpen(false);
       setDeleteSessionId(null);
-      showStatusToast(t("session.deleted"), "success");
+      showStatusToast(td("session.deleted", "Session deleted"), "success");
       // Route away from the deleted session id.
       props.setView("session");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
-      showStatusToast(message || t("session.failed_to_delete"), "error");
+      showStatusToast(message || td("session.failed_to_delete", "Failed to delete session"), "error");
     } finally {
       setDeleteSessionBusy(false);
     }
@@ -2364,7 +2364,7 @@ export default function SessionView(props: SessionViewProps) {
   const requireSessionId = () => {
     const sessionId = props.selectedSessionId;
     if (!sessionId) {
-      showStatusToast(t("session.no_session_selected"), "warning");
+      showStatusToast(td("session.no_session_selected", "No session selected"), "warning");
       return null;
     }
     return sessionId;
@@ -2403,7 +2403,7 @@ export default function SessionView(props: SessionViewProps) {
     methodIndex?: number,
   ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
-      throw new Error(t("session.provider_auth_in_progress"));
+      throw new Error(td("session.provider_auth_in_progress", "Provider auth is already in progress."));
     }
     setProviderAuthActionBusy(true);
     try {
@@ -2427,12 +2427,12 @@ export default function SessionView(props: SessionViewProps) {
         code,
       );
       if (result.connected) {
-        showStatusToast(result.message || t("session.provider_connected"), "success");
+        showStatusToast(result.message || td("session.provider_connected", "Provider connected"), "success");
         props.closeProviderAuthModal();
       }
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("session.oauth_failed");
+      const message = error instanceof Error ? error.message : td("session.oauth_failed", "OAuth failed");
       showStatusToast(message, "error");
       return { connected: false };
     } finally {
@@ -2448,11 +2448,11 @@ export default function SessionView(props: SessionViewProps) {
     setProviderAuthActionBusy(true);
     try {
       const message = await props.submitProviderApiKey(providerId, apiKey);
-      showStatusToast(message || t("session.api_key_saved"), "success");
+      showStatusToast(message || td("session.api_key_saved", "API key saved"), "success");
       props.closeProviderAuthModal();
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : t("session.failed_to_save_api_key");
+        error instanceof Error ? error.message : td("session.failed_to_save_api_key", "Failed to save API key");
       showStatusToast(message, "error");
     } finally {
       setProviderAuthActionBusy(false);
@@ -2464,7 +2464,7 @@ export default function SessionView(props: SessionViewProps) {
     setProviderAuthActionBusy(true);
     try {
       const message = await props.connectCloudProvider(cloudProviderId);
-      showStatusToast(message || t("session.provider_connected"), "success");
+      showStatusToast(message || td("session.provider_connected", "Provider connected"), "success");
       props.closeProviderAuthModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to connect organization provider";
@@ -2497,7 +2497,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!client || !workspaceId) {
       if (notify) {
         showComposerNotice({
-          title: t("session.upload_connect_server"),
+          title: td("session.upload_connect_server", "Connect to the OpenWork server to upload files to the shared folder."),
           tone: "warning",
         });
       }
@@ -2509,7 +2509,7 @@ export default function SessionView(props: SessionViewProps) {
       files.length === 1 ? (files[0]?.name ?? "file") : `${files.length} files`;
     if (notify) {
       showComposerNotice({
-        title: t("session.uploading_to_shared_folder", undefined, { label }),
+        title: td("session.uploading_to_shared_folder", "Uploading {label} to the shared folder...", { label }),
         tone: "info",
       });
     }
@@ -2528,8 +2528,8 @@ export default function SessionView(props: SessionViewProps) {
           .join(", ");
         showComposerNotice({
           title: summary
-            ? t("session.uploaded_with_summary", undefined, { summary })
-            : t("session.uploaded_to_shared_folder"),
+            ? td("session.uploaded_with_summary", "Uploaded to the shared folder: {summary}", { summary })
+            : td("session.uploaded_to_shared_folder", "Uploaded to the shared folder."),
           tone: "success",
         });
       }
@@ -2539,7 +2539,7 @@ export default function SessionView(props: SessionViewProps) {
         const message =
           error instanceof Error
             ? error.message
-            : t("session.shared_folder_upload_failed");
+            : td("session.shared_folder_upload_failed", "Shared folder upload failed");
         showComposerNotice({ title: message, tone: "error" });
       }
       return [];
@@ -2590,9 +2590,9 @@ export default function SessionView(props: SessionViewProps) {
     const items: CommandPaletteItem[] = [
       {
         id: "new-session",
-        title: t("session.cmd_new_session_title"),
-        detail: t("session.cmd_new_session_detail"),
-        meta: t("session.cmd_new_session_meta"),
+        title: td("session.cmd_new_session_title", "Create new session"),
+        detail: td("session.cmd_new_session_detail", "Start a fresh task in the current workspace"),
+        meta: td("session.cmd_new_session_meta", "Create"),
         action: () => {
           closeCommandPalette();
           void Promise.resolve(sessionActions.createSessionAndOpen())
@@ -2604,18 +2604,18 @@ export default function SessionView(props: SessionViewProps) {
               const message =
                 error instanceof Error
                   ? error.message
-                  : t("session.failed_to_create_session");
+                  : td("session.failed_to_create_session", "Failed to create session");
               showStatusToast(message, "error");
             });
         },
       },
       {
         id: "rename-session",
-        title: t("session.cmd_rename_title"),
+        title: td("session.cmd_rename_title", "Rename current session"),
         detail:
           selectedSessionTitle().trim() ||
-          t("session.cmd_rename_detail_fallback"),
-        meta: t("session.cmd_rename_meta"),
+          td("session.cmd_rename_detail_fallback", "Give your selected session a clearer name"),
+        meta: td("session.cmd_rename_meta", "Rename"),
         action: () => {
           closeCommandPalette();
           openRenameModal({ returnFocusToComposer: true });
@@ -2623,11 +2623,11 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "compact-session",
-        title: t("session.cmd_compact_title"),
+        title: td("session.cmd_compact_title", "Compact Conversation"),
         detail: canCompactSession()
-          ? t("session.cmd_compact_detail")
-          : t("session.cmd_compact_detail_empty"),
-        meta: t("session.cmd_compact_meta"),
+          ? td("session.cmd_compact_detail", "Send a compact instruction to OpenCode for this session")
+          : td("session.cmd_compact_detail_empty", "No user messages to compact yet"),
+        meta: td("session.cmd_compact_meta", "Compact"),
         action: () => {
           closeCommandPalette();
           void compactSessionHistory();
@@ -2635,9 +2635,9 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "sessions",
-        title: t("session.cmd_sessions_title"),
-        detail: t("session.cmd_sessions_detail", undefined, { count: totalSessionCount().toLocaleString() }),
-        meta: t("session.cmd_sessions_meta"),
+        title: td("session.cmd_sessions_title", "Search sessions"),
+        detail: td("session.cmd_sessions_detail", "{count} available across workspaces", { count: totalSessionCount().toLocaleString() }),
+        meta: td("session.cmd_sessions_meta", "Jump"),
         action: () => {
           setCommandPaletteMode("sessions");
           setCommandPaletteQuery("");
@@ -2647,9 +2647,9 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "model",
-        title: t("session.cmd_model_title"),
-        detail: t("session.cmd_model_detail", undefined, { model: modelControls.selectedSessionModelLabel() || t("session.cmd_model_fallback"), variant: modelControls.sessionModelVariantLabel() }),
-        meta: t("session.cmd_model_meta"),
+        title: td("session.cmd_model_title", "Change model"),
+        detail: td("session.cmd_model_detail", "{model} · {variant}", { model: modelControls.selectedSessionModelLabel() || td("session.cmd_model_fallback", "Model"), variant: modelControls.sessionModelVariantLabel() }),
+        meta: td("session.cmd_model_meta", "Open"),
         action: () => {
           closeCommandPalette();
           modelControls.openSessionModelPicker({ returnFocusTarget: "composer" });
@@ -2657,9 +2657,9 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "provider",
-        title: t("session.cmd_provider_title"),
-        detail: t("session.cmd_provider_detail"),
-        meta: t("session.cmd_provider_meta"),
+        title: td("session.cmd_provider_title", "Connect provider"),
+        detail: td("session.cmd_provider_detail", "Open provider connection flow"),
+        meta: td("session.cmd_provider_meta", "Open"),
         action: () => {
           closeCommandPalette();
           void props
@@ -2668,7 +2668,7 @@ export default function SessionView(props: SessionViewProps) {
               const message =
                 error instanceof Error
                   ? error.message
-                  : t("session.failed_to_load_providers");
+                  : td("session.failed_to_load_providers", "Failed to load providers");
               showStatusToast(message, "error");
               focusComposer();
             });
@@ -2697,8 +2697,8 @@ export default function SessionView(props: SessionViewProps) {
       detail: item.workspaceTitle,
       meta:
         item.workspaceId === props.selectedWorkspaceId
-          ? t("session.cmd_current_workspace")
-          : t("session.cmd_switch"),
+          ? td("session.cmd_current_workspace", "Current workspace")
+          : td("session.cmd_switch", "Switch"),
       action: () => {
         closeCommandPalette();
         openSessionFromList(item.workspaceId, item.sessionId, {
@@ -2716,14 +2716,14 @@ export default function SessionView(props: SessionViewProps) {
 
   const commandPaletteTitle = createMemo(() => {
     const mode = commandPaletteMode();
-    if (mode === "sessions") return t("session.palette_title_sessions");
-    return t("session.palette_title_actions");
+    if (mode === "sessions") return td("session.palette_title_sessions", "Search sessions");
+    return td("session.palette_title_actions", "Quick actions");
   });
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
-    if (mode === "sessions") return t("session.palette_placeholder_sessions");
-    return t("session.palette_placeholder_actions");
+    if (mode === "sessions") return td("session.palette_placeholder_sessions", "Find by session title or workspace");
+    return td("session.palette_placeholder_actions", "Search actions");
   });
 
   createEffect(
@@ -2766,13 +2766,13 @@ export default function SessionView(props: SessionViewProps) {
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return props.anyActiveRuns ? t("session.update_ready") : t("session.install_update");
+      return props.anyActiveRuns ? td("session.update_ready", "Update ready") : td("session.install_update", "Install update");
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? t("session.downloading") : t("session.downloading_percent", undefined, { percent });
+      return percent == null ? td("session.downloading", "Downloading") : td("session.downloading_percent", "Downloading {percent}%", { percent });
     }
-    return t("session.update_available");
+    return td("session.update_available", "Update available");
   });
 
   const updatePillButtonTone = createMemo(() => {
@@ -2830,11 +2830,11 @@ export default function SessionView(props: SessionViewProps) {
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? t("session.update_ready_stop_runs_title", undefined, { version })
-        : t("session.restart_update_title", undefined, { version });
+        ? td("session.update_ready_stop_runs_title", "Update ready {version}. Stop active runs to restart.", { version })
+        : td("session.restart_update_title", "Restart to apply update {version}", { version });
     }
-    if (state === "downloading") return t("session.downloading_update_title", undefined, { version });
-    return t("session.update_available_title", undefined, { version });
+    if (state === "downloading") return td("session.downloading_update_title", "Downloading update {version}", { version });
+    return td("session.update_available_title", "Update available {version}", { version });
   });
 
   const handleUpdatePillClick = () => {
@@ -2853,7 +2853,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const openProviderAuth = (preferredProviderId?: string) => {
     void props.openProviderAuthModal({ preferredProviderId }).catch((error) => {
-      const message = error instanceof Error ? error.message : t("session.connect_failed");
+      const message = error instanceof Error ? error.message : td("session.connect_failed", "Connect failed");
       showStatusToast(message, "error");
     });
   };
@@ -3039,8 +3039,8 @@ export default function SessionView(props: SessionViewProps) {
           <div
             class="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 lg:block"
             onPointerDown={startLeftSidebarResize}
-            title={t("session.resize_workspace_column")}
-            aria-label={t("session.resize_workspace_column")}
+            title={td("session.resize_workspace_column", "Resize workspace column")}
+            aria-label={td("session.resize_workspace_column", "Resize workspace column")}
           />
         </aside>
 
@@ -3087,7 +3087,7 @@ export default function SessionView(props: SessionViewProps) {
                 {sessionHeaderTitle()}
               </h1>
               <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                {props.selectedWorkspaceDisplay.displayName || props.selectedWorkspaceDisplay.name || t("session.workspace_fallback")}
+                {props.selectedWorkspaceDisplay.displayName || props.selectedWorkspaceDisplay.name || td("session.workspace_fallback", "Workspace")}
               </span>
               <Show when={props.developerMode}>
                 <span class="hidden text-[12px] text-dls-secondary lg:inline">
@@ -3118,11 +3118,11 @@ export default function SessionView(props: SessionViewProps) {
                   }
                   window.setTimeout(() => openCommandPalette(), 0);
                 }}
-                title={t("session.quick_actions_title")}
-                aria-label={t("session.quick_actions_label")}
+                title={td("session.quick_actions_title", "Quick actions (Ctrl/Cmd+K)")}
+                aria-label={td("session.quick_actions_label", "Quick actions")}
               >
                 <Menu size={15} />
-                <span>{t("session.menu_label")}</span>
+                <span>{td("session.menu_label", "Menu")}</span>
                 <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">
                   ⌘K
                 </span>
@@ -3141,8 +3141,8 @@ export default function SessionView(props: SessionViewProps) {
                   }
                   openSearch();
                 }}
-                title={t("session.search_conversation_title")}
-                aria-label={t("session.search_conversation_label")}
+                title={td("session.search_conversation_title", "Search conversation (Ctrl/Cmd+F)")}
+                aria-label={td("session.search_conversation_label", "Search conversation")}
               >
                 <Search size={16} />
               </button>
@@ -3152,8 +3152,8 @@ export default function SessionView(props: SessionViewProps) {
                 class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={undoLastMessage}
                 disabled={!canUndoLastMessage() || historyActionBusy() !== null}
-                title={t("session.undo_title")}
-                aria-label={t("session.undo_label")}
+                title={td("session.undo_title", "Undo last message")}
+                aria-label={td("session.undo_label", "Revert")}
               >
                 <Show
                   when={historyActionBusy() === "undo"}
@@ -3161,15 +3161,15 @@ export default function SessionView(props: SessionViewProps) {
                 >
                   <Loader2 size={16} class="animate-spin" />
                 </Show>
-                <span class="hidden lg:inline">{t("session.revert_label")}</span>
+                <span class="hidden lg:inline">{td("session.revert_label", "Revert")}</span>
               </button>
               <button
                 type="button"
                 class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={redoLastMessage}
                 disabled={!canRedoLastMessage() || historyActionBusy() !== null}
-                title={t("session.redo_title")}
-                aria-label={t("session.redo_aria_label")}
+                title={td("session.redo_title", "Redo last reverted message")}
+                aria-label={td("session.redo_aria_label", "Redo last reverted message")}
               >
                 <Show
                   when={historyActionBusy() === "redo"}
@@ -3177,7 +3177,7 @@ export default function SessionView(props: SessionViewProps) {
                 >
                   <Loader2 size={16} class="animate-spin" />
                 </Show>
-                <span class="hidden lg:inline">{t("session.redo_label")}</span>
+                <span class="hidden lg:inline">{td("session.redo_label", "Redo")}</span>
               </button>
             </div>
           </header>
@@ -3206,8 +3206,8 @@ export default function SessionView(props: SessionViewProps) {
                     }
                   }}
                   class="min-w-0 flex-1 bg-transparent text-sm text-gray-11 placeholder:text-gray-9 focus:outline-none"
-                  placeholder={t("session.search_placeholder")}
-                  aria-label={t("session.search_placeholder")}
+                  placeholder={td("session.search_placeholder", "Search in this chat")}
+                  aria-label={td("session.search_placeholder", "Search in this chat")}
                 />
                 <span class="text-[11px] text-gray-10 tabular-nums">
                   {activeSearchPositionLabel()}
@@ -3217,24 +3217,24 @@ export default function SessionView(props: SessionViewProps) {
                   class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
                   disabled={searchHits().length === 0}
                   onClick={() => moveSearchHit(-1)}
-                  aria-label={t("session.prev_match")}
+                  aria-label={td("session.prev_match", "Previous match")}
                 >
-                  {t("session.search_prev")}
+                  {td("session.search_prev", "Prev")}
                 </button>
                 <button
                   type="button"
                   class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
                   disabled={searchHits().length === 0}
                   onClick={() => moveSearchHit(1)}
-                  aria-label={t("session.next_match")}
+                  aria-label={td("session.next_match", "Next match")}
                 >
-                  {t("session.search_next")}
+                  {td("session.search_next", "Next")}
                 </button>
                 <button
                   type="button"
                   class="flex h-7 w-7 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12"
                   onClick={closeSearch}
-                  aria-label={t("session.close_search")}
+                  aria-label={td("session.close_search", "Close search")}
                 >
                   <X size={14} />
                 </button>
@@ -3305,9 +3305,9 @@ export default function SessionView(props: SessionViewProps) {
                           <Loader2 size={20} class="animate-spin text-dls-secondary" />
                         </div>
                         <div class="space-y-1">
-                          <h3 class="text-base font-medium text-dls-text">{t("session.loading_title")}</h3>
+                          <h3 class="text-base font-medium text-dls-text">{td("session.loading_title", "Loading session")}</h3>
                           <p class="text-sm text-dls-secondary">
-                            {t("session.loading_detail")}
+                            {td("session.loading_detail", "Pulling in the latest messages for this task.")}
                           </p>
                         </div>
                       </div>
@@ -3379,7 +3379,7 @@ export default function SessionView(props: SessionViewProps) {
                             opencodeBaseUrl: reactSessionOpencodeBaseUrl(),
                             openworkToken: reactSessionToken(),
                             developerMode: props.developerMode,
-                            modelLabel: modelControls.selectedSessionModelLabel() || t("session.model_fallback"),
+                            modelLabel: modelControls.selectedSessionModelLabel() || td("session.model_fallback", "Model"),
                             onModelClick: () => modelControls.openSessionModelPicker(),
                             onSendDraft: handleSendPrompt,
                             onDraftChange: handleDraftChange,
@@ -3420,10 +3420,10 @@ export default function SessionView(props: SessionViewProps) {
                             disabled={props.loadingEarlierMessages}
                           >
                             {props.loadingEarlierMessages
-                              ? t("session.loading_earlier")
+                              ? td("session.loading_earlier", "Loading earlier messages...")
                               : hiddenMessageCount() > 0
-                                ? t("session.show_earlier", undefined, { count: nextRevealCount().toLocaleString(), plural: nextRevealCount() === 1 ? "" : "s" })
-                                : t("session.load_earlier")}
+                                ? td("session.show_earlier", "Show {count} earlier message{plural}", { count: nextRevealCount().toLocaleString(), plural: nextRevealCount() === 1 ? "" : "s" })
+                                : td("session.load_earlier", "Load earlier messages")}
                           </button>
                         </div>
                       </Show>
@@ -3500,7 +3500,7 @@ export default function SessionView(props: SessionViewProps) {
                           sessionScroll.jumpToStartOfMessage("smooth");
                         }}
                       >
-                        {t("session.jump_to_start")}
+                        {td("session.jump_to_start", "Jump to start of message")}
                       </button>
                     </Show>
                     <Show when={!sessionScroll.isAtBottom()}>
@@ -3512,7 +3512,7 @@ export default function SessionView(props: SessionViewProps) {
                           sessionScroll.jumpToLatest("smooth");
                         }}
                       >
-                        {t("session.jump_to_latest")}
+                        {td("session.jump_to_latest", "Jump to latest")}
                       </button>
                     </Show>
                   </div>
@@ -3601,7 +3601,7 @@ export default function SessionView(props: SessionViewProps) {
               onSend={handleSendPrompt}
               onStop={cancelRun}
               onDraftChange={handleDraftChange}
-              selectedModelLabel={modelControls.selectedSessionModelLabel() || t("session.model_fallback")}
+              selectedModelLabel={modelControls.selectedSessionModelLabel() || td("session.model_fallback", "Model")}
               onModelClick={() => modelControls.openSessionModelPicker()}
               modelVariantLabel={modelControls.sessionModelVariantLabel()}
               modelVariant={modelControls.sessionModelVariant()}
@@ -3682,7 +3682,7 @@ export default function SessionView(props: SessionViewProps) {
                     class="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
                     onClick={returnToCommandRoot}
                   >
-                    {t("session.back")}
+                    {td("session.back", "Back")}
                   </button>
                 </Show>
                 <Search size={14} class="text-dls-secondary shrink-0" />
@@ -3701,7 +3701,7 @@ export default function SessionView(props: SessionViewProps) {
                   type="button"
                   class="h-8 w-8 flex items-center justify-center rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
                   onClick={closeCommandPalette}
-                  aria-label={t("session.close_quick_actions")}
+                  aria-label={td("session.close_quick_actions", "Close quick actions")}
                 >
                   <X size={14} />
                 </button>
@@ -3716,7 +3716,7 @@ export default function SessionView(props: SessionViewProps) {
                 when={commandPaletteItems().length > 0}
                 fallback={
                   <div class="px-3 py-6 text-sm text-dls-secondary text-center">
-                    {t("session.no_matches_command")}
+                    {td("session.no_matches_command", "No matches.")}
                   </div>
                 }
               >
@@ -3762,8 +3762,8 @@ export default function SessionView(props: SessionViewProps) {
             </div>
 
             <div class="border-t border-dls-border px-3 py-2 text-[11px] text-dls-secondary flex items-center justify-between gap-2">
-              <span>{t("session.palette_hint_navigate")}</span>
-              <span>{t("session.palette_hint_run")}</span>
+              <span>{td("session.palette_hint_navigate", "Arrow keys to navigate")}</span>
+              <span>{td("session.palette_hint_run", "Enter to run · Esc to close")}</span>
             </div>
           </div>
         </div>
@@ -3799,14 +3799,14 @@ export default function SessionView(props: SessionViewProps) {
 
       <ConfirmModal
         open={deleteSessionOpen()}
-        title={t("session.delete_session_title")}
+        title={td("session.delete_session_title", "Delete session?")}
         message={
           sessionTitleForId(deleteSessionId()).trim()
-            ? t("session.delete_named_session_message", undefined, { title: sessionTitleForId(deleteSessionId()).trim() })
-            : t("session.delete_session_generic")
+            ? td("session.delete_named_session_message", "This will permanently delete \"{title}\" and its messages.", { title: sessionTitleForId(deleteSessionId()).trim() })
+            : td("session.delete_session_generic", "This will permanently delete the selected session and its messages.")
         }
-        confirmLabel={deleteSessionBusy() ? t("session.deleting") : t("session.delete")}
-        cancelLabel={t("common.cancel")}
+        confirmLabel={deleteSessionBusy() ? td("session.deleting", "Deleting...") : td("session.delete", "Delete")}
+        cancelLabel={td("common.cancel", "Cancel")}
         variant="danger"
         onConfirm={confirmDeleteSession}
         onCancel={closeDeleteSessionModal}
@@ -3888,7 +3888,7 @@ export default function SessionView(props: SessionViewProps) {
 
               <div class="bg-gray-1/50 rounded-xl p-4 border border-gray-6 mb-6">
                 <div class="text-xs text-gray-10 uppercase tracking-wider mb-2 font-semibold">
-                  {t("session.permission_label")}
+                  {td("session.permission_label", "Permission")}
                 </div>
                 <div class="text-sm text-gray-12 font-mono">
                   {activePermissionPresentation().permissionLabel}
@@ -3916,7 +3916,7 @@ export default function SessionView(props: SessionViewProps) {
                 >
                   <details class="mt-4 rounded-lg bg-gray-1/20 p-2">
                     <summary class="cursor-pointer text-xs text-gray-11">
-                      {t("session.details_label")}
+                      {td("session.details_label", "Details")}
                     </summary>
                     <pre class="mt-2 whitespace-pre-wrap break-words text-xs text-gray-12">
                       {props.safeStringify(props.activePermission?.metadata)}
@@ -3935,7 +3935,7 @@ export default function SessionView(props: SessionViewProps) {
                   }
                   disabled={props.permissionReplyBusy}
                 >
-                  {t("session.deny")}
+                  {td("session.deny", "Deny")}
                 </Button>
                 <div class="grid grid-cols-2 gap-2">
                   <Button
@@ -3947,7 +3947,7 @@ export default function SessionView(props: SessionViewProps) {
                     }
                     disabled={props.permissionReplyBusy}
                   >
-                    {t("session.allow_once")}
+                    {td("session.allow_once", "Once")}
                   </Button>
                   <Button
                     variant="primary"
@@ -3961,7 +3961,7 @@ export default function SessionView(props: SessionViewProps) {
                     }
                     disabled={props.permissionReplyBusy}
                   >
-                    {t("session.allow_for_session")}
+                    {td("session.allow_for_session", "Allow for session")}
                   </Button>
                 </div>
               </div>
