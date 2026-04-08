@@ -582,9 +582,9 @@ function getDenOrgSkillsFromPayload(payload: unknown): DenOrgSkillCard[] {
     .filter((entry): entry is DenOrgSkillCard => entry !== null);
 }
 
-type DenOrgSkillHubParsed = { id: string; name: string; skills: DenOrgSkillCard[] };
+export type DenOrgSkillHub = { id: string; name: string; skills: DenOrgSkillCard[] };
 
-function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHubParsed | null {
+function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHub | null {
   const hubId = hub.id;
   const hubName = hub.name;
   const hubSkills = hub.skills;
@@ -597,13 +597,13 @@ function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHubPars
   return { id: hubId, name: hubName, skills };
 }
 
-function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHubParsed[] {
+function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHub[] {
   if (!isRecord(payload) || !Array.isArray(payload.skillHubs)) {
     return [];
   }
   return payload.skillHubs
     .map((entry) => (isRecord(entry) ? parseOrgSkillHubEntry(entry) : null))
-    .filter((e): e is DenOrgSkillHubParsed => e !== null);
+      .filter((e): e is DenOrgSkillHub => e !== null);
 }
 
 function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | null {
@@ -1015,7 +1015,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return getDenOrgSkillsFromPayload(payload);
     },
 
-    async listOrgSkillHubs(orgId: string): Promise<DenOrgSkillHubParsed[]> {
+    async listOrgSkillHubs(orgId: string): Promise<DenOrgSkillHub[]> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs`, {
         method: "GET",
         token,

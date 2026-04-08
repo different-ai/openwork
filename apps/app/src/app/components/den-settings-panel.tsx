@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
-import { ArrowUpRight, Boxes, Cloud, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
+import { ArrowUpRight, Boxes, Brain, Cloud, KeyRound, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -9,6 +9,8 @@ import {
   clearDenSession,
   DEFAULT_DEN_BASE_URL,
   DenApiError,
+  type DenOrgSkillHub,
+  type DenOrgLlmProvider,
   type DenTemplate,
   createDenClient,
   normalizeDenBaseUrl,
@@ -16,6 +18,7 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../lib/den";
+import type { CloudImportedProvider, CloudImportedSkillHub } from "../cloud/import-state";
 import {
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
@@ -27,6 +30,7 @@ import {
   readDenTemplateCacheSnapshot,
 } from "../lib/den-template-cache";
 import { usePlatform } from "../context/platform";
+import { useExtensions } from "../extensions/provider";
 
 type DenSettingsPanelProps = {
   developerMode: boolean;
@@ -42,7 +46,37 @@ type DenSettingsPanelProps = {
     templateData: unknown;
     organizationName?: string | null;
   }) => void | Promise<void>;
+  cloudOrgProviders: DenOrgLlmProvider[];
+  importedCloudProviders: Record<string, CloudImportedProvider>;
+  refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
+  connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
 };
+
+type CloudSkillHubRow = {
+  key: string;
+  hubId: string;
+  name: string;
+  hub: DenOrgSkillHub | null;
+  imported: CloudImportedSkillHub | null;
+  status: "available" | "imported" | "out_of_sync" | "removed_from_cloud";
+  liveSkillCount: number;
+  importedSkillCount: number;
+};
+
+type CloudProviderRow = {
+  key: string;
+  cloudProviderId: string;
+  provider: DenOrgLlmProvider | null;
+  imported: CloudImportedProvider | null;
+  status: "available" | "imported" | "out_of_sync" | "removed_from_cloud";
+  name: string;
+};
+
+const sortStrings = (values: string[]) => [...values].sort();
+
+const sameStringList = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((value, index) => value === b[index]);
 
 function statusBadgeClass(kind: "ready" | "warning" | "neutral" | "error") {
   switch (kind) {
@@ -81,6 +115,7 @@ function workerStatusMeta(status: string, tr: (key: string) => string) {
 
 export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
+  const extensions = useExtensions();
   const tr = (key: string) => t(key, currentLocale());
   const initial = readDenSettings();
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
@@ -122,6 +157,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [orgsError, setOrgsError] = createSignal<string | null>(null);
   const [workersError, setWorkersError] = createSignal<string | null>(null);
   const [templateActionError, setTemplateActionError] = createSignal<string | null>(null);
+  const [skillHubsBusy, setSkillHubsBusy] = createSignal(false);
+  const [skillHubActionId, setSkillHubActionId] = createSignal<string | null>(null);
+  const [skillHubActionKind, setSkillHubActionKind] = createSignal<"import" | "remove" | "sync" | null>(null);
+  const [skillHubActionError, setSkillHubActionError] = createSignal<string | null>(null);
+  const [providersBusy, setProvidersBusy] = createSignal(false);
+  const [providerActionId, setProviderActionId] = createSignal<string | null>(null);
+  const [providerActionKind, setProviderActionKind] = createSignal<"import" | "remove" | "sync" | null>(null);
+  const [providerActionError, setProviderActionError] = createSignal<string | null>(null);
 
   const activeOrg = createMemo(() => orgs().find((org) => org.id === activeOrgId()) ?? null);
   const client = createMemo(() =>
@@ -141,6 +184,83 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const templatesError = createMemo(
     () => templateActionError() ?? templateCacheSnapshot().error,
   );
+  const skillHubImports = createMemo(() => extensions.importedCloudSkillHubs());
+  const skillHubRows = createMemo<CloudSkillHubRow[]>(() => {
+    const liveHubs = extensions.cloudOrgSkillHubs();
+    const imported = skillHubImports();
+    const rows: CloudSkillHubRow[] = liveHubs.map((hub) => {
+      const importedHub = imported[hub.id] ?? null;
+      const currentSkillIds = sortStrings(hub.skills.map((skill) => skill.id));
+      const importedSkillIds = sortStrings(importedHub?.skillIds ?? []);
+      const status = !importedHub
+        ? "available"
+        : sameStringList(currentSkillIds, importedSkillIds)
+          ? "imported"
+          : "out_of_sync";
+      return {
+        key: `live:${hub.id}`,
+        hubId: hub.id,
+        name: hub.name,
+        hub,
+        imported: importedHub,
+        status,
+        liveSkillCount: hub.skills.length,
+        importedSkillCount: importedHub?.skillNames.length ?? 0,
+      };
+    });
+
+    for (const importedHub of Object.values(imported)) {
+      if (liveHubs.some((hub) => hub.id === importedHub.hubId)) continue;
+      rows.push({
+        key: `imported:${importedHub.hubId}`,
+        hubId: importedHub.hubId,
+        name: importedHub.name,
+        hub: null,
+        imported: importedHub,
+        status: "removed_from_cloud",
+        liveSkillCount: 0,
+        importedSkillCount: importedHub.skillNames.length,
+      });
+    }
+
+    return rows;
+  });
+  const providerRows = createMemo<CloudProviderRow[]>(() => {
+    const imported = props.importedCloudProviders;
+    const rows: CloudProviderRow[] = props.cloudOrgProviders.map((provider) => {
+      const importedProvider = imported[provider.id] ?? null;
+      const status = !importedProvider
+        ? "available"
+        : importedProvider.providerId !== provider.providerId ||
+            (importedProvider.source ?? null) !== provider.source ||
+            (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
+            !sameStringList(importedProvider.modelIds, sortStrings(provider.models.map((model) => model.id)))
+          ? "out_of_sync"
+          : "imported";
+      return {
+        key: `live:${provider.id}`,
+        cloudProviderId: provider.id,
+        provider,
+        imported: importedProvider,
+        status,
+        name: provider.name,
+      };
+    });
+
+    for (const importedProvider of Object.values(imported)) {
+      if (props.cloudOrgProviders.some((provider) => provider.id === importedProvider.cloudProviderId)) continue;
+      rows.push({
+        key: `imported:${importedProvider.cloudProviderId}`,
+        cloudProviderId: importedProvider.cloudProviderId,
+        provider: null,
+        imported: importedProvider,
+        status: "removed_from_cloud",
+        name: importedProvider.name,
+      });
+    }
+
+    return rows;
+  });
 
   const summaryTone = createMemo(() => {
     if (authError() || workersError() || orgsError() || templatesError()) return "error" as const;
@@ -271,6 +391,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setOrgsError(null);
     setWorkersError(null);
     setTemplateActionError(null);
+    setSkillHubActionError(null);
+    setProviderActionError(null);
+    setSkillHubActionKind(null);
+    setProviderActionKind(null);
   };
 
   const clearSignedInState = (message?: string | null) => {
@@ -283,6 +407,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setAuthToken("");
     setOpeningWorkerId(null);
     setOpeningTemplateId(null);
+    setSkillHubActionId(null);
+    setProviderActionId(null);
+    setSkillHubActionKind(null);
+    setProviderActionKind(null);
     clearSessionState();
     setBaseUrlError(null);
     setAuthError(null);
@@ -403,6 +531,65 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
   };
 
+  const refreshSkillHubs = async (quiet = false) => {
+    const orgId = activeOrgId().trim();
+    if (!authToken().trim() || !orgId) {
+      return;
+    }
+
+    setSkillHubsBusy(true);
+    if (!quiet) setSkillHubActionError(null);
+
+    try {
+      await extensions.refreshCloudOrgSkillHubs({ force: true });
+      if (!quiet) {
+        const count = extensions.cloudOrgSkillHubs().length;
+        setStatusMessage(
+          count > 0
+            ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg()?.name ?? tr("den.active_org_title")}.`
+            : `No cloud skill hubs are available for ${activeOrg()?.name ?? tr("den.active_org_title")}.`,
+        );
+      }
+    } catch (error) {
+      if (!quiet) {
+        setSkillHubActionError(
+          error instanceof Error ? error.message : "Failed to load cloud skill hubs.",
+        );
+      }
+    } finally {
+      setSkillHubsBusy(false);
+    }
+  };
+
+  const refreshProviders = async (quiet = false) => {
+    const orgId = activeOrgId().trim();
+    if (!authToken().trim() || !orgId) {
+      return;
+    }
+
+    setProvidersBusy(true);
+    setProviderActionError(null);
+
+    try {
+      const items = await props.refreshCloudOrgProviders({ force: !quiet });
+      if (!quiet) {
+        setStatusMessage(
+          items.length > 0
+            ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg()?.name ?? tr("den.active_org_title")}.`
+            : `No cloud providers are available for ${activeOrg()?.name ?? tr("den.active_org_title")}.`,
+        );
+      }
+    } catch (error) {
+      if (!quiet) {
+        setProviderActionError(
+          error instanceof Error ? error.message : "Failed to load cloud providers.",
+        );
+      }
+    } finally {
+      setProvidersBusy(false);
+    }
+  };
+
   createEffect(() => {
     const token = authToken().trim();
     const currentBaseUrl = baseUrl();
@@ -458,6 +645,16 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   createEffect(() => {
     if (!user() || !activeOrg()?.slug?.trim()) return;
     void refreshTemplates(true);
+  });
+
+  createEffect(() => {
+    if (!user() || !activeOrgId().trim()) return;
+    void refreshSkillHubs(true);
+  });
+
+  createEffect(() => {
+    if (!user() || !activeOrgId().trim()) return;
+    void refreshProviders(true);
   });
 
   createEffect(() => {
@@ -586,6 +783,126 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       setTemplateActionError(error instanceof Error ? error.message : t("den.error_open_template", currentLocale(), { name: template.name }));
     } finally {
       setOpeningTemplateId(null);
+    }
+  };
+
+  const handleImportSkillHub = async (hubId: string) => {
+    const hub = extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
+    if (!hub || skillHubActionId()) return;
+
+    setSkillHubActionId(hub.id);
+    setSkillHubActionKind("import");
+    setSkillHubActionError(null);
+
+    try {
+      const result = await extensions.importCloudOrgSkillHub(hub);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      setStatusMessage(`${result.message} ${t("reload.toast_description", currentLocale())}`);
+    } catch (error) {
+      setSkillHubActionError(error instanceof Error ? error.message : `Failed to import ${hub.name}.`);
+    } finally {
+      setSkillHubActionId(null);
+      setSkillHubActionKind(null);
+    }
+  };
+
+  const handleRemoveSkillHub = async (hubId: string) => {
+    const imported = skillHubImports()[hubId];
+    if (!imported || skillHubActionId()) return;
+
+    setSkillHubActionId(hubId);
+    setSkillHubActionKind("remove");
+    setSkillHubActionError(null);
+
+    try {
+      const result = await extensions.removeCloudOrgSkillHub(hubId);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      setStatusMessage(`${result.message} ${t("reload.toast_description", currentLocale())}`);
+    } catch (error) {
+      setSkillHubActionError(error instanceof Error ? error.message : `Failed to remove ${imported.name}.`);
+    } finally {
+      setSkillHubActionId(null);
+      setSkillHubActionKind(null);
+    }
+  };
+
+  const handleSyncSkillHub = async (hubId: string) => {
+    const hub = extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
+    if (!hub || skillHubActionId()) return;
+
+    setSkillHubActionId(hub.id);
+    setSkillHubActionKind("sync");
+    setSkillHubActionError(null);
+
+    try {
+      const result = await extensions.syncCloudOrgSkillHub(hub);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      setStatusMessage(`${result.message} ${t("reload.toast_description", currentLocale())}`);
+    } catch (error) {
+      setSkillHubActionError(error instanceof Error ? error.message : `Failed to sync ${hub.name}.`);
+    } finally {
+      setSkillHubActionId(null);
+      setSkillHubActionKind(null);
+    }
+  };
+
+  const handleImportProvider = async (cloudProviderId: string, providerName: string) => {
+    if (providerActionId()) return;
+
+    setProviderActionId(cloudProviderId);
+    setProviderActionKind("import");
+    setProviderActionError(null);
+
+    try {
+      const message = await props.connectCloudProvider(cloudProviderId);
+      setStatusMessage(`${message || `Imported ${providerName}.`} ${t("reload.toast_description", currentLocale())}`);
+    } catch (error) {
+      setProviderActionError(error instanceof Error ? error.message : `Failed to import ${providerName}.`);
+    } finally {
+      setProviderActionId(null);
+      setProviderActionKind(null);
+    }
+  };
+
+  const handleRemoveProvider = async (cloudProviderId: string, providerName: string) => {
+    if (providerActionId()) return;
+
+    setProviderActionId(cloudProviderId);
+    setProviderActionKind("remove");
+    setProviderActionError(null);
+
+    try {
+      const message = await props.removeCloudProvider(cloudProviderId);
+      setStatusMessage(`${message || `Removed ${providerName}.`} ${t("reload.toast_description", currentLocale())}`);
+    } catch (error) {
+      setProviderActionError(error instanceof Error ? error.message : `Failed to remove ${providerName}.`);
+    } finally {
+      setProviderActionId(null);
+      setProviderActionKind(null);
+    }
+  };
+
+  const handleSyncProvider = async (cloudProviderId: string, providerName: string) => {
+    if (providerActionId()) return;
+
+    setProviderActionId(cloudProviderId);
+    setProviderActionKind("sync");
+    setProviderActionError(null);
+
+    try {
+      await props.connectCloudProvider(cloudProviderId);
+      setStatusMessage(`Synced ${providerName}. ${t("reload.toast_description", currentLocale())}`);
+    } catch (error) {
+      setProviderActionError(error instanceof Error ? error.message : `Failed to sync ${providerName}.`);
+    } finally {
+      setProviderActionId(null);
+      setProviderActionKind(null);
     }
   };
 
@@ -1037,6 +1354,273 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                       >
                         {opening() ? tr("den.opening") : tr("den.open")}
                       </Button>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          <div class={`${settingsPanelClass} space-y-4`}>
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
+                  <Boxes size={15} class="text-dls-secondary" />
+                  {tr("den.skill_hubs_title")}
+                </div>
+                <div class="mt-1 text-xs text-dls-secondary">
+                  {tr("den.skill_hubs_hint")}
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div class={sectionPillClass}>
+                  <Users size={12} />
+                  {activeOrgName()}
+                </div>
+                <Button
+                  variant="outline"
+                  class="h-8 px-3 text-xs"
+                  onClick={() => void refreshSkillHubs()}
+                  disabled={skillHubsBusy() || !activeOrgId().trim()}
+                >
+                  <RefreshCcw size={13} class={skillHubsBusy() ? "animate-spin" : ""} />
+                  {tr("den.refresh")}
+                </Button>
+              </div>
+            </div>
+
+            <Show when={skillHubActionError() || extensions.cloudOrgSkillHubsStatus()}>
+              {(value) => (
+                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                  {value()}
+                </div>
+              )}
+            </Show>
+
+            <Show when={!skillHubsBusy() && skillHubRows().length === 0}>
+              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                <Show when={activeOrgId().trim()} fallback={tr("den.choose_org_for_skill_hubs")}>
+                  {tr("den.no_skill_hubs")}
+                </Show>
+              </div>
+            </Show>
+
+            <div class="space-y-1">
+              <For each={skillHubRows()}>
+                {(row) => {
+                  const actionBusy = createMemo(() => skillHubActionId() === row.hubId);
+                  const actionLabel = createMemo(() => {
+                    if (!actionBusy()) return null;
+                    switch (skillHubActionKind()) {
+                      case "import":
+                        return tr("den.importing");
+                      case "sync":
+                        return tr("den.syncing");
+                      default:
+                        return tr("den.removing");
+                    }
+                  });
+                  return (
+                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]">
+                      <div class="min-w-0 pr-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="truncate font-medium text-dls-text">{row.name}</span>
+                          <span class={sectionPillClass}>
+                            {t("den.skill_hub_skills_badge", currentLocale(), {
+                              count: row.hub?.skills.length ?? row.importedSkillCount,
+                            })}
+                          </span>
+                          <Show when={row.status !== "available"}>
+                            <span class={sectionPillClass}>
+                              {row.status === "imported"
+                                ? tr("den.imported_badge")
+                                : row.status === "out_of_sync"
+                                  ? tr("den.out_of_sync_badge")
+                                  : tr("den.removed_from_cloud_badge")}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
+                          {row.status === "available"
+                            ? t("den.skill_hub_detail", currentLocale(), { count: row.liveSkillCount })
+                            : row.status === "imported"
+                              ? t("den.skill_hub_imported_detail", currentLocale(), {
+                                  count: row.importedSkillCount,
+                                })
+                              : row.status === "out_of_sync"
+                                ? t("den.skill_hub_sync_detail", currentLocale(), {
+                                    liveCount: row.liveSkillCount,
+                                    importedCount: row.importedSkillCount,
+                                  })
+                                : t("den.skill_hub_removed_detail", currentLocale(), {
+                                    importedCount: row.importedSkillCount,
+                                  })}
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2 shrink-0">
+                        <Show when={row.status === "out_of_sync" && row.hub}>
+                          <Button
+                            variant="secondary"
+                            class="h-8 px-4 text-xs"
+                            onClick={() => void handleSyncSkillHub(row.hubId)}
+                            disabled={skillHubActionId() !== null}
+                          >
+                            {actionBusy() && skillHubActionKind() === "sync" ? tr("den.syncing") : tr("den.sync")}
+                          </Button>
+                        </Show>
+                        <Button
+                          variant={row.status === "available" ? "secondary" : "outline"}
+                          class="h-8 px-4 text-xs"
+                          onClick={() => {
+                            if (row.status === "available" && row.hub) return void handleImportSkillHub(row.hubId);
+                            return void handleRemoveSkillHub(row.hubId);
+                          }}
+                          disabled={skillHubActionId() !== null}
+                        >
+                          {actionBusy()
+                            ? actionLabel()
+                            : row.status === "available"
+                              ? tr("den.import_all")
+                              : row.status === "removed_from_cloud"
+                                ? tr("den.uninstall")
+                                : t("common.remove", currentLocale())}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          <div class={`${settingsPanelClass} space-y-4`}>
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
+                  <Brain size={15} class="text-dls-secondary" />
+                  {tr("den.cloud_providers_title")}
+                </div>
+                <div class="mt-1 text-xs text-dls-secondary">
+                  {tr("den.cloud_providers_hint")}
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div class={sectionPillClass}>
+                  <Users size={12} />
+                  {activeOrgName()}
+                </div>
+                <Button
+                  variant="outline"
+                  class="h-8 px-3 text-xs"
+                  onClick={() => void refreshProviders()}
+                  disabled={providersBusy() || !activeOrgId().trim()}
+                >
+                  <RefreshCcw size={13} class={providersBusy() ? "animate-spin" : ""} />
+                  {tr("den.refresh")}
+                </Button>
+              </div>
+            </div>
+
+            <Show when={providerActionError()}>
+              {(value) => (
+                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                  {value()}
+                </div>
+              )}
+            </Show>
+
+            <Show when={!providersBusy() && providerRows().length === 0}>
+              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                <Show when={activeOrgId().trim()} fallback={tr("den.choose_org_for_providers")}>
+                  {tr("den.no_cloud_providers")}
+                </Show>
+              </div>
+            </Show>
+
+            <div class="space-y-1">
+              <For each={providerRows()}>
+                {(row) => {
+                  const actionBusy = createMemo(() => providerActionId() === row.cloudProviderId);
+                  const actionLabel = createMemo(() => {
+                    if (!actionBusy()) return null;
+                    switch (providerActionKind()) {
+                      case "import":
+                        return tr("den.importing");
+                      case "sync":
+                        return tr("den.syncing");
+                      default:
+                        return tr("den.removing");
+                    }
+                  });
+                  return (
+                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]">
+                      <div class="min-w-0 pr-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="truncate font-medium text-dls-text">{row.name}</span>
+                          <span class={sectionPillClass}>
+                            <KeyRound size={12} />
+                            {row.provider?.providerId ?? row.imported?.providerId}
+                          </span>
+                          <Show when={row.provider?.hasApiKey}>
+                            <span class={sectionPillClass}>{tr("den.credentials_ready_badge")}</span>
+                          </Show>
+                          <Show when={row.status !== "available"}>
+                            <span class={sectionPillClass}>
+                              {row.status === "imported"
+                                ? tr("den.imported_badge")
+                                : row.status === "out_of_sync"
+                                  ? tr("den.out_of_sync_badge")
+                                  : tr("den.removed_from_cloud_badge")}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
+                          {row.status === "removed_from_cloud"
+                            ? t("den.cloud_provider_removed_detail", currentLocale(), {
+                                providerId: row.imported?.providerId ?? row.name,
+                              })
+                            : row.status === "out_of_sync"
+                              ? t("den.cloud_provider_sync_detail", currentLocale(), {
+                                  count: row.provider?.models.length ?? 0,
+                                  source: row.provider?.source === "custom" ? "custom" : "managed",
+                                })
+                              : t("den.cloud_provider_detail", currentLocale(), {
+                                  count: row.provider?.models.length ?? 0,
+                                  source: row.provider?.source === "custom" ? "custom" : "managed",
+                                })}
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2 shrink-0">
+                        <Show when={row.status === "out_of_sync" && row.provider}>
+                          <Button
+                            variant="secondary"
+                            class="h-8 px-4 text-xs"
+                            onClick={() => void handleSyncProvider(row.cloudProviderId, row.name)}
+                            disabled={providerActionId() !== null}
+                          >
+                            {actionBusy() && providerActionKind() === "sync" ? tr("den.syncing") : tr("den.sync")}
+                          </Button>
+                        </Show>
+                        <Button
+                          variant={row.status === "available" ? "secondary" : "outline"}
+                          class="h-8 px-4 text-xs"
+                          onClick={() => {
+                            if (row.status === "available" && row.provider) {
+                              return void handleImportProvider(row.cloudProviderId, row.name);
+                            }
+                            return void handleRemoveProvider(row.cloudProviderId, row.name);
+                          }}
+                          disabled={providerActionId() !== null}
+                        >
+                          {actionBusy()
+                            ? actionLabel()
+                            : row.status === "available"
+                              ? tr("den.import_provider")
+                              : row.status === "removed_from_cloud"
+                                ? tr("den.uninstall")
+                                : t("common.remove", currentLocale())}
+                        </Button>
+                      </div>
                     </div>
                   );
                 }}

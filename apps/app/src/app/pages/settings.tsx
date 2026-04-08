@@ -64,6 +64,7 @@ import type {
   OpenworkServerSettings,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
+import type { DenOrgLlmProvider } from "../lib/den";
 import type {
   EngineInfo,
   OrchestratorBinaryInfo,
@@ -73,6 +74,7 @@ import type {
   OpenCodeRouterInfo,
   SandboxDebugProbeResult,
 } from "../lib/tauri";
+import type { CloudImportedProvider } from "../cloud/import-state";
 import {
   appBuildInfo,
   engineRestart,
@@ -96,11 +98,16 @@ export type SettingsViewProps = {
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
+  cloudOrgProviders: DenOrgLlmProvider[];
+  importedCloudProviders: Record<string, CloudImportedProvider>;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
     preferredProviderId?: string;
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
+  removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
+  connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
   openworkServerClient: OpenworkServerClient | null;
@@ -1903,6 +1910,11 @@ export default function SettingsView(props: SettingsViewProps) {
               developerMode={props.developerMode}
               connectRemoteWorkspace={props.connectRemoteWorkspace}
               openTeamBundle={props.openTeamBundle}
+              cloudOrgProviders={props.cloudOrgProviders}
+              importedCloudProviders={props.importedCloudProviders}
+              refreshCloudOrgProviders={props.refreshCloudOrgProviders}
+              connectCloudProvider={props.connectCloudProvider}
+              removeCloudProvider={props.removeCloudProvider}
             />
         </Match>
 
