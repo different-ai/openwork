@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Cpu, KeyRound, Plus, Search } from "lucide-react";
+import { CodeXml, Cpu, KeyRound, Plus, Search } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { buttonVariants } from "../../../../_components/ui/button";
 import { DenInput } from "../../../../_components/ui/input";
@@ -20,6 +20,10 @@ import {
 
 function getProviderSourceLabel(source: "models_dev" | "custom") {
   return source === "custom" ? "Custom" : "Catalog";
+}
+
+function getProviderSourceIcon(source: "models_dev" | "custom") {
+  return source === "custom" ? CodeXml : Cpu;
 }
 
 export function LlmProvidersScreen() {
@@ -93,6 +97,7 @@ export function LlmProvidersScreen() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
           {filteredProviders.map((provider) => {
+            const SourceIcon = getProviderSourceIcon(provider.source);
             const envNames = getProviderEnvNames(provider.providerConfig);
             const memberAccessCount = provider.access.members.length;
             const teamAccessCount = provider.access.teams.length;
@@ -105,7 +110,7 @@ export function LlmProvidersScreen() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
-                      <Cpu className="h-3.5 w-3.5" />
+                      <SourceIcon className="h-3.5 w-3.5" />
                       {getProviderSourceLabel(provider.source)}
                     </div>
                     <h2 className="mt-4 text-[22px] font-semibold tracking-[-0.05em] text-gray-950">{provider.name}</h2>
