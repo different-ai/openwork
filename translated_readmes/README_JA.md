@@ -1,6 +1,6 @@
 [![Discord](https://img.shields.io/badge/discord-加入-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
-[English](../README.md) | 日本語 | [他の言語](./README.md)
+[English](../README.md) | 日本語 | [他の翻訳README](./README.md)
 
 # OpenWork
 > OpenWorkは、Claude Cowork/Codex（デスクトップアプリ）のオープンソース代替です。

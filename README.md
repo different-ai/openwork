@@ -231,9 +231,6 @@ MIT — see `LICENSE`.
 
 ## Supported Languages
 
-Translated READMEs live in [`readmes/`](./readmes/README.md).
+Translated READMEs: [`translated_readmes/`](./translated_readmes/README.md). README languages: English, 简体中文, 繁體中文, 日本語.
 
-- English
-- 简体中文
-- 繁體中文
-- 日本語
+App i18n languages: English (`en`), Japanese (`ja`), Simplified Chinese (`zh`), Vietnamese (`vi`), Brazilian Portuguese (`pt-BR`).
