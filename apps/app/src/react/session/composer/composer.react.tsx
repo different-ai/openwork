@@ -83,6 +83,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [variantMenuOpen, setVariantMenuOpen] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
@@ -216,6 +217,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       if (event.key === "Escape") {
         event.preventDefault();
         setAgentMenuOpen(false);
+        setVariantMenuOpen(false);
         return;
       }
     }
@@ -257,17 +259,32 @@ export function ReactSessionComposer(props: ComposerProps) {
               {props.modelLabel}
             </button>
             {props.modelBehaviorOptions?.length ? (
-              <select
-                value={props.modelVariant ?? ""}
-                className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text outline-none"
-                onChange={(event) => props.onModelVariantChange(event.currentTarget.value || null)}
-              >
-                {props.modelBehaviorOptions.map((option) => (
-                  <option key={option.value ?? "default"} value={option.value ?? ""}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
+                  onClick={() => setVariantMenuOpen((value) => !value)}
+                >
+                  {props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? props.modelVariantLabel || "Default"}
+                </button>
+                {variantMenuOpen ? (
+                  <div className="absolute left-0 top-full z-20 mt-2 w-48 rounded-2xl border border-dls-border bg-dls-surface p-2 shadow-[var(--dls-card-shadow)]">
+                    {props.modelBehaviorOptions.map((option) => (
+                      <button
+                        key={option.value ?? "default"}
+                        type="button"
+                        className={`w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.modelVariant === option.value ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
+                        onClick={() => {
+                          props.onModelVariantChange(option.value);
+                          setVariantMenuOpen(false);
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             <div className="relative">
               <button
