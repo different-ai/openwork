@@ -228,3 +228,12 @@ Interested in using OpenWork in your organization? We'd love to hear from you �
 ## License
 
 MIT — see `LICENSE`.
+
+## Supported Languages
+
+Translated READMEs live in [`readmes/`](./readmes/README.md).
+
+- English
+- 简体中文
+- 繁體中文
+- 日本語
