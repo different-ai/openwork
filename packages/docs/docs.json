@@ -50,6 +50,7 @@
         "tab": "Cloud docs",
         "pages": [
           "get-started-cloud",
+          "team-provisioning",
           "cloud-skill-hubs",
           "cloud-shared-workspaces",
           "cloud-llm-providers",
@@ -81,10 +82,6 @@
     {
       "source": "/introduction",
       "destination": "/get-started-cloud"
-    },
-    {
-      "source": "/team-provisioning",
-      "destination": "/cloud-skill-hubs"
     }
   ],
   "errors": {
