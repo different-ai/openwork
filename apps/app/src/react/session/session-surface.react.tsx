@@ -380,19 +380,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="mx-auto flex w-full max-w-[800px] justify-end px-4">
-            <button
-              type="button"
-              className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
-              onClick={handleCopyTranscript}
-              disabled={renderedMessages.length === 0}
-            >
-              Copy transcript
-            </button>
-          </div>
-          <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
-        </div>
+        <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
       )}
       </div>
 

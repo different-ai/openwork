@@ -103,7 +103,7 @@ function AssistantBlock(props: { message: UIMessage; developerMode: boolean; isS
   return (
     <article className="flex justify-start" data-message-role="assistant" data-message-id={props.message.id}>
       <div className="group relative w-full max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased">
-        <div className="mb-1 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute -top-3 right-0 opacity-0 transition-opacity group-hover:opacity-100">
           <CopyButton text={messageToText(props.message)} />
         </div>
         <div className="space-y-4">
@@ -160,7 +160,7 @@ function UserBlock(props: { message: UIMessage }) {
   return (
     <article className="flex justify-end" data-message-role="user" data-message-id={props.message.id}>
       <div className="group relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text">
-        <div className="mb-1 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute -top-3 right-2 opacity-0 transition-opacity group-hover:opacity-100">
           <CopyButton text={messageToText(props.message)} />
         </div>
         {attachments.length > 0 ? (
