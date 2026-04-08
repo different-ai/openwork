@@ -460,27 +460,27 @@ export function LlmProviderEditorScreen({
                             <div className="rounded-[28px] bg-gray-50 p-6">
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             NPM package
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
                                                 {providerNpm ?? "Not set"}
                                             </span>
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             API base
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full break-all rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
                                                 {providerApiBase ?? "Not set"}
                                             </span>
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             Env keys
                                         </p>
                                         {providerEnv.length > 0 ? (
@@ -488,7 +488,7 @@ export function LlmProviderEditorScreen({
                                                 {providerEnv.map((envName) => (
                                                     <span
                                                         key={envName}
-                                                        className="inline-flex max-w-full break-all rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200"
+                                                        className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200"
                                                     >
                                                         {envName}
                                                     </span>
@@ -496,18 +496,18 @@ export function LlmProviderEditorScreen({
                                             </div>
                                         ) : (
                                             <p className="mt-2">
-                                                <span className="inline-flex max-w-full rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                <span className="inline-flex max-w-full rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
                                                     None listed
                                                 </span>
                                             </p>
                                         )}
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             Docs
                                         </p>
                                         <p className="mt-2">
-                                            <span className="inline-flex max-w-full break-all rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
                                                 {providerDoc ?? "Not set"}
                                             </span>
                                         </p>
