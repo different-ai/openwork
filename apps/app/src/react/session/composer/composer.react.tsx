@@ -265,7 +265,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
                   onClick={() => setVariantMenuOpen((value) => !value)}
                 >
-                  {props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? props.modelVariantLabel || "Default"}
+                  {(props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? props.modelVariantLabel) || "Default"}
                 </button>
                 {variantMenuOpen ? (
                   <div className="absolute left-0 top-full z-20 mt-2 w-48 rounded-2xl border border-dls-border bg-dls-surface p-2 shadow-[var(--dls-card-shadow)]">
