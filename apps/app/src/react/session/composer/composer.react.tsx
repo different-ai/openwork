@@ -562,24 +562,24 @@ export function ReactSessionComposer(props: ComposerProps) {
         ) : null}
         <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
           <div className="text-xs text-dls-secondary">{props.statusLabel}</div>
-          <div className="flex items-center gap-2">
+          {props.busy ? (
             <button
               type="button"
-              className="rounded-full border border-dls-border px-4 py-2 text-sm text-dls-secondary transition-colors hover:bg-dls-hover disabled:opacity-50"
+              className="rounded-full bg-red-9 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-red-10"
               onClick={props.onStop}
-              disabled={!props.busy}
             >
               Stop
             </button>
+          ) : (
             <button
               type="button"
               className="rounded-full bg-[var(--dls-accent)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)] disabled:opacity-50"
               onClick={props.onSend}
-              disabled={props.busy || props.disabled || !props.draft.trim()}
+              disabled={props.disabled || !props.draft.trim()}
             >
               Run task
             </button>
-          </div>
+          )}
         </div>
       </div>
     </div>
