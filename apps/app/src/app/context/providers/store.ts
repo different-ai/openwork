@@ -336,6 +336,12 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     workerType: "local" | "remote",
     cloudProviders: DenOrgLlmProvider[],
   ) => {
+    const isNamedProvider = (id: string, fallbackName: string | undefined, target: string) => {
+      const normalizedId = id.trim().toLowerCase();
+      const normalizedName = fallbackName?.trim().toLowerCase() ?? "";
+      return normalizedId === target || normalizedName === target;
+    };
+
     const merged = Object.fromEntries(
       Object.entries(methods ?? {}).map(([id, providerMethods]) => [
         id,
@@ -355,9 +361,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     }
     for (const [id, providerMethods] of Object.entries(merged)) {
       const provider = availableProviders.find((item) => item.id === id);
-      const normalizedId = id.trim().toLowerCase();
-      const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
-      const isOpenAiProvider = normalizedId === "openai" || normalizedName === "openai";
+      const isOpenAiProvider = isNamedProvider(id, provider?.name, "openai");
       if (!isOpenAiProvider) continue;
       merged[id] = providerMethods.filter((method) => {
         if (method.type !== "oauth") return true;
@@ -375,6 +379,13 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         continue;
       }
       merged[id] = [...existing, buildCloudProviderMethod(provider)];
+    }
+
+    for (const [id, providerMethods] of Object.entries(merged)) {
+      const provider = availableProviders.find((item) => item.id === id);
+      if (!isNamedProvider(id, provider?.name, "anthropic")) continue;
+      // Anthropic no longer supports in-product key creation or subscription sign-in.
+      merged[id] = providerMethods.filter((method) => method.type === "api");
     }
 
     return merged;
