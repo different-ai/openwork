@@ -46,12 +46,6 @@
             ]
           },
           {
-            "group": "Changelog",
-            "pages": [
-              "changelog"
-            ]
-          },
-          {
             "group": "Improve this doc",
             "pages": [
               "missing-docs"
@@ -60,8 +54,20 @@
         ]
       },
       {
+        "tab": "Cloud docs",
+        "pages": [
+          "cloud-docs"
+        ]
+      },
+      {
         "tab": "Cloud API",
         "openapi": "https://api.openworklabs.com/openapi.json"
+      },
+      {
+        "tab": "Changelog",
+        "pages": [
+          "changelog"
+        ]
       }
     ]
   },
