@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
     ArrowLeft,
-    CheckCircle2,
-    Circle,
     CodeXml,
     Cpu,
     Search,
+    User,
+    Users,
 } from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
 import { DenCombobox } from "../../../../_components/ui/combobox";
@@ -69,6 +69,8 @@ export function LlmProviderEditorScreen({
         [llmProviderId, llmProviders],
     );
     const [source, setSource] = useState<DenLlmProviderSource>("models_dev");
+    const [accessTab, setAccessTab] = useState<"teams" | "people">("teams");
+    const [accessQuery, setAccessQuery] = useState("");
     const [catalogProviders, setCatalogProviders] = useState<
         DenModelsDevProviderSummary[]
     >([]);
@@ -215,6 +217,32 @@ export function LlmProviderEditorScreen({
                 model.id.toLowerCase().includes(normalizedQuery),
         );
     }, [catalogDetail?.models, modelQuery]);
+
+    const filteredTeams = useMemo(() => {
+        const teams = orgContext?.teams ?? [];
+        const normalizedQuery = accessQuery.trim().toLowerCase();
+        if (!normalizedQuery) {
+            return teams;
+        }
+
+        return teams.filter((team) =>
+            team.name.toLowerCase().includes(normalizedQuery),
+        );
+    }, [accessQuery, orgContext?.teams]);
+
+    const filteredMembers = useMemo(() => {
+        const members = orgContext?.members ?? [];
+        const normalizedQuery = accessQuery.trim().toLowerCase();
+        if (!normalizedQuery) {
+            return members;
+        }
+
+        return members.filter(
+            (member) =>
+                member.user.name.toLowerCase().includes(normalizedQuery) ||
+                member.user.email.toLowerCase().includes(normalizedQuery),
+        );
+    }, [accessQuery, orgContext?.members]);
 
     const catalogProviderOptions = useMemo(
         () =>
@@ -572,7 +600,7 @@ export function LlmProviderEditorScreen({
 
             {source === "models_dev" ? (
                 <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                    <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
                         <div>
                             <div className="flex flex-wrap items-center gap-3">
                                 <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
@@ -593,21 +621,22 @@ export function LlmProviderEditorScreen({
                             </p>
                         </div>
 
-                        <DenInput
-                            type="search"
-                            icon={Search}
-                            value={modelQuery}
-                            onChange={(event) =>
-                                setModelQuery(event.target.value)
-                            }
-                            placeholder="Search models..."
-                            className="lg:w-[360px]"
-                        />
+                        <div className="mt-6">
+                            <DenInput
+                                type="search"
+                                icon={Search}
+                                value={modelQuery}
+                                onChange={(event) =>
+                                    setModelQuery(event.target.value)
+                                }
+                                placeholder="Search models..."
+                            />
+                        </div>
                     </div>
 
                     {catalogDetail ? (
                         filteredModels.length ? (
-                            <div>
+                            <div className="mt-4">
                                 <div className="overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
                                     {filteredModels.map((model) => {
                                         const selected =
@@ -641,7 +670,7 @@ export function LlmProviderEditorScreen({
                                 </div>
                             </div>
                         ) : (
-                            <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
                                 No models match{" "}
                                 <span className="font-medium text-gray-700">
                                     &quot;{modelQuery}&quot;
@@ -650,118 +679,164 @@ export function LlmProviderEditorScreen({
                             </div>
                         )
                     ) : (
-                        <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
                             Select a provider to browse its models.
                         </div>
                     )}
                 </section>
             ) : null}
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
-                    People access
-                </h2>
-
-                <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {orgContext?.members.map((member) => {
-                        const selected = selectedMemberIds.includes(member.id);
-                        const locked = lockedMemberId === member.id;
-                        return (
-                            <button
-                                key={member.id}
-                                type="button"
-                                disabled={locked}
-                                onClick={() =>
-                                    setSelectedMemberIds((current) =>
-                                        current.includes(member.id)
-                                            ? current.filter(
-                                                  (entry) =>
-                                                      entry !== member.id,
-                                              )
-                                            : [...current, member.id],
-                                    )
-                                }
-                                className={`flex min-h-[88px] items-center gap-4 rounded-[24px] border px-5 py-4 text-left transition ${selected ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"} ${locked ? "cursor-default" : "cursor-pointer"}`}
-                            >
-                                {selected ? (
-                                    <CheckCircle2 className="h-7 w-7 shrink-0" />
-                                ) : (
-                                    <Circle className="h-7 w-7 shrink-0 text-gray-300" />
-                                )}
-                                <div>
-                                    <p className="text-[16px] font-medium tracking-[-0.03em]">
-                                        {member.user.name}
-                                    </p>
-                                    <p
-                                        className={`mt-1 text-[13px] ${selected ? "text-white/70" : "text-gray-400"}`}
-                                    >
-                                        {member.user.email}
-                                    </p>
-                                    {locked ? (
-                                        <p
-                                            className={`mt-1 text-[12px] ${selected ? "text-white/60" : "text-gray-400"}`}
-                                        >
-                                            Creator access is locked
-                                        </p>
-                                    ) : null}
-                                </div>
-                            </button>
-                        );
-                    }) ?? null}
-                </div>
-            </section>
-
             <section className="rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
-                    Team access
-                </h2>
+                <div>
+                    <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                        Configure access
+                    </h2>
+                    <p className="mt-2 text-[15px] text-gray-500">
+                        Select which teams and people can use this provider.
+                    </p>
+                </div>
 
-                {orgContext?.teams.length ? (
-                    <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {orgContext.teams.map((team) => {
-                            const selected = selectedTeamIds.includes(team.id);
-                            return (
-                                <button
-                                    key={team.id}
-                                    type="button"
-                                    onClick={() =>
-                                        setSelectedTeamIds((current) =>
-                                            current.includes(team.id)
-                                                ? current.filter(
-                                                      (entry) =>
-                                                          entry !== team.id,
-                                                  )
-                                                : [...current, team.id],
-                                        )
-                                    }
-                                    className={`flex min-h-[88px] items-center gap-4 rounded-[24px] border px-5 py-4 text-left transition ${selected ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"}`}
-                                >
-                                    {selected ? (
-                                        <CheckCircle2 className="h-7 w-7 shrink-0" />
-                                    ) : (
-                                        <Circle className="h-7 w-7 shrink-0 text-gray-300" />
-                                    )}
-                                    <div>
-                                        <p className="text-[16px] font-medium tracking-[-0.03em]">
-                                            {team.name}
-                                        </p>
-                                        <p
-                                            className={`mt-1 text-[13px] ${selected ? "text-white/70" : "text-gray-400"}`}
-                                        >
-                                            {team.memberIds.length}{" "}
-                                            {team.memberIds.length === 1
-                                                ? "member"
-                                                : "members"}
-                                        </p>
-                                    </div>
-                                </button>
-                            );
-                        })}
-                    </div>
+                <div className="mt-8 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setAccessTab("teams");
+                            setAccessQuery("");
+                        }}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "teams" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                    >
+                        <Users className="h-4 w-4" />
+                        {`Teams (${selectedTeamIds.length})`}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setAccessTab("people");
+                            setAccessQuery("");
+                        }}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "people" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                    >
+                        <User className="h-4 w-4" />
+                        {`People (${selectedMemberIds.length})`}
+                    </button>
+                </div>
+
+                <div className="mt-6">
+                    <DenInput
+                        type="search"
+                        icon={Search}
+                        value={accessQuery}
+                        onChange={(event) => setAccessQuery(event.target.value)}
+                        placeholder={
+                            accessTab === "teams"
+                                ? "Search teams..."
+                                : "Search people..."
+                        }
+                    />
+                </div>
+
+                {accessTab === "teams" ? (
+                    orgContext?.teams.length ? (
+                        filteredTeams.length ? (
+                            <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                                {filteredTeams.map((team) => {
+                                    const selected = selectedTeamIds.includes(team.id);
+                                    return (
+                                        <DenSelectableRow
+                                            key={team.id}
+                                            selected={selected}
+                                            leading={
+                                                <Users className="h-4 w-4 text-gray-400" />
+                                            }
+                                            title={team.name}
+                                            description={`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}
+                                            onClick={() =>
+                                                setSelectedTeamIds((current) =>
+                                                    current.includes(team.id)
+                                                        ? current.filter(
+                                                              (entry) =>
+                                                                  entry !== team.id,
+                                                          )
+                                                        : [...current, team.id],
+                                                )
+                                            }
+                                        />
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                                No teams match{" "}
+                                <span className="font-medium text-gray-700">
+                                    &quot;{accessQuery}&quot;
+                                </span>
+                                .
+                            </div>
+                        )
+                    ) : (
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            Create teams from the Members page before assigning team
+                            access.
+                        </div>
+                    )
+                ) : orgContext?.members.length ? (
+                    filteredMembers.length ? (
+                        <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                            {filteredMembers.map((member) => {
+                                const selected = selectedMemberIds.includes(
+                                    member.id,
+                                );
+                                const locked = lockedMemberId === member.id;
+                                return (
+                                    <DenSelectableRow
+                                        key={member.id}
+                                        disabled={locked}
+                                        selected={selected}
+                                        leading={
+                                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0f172a] text-[11px] font-semibold uppercase text-white">
+                                                {member.user.name
+                                                    .split(" ")
+                                                    .map((part) => part[0])
+                                                    .join("")
+                                                    .slice(0, 2)}
+                                            </div>
+                                        }
+                                        descriptionBelow
+                                        title={member.user.name}
+                                        description={member.user.email}
+                                        aside={
+                                            locked ? (
+                                                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-500">
+                                                    Locked
+                                                </span>
+                                            ) : undefined
+                                        }
+                                        onClick={() =>
+                                            setSelectedMemberIds((current) =>
+                                                current.includes(member.id)
+                                                    ? current.filter(
+                                                          (entry) =>
+                                                              entry !== member.id,
+                                                      )
+                                                    : [...current, member.id],
+                                            )
+                                        }
+                                    />
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            No people match{" "}
+                            <span className="font-medium text-gray-700">
+                                &quot;{accessQuery}&quot;
+                            </span>
+                            .
+                        </div>
+                    )
                 ) : (
-                    <div className="mt-8 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                        Create teams from the Members page before assigning team
-                        access.
+                    <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                        No people are available to assign yet.
                     </div>
                 )}
             </section>
