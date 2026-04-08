@@ -100,7 +100,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const isClaudeProMaxMethod = (method: ProviderAuthMethod) => {
     const label = method.label.toLowerCase();
-    return method.type === "oauth" && label.includes("pro/max");
+    return method.type === "oauth" && (label.includes("pro/max") || label.includes("create an api key"));
   };
 
   const entries = createMemo<ProviderAuthEntry[]>(() => {
