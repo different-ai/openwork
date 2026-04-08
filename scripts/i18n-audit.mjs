@@ -9,6 +9,7 @@
  *   node scripts/i18n-audit.mjs --unused     # only unused keys (in EN but never referenced in source)
  *   node scripts/i18n-audit.mjs --hardcoded  # only hardcoded English strings in source files
  *   node scripts/i18n-audit.mjs --summary    # counts only, no key lists
+ *   node scripts/i18n-audit.mjs --dangling   # find t() calls referencing keys not in en.ts
  *   node scripts/i18n-audit.mjs --prune      # remove unused keys from all locales
  *   node scripts/i18n-audit.mjs --sort       # alphabetically sort keys in all locales
  */
@@ -303,7 +304,43 @@ if (shouldRun("--summary")) {
   console.log();
 }
 
-// --- 7. Hardcoded English scan ---
+// --- 7. Dangling t() calls (referencing keys not in en.ts) ---
+if (shouldRun("--dangling", "--summary")) {
+  console.log("=== Dangling t() calls (keys not in en.ts) ===");
+
+  const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
+  // Match t("key.name"), t("key.name", ...), translate("key.name"), tr("key.name")
+  const keyRefPattern = /\b(?:t|translate|tr)\(\s*"([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*?)"/g;
+
+  const dangling = [];
+  for (const file of sourceFiles) {
+    const content = readFileSync(file, "utf-8");
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      for (const match of lines[i].matchAll(keyRefPattern)) {
+        const key = match[1];
+        if (!enKeys.has(key)) {
+          dangling.push({ key, file: file.replace(REPO_ROOT + "/", ""), line: i + 1 });
+        }
+      }
+    }
+  }
+
+  if (dangling.length === 0) {
+    console.log("  ✓ all t() keys exist in en.ts");
+  } else {
+    console.log(`  ✗ ${dangling.length} dangling references`);
+    exitCode = 1;
+    if (mode !== "--summary") {
+      for (const { key, file, line } of dangling) {
+        console.log(`    ${file}:${line} → "${key}"`);
+      }
+    }
+  }
+  console.log();
+}
+
+// --- 8. Hardcoded English scan ---
 if (shouldRun("--hardcoded")) {
   console.log("=== Hardcoded English scan (key source files) ===");
 
@@ -412,5 +449,5 @@ if (mode === "--sort") {
 
 // --- Done ---
 console.log("=== Done ===");
-console.log("Run with --missing, --orphan, --unused, --hardcoded, --prune, --sort, or --summary for focused output.");
+console.log("Run with --missing, --orphan, --unused, --dangling, --hardcoded, --prune, --sort, or --summary for focused output.");
 process.exit(exitCode);
