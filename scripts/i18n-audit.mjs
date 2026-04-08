@@ -12,6 +12,7 @@
  *   node scripts/i18n-audit.mjs --aliases    # aliased t() calls (translate/tr instead of t)
  *   node scripts/i18n-audit.mjs --placeholders # placeholder integrity check
  *   node scripts/i18n-audit.mjs --hardcoded  # hardcoded English strings in source files
+ *   node scripts/i18n-audit.mjs --find "New Automation" # locate EN text -> key -> source refs
  *   node scripts/i18n-audit.mjs --prune      # (destructive) remove unused keys from all locales
  *   node scripts/i18n-audit.mjs --sort       # (destructive) alphabetically sort keys in all locales
  */
@@ -28,8 +29,11 @@ const APP_SRC = join(REPO_ROOT, "apps/app/src");
 const LOCALES = ["ja", "zh", "vi", "pt-BR", "th"];
 const EN_FILE = join(LOCALES_DIR, "en.ts");
 
-const mode = process.argv[2] ?? "--all";
-const EXCLUDED_FROM_ALL = new Set(["--hardcoded", "--aliases"]);
+const args = process.argv.slice(2);
+const mode = args[0] ?? "--all";
+const queryArgs = mode === "--find" ? args.slice(1).filter((arg) => arg !== "--") : args.slice(1);
+const query = queryArgs.join(" ").trim();
+const EXCLUDED_FROM_ALL = new Set(["--hardcoded", "--aliases", "--find"]);
 const shouldRun = (...modes) => (mode === "--all" && !modes.some((m) => EXCLUDED_FROM_ALL.has(m))) || modes.includes(mode);
 
 // ---------------------------------------------------------------------------
@@ -97,6 +101,130 @@ function findDuplicates(filePath) {
   return dupes;
 }
 
+function toRelativePath(filePath) {
+  return filePath.replace(REPO_ROOT + "/", "");
+}
+
+function normalizeSearchText(value) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function getSearchScore(value, normalizedQuery) {
+  const normalizedValue = normalizeSearchText(value);
+  if (normalizedValue === normalizedQuery) return 0;
+  if (normalizedValue.startsWith(normalizedQuery)) return 1;
+  if (normalizedValue.includes(normalizedQuery)) return 2;
+  return Number.POSITIVE_INFINITY;
+}
+
+function findDirectSourceMatches(normalizedQuery, sourceFiles) {
+  const matches = [];
+
+  for (const file of sourceFiles) {
+    const lines = readFileSync(file, "utf-8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const text = lines[i].trim();
+      if (!text) continue;
+      const score = getSearchScore(text, normalizedQuery);
+      if (!Number.isFinite(score)) continue;
+      matches.push({ file: toRelativePath(file), line: i + 1, text, score });
+    }
+  }
+
+  return matches.sort((a, b) => a.score - b.score || a.file.localeCompare(b.file) || a.line - b.line);
+}
+
+function findStaticKeyReferences(key, sourceFiles) {
+  const matches = [];
+
+  for (const file of sourceFiles) {
+    const lines = readFileSync(file, "utf-8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].includes(key)) continue;
+      matches.push({ file: toRelativePath(file), line: i + 1, text: lines[i].trim() });
+    }
+  }
+
+  return matches;
+}
+
+function findTranslationMatches(normalizedQuery, sourceFiles, keyValues) {
+  const matches = [];
+
+  for (const [key, value] of keyValues) {
+    const score = Math.min(getSearchScore(key, normalizedQuery), getSearchScore(value, normalizedQuery));
+    if (!Number.isFinite(score)) continue;
+    matches.push({ key, value, score, references: findStaticKeyReferences(key, sourceFiles) });
+  }
+
+  return matches.sort((a, b) => a.score - b.score || a.key.localeCompare(b.key));
+}
+
+function runFindMode(rawQuery, keyValues) {
+  if (!rawQuery) {
+    console.error('Usage: node scripts/i18n-audit.mjs --find "English text"');
+    process.exit(1);
+  }
+
+  const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
+  const normalizedQuery = normalizeSearchText(rawQuery);
+  const directMatches = findDirectSourceMatches(normalizedQuery, sourceFiles);
+  const translationMatches = findTranslationMatches(normalizedQuery, sourceFiles, keyValues);
+  const DIRECT_MATCH_LIMIT = 20;
+  const TRANSLATION_MATCH_LIMIT = 20;
+  const REFERENCE_LIMIT = 10;
+
+  console.log("╔══════════════════════════════════════════════════╗");
+  console.log("║            i18n Text Locator                    ║");
+  console.log("╚══════════════════════════════════════════════════╝");
+  console.log();
+  console.log(`Query: ${JSON.stringify(rawQuery)}`);
+  console.log();
+
+  if (directMatches.length === 0 && translationMatches.length === 0) {
+    console.log("No direct or translation matches found.");
+    process.exit(1);
+  }
+
+  if (directMatches.length > 0) {
+    console.log("=== Direct source matches ===");
+    for (const { file, line, text } of directMatches.slice(0, DIRECT_MATCH_LIMIT)) {
+      console.log(`  ${file}:${line}`);
+      console.log(`    ${text.slice(0, 140)}`);
+    }
+    if (directMatches.length > DIRECT_MATCH_LIMIT) {
+      console.log(`  ... and ${directMatches.length - DIRECT_MATCH_LIMIT} more direct matches`);
+    }
+    console.log();
+  }
+
+  if (translationMatches.length > 0) {
+    console.log("=== Translation matches ===");
+    for (const { key, value, references } of translationMatches.slice(0, TRANSLATION_MATCH_LIMIT)) {
+      console.log(`  ${key}`);
+      console.log(`    English: ${value}`);
+      if (references.length === 0) {
+        console.log("    References: no static references found in app source");
+      } else {
+        console.log("    References:");
+        for (const { file, line, text } of references.slice(0, REFERENCE_LIMIT)) {
+          console.log(`      ${file}:${line}`);
+          console.log(`        ${text.slice(0, 120)}`);
+        }
+        if (references.length > REFERENCE_LIMIT) {
+          console.log(`      ... and ${references.length - REFERENCE_LIMIT} more references`);
+        }
+      }
+    }
+    if (translationMatches.length > TRANSLATION_MATCH_LIMIT) {
+      console.log(`  ... and ${translationMatches.length - TRANSLATION_MATCH_LIMIT} more translation matches`);
+    }
+    console.log();
+  }
+
+  process.exit(0);
+}
+
 // ---------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------
@@ -104,6 +232,10 @@ function findDuplicates(filePath) {
 const enKeys = extractKeys(EN_FILE);
 const enKeyValues = extractKeyValues(EN_FILE);
 let exitCode = 0;
+
+if (mode === "--find") {
+  runFindMode(query, enKeyValues);
+}
 
 console.log("╔══════════════════════════════════════════════════╗");
 console.log("║              i18n Audit Report                   ║");
@@ -487,5 +619,5 @@ if (mode === "--sort") {
 
 // --- Done ---
 console.log("=== Done ===");
-console.log("Run with --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.");
+console.log('Run with --find "text", --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.');
 process.exit(exitCode);
