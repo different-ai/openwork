@@ -3,7 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CheckCircle2, Circle, Cpu, Search } from "lucide-react";
+import {
+    ArrowLeft,
+    CheckCircle2,
+    Circle,
+    CodeXml,
+    Cpu,
+    Search,
+} from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
 import { DenCombobox } from "../../../../_components/ui/combobox";
 import { DenInput } from "../../../../_components/ui/input";
@@ -34,7 +41,7 @@ import {
 
 const SOURCE_TABS = [
     { value: "models_dev" as const, label: "Catalog provider", icon: Cpu },
-    { value: "custom" as const, label: "Custom provider", icon: Cpu },
+    { value: "custom" as const, label: "Custom provider", icon: CodeXml },
 ];
 
 function getLockMemberId(
@@ -451,38 +458,58 @@ export function LlmProviderEditorScreen({
 
                         {catalogDetail ? (
                             <div className="rounded-[28px] bg-gray-50 p-6">
-                                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                <div className="grid gap-4 md:grid-cols-2">
                                     <div>
                                         <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
                                             NPM package
                                         </p>
-                                        <p className="mt-2 text-[15px] font-medium text-gray-900">
-                                            {providerNpm ?? "Not set"}
+                                        <p className="mt-2">
+                                            <span className="inline-flex max-w-full rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                {providerNpm ?? "Not set"}
+                                            </span>
                                         </p>
                                     </div>
                                     <div>
                                         <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
                                             API base
                                         </p>
-                                        <p className="mt-2 break-all text-[15px] font-medium text-gray-900">
-                                            {providerApiBase ?? "Not set"}
+                                        <p className="mt-2">
+                                            <span className="inline-flex max-w-full break-all rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                {providerApiBase ?? "Not set"}
+                                            </span>
                                         </p>
                                     </div>
                                     <div>
                                         <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
                                             Env keys
                                         </p>
-                                        <p className="mt-2 text-[15px] font-medium text-gray-900">
-                                            {providerEnv.join(", ") ||
-                                                "None listed"}
-                                        </p>
+                                        {providerEnv.length > 0 ? (
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                {providerEnv.map((envName) => (
+                                                    <span
+                                                        key={envName}
+                                                        className="inline-flex max-w-full break-all rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200"
+                                                    >
+                                                        {envName}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="mt-2">
+                                                <span className="inline-flex max-w-full rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                    None listed
+                                                </span>
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
                                             Docs
                                         </p>
-                                        <p className="mt-2 text-[15px] font-medium text-gray-900">
-                                            {providerDoc ?? "Not set"}
+                                        <p className="mt-2">
+                                            <span className="inline-flex max-w-full break-all rounded-full bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                {providerDoc ?? "Not set"}
+                                            </span>
                                         </p>
                                     </div>
                                 </div>
