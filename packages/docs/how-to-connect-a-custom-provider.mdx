@@ -1,11 +1,9 @@
 ---
 title: "Adding a custom LLM provider/model"
-description: "How to connect a custom provider with openwork"
+description: "How to connect a custom provider with OpenWork"
 ---
 
-Because `Openwork` is built on `Opencode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
-
-The reason for this is that you may want to support different models and permissions across several workspaces, specially when sharing it with a team.
+Because `OpenWork` is built on `OpenCode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
 
 Inside `/path-to-your-workspace/.config/opencode/opencode.json`:
 ```
@@ -27,6 +25,8 @@ Inside `/path-to-your-workspace/.config/opencode/opencode.json`:
 }
 ```
 
-We've also built a [custom skill](https://share.openworklabs.com/b/01KNBQDQAK41VZSZDF5G9MW4MW) that you can import in Openwork following [this guide](/importing-a-skill). 
+We've also built a [custom skill](https://share.openworklabs.com/b/01KNBQDQAK41VZSZDF5G9MW4MW) that you can import in OpenWork following [this guide](/importing-a-skill).
 
 The following tutorial covers how to [import a custom provider using the skill](https://x.com/getopenwork/status/2034129039317995908?s=20).
+
+For teams, you can manage the provider in OpenWork Cloud under [LLM Providers](/cloud-llm-providers), then import it into each workspace from `Settings -> Cloud`.

@@ -19,13 +19,6 @@
         "pages": [
           "get-started",
           {
-            "group": "Cloud",
-            "pages": [
-              "introduction",
-              "team-provisioning"
-            ]
-          },
-          {
             "group": "Desktop App",
             "pages": [
               "enable-advanced-search-with-exa",
@@ -56,7 +49,12 @@
       {
         "tab": "Cloud docs",
         "pages": [
-          "get-started-cloud"
+          "get-started-cloud",
+          "cloud-skill-hubs",
+          "cloud-shared-workspaces",
+          "cloud-llm-providers",
+          "cloud-custom-llm-providers",
+          "cloud-members-and-rbac"
         ]
       },
       {
@@ -79,6 +77,14 @@
     {
       "source": "/quickstart",
       "destination": "/get-started"
+    },
+    {
+      "source": "/introduction",
+      "destination": "/get-started-cloud"
+    },
+    {
+      "source": "/team-provisioning",
+      "destination": "/cloud-skill-hubs"
     }
   ],
   "errors": {
