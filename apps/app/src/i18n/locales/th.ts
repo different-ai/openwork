@@ -1574,7 +1574,7 @@ export default {
   "settings.reset_config_defaults": "กำลังรีเซ็ต...",
   "settings.reset_config_failed": "รีเซ็ต app config ไม่สำเร็จ",
   "settings.reset_confirm_button": "รีเซ็ตและรีสตาร์ท",
-  "settings.reset_confirmation_hint": "พิมพ์ <span class=\"font-mono\">RESET</span> เพื่อยืนยัน OpenWork จะรีสตาร์ท",
+  "settings.reset_confirmation_hint": "พิมพ์ {resetWord} เพื่อยืนยัน OpenWork จะรีสตาร์ท",
   "settings.reset_confirmation_label": "การยืนยัน",
   "settings.reset_confirmation_placeholder": "พิมพ์ RESET",
   "settings.reset_onboarding": "รีเซ็ต onboarding",

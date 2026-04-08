@@ -1577,7 +1577,7 @@ export default {
   "settings.reset_config_defaults": "正在重置…",
   "settings.reset_config_failed": "重置应用配置失败。",
   "settings.reset_confirm_button": "重置并重启",
-  "settings.reset_confirmation_hint": "输入 <span class=\"font-mono\">RESET</span> 以确认。OpenWork将重启。",
+  "settings.reset_confirmation_hint": "输入 {resetWord} 以确认。OpenWork将重启。",
   "settings.reset_confirmation_label": "确认",
   "settings.reset_confirmation_placeholder": "输入RESET",
   "settings.reset_onboarding": "重置入门",

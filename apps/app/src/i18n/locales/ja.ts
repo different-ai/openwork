@@ -1573,7 +1573,7 @@ export default {
   "settings.reset_config_defaults": "リセット中…",
   "settings.reset_config_failed": "アプリ設定のリセットに失敗しました。",
   "settings.reset_confirm_button": "リセットして再起動",
-  "settings.reset_confirmation_hint": "確認のため <span class=\"font-mono\">RESET</span> と入力してください。OpenWorkが再起動されます。",
+  "settings.reset_confirmation_hint": "確認のため {resetWord} と入力してください。OpenWorkが再起動されます。",
   "settings.reset_confirmation_label": "確認",
   "settings.reset_confirmation_placeholder": "RESETと入力",
   "settings.reset_onboarding": "オンボーディングをリセット",

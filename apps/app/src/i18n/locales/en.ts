@@ -1574,7 +1574,7 @@ export default {
   "settings.reset_config_defaults": "Resetting...",
   "settings.reset_config_failed": "Failed to reset app config.",
   "settings.reset_confirm_button": "Reset & Restart",
-  "settings.reset_confirmation_hint": "Type <span class=\"font-mono\">RESET</span> to confirm. OpenWork will restart.",
+  "settings.reset_confirmation_hint": "Type {resetWord} to confirm. OpenWork will restart.",
   "settings.reset_confirmation_label": "Confirmation",
   "settings.reset_confirmation_placeholder": "Type RESET",
   "settings.reset_onboarding": "Reset onboarding",

@@ -1574,7 +1574,7 @@ export default {
   "settings.reset_config_defaults": "Redefinindo...",
   "settings.reset_config_failed": "Falha ao redefinir configurações do app.",
   "settings.reset_confirm_button": "Redefinir e Reiniciar",
-  "settings.reset_confirmation_hint": "Digite <span class=\"font-mono\">RESET</span> para confirmar. O OpenWork será reiniciado.",
+  "settings.reset_confirmation_hint": "Digite {resetWord} para confirmar. O OpenWork será reiniciado.",
   "settings.reset_confirmation_label": "Confirmação",
   "settings.reset_confirmation_placeholder": "Digite RESET",
   "settings.reset_onboarding": "Redefinir onboarding",

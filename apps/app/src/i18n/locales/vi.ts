@@ -1574,7 +1574,7 @@ export default {
   "settings.reset_config_defaults": "Đang đặt lại...",
   "settings.reset_config_failed": "Đặt lại cấu hình ứng dụng thất bại.",
   "settings.reset_confirm_button": "Đặt lại & Khởi động lại",
-  "settings.reset_confirmation_hint": "Nhập <span class=\"font-mono\">RESET</span> để xác nhận. OpenWork sẽ khởi động lại.",
+  "settings.reset_confirmation_hint": "Nhập {resetWord} để xác nhận. OpenWork sẽ khởi động lại.",
   "settings.reset_confirmation_label": "Xác nhận",
   "settings.reset_confirmation_placeholder": "Nhập RESET",
   "settings.reset_onboarding": "Đặt lại thiết lập ban đầu",
