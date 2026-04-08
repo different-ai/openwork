@@ -17,9 +17,10 @@ import {
 } from "../utils";
 import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
-import { buildDenAuthUrl, readDenSettings } from "../lib/den";
+import { buildDenAuthUrl, readDenSettings, type DenOrgLlmProvider } from "../lib/den";
 import { useConnections } from "../connections/provider";
 import { useExtensions } from "../extensions/provider";
+import type { CloudImportedProvider } from "../cloud/import-state";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 import {
@@ -81,11 +82,14 @@ export type SettingsShellProps = {
   providerAuthProviders: ProviderAuthProvider[];
   providerAuthPreferredProviderId: string | null;
   providerAuthWorkerType: "local" | "remote";
+  cloudOrgProviders: DenOrgLlmProvider[];
+  importedCloudProviders: Record<string, CloudImportedProvider>;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
     preferredProviderId?: string;
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
+  removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
@@ -95,6 +99,7 @@ export type SettingsShellProps = {
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   refreshProviders: () => Promise<unknown>;
   setView: (view: View, sessionId?: string) => void;
   toggleSettings: () => void;
@@ -1149,8 +1154,13 @@ export default function SettingsShell(props: SettingsShellProps) {
                   providers={props.providers}
                   providerConnectedIds={props.providerConnectedIds}
                   providerAuthBusy={props.providerAuthBusy}
+                  cloudOrgProviders={props.cloudOrgProviders}
+                  importedCloudProviders={props.importedCloudProviders}
                   openProviderAuthModal={props.openProviderAuthModal}
                   disconnectProvider={props.disconnectProvider}
+                  removeCloudProvider={props.removeCloudProvider}
+                  refreshCloudOrgProviders={props.refreshCloudOrgProviders}
+                  connectCloudProvider={props.connectCloudProvider}
                   openworkServerStatus={props.openworkServerStatus}
                   openworkServerUrl={props.openworkServerUrl}
                   openworkServerClient={props.openworkServerClient}

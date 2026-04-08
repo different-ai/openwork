@@ -473,8 +473,18 @@ export function createWorkspaceStore(options: {
     if (!workspaceId) return null;
     const workspace = workspaces().find((item) => item.id === workspaceId) ?? null;
     if (!workspace || workspace.workspaceType !== "remote") return null;
+    const openworkHostUrl =
+      normalizeRemoteType(workspace.remoteType) === "openwork"
+        ? buildOpenworkWorkspaceBaseUrl(
+            workspace.openworkHostUrl?.trim() ?? "",
+            workspace.openworkWorkspaceId,
+          ) ||
+          workspace.openworkHostUrl?.trim() ||
+          workspace.baseUrl?.trim() ||
+          ""
+        : workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
     return {
-      openworkHostUrl: workspace.openworkHostUrl ?? workspace.baseUrl ?? "",
+      openworkHostUrl,
       openworkToken: workspace.openworkToken ?? options.openworkServer.openworkServerSettings().token ?? "",
       directory: workspace.directory ?? "",
       displayName: workspace.displayName ?? "",

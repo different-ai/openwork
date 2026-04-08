@@ -198,6 +198,35 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
 
 function isWebAppHost(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
+
+  if (
+    normalized === "localhost" ||
+    normalized === "0.0.0.0" ||
+    normalized === "::1" ||
+    normalized === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(normalized)
+  ) {
+    return true;
+  }
+
+  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [first, second, third, fourth] = ipv4Match.slice(1).map(Number);
+    const octets = [first, second, third, fourth];
+    if (octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+      if (
+        first === 10 ||
+        first === 127 ||
+        (first === 172 && second >= 16 && second <= 31) ||
+        (first === 192 && second === 168) ||
+        (first === 169 && second === 254) ||
+        (first === 100 && second >= 64 && second <= 127)
+      ) {
+        return true;
+      }
+    }
+  }
+
   return normalized === "app.openworklabs.com" || normalized === "app.openwork.software" || normalized.startsWith("app.");
 }
 
@@ -553,9 +582,9 @@ function getDenOrgSkillsFromPayload(payload: unknown): DenOrgSkillCard[] {
     .filter((entry): entry is DenOrgSkillCard => entry !== null);
 }
 
-type DenOrgSkillHubParsed = { id: string; name: string; skills: DenOrgSkillCard[] };
+export type DenOrgSkillHub = { id: string; name: string; skills: DenOrgSkillCard[] };
 
-function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHubParsed | null {
+function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHub | null {
   const hubId = hub.id;
   const hubName = hub.name;
   const hubSkills = hub.skills;
@@ -568,13 +597,13 @@ function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHubPars
   return { id: hubId, name: hubName, skills };
 }
 
-function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHubParsed[] {
+function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHub[] {
   if (!isRecord(payload) || !Array.isArray(payload.skillHubs)) {
     return [];
   }
   return payload.skillHubs
     .map((entry) => (isRecord(entry) ? parseOrgSkillHubEntry(entry) : null))
-    .filter((e): e is DenOrgSkillHubParsed => e !== null);
+      .filter((e): e is DenOrgSkillHub => e !== null);
 }
 
 function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | null {
@@ -986,7 +1015,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return getDenOrgSkillsFromPayload(payload);
     },
 
-    async listOrgSkillHubs(orgId: string): Promise<DenOrgSkillHubParsed[]> {
+    async listOrgSkillHubs(orgId: string): Promise<DenOrgSkillHub[]> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs`, {
         method: "GET",
         token,

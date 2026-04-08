@@ -2,21 +2,23 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import { Redo2, Search, Undo2, X } from "lucide-solid";
 
 import Button from "../../app/src/app/components/button";
-import CreateWorkspaceModal from "../../app/src/app/components/create-workspace-modal";
 import DenSettingsPanel from "../../app/src/app/components/den-settings-panel";
 import ModelPickerModal from "../../app/src/app/components/model-picker-modal";
-import ShareWorkspaceModal from "../../app/src/app/components/share-workspace-modal";
 import StatusBar from "../../app/src/app/components/status-bar";
 import Composer from "../../app/src/app/components/session/composer";
 import MessageList from "../../app/src/app/components/session/message-list";
 import WorkspaceSessionList from "../../app/src/app/components/session/workspace-session-list";
+import {
+  CreateWorkspaceModal,
+  ShareWorkspaceModal,
+} from "../../app/src/app/workspace";
 import { MCP_QUICK_CONNECT, SUGGESTED_PLUGINS } from "../../app/src/app/constants";
 import { createWorkspaceShellLayout } from "../../app/src/app/lib/workspace-shell-layout";
 import { getModelBehaviorSummary, sanitizeModelBehaviorValue } from "../../app/src/app/lib/model-behavior";
 import type { OpenworkServerClient } from "../../app/src/app/lib/openwork-server";
 import ExtensionsView from "../../app/src/app/pages/extensions";
 import IdentitiesView from "../../app/src/app/pages/identities";
-import ScheduledTasksView from "../../app/src/app/pages/scheduled";
+import AutomationsView from "../../app/src/app/pages/automations";
 import {
   applyThemeMode,
   getInitialThemeMode,
@@ -1491,7 +1493,7 @@ export default function NewLayoutApp() {
                       </Show>
 
                       <Show when={settingsTab() === "automations"}>
-                        <ScheduledTasksView
+                        <AutomationsView
                           jobs={scheduledJobs()}
                           source="remote"
                           sourceReady={true}
@@ -1669,6 +1671,8 @@ export default function NewLayoutApp() {
           <Show when={!showingSettings()}>
             <Composer
               prompt={composerPrompt()}
+              draftMode="prompt"
+              draftScopeKey="story-book-new-layout-composer"
               developerMode
               busy={false}
               isStreaming={false}
@@ -1693,10 +1697,8 @@ export default function NewLayoutApp() {
                 setAgentPickerOpen(false);
               }}
               setAgentPickerRef={() => undefined}
-              showNotionBanner={false}
-              onNotionBannerClick={() => undefined}
-              toast={composerToast()}
-              onToast={(message) => setComposerToast(message)}
+              notice={composerToast() ? { title: composerToast() } : null}
+              onNotice={(notice) => setComposerToast(notice.title)}
               listAgents={async () => []}
               recentFiles={workingFiles}
               searchFiles={async (query) => {
@@ -1708,7 +1710,9 @@ export default function NewLayoutApp() {
               isSandboxWorkspace={selectedWorkspaceId() === remoteWorkspace.id}
               attachmentsEnabled
               attachmentsDisabledReason={null}
+              skills={[]}
               listCommands={async () => commandOptions}
+              onOpenSettings={() => undefined}
             />
           </Show>
 

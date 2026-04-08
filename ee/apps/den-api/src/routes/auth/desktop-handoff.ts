@@ -46,6 +46,35 @@ function readSingleHeader(value: string | null) {
 
 function isWebAppHost(hostname: string) {
   const normalized = hostname.trim().toLowerCase()
+
+  if (
+    normalized === "localhost"
+    || normalized === "0.0.0.0"
+    || normalized === "::1"
+    || normalized === "[::1]"
+    || /^127(?:\.\d{1,3}){3}$/.test(normalized)
+  ) {
+    return true
+  }
+
+  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4Match) {
+    const [first, second, third, fourth] = ipv4Match.slice(1).map(Number)
+    const octets = [first, second, third, fourth]
+    if (octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+      if (
+        first === 10
+        || first === 127
+        || (first === 172 && second >= 16 && second <= 31)
+        || (first === 192 && second === 168)
+        || (first === 169 && second === 254)
+        || (first === 100 && second >= 64 && second <= 127)
+      ) {
+        return true
+      }
+    }
+  }
+
   return normalized === "app.openworklabs.com"
     || normalized === "app.openwork.software"
     || normalized.startsWith("app.")
@@ -178,51 +207,75 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     const input = c.req.valid("json")
 
     const now = new Date()
-    const rows = await db
-      .select({
-        grant: DesktopHandoffGrantTable,
-        session: AuthSessionTable,
-        user: AuthUserTable,
-      })
-      .from(DesktopHandoffGrantTable)
-      .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
-      .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
-      .where(
-        and(
-          eq(DesktopHandoffGrantTable.id, input.grant),
-          isNull(DesktopHandoffGrantTable.consumed_at),
-          gt(DesktopHandoffGrantTable.expires_at, now),
-          gt(AuthSessionTable.expiresAt, now),
-        ),
-      )
-      .limit(1)
+    const exchange = await db.transaction(async (tx) => {
+      const rows = await tx
+        .select({
+          session: AuthSessionTable,
+          user: AuthUserTable,
+        })
+        .from(DesktopHandoffGrantTable)
+        .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
+        .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            isNull(DesktopHandoffGrantTable.consumed_at),
+            gt(DesktopHandoffGrantTable.expires_at, now),
+            gt(AuthSessionTable.expiresAt, now),
+          ),
+        )
+        .limit(1)
 
-    const row = rows[0]
-    if (!row) {
+      const row = rows[0]
+      if (!row) {
+        return null
+      }
+
+      const consumedAt = new Date()
+      await tx
+        .update(DesktopHandoffGrantTable)
+        .set({ consumed_at: consumedAt })
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            isNull(DesktopHandoffGrantTable.consumed_at),
+            gt(DesktopHandoffGrantTable.expires_at, now),
+          ),
+        )
+
+      const claimed = await tx
+        .select({ id: DesktopHandoffGrantTable.id })
+        .from(DesktopHandoffGrantTable)
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            eq(DesktopHandoffGrantTable.consumed_at, consumedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!claimed[0]) {
+        return null
+      }
+
+      return {
+        token: row.session.token,
+        user: {
+          id: row.user.id,
+          email: row.user.email,
+          name: row.user.name,
+        },
+      }
+    })
+
+    if (!exchange) {
       return c.json({
         error: "grant_not_found",
         message: "This desktop sign-in link is missing, expired, or already used.",
       }, 404)
     }
 
-    await db
-      .update(DesktopHandoffGrantTable)
-      .set({ consumed_at: now })
-      .where(
-        and(
-          eq(DesktopHandoffGrantTable.id, input.grant),
-          isNull(DesktopHandoffGrantTable.consumed_at),
-        ),
-      )
-
-    return c.json({
-      token: row.session.token,
-      user: {
-        id: row.user.id,
-        email: row.user.email,
-        name: row.user.name,
-      },
-    })
+    return c.json(exchange)
     },
   )
 }

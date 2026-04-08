@@ -23,10 +23,22 @@ import {
   pickDirectory,
   readOpencodeConfig,
   writeOpencodeConfig,
+  workspaceOpenworkRead,
+  workspaceOpenworkWrite,
   type OpencodeConfigFile,
 } from "../lib/tauri";
 import type { OpenworkHubRepo, OpenworkServerClient } from "../lib/openwork-server";
-import { createDenClient, fetchDenOrgSkillsCatalog, readDenSettings } from "../lib/den";
+import {
+  createDenClient,
+  fetchDenOrgSkillsCatalog,
+  readDenSettings,
+  type DenOrgSkillHub,
+} from "../lib/den";
+import {
+  readWorkspaceCloudImports,
+  withWorkspaceCloudImports,
+  type CloudImportedSkillHub,
+} from "../cloud/import-state";
 import { createWorkspaceContextKey } from "./workspace-context";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
 
@@ -117,6 +129,10 @@ export function createExtensionsStore(options: {
   const [cloudOrgSkills, setCloudOrgSkills] = createSignal<DenOrgSkillCard[]>([]);
   const [cloudOrgSkillsStatus, setCloudOrgSkillsStatus] = createSignal<string | null>(null);
 
+  const [cloudOrgSkillHubs, setCloudOrgSkillHubs] = createSignal<DenOrgSkillHub[]>([]);
+  const [cloudOrgSkillHubsStatus, setCloudOrgSkillHubsStatus] = createSignal<string | null>(null);
+  const [importedCloudSkillHubs, setImportedCloudSkillHubs] = createSignal<Record<string, CloudImportedSkillHub>>({});
+
   const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
 
   const DEFAULT_HUB_REPO: HubSkillRepo = {
@@ -179,13 +195,251 @@ export function createExtensionsStore(options: {
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
   let cloudOrgSkillsLoaded = false;
+  let cloudOrgSkillHubsLoaded = false;
   let skillsRoot = "";
   let hubSkillsLoadKey = "";
   let cloudOrgSkillsLoadKey = "";
+  let cloudOrgSkillHubsLoadKey = "";
   let refreshCloudOrgSkillsInFlight = false;
   let refreshCloudOrgSkillsAborted = false;
+  let refreshCloudOrgSkillHubsInFlight = false;
+  let refreshCloudOrgSkillHubsAborted = false;
 
   const HUB_REPOS_STORAGE_KEY = "openwork.skills.hubRepos.v1";
+
+  const readWorkspaceOpenworkConfigRecord = async (): Promise<Record<string, unknown>> => {
+    const root = options.selectedWorkspaceRoot().trim();
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const openworkClient = options.openworkServer.openworkServerClient();
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServer.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.config?.read;
+
+    if (canUseOpenworkServer) {
+      const config = await openworkClient.getConfig(openworkWorkspaceId);
+      return config.openwork ?? {};
+    }
+
+    if (isLocalWorkspace && isTauriRuntime() && root) {
+      return await workspaceOpenworkRead({ workspacePath: root }) as unknown as Record<string, unknown>;
+    }
+
+    return {};
+  };
+
+  const writeWorkspaceOpenworkConfigRecord = async (config: Record<string, unknown>) => {
+    const root = options.selectedWorkspaceRoot().trim();
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const openworkClient = options.openworkServer.openworkServerClient();
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServer.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.config?.write;
+
+    if (canUseOpenworkServer) {
+      await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
+      return true;
+    }
+
+    if (isLocalWorkspace && isTauriRuntime() && root) {
+      const result = await workspaceOpenworkWrite({
+        workspacePath: root,
+        config: config as any,
+      });
+      if (!result.ok) {
+        throw new Error(result.stderr || result.stdout || "Failed to write .opencode/openwork.json");
+      }
+      return true;
+    }
+
+    return false;
+  };
+
+  const refreshImportedCloudSkillHubs = async () => {
+    try {
+      const config = await readWorkspaceOpenworkConfigRecord();
+      const cloudImports = readWorkspaceCloudImports(config);
+      setImportedCloudSkillHubs(cloudImports.skillHubs);
+      return cloudImports.skillHubs;
+    } catch {
+      setImportedCloudSkillHubs({});
+      return {};
+    }
+  };
+
+  const persistImportedCloudSkillHubs = async (
+    nextSkillHubs: Record<string, CloudImportedSkillHub>,
+  ) => {
+    const config = await readWorkspaceOpenworkConfigRecord();
+    const cloudImports = readWorkspaceCloudImports(config);
+    const nextConfig = withWorkspaceCloudImports(config, {
+      ...cloudImports,
+      skillHubs: nextSkillHubs,
+    });
+    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    if (!persisted) {
+      throw new Error("OpenWork server unavailable. Connect to manage imported cloud skill hubs.");
+    }
+    setImportedCloudSkillHubs(nextSkillHubs);
+  };
+
+  const buildCloudSkillContent = (name: string, description: string, body: string) => {
+    const safeDescription = description.replace(/\s+/g, " ").trim();
+    const normalizedBody = body.replace(/^\s*\n?/, "");
+    return [
+      "---",
+      `name: ${JSON.stringify(name)}`,
+      `description: ${JSON.stringify(safeDescription)}`,
+      "---",
+      "",
+      normalizedBody,
+    ].join("\n");
+  };
+
+  const upsertWorkspaceSkill = async (
+    name: string,
+    content: string,
+    description: string,
+    optionsOverride?: { overwrite?: boolean },
+  ) => {
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const root = options.selectedWorkspaceRoot().trim();
+    const openworkClient = options.openworkServer.openworkServerClient();
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServer.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.skills?.write;
+
+    if (canUseOpenworkServer) {
+      await openworkClient.upsertSkill(openworkWorkspaceId, {
+        name,
+        content,
+        description,
+      });
+      return;
+    }
+
+    if (isRemoteWorkspace) {
+      throw new Error("OpenWork server unavailable. Connect to import skills.");
+    }
+
+    if (!isTauriRuntime()) {
+      throw new Error(translate("skills.desktop_required"));
+    }
+
+    if (!isLocalWorkspace || !root) {
+      throw new Error(translate("skills.pick_workspace_first"));
+    }
+
+    const result = await installSkillTemplate(root, name, content, {
+      overwrite: optionsOverride?.overwrite ?? false,
+    });
+    if (!result.ok) {
+      throw new Error(result.stderr || result.stdout || translate("skills.install_failed"));
+    }
+  };
+
+  const buildImportedSkillNameMap = (imported?: CloudImportedSkillHub | null) => {
+    const mapping = new Map<string, string>();
+    if (!imported) return mapping;
+    imported.skillIds.forEach((skillId, index) => {
+      const name = imported.skillNames[index]?.trim();
+      if (skillId.trim() && name) {
+        mapping.set(skillId.trim(), name);
+      }
+    });
+    return mapping;
+  };
+
+  const applyCloudOrgSkillHubImport = async (
+    hub: DenOrgSkillHub,
+    imported?: CloudImportedSkillHub | null,
+  ) => {
+    const importedNameMap = buildImportedSkillNameMap(imported);
+    const taken = new Set(skills().map((skill) => skill.name));
+    imported?.skillNames.forEach((name) => {
+      if (name.trim()) taken.delete(name.trim());
+    });
+
+    const nextSkillNames: string[] = [];
+    const nextSkillIds: string[] = [];
+
+    for (const skill of hub.skills) {
+      const preferredName = importedNameMap.get(skill.id)?.trim() ?? "";
+      const installName =
+        preferredName && !nextSkillNames.includes(preferredName)
+          ? preferredName
+          : uniqueSkillInstallName(slugifyOpencodeSkillName(skill.title), taken, skill.id);
+      taken.add(installName);
+      nextSkillNames.push(installName);
+      nextSkillIds.push(skill.id);
+
+      const rawDesc = (skill.description?.trim() || skill.title).trim();
+      const description = rawDesc.slice(0, 1024) || skill.title.slice(0, 1024) || "Skill";
+      const body = extractSkillBodyMarkdown(skill.skillText);
+      const content = buildCloudSkillContent(installName, description, body);
+      await upsertWorkspaceSkill(installName, content, description, {
+        overwrite: Boolean(preferredName),
+      });
+    }
+
+    const removedSkillNames = (imported?.skillNames ?? []).filter((name) => !nextSkillNames.includes(name));
+    for (const name of removedSkillNames) {
+      await deleteWorkspaceSkill(name);
+    }
+
+    return { nextSkillNames, nextSkillIds, removedSkillNames };
+  };
+
+  const deleteWorkspaceSkill = async (name: string) => {
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const root = options.selectedWorkspaceRoot().trim();
+    const openworkClient = options.openworkServer.openworkServerClient() as
+      | (OpenworkServerClient & { deleteSkill?: (workspaceId: string, skillName: string) => Promise<unknown> })
+      | null;
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServer.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.skills?.write &&
+      typeof openworkClient.deleteSkill === "function";
+
+    if (canUseOpenworkServer) {
+      await openworkClient.deleteSkill!(openworkWorkspaceId, name);
+      return;
+    }
+
+    if (isRemoteWorkspace) {
+      throw new Error("OpenWork server unavailable. Connect to remove skills.");
+    }
+
+    if (!isTauriRuntime()) {
+      throw new Error(translate("skills.desktop_required"));
+    }
+
+    if (!isLocalWorkspace || !root) {
+      throw new Error(translate("skills.pick_workspace_first"));
+    }
+
+    const result = await uninstallSkillCommand(root, name);
+    if (!result.ok) {
+      throw new Error(result.stderr || result.stdout || translate("skills.uninstall_failed"));
+    }
+  };
 
   const persistHubRepos = () => {
     if (typeof window === "undefined") return;
@@ -426,6 +680,194 @@ export function createExtensionsStore(options: {
     }
   }
 
+  async function refreshCloudOrgSkillHubs(optionsOverride?: { force?: boolean }) {
+    const wk = workspaceContextKey();
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    const loadKey = `${wk}::${orgId}`;
+
+    if (loadKey !== cloudOrgSkillHubsLoadKey) {
+      cloudOrgSkillHubsLoaded = false;
+    }
+
+    if (!optionsOverride?.force && cloudOrgSkillHubsLoaded) {
+      await refreshImportedCloudSkillHubs();
+      return;
+    }
+    if (refreshCloudOrgSkillHubsInFlight) return;
+
+    refreshCloudOrgSkillHubsInFlight = true;
+    refreshCloudOrgSkillHubsAborted = false;
+
+    try {
+      setCloudOrgSkillHubsStatus(null);
+
+      if (!token || !orgId) {
+        setCloudOrgSkillHubs([]);
+        setCloudOrgSkillHubsStatus(null);
+        cloudOrgSkillHubsLoaded = true;
+        cloudOrgSkillHubsLoadKey = loadKey;
+        await refreshImportedCloudSkillHubs();
+        return;
+      }
+
+      const client = createDenClient({ baseUrl: settings.baseUrl, token });
+      const hubs = await client.listOrgSkillHubs(orgId);
+      if (refreshCloudOrgSkillHubsAborted) return;
+      setCloudOrgSkillHubs(hubs);
+      if (!hubs.length) {
+        setCloudOrgSkillHubsStatus("No organization skill hubs are available yet.");
+      }
+      cloudOrgSkillHubsLoaded = true;
+      cloudOrgSkillHubsLoadKey = loadKey;
+      await refreshImportedCloudSkillHubs();
+    } catch (e) {
+      if (refreshCloudOrgSkillHubsAborted) return;
+      setCloudOrgSkillHubs([]);
+      setCloudOrgSkillHubsStatus(
+        e instanceof Error ? e.message : "Failed to load organization skill hubs.",
+      );
+    } finally {
+      refreshCloudOrgSkillHubsInFlight = false;
+    }
+  }
+
+  async function importCloudOrgSkillHub(
+    hub: DenOrgSkillHub,
+  ): Promise<{ ok: boolean; message: string; importedNames: string[] }> {
+    const importedNames: string[] = [];
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const applied = await applyCloudOrgSkillHubImport(hub, importedCloudSkillHubs()[hub.id]);
+      importedNames.push(...applied.nextSkillNames);
+
+      const nextImports = {
+        ...importedCloudSkillHubs(),
+        [hub.id]: {
+          hubId: hub.id,
+          name: hub.name,
+          skillNames: applied.nextSkillNames,
+          skillIds: applied.nextSkillIds,
+          importedAt: Date.now(),
+        },
+      };
+      await persistImportedCloudSkillHubs(nextImports);
+      options.markReloadRequired?.("skills", {
+        type: "skill",
+        name: hub.name,
+        action: "added",
+      });
+      await refreshSkills({ force: true });
+      await refreshCloudOrgSkills({ force: true });
+      await refreshCloudOrgSkillHubs({ force: true });
+      return {
+        ok: true,
+        message: `Imported ${hub.skills.length} skill${hub.skills.length === 1 ? "" : "s"} from ${hub.name}.`,
+        importedNames,
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message, importedNames };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function syncCloudOrgSkillHub(
+    hub: DenOrgSkillHub,
+  ): Promise<{ ok: boolean; message: string; importedNames: string[] }> {
+    const imported = importedCloudSkillHubs()[hub.id];
+    if (!imported) {
+      return await importCloudOrgSkillHub(hub);
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const applied = await applyCloudOrgSkillHubImport(hub, imported);
+      const nextImports = {
+        ...importedCloudSkillHubs(),
+        [hub.id]: {
+          hubId: hub.id,
+          name: hub.name,
+          skillNames: applied.nextSkillNames,
+          skillIds: applied.nextSkillIds,
+          importedAt: imported.importedAt ?? Date.now(),
+        },
+      };
+      await persistImportedCloudSkillHubs(nextImports);
+      options.markReloadRequired?.("skills", {
+        type: "skill",
+        name: hub.name,
+        action: "added",
+      });
+      await refreshSkills({ force: true });
+      await refreshCloudOrgSkills({ force: true });
+      await refreshCloudOrgSkillHubs({ force: true });
+      return {
+        ok: true,
+        message: `Synced ${hub.name} from cloud.`,
+        importedNames: applied.nextSkillNames,
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message, importedNames: [] };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function removeCloudOrgSkillHub(
+    hubId: string,
+  ): Promise<{ ok: boolean; message: string; removedNames: string[] }> {
+    const imported = importedCloudSkillHubs()[hubId];
+    if (!imported) {
+      return { ok: false, message: "This skill hub has not been imported into the workspace.", removedNames: [] };
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      for (const name of imported.skillNames) {
+        await deleteWorkspaceSkill(name);
+        options.markReloadRequired?.("skills", {
+          type: "skill",
+          name,
+          action: "removed",
+        });
+      }
+
+      const nextImports = { ...importedCloudSkillHubs() };
+      delete nextImports[hubId];
+      await persistImportedCloudSkillHubs(nextImports);
+      await refreshSkills({ force: true });
+      await refreshCloudOrgSkills({ force: true });
+      await refreshCloudOrgSkillHubs({ force: true });
+      return {
+        ok: true,
+        message: `Removed ${imported.skillNames.length} imported skill${imported.skillNames.length === 1 ? "" : "s"} from ${imported.name}.`,
+        removedNames: imported.skillNames,
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message, removedNames: [] };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
   async function installHubSkill(name: string): Promise<{ ok: boolean; message: string }> {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, message: "Skill name is required." };
@@ -481,40 +923,24 @@ export function createExtensionsStore(options: {
   }
 
   async function installCloudOrgSkill(skill: DenOrgSkillCard): Promise<{ ok: boolean; message: string }> {
-    const isRemoteWorkspace = options.workspaceType() === "remote";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.skills?.write &&
-      typeof openworkClient.upsertSkill === "function";
-
-    if (!canUseOpenworkServer) {
-      if (isRemoteWorkspace) {
-        return { ok: false, message: translate("skills.cloud_install_need_server") };
-      }
-      return { ok: false, message: translate("skills.cloud_install_need_server") };
-    }
-
     const installedNames = new Set(skills().map((s) => s.name));
     const base = slugifyOpencodeSkillName(skill.title);
     const installName = uniqueSkillInstallName(base, installedNames, skill.id);
     const rawDesc = (skill.description?.trim() || skill.title).trim();
     const description = rawDesc.slice(0, 1024) || skill.title.slice(0, 1024) || "Skill";
     const body = extractSkillBodyMarkdown(skill.skillText);
+    const content = buildCloudSkillContent(installName, description, body);
 
     options.setBusy(true);
     options.setError(null);
     setSkillsStatus(null);
 
     try {
-      await openworkClient.upsertSkill(openworkWorkspaceId, {
+      await upsertWorkspaceSkill(installName, content, description);
+      options.markReloadRequired?.("skills", {
+        type: "skill",
         name: installName,
-        content: body,
-        description,
+        action: "added",
       });
       await refreshSkills({ force: true });
       await refreshCloudOrgSkills({ force: true });
@@ -1243,16 +1669,6 @@ export function createExtensionsStore(options: {
   }
 
   async function uninstallSkill(name: string) {
-    if (!isTauriRuntime()) {
-      setSkillsStatus(translate("skills.desktop_required"));
-      return;
-    }
-
-    if (options.workspaceType() !== "local") {
-      options.setError("Local workers are required to uninstall skills.");
-      return;
-    }
-
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
       setSkillsStatus(translate("skills.pick_workspace_first"));
@@ -1269,17 +1685,13 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
-      const result = await uninstallSkillCommand(root, trimmed);
-      if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || translate("skills.uninstall_failed"));
-      } else {
-        setSkillsStatus(result.stdout || translate("skills.uninstalled"));
-        options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "removed" });
-      }
-
+      await deleteWorkspaceSkill(trimmed);
+      setSkillsStatus(translate("skills.uninstalled"));
+      options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "removed" });
       await refreshSkills({ force: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      setSkillsStatus(message);
       options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
@@ -1482,9 +1894,11 @@ export function createExtensionsStore(options: {
     skillsLoaded = false;
     hubSkillsLoaded = false;
     cloudOrgSkillsLoaded = false;
+    cloudOrgSkillHubsLoaded = false;
     skillsRoot = "";
     hubSkillsLoadKey = "";
     cloudOrgSkillsLoadKey = "";
+    cloudOrgSkillHubsLoadKey = "";
 
     // Skip the very first run (empty key = no workspace selected yet).
     if (!key || key === "::::") return;
@@ -1492,11 +1906,13 @@ export function createExtensionsStore(options: {
     // Refresh core resources that are needed across many surfaces.
     void refreshSkills({ force: true });
     void refreshPlugins();
+    void refreshImportedCloudSkillHubs();
   });
 
   if (typeof window !== "undefined") {
     window.addEventListener("openwork-den-session-updated", () => {
       cloudOrgSkillsLoaded = false;
+      cloudOrgSkillHubsLoaded = false;
       setCloudOrgSkillsContextKey("");
     });
   }
@@ -1508,6 +1924,9 @@ export function createExtensionsStore(options: {
     hubSkillsStatus,
     cloudOrgSkills,
     cloudOrgSkillsStatus,
+    cloudOrgSkillHubs,
+    cloudOrgSkillHubsStatus,
+    importedCloudSkillHubs,
     hubRepo,
     hubRepos,
     pluginScope,
@@ -1526,6 +1945,7 @@ export function createExtensionsStore(options: {
     refreshSkills,
     refreshHubSkills,
     refreshCloudOrgSkills,
+    refreshCloudOrgSkillHubs,
     setHubRepo,
     addHubRepo,
     removeHubRepo,
@@ -1536,6 +1956,9 @@ export function createExtensionsStore(options: {
     installSkillCreator,
     installHubSkill,
     installCloudOrgSkill,
+    importCloudOrgSkillHub,
+    syncCloudOrgSkillHub,
+    removeCloudOrgSkillHub,
     revealSkillsFolder,
     uninstallSkill,
     readSkill,

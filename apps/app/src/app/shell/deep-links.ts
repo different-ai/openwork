@@ -3,6 +3,7 @@ import { createEffect, createSignal, type Accessor } from "solid-js";
 import { t, currentLocale } from "../../i18n";
 
 import { createDenClient, writeDenSettings } from "../lib/den";
+import { dispatchDenSessionUpdated } from "../lib/den-session-events";
 import { stripBundleQuery } from "../bundles";
 import type { createBundlesStore } from "../bundles/store";
 import type { SettingsTab, View } from "../types";
@@ -35,6 +36,15 @@ export function createDeepLinksController(options: {
   const [pendingDenAuthDeepLink, setPendingDenAuthDeepLink] = createSignal<DenAuthDeepLink | null>(null);
   const [processingDenAuthDeepLink, setProcessingDenAuthDeepLink] = createSignal(false);
   const recentClaimedDeepLinks = new Map<string, number>();
+  const recentHandledDenGrants = new Map<string, number>();
+
+  const pruneRecentHandledDenGrants = (now: number) => {
+    for (const [grant, seenAt] of recentHandledDenGrants) {
+      if (now - seenAt > 5 * 60 * 1000) {
+        recentHandledDenGrants.delete(grant);
+      }
+    }
+  };
 
   const queueRemoteConnectDefaults = (pending: RemoteWorkspaceDefaults | null) => {
     setPendingRemoteConnectDeepLink(pending);
@@ -87,6 +97,18 @@ export function createDeepLinksController(options: {
     if (!parsed) {
       return false;
     }
+
+    const now = Date.now();
+    pruneRecentHandledDenGrants(now);
+    if (recentHandledDenGrants.has(parsed.grant)) {
+      return true;
+    }
+
+    const currentPending = pendingDenAuthDeepLink();
+    if (currentPending?.grant === parsed.grant) {
+      return true;
+    }
+
     setPendingDenAuthDeepLink(parsed);
     return true;
   };
@@ -173,6 +195,7 @@ export function createDeepLinksController(options: {
 
     setProcessingDenAuthDeepLink(true);
     setPendingDenAuthDeepLink(null);
+    recentHandledDenGrants.set(pending.grant, Date.now());
     options.setView("settings");
     options.setSettingsTab("den");
     options.goToSettings("den");
@@ -192,24 +215,20 @@ export function createDeepLinksController(options: {
           activeOrgName: null,
         });
 
-        window.dispatchEvent(
-          new CustomEvent("openwork-den-session-updated", {
-            detail: {
-              status: "success",
-              email: result.user?.email ?? null,
-            },
-          }),
-        );
+        dispatchDenSessionUpdated({
+          status: "success",
+          baseUrl: pending.denBaseUrl,
+          token: result.token,
+          user: result.user,
+          email: result.user?.email ?? null,
+        });
       })
       .catch((error) => {
-        window.dispatchEvent(
-          new CustomEvent("openwork-den-session-updated", {
-            detail: {
-              status: "error",
-              message: error instanceof Error ? error.message : t("app.error_cloud_signin", currentLocale()),
-            },
-          }),
-        );
+        recentHandledDenGrants.delete(pending.grant);
+        dispatchDenSessionUpdated({
+          status: "error",
+          message: error instanceof Error ? error.message : t("app.error_cloud_signin", currentLocale()),
+        });
       })
       .finally(() => {
         setProcessingDenAuthDeepLink(false);
