@@ -61,9 +61,17 @@ function latestAssistantMessageId(messages: UIMessage[]) {
   return null;
 }
 
+function humanMediaType(raw: string) {
+  if (!raw || raw === "application/octet-stream") return null;
+  const short = raw.replace(/^application\//, "").replace(/^text\//, "");
+  return short.toUpperCase();
+}
+
 function FileCard(props: { part: { filename?: string; url: string; mediaType: string }; tone: "assistant" | "user" }) {
-  const title = props.part.filename || props.part.url || "File";
-  const detail = props.part.url || "";
+  const isDataUrl = props.part.url?.startsWith("data:");
+  const title = props.part.filename || (isDataUrl ? "Attached file" : props.part.url) || "File";
+  const ext = props.part.filename?.split(".").pop()?.toLowerCase();
+  const badge = humanMediaType(props.part.mediaType) ?? (ext ? ext.toUpperCase() : null);
   return (
     <div
       className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${
@@ -81,9 +89,8 @@ function FileCard(props: { part: { filename?: string; url: string; mediaType: st
       )}
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-gray-12">{title}</div>
-        {detail ? <div className="truncate text-[11px] text-gray-11">{detail}</div> : null}
       </div>
-      {props.part.mediaType ? <div className="max-w-[160px] truncate rounded-full bg-gray-1/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-9">{props.part.mediaType}</div> : null}
+      {badge ? <div className="max-w-[160px] truncate rounded-full bg-gray-1/70 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-9">{badge}</div> : null}
     </div>
   );
 }
