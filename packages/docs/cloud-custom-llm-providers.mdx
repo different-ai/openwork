@@ -5,6 +5,10 @@ description: "Create a custom provider definition in OpenWork Cloud and import i
 
 Use this when the provider is not in the catalog. The Cloud dashboard accepts a models.dev-style JSON definition, stores the shared credential once, and then lets desktop workspaces import it.
 
+<Frame>
+  ![Custom LLM provider detail in OpenWork Cloud](/images/cloud-custom-llm-provider-detail.png)
+</Frame>
+
 ## Create the custom provider
 
 1. Open `LLM Providers`.
@@ -66,12 +70,12 @@ The JSON must include `id`, `name`, `npm`, `env`, `doc`, and `models`. `api` is 
 
 ### Functional example: Ollama (Qwen3 8B)
 
-<Frame>
-  ![Custom LLM provider detail in OpenWork Cloud](/images/cloud-custom-llm-provider-detail.png)
-</Frame>
-
 This setup a local [Ollama](https://docs.ollama.com/api/openai-compatibility) instance running `qwen3:8b`. 
 Ollama's OpenAI-compatible endpoint requires an API key but ignores the value, so paste anything (for example `ollama`) into the `API key / credential` field when creating the provider.
+
+<Frame>
+  ![Config to add Ollama as a custom provider](/images/ollama-custom-provider.png)
+</Frame>
 
 ```json
 {
@@ -113,13 +117,13 @@ Ollama's OpenAI-compatible endpoint requires an API key but ignores the value, s
 }
 ```
 
+<Frame>
+  ![Ollama added as a provider](/images/ollama-added-as-provider.png)
+</Frame>
+
 Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama server is reachable at `http://localhost:11434` with `ollama serve`
 
 Import it in your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
-
-<Frame>
-  ![Custom LLM provider detail in OpenWork Cloud](/images/cloud-custom-llm-provider-detail.png)
-</Frame>
 
 ## When to use a cloud provider
 
