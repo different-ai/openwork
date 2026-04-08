@@ -57,9 +57,21 @@ The JSON must include `id`, `name`, `npm`, `env`, `doc`, and `models`. `api` is 
 }
 ```
 
+## Import it into the desktop app
+
+1. Open `Settings -> Cloud`.
+2. Choose the correct `Active org`.
+3. Under `Cloud providers`, click `Import`.
+4. Reload the workspace when OpenWork asks.
+
 ### Functional example: Ollama (Qwen3 8B)
 
-This wires up a local [Ollama](https://docs.ollama.com/api/openai-compatibility) instance running `qwen3:8b`. Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama server is reachable at `http://localhost:11434`. Ollama's OpenAI-compatible endpoint requires an API key but ignores the value, so paste anything (for example `ollama`) into the `API key / credential` field when creating the provider.
+<Frame>
+  ![Custom LLM provider detail in OpenWork Cloud](/images/cloud-custom-llm-provider-detail.png)
+</Frame>
+
+This setup a local [Ollama](https://docs.ollama.com/api/openai-compatibility) instance running `qwen3:8b`. 
+Ollama's OpenAI-compatible endpoint requires an API key but ignores the value, so paste anything (for example `ollama`) into the `API key / credential` field when creating the provider.
 
 ```json
 {
@@ -101,21 +113,14 @@ This wires up a local [Ollama](https://docs.ollama.com/api/openai-compatibility)
 }
 ```
 
-Because the endpoint is `localhost`, each teammate who imports this provider into their desktop app needs their own Ollama running locally — the shared credential only covers the JSON definition, not the runtime.
+Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama server is reachable at `http://localhost:11434` with `ollama serve`
+
+Import it in your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
 
 <Frame>
   ![Custom LLM provider detail in OpenWork Cloud](/images/cloud-custom-llm-provider-detail.png)
 </Frame>
 
-## Import it into the desktop app
+## When to use a cloud provider
 
-1. Open `Settings -> Cloud`.
-2. Choose the correct `Active org`.
-3. Under `Cloud providers`, click `Import`.
-4. Reload the workspace when OpenWork asks.
-
-
-
-## When to use this instead of a desktop-only provider
-
-Use the Cloud flow when the provider should be shared across an org or team. If the provider is only for one workspace, keep it local with [Adding a custom LLM provider/model](/how-to-connect-a-custom-provider).
+We recommend using Cloud-bsaed provider when the setup is meant to be shared across an org or team. Otherwise, doing it directly in desktop is easier.
