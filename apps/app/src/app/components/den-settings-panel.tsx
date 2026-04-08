@@ -1347,6 +1347,93 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
             <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
+                  <Boxes size={15} class="text-dls-secondary" />
+                  {tr("den.team_templates_title")}
+                </div>
+                <div class="mt-1 text-xs text-dls-secondary">
+                  {tr("den.team_templates_hint")}
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div class={sectionPillClass}>
+                  <Users size={12} />
+                  {activeOrgName()}
+                </div>
+                <Button
+                  variant="outline"
+                  class="h-8 px-3 text-xs"
+                  onClick={() => void refreshTemplates()}
+                  disabled={templatesBusy() || !activeOrg()?.slug?.trim()}
+                >
+                  <RefreshCcw size={13} class={templatesBusy() ? "animate-spin" : ""} />
+                  {tr("den.refresh")}
+                </Button>
+              </div>
+            </div>
+
+            <Show when={templatesError()}>
+              {(value) => (
+                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                  {value()}
+                </div>
+              )}
+            </Show>
+
+            <Show when={!templatesBusy() && templates().length === 0}>
+              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                <Show
+                  when={activeOrg()?.slug?.trim()}
+                  fallback={tr("den.choose_org_for_templates")}
+                >
+                  {tr("den.no_team_templates")}
+                </Show>
+              </div>
+            </Show>
+
+            <div class="space-y-1">
+              <For each={templates()}>
+                {(template) => {
+                  const isMine = () => template.creator?.userId === user()?.id;
+                  const opening = () => openingTemplateId() === template.id;
+                  return (
+                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]">
+                      <div class="min-w-0 pr-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="truncate font-medium text-dls-text">
+                            {template.name}
+                          </span>
+                          <span class={sectionPillClass}>
+                            {tr("den.team_template_badge")}
+                          </span>
+                          <Show when={isMine()}>
+                            <span class={sectionPillClass}>
+                              {tr("den.worker_mine_badge")}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
+                          by {templateCreatorLabel(template)} · {formatTemplateTimestamp(template.createdAt)}
+                        </div>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        class="h-8 px-4 text-xs shrink-0"
+                        onClick={() => void handleOpenTemplate(template)}
+                        disabled={openingTemplateId() !== null}
+                      >
+                        {opening() ? tr("den.opening") : tr("den.open")}
+                      </Button>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          <div class={`${settingsPanelClass} space-y-4`}>
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Package size={15} class="text-dls-secondary" />
                   {tr("den.cloud_skills_title")}
                 </div>
@@ -1478,182 +1565,6 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                               : tr("den.uninstall")}
                         </Button>
                       </div>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </div>
-
-          <div class={`${settingsPanelClass} space-y-4`}>
-            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Server size={15} class="text-dls-secondary" />
-                  {tr("den.cloud_workers_title")}
-                </div>
-                <div class="mt-1 text-xs text-dls-secondary">
-                  {tr("den.cloud_workers_hint")}
-                </div>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <div class={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName()}
-                </div>
-                <Button
-                  variant="outline"
-                  class="h-8 px-3 text-xs"
-                  onClick={() => void refreshWorkers()}
-                  disabled={workersBusy() || !activeOrgId().trim()}
-                >
-                  <RefreshCcw size={13} class={workersBusy() ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            <Show when={workersError()}>
-              {(value) => (
-                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
-                  {value()}
-                </div>
-              )}
-            </Show>
-
-            <Show when={!workersBusy() && workers().length === 0}>
-              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {tr("den.no_cloud_workers")}
-              </div>
-            </Show>
-
-            <div class="space-y-1">
-              <For each={workers()}>
-                {(worker) => {
-                  const status = createMemo(() => workerStatusMeta(worker.status, tr));
-                  return (
-                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]">
-                      <div class="min-w-0 pr-4">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <span class="truncate font-medium text-dls-text">
-                            {worker.workerName}
-                          </span>
-                          <span
-                            class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusBadgeClass(status().tone)}`}
-                          >
-                            {status().label}
-                          </span>
-                          <Show when={worker.isMine}>
-                            <span class={sectionPillClass}>
-                              {tr("den.worker_mine_badge")}
-                            </span>
-                          </Show>
-                        </div>
-                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
-                          {worker.provider ? t("den.worker_provider_label", currentLocale(), { provider: worker.provider }) : tr("den.worker_secondary_cloud")}
-                          <Show when={worker.instanceUrl}>
-                            {(value) => <span> · {value()}</span>}
-                          </Show>
-                        </div>
-                      </div>
-                      <Button
-                        variant="secondary"
-                        class="h-8 px-4 text-xs shrink-0"
-                        onClick={() =>
-                          void handleOpenWorker(worker.workerId, worker.workerName)
-                        }
-                        disabled={openingWorkerId() !== null || !status().canOpen}
-                        title={!status().canOpen ? tr("den.worker_not_ready_title") : undefined}
-                      >
-                        {openingWorkerId() === worker.workerId ? tr("den.opening") : tr("den.open")}
-                      </Button>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </div>
-
-          <div class={`${settingsPanelClass} space-y-4`}>
-            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Boxes size={15} class="text-dls-secondary" />
-                  {tr("den.team_templates_title")}
-                </div>
-                <div class="mt-1 text-xs text-dls-secondary">
-                  {tr("den.team_templates_hint")}
-                </div>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <div class={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName()}
-                </div>
-                <Button
-                  variant="outline"
-                  class="h-8 px-3 text-xs"
-                  onClick={() => void refreshTemplates()}
-                  disabled={templatesBusy() || !activeOrg()?.slug?.trim()}
-                >
-                  <RefreshCcw size={13} class={templatesBusy() ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            <Show when={templatesError()}>
-              {(value) => (
-                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
-                  {value()}
-                </div>
-              )}
-            </Show>
-
-            <Show when={!templatesBusy() && templates().length === 0}>
-              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                <Show
-                  when={activeOrg()?.slug?.trim()}
-                  fallback={tr("den.choose_org_for_templates")}
-                >
-                  {tr("den.no_team_templates")}
-                </Show>
-              </div>
-            </Show>
-
-            <div class="space-y-1">
-              <For each={templates()}>
-                {(template) => {
-                  const isMine = () => template.creator?.userId === user()?.id;
-                  const opening = () => openingTemplateId() === template.id;
-                  return (
-                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]">
-                      <div class="min-w-0 pr-4">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <span class="truncate font-medium text-dls-text">
-                            {template.name}
-                          </span>
-                          <span class={sectionPillClass}>
-                            {tr("den.team_template_badge")}
-                          </span>
-                          <Show when={isMine()}>
-                            <span class={sectionPillClass}>
-                              {tr("den.worker_mine_badge")}
-                            </span>
-                          </Show>
-                        </div>
-                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
-                          by {templateCreatorLabel(template)} · {formatTemplateTimestamp(template.createdAt)}
-                        </div>
-                      </div>
-                      <Button
-                        variant="secondary"
-                        class="h-8 px-4 text-xs shrink-0"
-                        onClick={() => void handleOpenTemplate(template)}
-                        disabled={openingTemplateId() !== null}
-                      >
-                        {opening() ? tr("den.opening") : tr("den.open")}
-                      </Button>
                     </div>
                   );
                 }}
@@ -1921,6 +1832,95 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                                 : t("common.remove", currentLocale())}
                         </Button>
                       </div>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          <div class={`${settingsPanelClass} space-y-4`}>
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
+                  <Server size={15} class="text-dls-secondary" />
+                  {tr("den.cloud_workers_title")}
+                </div>
+                <div class="mt-1 text-xs text-dls-secondary">
+                  {tr("den.cloud_workers_hint")}
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div class={sectionPillClass}>
+                  <Users size={12} />
+                  {activeOrgName()}
+                </div>
+                <Button
+                  variant="outline"
+                  class="h-8 px-3 text-xs"
+                  onClick={() => void refreshWorkers()}
+                  disabled={workersBusy() || !activeOrgId().trim()}
+                >
+                  <RefreshCcw size={13} class={workersBusy() ? "animate-spin" : ""} />
+                  {tr("den.refresh")}
+                </Button>
+              </div>
+            </div>
+
+            <Show when={workersError()}>
+              {(value) => (
+                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                  {value()}
+                </div>
+              )}
+            </Show>
+
+            <Show when={!workersBusy() && workers().length === 0}>
+              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                {tr("den.no_cloud_workers")}
+              </div>
+            </Show>
+
+            <div class="space-y-1">
+              <For each={workers()}>
+                {(worker) => {
+                  const status = createMemo(() => workerStatusMeta(worker.status, tr));
+                  return (
+                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]">
+                      <div class="min-w-0 pr-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="truncate font-medium text-dls-text">
+                            {worker.workerName}
+                          </span>
+                          <span
+                            class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusBadgeClass(status().tone)}`}
+                          >
+                            {status().label}
+                          </span>
+                          <Show when={worker.isMine}>
+                            <span class={sectionPillClass}>
+                              {tr("den.worker_mine_badge")}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
+                          {worker.provider ? t("den.worker_provider_label", currentLocale(), { provider: worker.provider }) : tr("den.worker_secondary_cloud")}
+                          <Show when={worker.instanceUrl}>
+                            {(value) => <span> · {value()}</span>}
+                          </Show>
+                        </div>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        class="h-8 px-4 text-xs shrink-0"
+                        onClick={() =>
+                          void handleOpenWorker(worker.workerId, worker.workerName)
+                        }
+                        disabled={openingWorkerId() !== null || !status().canOpen}
+                        title={!status().canOpen ? tr("den.worker_not_ready_title") : undefined}
+                      >
+                        {openingWorkerId() === worker.workerId ? tr("den.opening") : tr("den.open")}
+                      </Button>
                     </div>
                   );
                 }}

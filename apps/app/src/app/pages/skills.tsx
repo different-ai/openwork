@@ -1359,11 +1359,6 @@ export default function SkillsView(props: SkillsViewProps) {
                     </Show>
                   </div>
 
-                  <div class="flex justify-end">
-                    <button type="button" onClick={closeShareLink} class={sharePillSecondaryClass}>
-                      {translate("skills.share_done")}
-                    </button>
-                  </div>
                 </div>
               </Show>
 
@@ -1445,11 +1440,6 @@ export default function SkillsView(props: SkillsViewProps) {
                     </Show>
                   </div>
 
-                  <div class="flex justify-end">
-                    <button type="button" onClick={closeShareLink} class={sharePillSecondaryClass}>
-                      {translate("skills.share_done")}
-                    </button>
-                  </div>
                 </div>
               </Show>
             </div>
