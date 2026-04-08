@@ -6,6 +6,16 @@ export type CloudImportedSkillHub = {
   importedAt: number | null;
 };
 
+export type CloudImportedSkill = {
+  cloudSkillId: string;
+  installedName: string;
+  title: string;
+  description: string | null;
+  shared: "org" | "public" | null;
+  updatedAt: string | null;
+  importedAt: number | null;
+};
+
 export type CloudImportedProvider = {
   cloudProviderId: string;
   providerId: string;
@@ -18,6 +28,7 @@ export type CloudImportedProvider = {
 
 export type WorkspaceCloudImports = {
   skillHubs: Record<string, CloudImportedSkillHub>;
+  skills: Record<string, CloudImportedSkill>;
   providers: Record<string, CloudImportedProvider>;
 };
 
@@ -33,6 +44,7 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
   const root = isRecord(value) ? value : {};
   const cloudImports = isRecord(root.cloudImports) ? root.cloudImports : {};
   const rawSkillHubs = isRecord(cloudImports.skillHubs) ? cloudImports.skillHubs : {};
+  const rawSkills = isRecord(cloudImports.skills) ? cloudImports.skills : {};
   const rawProviders = isRecord(cloudImports.providers) ? cloudImports.providers : {};
 
   const skillHubs = Object.fromEntries(
@@ -82,7 +94,33 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
       .filter((entry): entry is readonly [string, CloudImportedProvider] => Boolean(entry)),
   );
 
-  return { skillHubs, providers };
+  const skills = Object.fromEntries(
+    Object.entries(rawSkills)
+      .map(([key, entry]) => {
+        if (!isRecord(entry)) return null;
+        const cloudSkillId = typeof entry.cloudSkillId === "string"
+          ? entry.cloudSkillId.trim()
+          : key.trim();
+        const installedName = typeof entry.installedName === "string" ? entry.installedName.trim() : "";
+        const title = typeof entry.title === "string" ? entry.title.trim() : installedName || cloudSkillId;
+        if (!cloudSkillId || !installedName || !title) return null;
+        const imported = {
+          cloudSkillId,
+          installedName,
+          title,
+          description: typeof entry.description === "string" ? entry.description.trim() || null : null,
+          shared: entry.shared === "org" || entry.shared === "public" ? entry.shared : null,
+          updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt.trim() || null : null,
+          importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
+            ? entry.importedAt
+            : null,
+        } satisfies CloudImportedSkill;
+        return [cloudSkillId, imported] as const;
+      })
+      .filter((entry): entry is readonly [string, CloudImportedSkill] => Boolean(entry)),
+  );
+
+  return { skillHubs, skills, providers };
 }
 
 export function withWorkspaceCloudImports(
@@ -93,6 +131,7 @@ export function withWorkspaceCloudImports(
     ...config,
     cloudImports: {
       skillHubs: cloudImports.skillHubs,
+      skills: cloudImports.skills,
       providers: cloudImports.providers,
     },
   };

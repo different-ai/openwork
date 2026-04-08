@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
-import { ArrowUpRight, Boxes, Brain, Cloud, KeyRound, LogOut, RefreshCcw, Server, Users } from "lucide-solid";
+import { ArrowUpRight, Boxes, Brain, Cloud, KeyRound, LogOut, Package, RefreshCcw, Server, Users } from "lucide-solid";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -18,7 +18,8 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../lib/den";
-import type { CloudImportedProvider, CloudImportedSkillHub } from "../cloud/import-state";
+import type { DenOrgSkillCard } from "../types";
+import type { CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../cloud/import-state";
 import {
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
@@ -71,6 +72,16 @@ type CloudProviderRow = {
   imported: CloudImportedProvider | null;
   status: "available" | "imported" | "out_of_sync" | "removed_from_cloud";
   name: string;
+};
+
+type CloudSkillRow = {
+  key: string;
+  cloudSkillId: string;
+  skill: DenOrgSkillCard | null;
+  imported: CloudImportedSkill | null;
+  status: "available" | "installed" | "out_of_sync" | "removed_from_cloud";
+  title: string;
+  installedName: string | null;
 };
 
 const sortStrings = (values: string[]) => [...values].sort();
@@ -161,6 +172,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [skillHubActionId, setSkillHubActionId] = createSignal<string | null>(null);
   const [skillHubActionKind, setSkillHubActionKind] = createSignal<"import" | "remove" | "sync" | null>(null);
   const [skillHubActionError, setSkillHubActionError] = createSignal<string | null>(null);
+  const [skillsBusy, setSkillsBusy] = createSignal(false);
+  const [skillActionId, setSkillActionId] = createSignal<string | null>(null);
+  const [skillActionKind, setSkillActionKind] = createSignal<"import" | "remove" | "sync" | null>(null);
+  const [skillActionError, setSkillActionError] = createSignal<string | null>(null);
   const [providersBusy, setProvidersBusy] = createSignal(false);
   const [providerActionId, setProviderActionId] = createSignal<string | null>(null);
   const [providerActionKind, setProviderActionKind] = createSignal<"import" | "remove" | "sync" | null>(null);
@@ -225,6 +240,51 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     return rows;
   });
+  const installedSkillNames = createMemo(() => new Set(extensions.skills().map((skill) => skill.name)));
+  const skillRows = createMemo<CloudSkillRow[]>(() => {
+    const liveSkills = extensions.cloudOrgSkills();
+    const imported = extensions.importedCloudSkills();
+    const installedNames = installedSkillNames();
+    const rows: CloudSkillRow[] = liveSkills.map((skill) => {
+      const importedSkill = imported[skill.id] ?? null;
+      const remoteUpdatedAt = skill.updatedAt ? Date.parse(skill.updatedAt) : Number.NaN;
+      const importedUpdatedAt = importedSkill?.updatedAt ? Date.parse(importedSkill.updatedAt) : Number.NaN;
+      const installedName = importedSkill?.installedName?.trim() || null;
+      const installedLocally = installedName ? installedNames.has(installedName) : false;
+      const status = !importedSkill
+        ? "available"
+        : !installedLocally
+          ? "out_of_sync"
+          : Number.isFinite(remoteUpdatedAt) && (!Number.isFinite(importedUpdatedAt) || remoteUpdatedAt > importedUpdatedAt)
+            ? "out_of_sync"
+            : "installed";
+
+      return {
+        key: `live:${skill.id}`,
+        cloudSkillId: skill.id,
+        skill,
+        imported: importedSkill,
+        status,
+        title: skill.title,
+        installedName,
+      };
+    });
+
+    for (const importedSkill of Object.values(imported)) {
+      if (liveSkills.some((skill) => skill.id === importedSkill.cloudSkillId)) continue;
+      rows.push({
+        key: `imported:${importedSkill.cloudSkillId}`,
+        cloudSkillId: importedSkill.cloudSkillId,
+        skill: null,
+        imported: importedSkill,
+        status: "removed_from_cloud",
+        title: importedSkill.title,
+        installedName: importedSkill.installedName,
+      });
+    }
+
+    return rows.sort((a, b) => a.title.localeCompare(b.title));
+  });
   const providerRows = createMemo<CloudProviderRow[]>(() => {
     const imported = props.importedCloudProviders;
     const rows: CloudProviderRow[] = props.cloudOrgProviders.map((provider) => {
@@ -263,8 +323,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   });
 
   const summaryTone = createMemo(() => {
-    if (authError() || workersError() || orgsError() || templatesError()) return "error" as const;
-    if (sessionBusy() || orgsBusy() || workersBusy() || templatesBusy()) return "warning" as const;
+    if (authError() || workersError() || orgsError() || templatesError() || skillActionError() || providerActionError() || skillHubActionError()) return "error" as const;
+    if (sessionBusy() || orgsBusy() || workersBusy() || templatesBusy() || skillsBusy() || providersBusy() || skillHubsBusy()) return "warning" as const;
     if (isSignedIn()) return "ready" as const;
     return "neutral" as const;
   });
@@ -561,6 +621,34 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
   };
 
+  const refreshSkills = async (quiet = false) => {
+    const orgId = activeOrgId().trim();
+    if (!authToken().trim() || !orgId) {
+      return;
+    }
+
+    setSkillsBusy(true);
+    if (!quiet) setSkillActionError(null);
+
+    try {
+      await extensions.refreshCloudOrgSkills({ force: true });
+      if (!quiet) {
+        const count = extensions.cloudOrgSkills().length;
+        setStatusMessage(
+          count > 0
+            ? t("den.status_loaded_skills", currentLocale(), { count, plural: count === 1 ? "" : "s", name: activeOrg()?.name ?? tr("den.active_org_title") })
+            : t("den.status_no_skills", currentLocale(), { name: activeOrg()?.name ?? tr("den.active_org_title") }),
+        );
+      }
+    } catch (error) {
+      if (!quiet) {
+        setSkillActionError(error instanceof Error ? error.message : tr("den.error_load_skills"));
+      }
+    } finally {
+      setSkillsBusy(false);
+    }
+  };
+
   const refreshProviders = async (quiet = false) => {
     const orgId = activeOrgId().trim();
     if (!authToken().trim() || !orgId) {
@@ -650,6 +738,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   createEffect(() => {
     if (!user() || !activeOrgId().trim()) return;
     void refreshSkillHubs(true);
+  });
+
+  createEffect(() => {
+    if (!user() || !activeOrgId().trim()) return;
+    void refreshSkills(true);
   });
 
   createEffect(() => {
@@ -849,6 +942,71 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     } finally {
       setSkillHubActionId(null);
       setSkillHubActionKind(null);
+    }
+  };
+
+  const handleImportSkill = async (cloudSkillId: string, title: string) => {
+    const skill = extensions.cloudOrgSkills().find((entry) => entry.id === cloudSkillId);
+    if (!skill || skillActionId()) return;
+
+    setSkillActionId(cloudSkillId);
+    setSkillActionKind("import");
+    setSkillActionError(null);
+
+    try {
+      const result = await extensions.installCloudOrgSkill(skill);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
+    } catch (error) {
+      setSkillActionError(error instanceof Error ? error.message : t("den.import_skill_failed", undefined, { name: title }));
+    } finally {
+      setSkillActionId(null);
+      setSkillActionKind(null);
+    }
+  };
+
+  const handleRemoveSkill = async (cloudSkillId: string, title: string) => {
+    if (skillActionId()) return;
+
+    setSkillActionId(cloudSkillId);
+    setSkillActionKind("remove");
+    setSkillActionError(null);
+
+    try {
+      const result = await extensions.removeCloudOrgSkill(cloudSkillId);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
+    } catch (error) {
+      setSkillActionError(error instanceof Error ? error.message : t("den.remove_skill_failed", undefined, { name: title }));
+    } finally {
+      setSkillActionId(null);
+      setSkillActionKind(null);
+    }
+  };
+
+  const handleSyncSkill = async (cloudSkillId: string, title: string) => {
+    const skill = extensions.cloudOrgSkills().find((entry) => entry.id === cloudSkillId);
+    if (!skill || skillActionId()) return;
+
+    setSkillActionId(cloudSkillId);
+    setSkillActionKind("sync");
+    setSkillActionError(null);
+
+    try {
+      const result = await extensions.syncCloudOrgSkill(skill);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
+    } catch (error) {
+      setSkillActionError(error instanceof Error ? error.message : t("den.sync_skill_failed", undefined, { name: title }));
+    } finally {
+      setSkillActionId(null);
+      setSkillActionKind(null);
     }
   };
 
@@ -1183,6 +1341,148 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                 </div>
               )}
             </Show>
+          </div>
+
+          <div class={`${settingsPanelClass} space-y-4`}>
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
+                  <Package size={15} class="text-dls-secondary" />
+                  {tr("den.cloud_skills_title")}
+                </div>
+                <div class="mt-1 text-xs text-dls-secondary">
+                  {tr("den.cloud_skills_hint")}
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <div class={sectionPillClass}>
+                  <Users size={12} />
+                  {activeOrgName()}
+                </div>
+                <Button
+                  variant="outline"
+                  class="h-8 px-3 text-xs"
+                  onClick={() => void refreshSkills()}
+                  disabled={skillsBusy() || !activeOrgId().trim()}
+                >
+                  <RefreshCcw size={13} class={skillsBusy() ? "animate-spin" : ""} />
+                  {tr("den.refresh")}
+                </Button>
+              </div>
+            </div>
+
+            <Show when={skillActionError() || extensions.cloudOrgSkillsStatus()}>
+              {(value) => (
+                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                  {value()}
+                </div>
+              )}
+            </Show>
+
+            <Show when={!skillsBusy() && skillRows().length === 0}>
+              <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                <Show when={activeOrgId().trim()} fallback={tr("den.choose_org_for_skills")}>
+                  {tr("den.no_cloud_skills")}
+                </Show>
+              </div>
+            </Show>
+
+            <div class="space-y-1">
+              <For each={skillRows()}>
+                {(row) => {
+                  const actionBusy = createMemo(() => skillActionId() === row.cloudSkillId);
+                  const actionLabel = createMemo(() => {
+                    if (!actionBusy()) return null;
+                    switch (skillActionKind()) {
+                      case "import":
+                        return tr("den.importing");
+                      case "sync":
+                        return tr("den.syncing");
+                      default:
+                        return tr("den.removing");
+                    }
+                  });
+
+                  return (
+                    <div class="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]">
+                      <div class="min-w-0 pr-4">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="truncate font-medium text-dls-text">{row.title}</span>
+                          <Show when={row.skill?.hubName}>
+                            <span class={sectionPillClass}>{t("skills.cloud_hub_label", currentLocale(), { name: row.skill?.hubName ?? "" })}</span>
+                          </Show>
+                          <Show when={row.skill?.shared === "org"}>
+                            <span class={sectionPillClass}>{tr("skills.cloud_shared_org")}</span>
+                          </Show>
+                          <Show when={row.skill?.shared === "public"}>
+                            <span class={sectionPillClass}>{tr("skills.cloud_shared_public")}</span>
+                          </Show>
+                          <Show when={row.skill?.shared === null && !row.skill?.hubName}>
+                            <span class={sectionPillClass}>{tr("den.private_badge")}</span>
+                          </Show>
+                          <Show when={row.installedName}>
+                            <span class={sectionPillClass}>{t("den.installed_name_badge", currentLocale(), { name: row.installedName ?? "" })}</span>
+                          </Show>
+                          <Show when={row.status !== "available"}>
+                            <span class={sectionPillClass}>
+                              {row.status === "installed"
+                                ? tr("den.imported_badge")
+                                : row.status === "out_of_sync"
+                                  ? tr("den.out_of_sync_badge")
+                                  : tr("den.removed_from_cloud_badge")}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
+                          {row.status === "available"
+                            ? t("den.cloud_skill_detail", currentLocale(), { title: row.title })
+                            : row.status === "installed"
+                              ? t("den.cloud_skill_imported_detail", currentLocale(), {
+                                  name: row.installedName ?? row.title,
+                                })
+                              : row.status === "out_of_sync"
+                                ? t("den.cloud_skill_sync_detail", currentLocale(), {
+                                    name: row.installedName ?? row.title,
+                                  })
+                                : t("den.cloud_skill_removed_detail", currentLocale(), {
+                                    name: row.installedName ?? row.title,
+                                  })}
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2 shrink-0">
+                        <Show when={row.status === "out_of_sync" && row.skill}>
+                          <Button
+                            variant="secondary"
+                            class="h-8 px-4 text-xs"
+                            onClick={() => void handleSyncSkill(row.cloudSkillId, row.title)}
+                            disabled={skillActionId() !== null}
+                          >
+                            {actionBusy() && skillActionKind() === "sync" ? tr("den.syncing") : tr("den.sync")}
+                          </Button>
+                        </Show>
+                        <Button
+                          variant={row.status === "available" ? "secondary" : "outline"}
+                          class="h-8 px-4 text-xs"
+                          onClick={() => {
+                            if (row.status === "available" && row.skill) {
+                              return void handleImportSkill(row.cloudSkillId, row.title);
+                            }
+                            return void handleRemoveSkill(row.cloudSkillId, row.title);
+                          }}
+                          disabled={skillActionId() !== null}
+                        >
+                          {actionBusy()
+                            ? actionLabel()
+                            : row.status === "available"
+                              ? tr("den.import_skill")
+                              : tr("den.uninstall")}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
           </div>
 
           <div class={`${settingsPanelClass} space-y-4`}>

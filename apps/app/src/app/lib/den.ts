@@ -570,6 +570,7 @@ function parseDenOrgSkillRow(record: Record<string, unknown>, hubName: string | 
     skillText: record.skillText,
     hubName,
     shared,
+    updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
   };
 }
 

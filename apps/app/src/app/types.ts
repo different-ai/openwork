@@ -279,6 +279,7 @@ export type DenOrgSkillCard = {
   skillText: string;
   hubName: string | null;
   shared: "org" | "public" | null;
+  updatedAt: string | null;
 };
 
 export type PluginInstallStep = {

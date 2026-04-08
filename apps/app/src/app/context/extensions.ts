@@ -37,6 +37,7 @@ import {
 import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
+  type CloudImportedSkill,
   type CloudImportedSkillHub,
 } from "../cloud/import-state";
 import { createWorkspaceContextKey } from "./workspace-context";
@@ -128,6 +129,7 @@ export function createExtensionsStore(options: {
 
   const [cloudOrgSkills, setCloudOrgSkills] = createSignal<DenOrgSkillCard[]>([]);
   const [cloudOrgSkillsStatus, setCloudOrgSkillsStatus] = createSignal<string | null>(null);
+  const [importedCloudSkills, setImportedCloudSkills] = createSignal<Record<string, CloudImportedSkill>>({});
 
   const [cloudOrgSkillHubs, setCloudOrgSkillHubs] = createSignal<DenOrgSkillHub[]>([]);
   const [cloudOrgSkillHubsStatus, setCloudOrgSkillHubsStatus] = createSignal<string | null>(null);
@@ -274,6 +276,18 @@ export function createExtensionsStore(options: {
     }
   };
 
+  const refreshImportedCloudSkills = async () => {
+    try {
+      const config = await readWorkspaceOpenworkConfigRecord();
+      const cloudImports = readWorkspaceCloudImports(config);
+      setImportedCloudSkills(cloudImports.skills);
+      return cloudImports.skills;
+    } catch {
+      setImportedCloudSkills({});
+      return {};
+    }
+  };
+
   const persistImportedCloudSkillHubs = async (
     nextSkillHubs: Record<string, CloudImportedSkillHub>,
   ) => {
@@ -288,6 +302,22 @@ export function createExtensionsStore(options: {
       throw new Error("OpenWork server unavailable. Connect to manage imported cloud skill hubs.");
     }
     setImportedCloudSkillHubs(nextSkillHubs);
+  };
+
+  const persistImportedCloudSkills = async (
+    nextSkills: Record<string, CloudImportedSkill>,
+  ) => {
+    const config = await readWorkspaceOpenworkConfigRecord();
+    const cloudImports = readWorkspaceCloudImports(config);
+    const nextConfig = withWorkspaceCloudImports(config, {
+      ...cloudImports,
+      skills: nextSkills,
+    });
+    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    if (!persisted) {
+      throw new Error("OpenWork server unavailable. Connect to manage imported cloud skills.");
+    }
+    setImportedCloudSkills(nextSkills);
   };
 
   const buildCloudSkillContent = (name: string, description: string, body: string) => {
@@ -360,6 +390,26 @@ export function createExtensionsStore(options: {
       }
     });
     return mapping;
+  };
+
+  const findImportedCloudSkill = (cloudSkillId: string) => importedCloudSkills()[cloudSkillId] ?? null;
+
+  const persistImportedCloudSkillRecord = async (skill: DenOrgSkillCard, installedName: string) => {
+    const imported = findImportedCloudSkill(skill.id);
+    const nextSkills = {
+      ...importedCloudSkills(),
+      [skill.id]: {
+        cloudSkillId: skill.id,
+        installedName,
+        title: skill.title,
+        description: skill.description,
+        shared: skill.shared,
+        updatedAt: skill.updatedAt,
+        importedAt: imported?.importedAt ?? Date.now(),
+      },
+    } satisfies Record<string, CloudImportedSkill>;
+    await persistImportedCloudSkills(nextSkills);
+    return nextSkills[skill.id];
   };
 
   const applyCloudOrgSkillHubImport = async (
@@ -643,7 +693,10 @@ export function createExtensionsStore(options: {
       cloudOrgSkillsLoaded = false;
     }
 
-    if (!optionsOverride?.force && cloudOrgSkillsLoaded) return;
+    if (!optionsOverride?.force && cloudOrgSkillsLoaded) {
+      await refreshImportedCloudSkills();
+      return;
+    }
     if (refreshCloudOrgSkillsInFlight) return;
 
     refreshCloudOrgSkillsInFlight = true;
@@ -658,6 +711,7 @@ export function createExtensionsStore(options: {
         cloudOrgSkillsLoaded = true;
         cloudOrgSkillsLoadKey = loadKey;
         setCloudOrgSkillsContextKey(loadKey);
+        await refreshImportedCloudSkills();
         return;
       }
 
@@ -671,6 +725,7 @@ export function createExtensionsStore(options: {
       cloudOrgSkillsLoaded = true;
       cloudOrgSkillsLoadKey = loadKey;
       setCloudOrgSkillsContextKey(loadKey);
+      await refreshImportedCloudSkills();
     } catch (e) {
       if (refreshCloudOrgSkillsAborted) return;
       setCloudOrgSkills([]);
@@ -923,32 +978,88 @@ export function createExtensionsStore(options: {
   }
 
   async function installCloudOrgSkill(skill: DenOrgSkillCard): Promise<{ ok: boolean; message: string }> {
+    const existingImport = findImportedCloudSkill(skill.id);
     const installedNames = new Set(skills().map((s) => s.name));
+    const preferredName = existingImport?.installedName?.trim() ?? "";
+    if (preferredName) {
+      installedNames.delete(preferredName);
+    }
     const base = slugifyOpencodeSkillName(skill.title);
-    const installName = uniqueSkillInstallName(base, installedNames, skill.id);
+    const installName = preferredName || uniqueSkillInstallName(base, installedNames, skill.id);
     const rawDesc = (skill.description?.trim() || skill.title).trim();
     const description = rawDesc.slice(0, 1024) || skill.title.slice(0, 1024) || "Skill";
     const body = extractSkillBodyMarkdown(skill.skillText);
     const content = buildCloudSkillContent(installName, description, body);
+    const action = existingImport ? "updated" : "added";
 
     options.setBusy(true);
     options.setError(null);
     setSkillsStatus(null);
 
     try {
-      await upsertWorkspaceSkill(installName, content, description);
+      await upsertWorkspaceSkill(installName, content, description, { overwrite: Boolean(existingImport) });
+      await persistImportedCloudSkillRecord(skill, installName);
       options.markReloadRequired?.("skills", {
         type: "skill",
         name: installName,
-        action: "added",
+        action,
       });
       await refreshSkills({ force: true });
       await refreshCloudOrgSkills({ force: true });
-      return { ok: true, message: t("skills.cloud_installed", currentLocale(), { name: installName }) };
+      return {
+        ok: true,
+        message: t(
+          existingImport ? "skills.cloud_updated" : "skills.cloud_installed",
+          currentLocale(),
+          { name: installName },
+        ),
+      };
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function syncCloudOrgSkill(skill: DenOrgSkillCard): Promise<{ ok: boolean; message: string }> {
+    return installCloudOrgSkill(skill);
+  }
+
+  async function removeCloudOrgSkill(cloudSkillId: string): Promise<{ ok: boolean; message: string; removedName: string | null }> {
+    const imported = findImportedCloudSkill(cloudSkillId);
+    if (!imported) {
+      return { ok: false, message: "This cloud skill has not been installed into the workspace.", removedName: null };
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      if (skills().some((skill) => skill.name === imported.installedName)) {
+        await deleteWorkspaceSkill(imported.installedName);
+      }
+      const nextImports = { ...importedCloudSkills() };
+      delete nextImports[cloudSkillId];
+      await persistImportedCloudSkills(nextImports);
+      options.markReloadRequired?.("skills", {
+        type: "skill",
+        name: imported.installedName,
+        action: "removed",
+      });
+      await refreshSkills({ force: true });
+      await refreshCloudOrgSkills({ force: true });
+      return {
+        ok: true,
+        message: t("skills.cloud_removed", currentLocale(), { name: imported.installedName }),
+        removedName: imported.installedName,
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message, removedName: null };
     } finally {
       options.setBusy(false);
     }
@@ -1906,6 +2017,7 @@ export function createExtensionsStore(options: {
     // Refresh core resources that are needed across many surfaces.
     void refreshSkills({ force: true });
     void refreshPlugins();
+    void refreshImportedCloudSkills();
     void refreshImportedCloudSkillHubs();
   });
 
@@ -1924,6 +2036,7 @@ export function createExtensionsStore(options: {
     hubSkillsStatus,
     cloudOrgSkills,
     cloudOrgSkillsStatus,
+    importedCloudSkills,
     cloudOrgSkillHubs,
     cloudOrgSkillHubsStatus,
     importedCloudSkillHubs,
@@ -1956,6 +2069,8 @@ export function createExtensionsStore(options: {
     installSkillCreator,
     installHubSkill,
     installCloudOrgSkill,
+    syncCloudOrgSkill,
+    removeCloudOrgSkill,
     importCloudOrgSkillHub,
     syncCloudOrgSkillHub,
     removeCloudOrgSkillHub,
