@@ -44,6 +44,16 @@ test("find mode accepts forwarded package-manager args", () => {
   assert.match(result.stdout, /config\.server_url_input_label/);
 });
 
+test("source-first audit passes for inline English defaults", () => {
+  const result = spawnSync("node", ["scripts/i18n-audit.mjs", "--source-first"], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Source-first defaults/);
+});
+
 test("find mode exits non-zero when nothing matches", () => {
   const result = runFind("definitely not a real openwork translation string");
 

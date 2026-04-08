@@ -3,7 +3,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-j
 import { readDevLogs } from "../lib/dev-log";
 import { isTauriRuntime } from "../utils";
 import { readPerfLogs } from "../lib/perf-log";
-import { t } from "../../i18n";
+import { t, td } from "../../i18n";
 
 import Button from "../components/button";
 import TextInput from "../components/text-input";
@@ -437,9 +437,9 @@ export default function ConfigView(props: ConfigViewProps) {
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <div class="text-sm font-medium text-gray-12">{t("config.server_section_title")}</div>
+            <div class="text-sm font-medium text-gray-12">{td("config.server_section_title", "OpenWork server")}</div>
             <div class="text-xs text-gray-10">
-              {t("config.server_section_desc")}
+              {td("config.server_section_desc", "Connect to an OpenWork server. Use the URL plus a collaborator or owner token from your server admin.")}
             </div>
           </div>
           <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>{openworkStatusLabel()}</div>
@@ -447,22 +447,22 @@ export default function ConfigView(props: ConfigViewProps) {
 
         <div class="grid gap-3">
           <TextInput
-            label={t("config.server_url_input_label")}
+            label={td("config.server_url_input_label", "OpenWork server URL")}
             value={openworkUrl()}
             onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
             placeholder="http://127.0.0.1:<port>"
-            hint={t("config.server_url_hint")}
+            hint={td("config.server_url_hint", "Use the URL shared by your OpenWork server. Local desktop workers reuse a persistent high port in the 48000-51000 range.")}
             disabled={props.busy}
           />
 
           <label class="block">
-            <div class="mb-1 text-xs font-medium text-gray-11">{t("config.token_label")}</div>
+            <div class="mb-1 text-xs font-medium text-gray-11">{td("config.token_label", "Collaborator or owner token")}</div>
             <div class="flex items-center gap-2">
               <input
                 type={openworkTokenVisible() ? "text" : "password"}
                 value={openworkToken()}
                 onInput={(event) => setOpenworkToken(event.currentTarget.value)}
-                placeholder={t("config.token_placeholder")}
+                placeholder={td("config.token_placeholder", "Paste your token")}
                 disabled={props.busy}
                 class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
               />
@@ -475,7 +475,7 @@ export default function ConfigView(props: ConfigViewProps) {
                 {openworkTokenVisible() ? t("common.hide") : t("common.show")}
               </Button>
             </div>
-            <div class="mt-1 text-xs text-gray-10">{t("config.token_hint")}</div>
+            <div class="mt-1 text-xs text-gray-10">{td("config.token_hint", "Optional. Paste a collaborator token for routine access or an owner token when this client must answer permission prompts.")}</div>
           </label>
         </div>
 
@@ -497,17 +497,17 @@ export default function ConfigView(props: ConfigViewProps) {
                 const ok = await props.testOpenworkServerConnection(next);
                 setOpenworkTestState(ok ? "success" : "error");
                 setOpenworkTestMessage(
-                  ok ? t("config.connection_successful") : t("config.connection_failed"),
+                  ok ? td("config.connection_successful", "Connection successful.") : td("config.connection_failed", "Connection failed."),
                 );
               } catch (error) {
-                const message = error instanceof Error ? error.message : t("config.connection_failed_check");
+                const message = error instanceof Error ? error.message : td("config.connection_failed_check", "Connection failed. Check the host URL and token.");
                 setOpenworkTestState("error");
                 setOpenworkTestMessage(message);
               }
             }}
             disabled={props.busy || openworkTestState() === "testing"}
           >
-            {openworkTestState() === "testing" ? t("config.testing") : t("config.test_connection")}
+            {openworkTestState() === "testing" ? td("config.testing", "Testing...") : td("config.test_connection", "Test connection")}
           </Button>
           <Button
             variant="outline"
@@ -533,7 +533,9 @@ export default function ConfigView(props: ConfigViewProps) {
             role="status"
             aria-live="polite"
           >
-            {openworkTestState() === "testing" ? t("config.testing_connection") : openworkTestMessage() ?? t("config.connection_status_updated")}
+            {openworkTestState() === "testing"
+              ? td("config.testing_connection", "Testing connection...")
+              : openworkTestMessage() ?? td("config.connection_status_updated", "Connection status updated.")}
           </div>
         </Show>
 

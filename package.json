@@ -22,6 +22,7 @@
     "typecheck": "pnpm --filter @openwork/app typecheck",
     "test:health": "pnpm --filter @openwork/app test:health",
     "test:i18n:find": "node --test scripts/i18n-audit-find.test.mjs",
+    "test:i18n:source-first": "bun test scripts/i18n-source-first.test.ts",
     "test:sessions": "pnpm --filter @openwork/app test:sessions",
     "test:refactor": "pnpm --filter @openwork/app test:refactor",
     "test:events": "pnpm --filter @openwork/app test:events",

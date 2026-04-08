@@ -9,6 +9,7 @@
  *   node scripts/i18n-audit.mjs --duplicates # duplicate keys in any locale
  *   node scripts/i18n-audit.mjs --unused     # unused keys (in EN but not referenced in repo)
  *   node scripts/i18n-audit.mjs --dangling   # t() calls referencing keys not in en.ts
+ *   node scripts/i18n-audit.mjs --source-first # verify td() inline EN defaults match en.ts
  *   node scripts/i18n-audit.mjs --aliases    # aliased t() calls (translate/tr instead of t)
  *   node scripts/i18n-audit.mjs --placeholders # placeholder integrity check
  *   node scripts/i18n-audit.mjs --hardcoded  # hardcoded English strings in source files
@@ -99,6 +100,52 @@ function findDuplicates(filePath) {
     else seen.set(key, true);
   }
   return dupes;
+}
+
+function getLineNumber(content, matchIndex) {
+  return content.slice(0, matchIndex).split("\n").length;
+}
+
+function parseDoubleQuotedLiteral(literal) {
+  return JSON.parse(literal);
+}
+
+function extractSourceFirstDefaults(sourceFiles) {
+  const defaults = new Map();
+  const conflicts = [];
+  const sourceFirstPattern = /\btd\(\s*"([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*?)"\s*,\s*("(?:\\.|[^"\\])*")/g;
+
+  for (const file of sourceFiles) {
+    const content = readFileSync(file, "utf-8");
+    for (const match of content.matchAll(sourceFirstPattern)) {
+      const key = match[1];
+      const literal = match[2];
+      const line = getLineNumber(content, match.index ?? 0);
+      const value = parseDoubleQuotedLiteral(literal);
+      const reference = { file: toRelativePath(file), line, value };
+      const existing = defaults.get(key);
+
+      if (!existing) {
+        defaults.set(key, { value, refs: [reference] });
+        continue;
+      }
+
+      if (existing.value !== value) {
+        conflicts.push({
+          key,
+          expected: existing.value,
+          actual: value,
+          original: existing.refs[0],
+          conflicting: reference,
+        });
+        continue;
+      }
+
+      existing.refs.push(reference);
+    }
+  }
+
+  return { defaults, conflicts };
 }
 
 function toRelativePath(filePath) {
@@ -257,6 +304,65 @@ for (const locale of LOCALES) {
 }
 console.log();
 
+// --- 2a. Source-first defaults ---
+if (shouldRun("--source-first")) {
+  console.log("=== Source-first defaults (td) ===");
+  const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
+  const { defaults: sourceFirstDefaults, conflicts } = extractSourceFirstDefaults(sourceFiles);
+  const missing = [];
+  const mismatched = [];
+
+  for (const [key, data] of sourceFirstDefaults) {
+    const enValue = enKeyValues.get(key);
+    if (enValue == null) {
+      missing.push({ key, ...data.refs[0] });
+      continue;
+    }
+
+    if (enValue !== data.value) {
+      mismatched.push({ key, enValue, ...data.refs[0] });
+    }
+  }
+
+  if (conflicts.length === 0 && missing.length === 0 && mismatched.length === 0) {
+    console.log(`  ✓ ${sourceFirstDefaults.size} source-first defaults match en.ts`);
+  } else {
+    exitCode = 1;
+
+    if (conflicts.length > 0) {
+      console.log(`  ✗ ${conflicts.length} conflicting td() defaults`);
+      if (mode !== "--summary") {
+        for (const conflict of conflicts.slice(0, 10)) {
+          console.log(`    ${conflict.key}`);
+          console.log(`      first:  ${conflict.original.file}:${conflict.original.line} -> ${JSON.stringify(conflict.expected)}`);
+          console.log(`      second: ${conflict.conflicting.file}:${conflict.conflicting.line} -> ${JSON.stringify(conflict.actual)}`);
+        }
+      }
+    }
+
+    if (missing.length > 0) {
+      console.log(`  ✗ ${missing.length} td() keys missing from en.ts`);
+      if (mode !== "--summary") {
+        for (const entry of missing.slice(0, 10)) {
+          console.log(`    ${entry.file}:${entry.line} -> ${entry.key} = ${JSON.stringify(entry.value)}`);
+        }
+      }
+    }
+
+    if (mismatched.length > 0) {
+      console.log(`  ✗ ${mismatched.length} td() defaults differ from en.ts`);
+      if (mode !== "--summary") {
+        for (const entry of mismatched.slice(0, 10)) {
+          console.log(`    ${entry.file}:${entry.line} -> ${entry.key}`);
+          console.log(`      inline: ${JSON.stringify(entry.value)}`);
+          console.log(`      en.ts:  ${JSON.stringify(entry.enValue)}`);
+        }
+      }
+    }
+  }
+  console.log();
+}
+
 // --- 2. Missing keys ---
 if (shouldRun("--missing")) {
   console.log("=== Missing keys (in en.ts but not in locale) ===");
@@ -397,7 +503,7 @@ if (shouldRun("--dangling")) {
 
   const sourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
   // Match t("key.name"), t("key.name", ...), translate("key.name"), tr("key.name")
-  const keyRefPattern = /\b(?:t|translate|tr)\(\s*"([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*?)"/g;
+  const keyRefPattern = /\b(?:t|td|translate|tr)\(\s*"([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*?)"/g;
 
   const dangling = [];
   for (const file of sourceFiles) {
@@ -428,7 +534,7 @@ if (shouldRun("--dangling")) {
 
   // --- 7. Dynamic t() calls (keys built at runtime) ---
   console.log("=== Dynamic t() calls (keys built at runtime) ===");
-  const dynamicPattern = /\b(?:t|translate|tr)\(\s*(`[^`]*\$\{|[^"'][^,)]*\+)/g;
+  const dynamicPattern = /\b(?:t|td|translate|tr)\(\s*(`[^`]*\$\{|[^"'][^,)]*\+)/g;
   const dynamicHits = [];
   for (const file of sourceFiles) {
     const content = readFileSync(file, "utf-8");
@@ -528,7 +634,7 @@ if (shouldRun("--hardcoded")) {
 
   const excludePatterns = [
     /import\b/, /from\s+"/, /class=/, /\btype\s/, /\bconst\s/, /variant=/,
-    /\bt\(/, /translate\(/, /"connected"/, /"allow"/, /"local"/, /"remote"/,
+    /\bt\(/, /\btd\(/, /translate\(/, /"connected"/, /"allow"/, /"local"/, /"remote"/,
     /"object"/, /"string"/, /"user"/, /"assistant"/, /"Escape"/, /"Arrow/,
     /"Enter"/, /"prompt"/, /"session"/, /"automation"/, /"minimal"/, /"starter"/,
     /"docker"/, /"opencode"/, /"simple"/, /"Started"/, /"Progress"/,
@@ -619,5 +725,5 @@ if (mode === "--sort") {
 
 // --- Done ---
 console.log("=== Done ===");
-console.log('Run with --find "text", --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.');
+console.log('Run with --find "text", --source-first, --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.');
 process.exit(exitCode);

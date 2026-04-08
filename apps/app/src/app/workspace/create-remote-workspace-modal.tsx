@@ -2,7 +2,7 @@ import { Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { X } from "lucide-solid";
 
-import { currentLocale, t } from "../../i18n";
+import { currentLocale, t, td } from "../../i18n";
 import {
   modalHeaderButtonClass,
   modalHeaderClass,
@@ -20,7 +20,7 @@ import type { CreateRemoteWorkspaceModalProps } from "./types";
 
 export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceModalProps) {
   let inputRef: HTMLInputElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = (key: string, defaultValue: string) => td(key, defaultValue, undefined, currentLocale());
 
   const [openworkHostUrl, setOpenworkHostUrl] = createSignal("");
   const [openworkToken, setOpenworkToken] = createSignal("");
@@ -29,9 +29,9 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
   const [displayName, setDisplayName] = createSignal("");
 
   const showClose = () => props.showClose ?? true;
-  const title = () => props.title ?? translate("dashboard.create_remote_workspace_title");
-  const subtitle = () => props.subtitle ?? translate("dashboard.create_remote_workspace_subtitle");
-  const confirmLabel = () => props.confirmLabel ?? translate("dashboard.create_remote_workspace_confirm");
+  const title = () => props.title ?? translate("dashboard.create_remote_workspace_title", "Add Remote Workspace");
+  const subtitle = () => props.subtitle ?? translate("dashboard.create_remote_workspace_subtitle", "Save an OpenWork server as a workspace.");
+  const confirmLabel = () => props.confirmLabel ?? translate("dashboard.create_remote_workspace_confirm", "Add Workspace");
   const isInline = () => props.inline ?? false;
   const submitting = () => props.submitting ?? false;
 
@@ -106,7 +106,7 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
               disabled={submitting()}
               class={pillGhostClass}
             >
-              {translate("common.cancel")}
+              {t("common.cancel", currentLocale())}
             </button>
           </Show>
           <button
@@ -120,7 +120,7 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
               })
             }
             disabled={!canSubmit()}
-            title={!openworkHostUrl().trim() ? translate("dashboard.remote_base_url_required") : undefined}
+            title={!openworkHostUrl().trim() ? translate("dashboard.remote_base_url_required", "Add a server URL to continue.") : undefined}
             class={pillPrimaryClass}
           >
             {confirmLabel()}

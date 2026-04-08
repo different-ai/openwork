@@ -12,6 +12,7 @@ import { LANGUAGE_PREF_KEY } from "../app/constants";
  */
 export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th";
 export type Locale = Language;
+export type TranslationParams = Record<string, string | number>;
 
 /**
  * All supported languages - single source of truth
@@ -60,6 +61,39 @@ const [locale, setLocaleSignal] = createRoot(() => createSignal<Language>("en"))
  */
 export const currentLocale = (): Language => locale();
 
+const formatTranslation = (value: string, params?: TranslationParams): string => {
+  if (!params) return value;
+
+  let result = value;
+  for (const [k, v] of Object.entries(params)) {
+    result = result.replace(`{${k}}`, String(v));
+  }
+
+  return result;
+};
+
+const resolveTranslation = (key: string, localeOverride?: Language, defaultValue?: string): string => {
+  const loc = localeOverride ?? locale();
+
+  if (defaultValue != null && loc === "en") {
+    return defaultValue;
+  }
+
+  if (TRANSLATIONS[loc]?.[key]) {
+    return TRANSLATIONS[loc][key];
+  }
+
+  if (defaultValue != null) {
+    return defaultValue;
+  }
+
+  if (loc !== "en" && TRANSLATIONS.en?.[key]) {
+    return TRANSLATIONS.en[key];
+  }
+
+  return key;
+};
+
 /**
  * Set locale and persist to localStorage
  */
@@ -93,29 +127,16 @@ export const setLocale = (newLocale: Language) => {
  * @param localeOverride - Optional locale override (defaults to current locale)
  * @returns Translated string or fallback
  */
-export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
-  const loc = localeOverride ?? locale();
+export const t = (key: string, localeOverride?: Language, params?: TranslationParams): string => {
+  return formatTranslation(resolveTranslation(key, localeOverride), params);
+};
 
-  // Try target language first
-  let result: string;
-  if (TRANSLATIONS[loc]?.[key]) {
-    result = TRANSLATIONS[loc][key];
-  } else if (loc !== "en" && TRANSLATIONS.en?.[key]) {
-    // Fallback to English
-    result = TRANSLATIONS.en[key];
-  } else {
-    // Final fallback to key itself (prevents raw keys from showing in UI)
-    return key;
-  }
-
-  // Replace params if provided
-  if (params) {
-    for (const [k, v] of Object.entries(params)) {
-      result = result.replace(`{${k}}`, String(v));
-    }
-  }
-
-  return result;
+/**
+ * Source-first translation helper.
+ * Keeps the English source string at the callsite while still using locale keys.
+ */
+export const td = (key: string, defaultValue: string, params?: TranslationParams, localeOverride?: Language): string => {
+  return formatTranslation(resolveTranslation(key, localeOverride, defaultValue), params);
 };
 
 /**
