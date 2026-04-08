@@ -43,5 +43,5 @@ export function ReactIsland<T extends object>(props: ReactIslandProps<T>) {
     root = null;
   });
 
-  return <div ref={container} class={props.class} />;
+  return <div ref={container} class={props.class} style={{ height: "100%" }} />;
 }

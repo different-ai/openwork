@@ -3266,7 +3266,7 @@ export default function SessionView(props: SessionViewProps) {
                 }}
               >
                 <div
-                  class="mx-auto w-full max-w-[800px]"
+                  class="mx-auto h-full w-full max-w-[800px]"
                   ref={(el) => {
                     chatContentEl = el;
                   }}
@@ -3379,6 +3379,28 @@ export default function SessionView(props: SessionViewProps) {
                             opencodeBaseUrl: reactSessionOpencodeBaseUrl(),
                             openworkToken: reactSessionToken(),
                             developerMode: props.developerMode,
+                            modelLabel: modelControls.selectedSessionModelLabel() || t("session.model_fallback"),
+                            onModelClick: () => modelControls.openSessionModelPicker(),
+                            onSendDraft: handleSendPrompt,
+                            onDraftChange: handleDraftChange,
+                            attachmentsEnabled: attachmentsEnabled(),
+                            attachmentsDisabledReason: attachmentsDisabledReason(),
+                            modelVariantLabel: modelControls.sessionModelVariantLabel(),
+                            modelVariant: modelControls.sessionModelVariant(),
+                            modelBehaviorOptions: modelControls.sessionModelBehaviorOptions(),
+                            onModelVariantChange: modelControls.setSessionModelVariant,
+                            agentLabel: agentLabel(),
+                            selectedAgent: sessionActions.selectedSessionAgent(),
+                            listAgents: sessionActions.listAgents,
+                            onSelectAgent: (agent) => {
+                              void applySessionAgent(agent);
+                            },
+                            listCommands: sessionActions.listCommands,
+                            recentFiles: props.workingFiles,
+                            searchFiles: sessionActions.searchWorkspaceFiles,
+                            isRemoteWorkspace: props.selectedWorkspaceDisplay.workspaceType === "remote",
+                            isSandboxWorkspace: isSandboxWorkspace(),
+                            onUploadInboxFiles: uploadInboxFiles,
                           }}
                         />
                       }
