@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Automation Visibility After</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #eef5ef;
+        --panel: rgba(255, 255, 255, 0.9);
+        --line: rgba(39, 69, 46, 0.12);
+        --text: #132017;
+        --muted: #55685b;
+        --accent: #227a4d;
+        --accent-soft: rgba(34, 122, 77, 0.12);
+        --info: #205d7a;
+        --info-soft: rgba(32, 93, 122, 0.12);
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(34, 122, 77, 0.14), transparent 34%),
+          radial-gradient(circle at top right, rgba(32, 93, 122, 0.12), transparent 28%),
+          linear-gradient(180deg, #f9fdf9 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+      .frame {
+        width: 1440px;
+        min-height: 1080px;
+        margin: 0 auto;
+        padding: 56px;
+      }
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        gap: 32px;
+        align-items: flex-start;
+        margin-bottom: 28px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font: 600 13px/1.1 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 18px 0 10px;
+        font-size: 56px;
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+        max-width: 780px;
+      }
+      .lede {
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 20px;
+        line-height: 1.45;
+      }
+      .callout {
+        width: 330px;
+        padding: 18px 20px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.75);
+        box-shadow: 0 18px 60px rgba(19, 32, 23, 0.08);
+      }
+      .callout strong {
+        display: block;
+        font: 700 15px/1.3 ui-sans-serif, system-ui, sans-serif;
+        margin-bottom: 8px;
+      }
+      .callout p {
+        margin: 0;
+        color: var(--muted);
+        font: 500 14px/1.55 ui-sans-serif, system-ui, sans-serif;
+      }
+      .workspace-strip {
+        display: grid;
+        grid-template-columns: 1.15fr 1fr;
+        gap: 18px;
+        margin-bottom: 24px;
+      }
+      .strip-card {
+        padding: 18px 20px;
+        border-radius: 20px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: 0 14px 44px rgba(19, 32, 23, 0.06);
+      }
+      .strip-card .label {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font: 600 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .path {
+        font: 600 20px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .content {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 24px;
+      }
+      .panel {
+        border-radius: 28px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: 0 24px 64px rgba(19, 32, 23, 0.08);
+        overflow: hidden;
+      }
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 22px 24px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .panel-title {
+        font: 700 26px/1.1 ui-sans-serif, system-ui, sans-serif;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 8px 12px;
+        font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .pill.after {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .jobs {
+        padding: 20px 20px 24px;
+        display: grid;
+        gap: 14px;
+      }
+      .job {
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(247,252,248,0.98));
+        padding: 18px 18px 16px;
+      }
+      .job-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .job-title {
+        font: 700 20px/1.15 ui-sans-serif, system-ui, sans-serif;
+      }
+      .job-status {
+        display: inline-flex;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(34, 122, 77, 0.1);
+        color: var(--accent);
+        font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .job p {
+        margin: 0;
+        color: var(--muted);
+        font: 500 15px/1.55 ui-sans-serif, system-ui, sans-serif;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 7px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--muted);
+        font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
+      }
+      .notes {
+        padding: 20px 22px 24px;
+      }
+      .note {
+        padding: 16px 18px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.84);
+        border: 1px solid var(--line);
+      }
+      .note + .note { margin-top: 14px; }
+      .note strong {
+        display: block;
+        margin-bottom: 8px;
+        font: 700 15px/1.2 ui-sans-serif, system-ui, sans-serif;
+      }
+      .note p {
+        margin: 0;
+        color: var(--muted);
+        font: 500 14px/1.55 ui-sans-serif, system-ui, sans-serif;
+      }
+      .legend {
+        margin-top: 18px;
+        color: var(--muted);
+        font: 600 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+      }
+      .info-pill {
+        display: inline-flex;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--info-soft);
+        color: var(--info);
+        font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="frame">
+      <section class="hero">
+        <div>
+          <span class="eyebrow">After</span>
+          <h1>Related parent and child workspace roots keep automations visible.</h1>
+          <p class="lede">
+            The same nested workspace now falls back to the nearest related automation workdir, so users can still manage real,
+            already-running jobs instead of seeing an empty state.
+          </p>
+        </div>
+        <aside class="callout">
+          <strong>New matching rule</strong>
+          <p>Prefer exact matches first. If none exist, show the closest related parent or child workspace roots instead of nothing.</p>
+        </aside>
+      </section>
+
+      <section class="workspace-strip">
+        <div class="strip-card">
+          <span class="label">Selected OpenWork workspace root</span>
+          <div class="path">/Users/jan/Programming/the-cloud-factory/_repos/openwork</div>
+        </div>
+        <div class="strip-card">
+          <span class="label">Recovered automation workdir</span>
+          <div class="path">/Users/jan/Programming/the-cloud-factory</div>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Automations</div>
+            <span class="pill after">3 visible jobs</span>
+          </div>
+          <div class="jobs">
+            <article class="job">
+              <div class="job-header">
+                <div class="job-title">Daily docs improvement:</div>
+                <span class="job-status">success</span>
+              </div>
+              <p>Recurring docs maintenance automation stored at the parent workspace root.</p>
+              <div class="meta">
+                <span class="tag">daily at 7:42 PM</span>
+                <span class="tag">source: local scheduler</span>
+                <span class="tag">workdir: the-cloud-factory</span>
+              </div>
+            </article>
+
+            <article class="job">
+              <div class="job-header">
+                <div class="job-title">Daily socratic brief V2</div>
+                <span class="job-status">success</span>
+              </div>
+              <p>Weekday morning coaching automation now remains visible from the nested OpenWork repo.</p>
+              <div class="meta">
+                <span class="tag">weekdays at 7:04 AM</span>
+                <span class="tag">source: local scheduler</span>
+                <span class="tag">workdir: the-cloud-factory</span>
+              </div>
+            </article>
+
+            <article class="job">
+              <div class="job-header">
+                <div class="job-title">DAILY SOCRATRIC BRIEF</div>
+                <span class="job-status">success</span>
+              </div>
+              <p>The older weekday brief is still visible too, so duplicate or migrated jobs are easier to clean up.</p>
+              <div class="meta">
+                <span class="tag">weekdays at 7:00 AM</span>
+                <span class="tag">source: local scheduler</span>
+                <span class="tag">workdir: the-cloud-factory</span>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Why this is better</div>
+            <span class="info-pill">No more false empty state</span>
+          </div>
+          <div class="notes">
+            <div class="note">
+              <strong>Users keep context</strong>
+              <p>The workspace can narrow from the repo root to a nested folder without losing visibility into existing automations.</p>
+            </div>
+            <div class="note">
+              <strong>Management actions still work</strong>
+              <p>The same related-workdir fallback is used in server and desktop resolution paths, so listing and delete lookups stay aligned.</p>
+            </div>
+            <div class="note">
+              <strong>The behavior is predictable</strong>
+              <p>Exact matches still win; the fallback only activates when the old behavior would have shown nothing.</p>
+            </div>
+            <div class="legend">Source data: the same 3 local scheduler jobs on this machine, rendered for the nested `_repos/openwork` workspace.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
