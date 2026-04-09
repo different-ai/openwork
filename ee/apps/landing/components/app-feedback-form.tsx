@@ -389,11 +389,8 @@ export function AppFeedbackForm(props: Props) {
 
           <div className="mt-5 border-t border-white/10 pt-5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">
-              Screenshot
+              Optional Screenshot
             </div>
-            <p className="mt-2 text-[13px] leading-relaxed text-slate-300">
-              Optional. Upload one image and we will include its hosted link in the feedback email.
-            </p>
             <input
               ref={inputRef}
               type="file"
@@ -427,12 +424,12 @@ export function AppFeedbackForm(props: Props) {
                 if (isBusy) return;
                 selectImage(event.dataTransfer.files?.[0] ?? null);
               }}
-              className={`mt-3 rounded-[1.1rem] border border-dashed p-3 transition ${dragActive ? "border-sky-300 bg-sky-400/10" : "border-white/15 bg-white/[0.04] hover:border-white/30 hover:bg-white/[0.06]"} ${isBusy ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+              className={`mt-3 rounded-[1rem] border border-dashed px-3 py-2.5 transition ${dragActive ? "border-sky-300 bg-sky-400/10" : "border-white/15 bg-white/[0.04] hover:border-white/30 hover:bg-white/[0.06]"} ${isBusy ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
               aria-label="Add a screenshot"
             >
               {selectedImage ? (
                 <div className="flex items-center gap-3">
-                  <div className="h-14 w-14 overflow-hidden rounded-xl border border-white/10 bg-white/5 shrink-0">
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/5">
                     {imagePreviewUrl ? (
                       <img
                         src={imagePreviewUrl}
@@ -465,15 +462,12 @@ export function AppFeedbackForm(props: Props) {
                 </div>
               ) : (
                 <div className="flex items-center gap-3">
-                  <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-sky-200">
-                    <ImagePlus className="h-4 w-4" />
+                  <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-sky-200">
+                    <ImagePlus className="h-3.5 w-3.5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-medium text-white">
-                      Drop an image here or click to browse
-                    </div>
-                    <div className="mt-1 text-[12px] text-slate-300">
-                      PNG, JPG, or WebP up to 8 MB.
+                    <div className="truncate text-[13px] font-medium text-white">
+                      Drop or click to upload an image
                     </div>
                   </div>
                 </div>
