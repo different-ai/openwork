@@ -3,7 +3,9 @@ title: "Skill hubs for teams"
 description: "Create org skill hubs, assign them to teams, and import them into the desktop app"
 ---
 
-Skill hubs are the team-wide way to distribute shared skills in OpenWork Cloud. You create the skills and team assignments in the Cloud dashboard, then each desktop workspace can import the hub in one step.
+Skill hubs are the team-wide way to distribute grouped skills in OpenWork Cloud. You create the skills and team assignments in the Cloud dashboard, then each desktop workspace can import the hub in one step.
+
+If you only need to publish a single skill, you can also save it directly from the desktop app without adding it to a hub. Those standalone org skills still appear in `Skills -> Cloud` and `Settings -> Cloud -> Skills`, but hubs are the better fit when you want one team-managed collection.
 
 ## 1. Create the organization
 
@@ -19,7 +21,7 @@ If you do not already have one, open [app.openworklabs.com](https://app.openwork
 
 Note: __Only `Owner` and `Admin` members can manage teams.__
 
-## 3. Create the skill
+## 3. Create the skill or upload it from the desktop app
 
 1. Open `Skill Hubs -> All Skills`.
 2. Click `Add Skill`.
@@ -29,6 +31,8 @@ Note: __Only `Owner` and `Admin` members can manage teams.__
 6. Click `Create Skill`.
 
 Skill creators and org admins can manage skills and hubs.
+
+If the skill already exists in a desktop workspace, you can also open `Workspace -> Skills`, click `Share skill`, choose `Team`, and save it to your active organization before attaching it to a hub.
 
 ## 4. Create the hub and assign it to the team
 
@@ -52,8 +56,11 @@ Skill creators and org admins can manage skills and hubs.
 
 OpenWork installs the hub's skills into `.opencode/skills` for that workspace.
 
+If you need just one shared skill instead of the entire hub, open `Skills -> Cloud` or `Settings -> Cloud -> Skills` and install it there.
+
 
 ## Keeping it up to date
 
 - Use `Sync` in `Settings -> Cloud -> Skill hubs` after the hub changes.
+- Use `Settings -> Cloud -> Skills` or `Skills -> Cloud` to sync, uninstall, or review individual skills that came from the org.
 - Use `Remove` to stop managing the hub from this workspace.
