@@ -15,6 +15,7 @@
 - `LOOPS_API_KEY` - Loops API key for feedback/contact submissions
 - `LOOPS_TRANSACTIONAL_ID_APP_FEEDBACK` - Loops transactional template ID for app feedback emails
 - `LOOPS_INTERNAL_FEEDBACK_EMAIL` - optional override for the internal feedback recipient (defaults to `team@openworklabs.com`)
+- `UPLOADTHING_TOKEN` - UploadThing token for hosted feedback screenshot uploads
 - `LANDING_FORM_ALLOWED_ORIGINS` - optional comma-separated origin allowlist for feedback/contact form posts
 
 ## Deploy (recommended)

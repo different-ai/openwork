@@ -1,7 +1,7 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, MessageSquareText, Send } from "lucide-react";
-import { useMemo, useState } from "react";
+import { AlertCircle, CheckCircle2, ImagePlus, LoaderCircle, MessageSquareText, Send, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type AppFeedbackPrefill = {
   source: string;
@@ -21,9 +21,39 @@ type Props = {
   prefill: AppFeedbackPrefill;
 };
 
+type UploadedFeedbackAttachment = {
+  name: string;
+  fileKey: string;
+  accessUrl: string;
+  size: number;
+  contentType: string;
+};
+
 type SubmitState = "idle" | "loading" | "success" | "error";
 
 const INITIAL_MESSAGE = "";
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+function formatFileSize(size: number) {
+  if (size >= 1024 * 1024) {
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function validateImageFile(file: File) {
+  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    return "Only PNG, JPG, and WebP screenshots are supported.";
+  }
+
+  if (file.size <= 0 || file.size > MAX_IMAGE_BYTES) {
+    return "Screenshots must be smaller than 8 MB.";
+  }
+
+  return "";
+}
 
 export function AppFeedbackForm(props: Props) {
   const [name, setName] = useState("");
@@ -33,6 +63,23 @@ export function AppFeedbackForm(props: Props) {
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [state, setState] = useState<SubmitState>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [uploadedAttachment, setUploadedAttachment] =
+    useState<UploadedFeedbackAttachment | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!selectedImage) {
+      setImagePreviewUrl("");
+      return;
+    }
+
+    const nextPreviewUrl = URL.createObjectURL(selectedImage);
+    setImagePreviewUrl(nextPreviewUrl);
+    return () => URL.revokeObjectURL(nextPreviewUrl);
+  }, [selectedImage]);
 
   const contextItems = useMemo(
     () => [
@@ -60,7 +107,72 @@ export function AppFeedbackForm(props: Props) {
     setStartedAt(Date.now());
     setState("idle");
     setErrorMessage("");
+    setSelectedImage(null);
+    setUploadedAttachment(null);
+    setDragActive(false);
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
   };
+
+  const selectImage = (file: File | null) => {
+    if (!file) return;
+
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      setState("error");
+      setErrorMessage(validationError);
+      return;
+    }
+
+    setSelectedImage(file);
+    setUploadedAttachment(null);
+    setState("idle");
+    setErrorMessage("");
+  };
+
+  const clearImage = () => {
+    setSelectedImage(null);
+    setUploadedAttachment(null);
+    setDragActive(false);
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+  };
+
+  const uploadImage = async () => {
+    if (!selectedImage) return null;
+    if (uploadedAttachment) return uploadedAttachment;
+
+    const formData = new FormData();
+    formData.set("image", selectedImage);
+    formData.set("website", website);
+    formData.set("startedAt", String(startedAt));
+
+    const response = await fetch("/api/app-feedback/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = (await response.json().catch(() => null)) as
+      | { error?: string; attachment?: UploadedFeedbackAttachment }
+      | null;
+
+    if (!response.ok || !data?.attachment) {
+      throw new Error(data?.error ?? "Something went wrong while uploading the screenshot.");
+    }
+
+    setUploadedAttachment(data.attachment);
+    return data.attachment;
+  };
+
+  const isBusy = state === "loading";
+  const submitLabel =
+    state === "loading"
+      ? selectedImage && !uploadedAttachment
+        ? "Uploading image..."
+        : "Sending..."
+      : "Send feedback";
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -89,6 +201,7 @@ export function AppFeedbackForm(props: Props) {
     setErrorMessage("");
 
     try {
+      const attachment = await uploadImage();
       const response = await fetch("/api/app-feedback", {
         method: "POST",
         headers: {
@@ -98,6 +211,7 @@ export function AppFeedbackForm(props: Props) {
           name: trimmedName,
           email: trimmedEmail,
           message: trimmed,
+          attachments: attachment ? [attachment] : [],
           website,
           startedAt,
           context: props.prefill,
@@ -117,6 +231,8 @@ export function AppFeedbackForm(props: Props) {
 
       setState("success");
       setMessage(INITIAL_MESSAGE);
+      setSelectedImage(null);
+      setUploadedAttachment(null);
     } catch (error) {
       setState("error");
       setErrorMessage(
@@ -140,7 +256,7 @@ export function AppFeedbackForm(props: Props) {
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">
             Your note goes to the OpenWork team with your contact details, app
-            version, and runtime context already attached.
+            version, runtime context, and an optional screenshot link.
           </p>
 
           {state === "success" ? (
@@ -187,7 +303,7 @@ export function AppFeedbackForm(props: Props) {
                     onChange={(event) => setName(event.target.value)}
                     placeholder="Jane Doe"
                     className="w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-[15px] text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
-                    disabled={state === "loading"}
+                    disabled={isBusy}
                     autoComplete="name"
                     required
                   />
@@ -202,7 +318,7 @@ export function AppFeedbackForm(props: Props) {
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="jane@company.com"
                     className="w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-[15px] text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
-                    disabled={state === "loading"}
+                    disabled={isBusy}
                     autoComplete="email"
                     required
                   />
@@ -218,9 +334,102 @@ export function AppFeedbackForm(props: Props) {
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder="What were you trying to do? What did you expect? What actually happened?"
                   className="min-h-[220px] w-full rounded-[1.5rem] border border-slate-200 bg-white px-4 py-4 text-[15px] leading-relaxed text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
-                  disabled={state === "loading"}
+                  disabled={isBusy}
                   required
                 />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Add a screenshot (optional)
+                </label>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept={ACCEPTED_IMAGE_TYPES.join(",")}
+                  className="hidden"
+                  onChange={(event) => selectImage(event.target.files?.[0] ?? null)}
+                  disabled={isBusy}
+                />
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => !isBusy && inputRef.current?.click()}
+                  onKeyDown={(event) => {
+                    if (isBusy) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      inputRef.current?.click();
+                    }
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    if (!isBusy) setDragActive(true);
+                  }}
+                  onDragLeave={(event) => {
+                    event.preventDefault();
+                    setDragActive(false);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setDragActive(false);
+                    if (isBusy) return;
+                    selectImage(event.dataTransfer.files?.[0] ?? null);
+                  }}
+                  className={`rounded-[1.5rem] border border-dashed px-5 py-5 transition ${dragActive ? "border-sky-400 bg-sky-50/80" : "border-slate-300 bg-slate-50/75 hover:border-slate-400 hover:bg-white"} ${isBusy ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+                  aria-label="Add a screenshot"
+                >
+                  {selectedImage ? (
+                    <div className="space-y-4">
+                      <div className="overflow-hidden rounded-[1.1rem] border border-slate-200 bg-white">
+                        {imagePreviewUrl ? (
+                          <img
+                            src={imagePreviewUrl}
+                            alt="Screenshot preview"
+                            className="max-h-[260px] w-full object-cover"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.15rem] border border-slate-200 bg-white px-4 py-3">
+                        <div>
+                          <div className="text-[14px] font-medium text-[#011627]">
+                            {selectedImage.name}
+                          </div>
+                          <div className="mt-1 text-[12px] text-slate-500">
+                            {formatFileSize(selectedImage.size)}
+                            {uploadedAttachment ? " - screenshot link ready" : " - uploaded when you send feedback"}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            clearImage();
+                          }}
+                          disabled={isBusy}
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                        >
+                          <X size={14} />
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-3 text-center">
+                      <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm">
+                        <ImagePlus className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-[15px] font-medium text-[#011627]">
+                          Drop a screenshot here or click to browse
+                        </div>
+                        <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+                          PNG, JPG, or WebP up to 8 MB. We upload it when you send feedback and include the hosted link in the email.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {state === "error" ? (
@@ -232,11 +441,15 @@ export function AppFeedbackForm(props: Props) {
 
               <button
                 type="submit"
-                disabled={state === "loading"}
+                disabled={isBusy}
                 className="doc-button inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Send size={16} />
-                {state === "loading" ? "Sending..." : "Send feedback"}
+                {state === "loading" ? (
+                  <LoaderCircle size={16} className="animate-spin" />
+                ) : (
+                  <Send size={16} />
+                )}
+                {submitLabel}
               </button>
             </form>
           )}

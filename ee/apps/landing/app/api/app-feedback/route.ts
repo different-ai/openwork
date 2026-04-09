@@ -1,5 +1,13 @@
 import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
 
+type FeedbackAttachment = {
+  name?: string;
+  fileKey?: string;
+  accessUrl?: string;
+  size?: number;
+  contentType?: string;
+};
+
 type FeedbackContext = {
   source?: string;
   entrypoint?: string;
@@ -18,6 +26,7 @@ type FeedbackPayload = {
   name?: string;
   email?: string;
   message?: string;
+  attachments?: FeedbackAttachment[];
   website?: string;
   startedAt?: number | string;
   context?: FeedbackContext;
@@ -64,6 +73,37 @@ function formatDiagnosticsSummary(context: ReturnType<typeof sanitizeContext>) {
   return lines.map(([label, value]) => `${label}: ${value}`).join("\n");
 }
 
+function sanitizeAttachments(input: FeedbackAttachment[] | undefined) {
+  return (Array.isArray(input) ? input : [])
+    .slice(0, 3)
+    .map((attachment) => ({
+      name: sanitizeValue(attachment?.name, 240),
+      fileKey: sanitizeValue(attachment?.fileKey, 512),
+      accessUrl: sanitizeValue(attachment?.accessUrl, 1200),
+      size:
+        typeof attachment?.size === "number" && Number.isFinite(attachment.size) && attachment.size > 0
+          ? Math.round(attachment.size)
+          : 0,
+      contentType: sanitizeValue(attachment?.contentType, 120),
+    }))
+    .filter((attachment) => attachment.fileKey && attachment.accessUrl);
+}
+
+function formatFeedbackMessage(
+  message: string,
+  attachments: ReturnType<typeof sanitizeAttachments>,
+) {
+  if (!attachments.length) return message;
+
+  const attachmentLines = attachments.map((attachment, index) => {
+    const label = attachments.length === 1 ? "Screenshot" : `Screenshot ${index + 1}`;
+    const suffix = attachment.name ? ` (${attachment.name})` : "";
+    return `${label}${suffix}: ${attachment.accessUrl}`;
+  });
+
+  return `${message}\n\n${attachmentLines.join("\n")}`;
+}
+
 export async function POST(request: Request) {
   const originCheck = validateTrustedOrigin(request);
   if (!originCheck.ok) {
@@ -104,7 +144,7 @@ export async function POST(request: Request) {
   let payload: FeedbackPayload;
   try {
     const raw = await request.text();
-    if (raw.length > 8000) {
+    if (raw.length > 16000) {
       return jsonResponse(request, { error: "Request payload is too large." }, 413);
     }
     payload = JSON.parse(raw) as FeedbackPayload;
@@ -123,6 +163,7 @@ export async function POST(request: Request) {
   const message = sanitizeValue(payload.message, 5000);
   const name = sanitizeValue(payload.name, 120);
   const email = sanitizeValue(payload.email, 240);
+  const attachments = sanitizeAttachments(payload.attachments);
 
   if (!name) {
     return jsonResponse(request,
@@ -148,14 +189,16 @@ export async function POST(request: Request) {
   const context = sanitizeContext(payload.context);
   const diagnosticsSummary = formatDiagnosticsSummary(context);
   const submittedAt = new Date().toISOString();
+  const formattedMessage = formatFeedbackMessage(message, attachments);
 
   if (process.env.NODE_ENV === "development") {
     console.log("[DEV] Skipping Loops app feedback email", {
       internalEmail,
       transactionalId,
-      message,
+      message: formattedMessage,
       name,
       email,
+      attachments,
       context,
     });
     return jsonResponse(request, { ok: true });
@@ -173,7 +216,7 @@ export async function POST(request: Request) {
       dataVariables: {
         name,
         email,
-        message,
+        message: formattedMessage,
         source: context.source || "openwork-app",
         entrypoint: context.entrypoint || "unknown",
         deployment: context.deployment || "desktop",
