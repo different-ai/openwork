@@ -35,6 +35,7 @@ export const metadata = {
 const protectedRoutes = [
   { path: "/api/enterprise-contact", method: "POST" as const },
   { path: "/api/app-feedback", method: "POST" as const },
+  { path: "/api/app-feedback/upload", method: "POST" as const },
 ];
 
 export default function RootLayout({
