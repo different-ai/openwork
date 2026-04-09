@@ -1085,16 +1085,17 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     "ow-soft-card rounded-[28px] p-5 md:p-6";
   const settingsPanelSoftClass =
     "ow-soft-card-quiet rounded-2xl p-4";
+  // Keep Cloud badges and controls on design-language tokens so dark mode preserves contrast.
   const headerBadgeClass =
-    "inline-flex min-h-8 items-center gap-2 rounded-xl bg-[#f3f4f6] px-3 text-[13px] font-medium text-dls-text";
+    "inline-flex min-h-8 items-center gap-2 rounded-xl border border-dls-border bg-dls-hover px-3 text-[13px] font-medium text-dls-text shadow-sm";
   const headerStatusBadgeClass =
-    "inline-flex min-h-10 min-w-[132px] items-center justify-center gap-2 rounded-2xl bg-[#f3f4f6] px-4 text-center text-sm font-medium text-dls-text";
+    "inline-flex min-h-10 min-w-[132px] items-center justify-center gap-2 rounded-2xl border border-dls-border bg-dls-hover px-4 text-center text-sm font-medium text-dls-text shadow-sm";
   const sectionPillClass =
-    "inline-flex items-center gap-1.5 rounded-full bg-[#f3f4f6] px-2.5 py-1 text-[11px] font-medium text-gray-11";
+    "inline-flex items-center gap-1.5 rounded-full border border-dls-border bg-dls-hover px-2.5 py-1 text-[11px] font-medium text-dls-secondary";
   const softNoticeClass =
-    "rounded-xl bg-[#f8fafc] px-3 py-2 text-xs text-gray-11";
+    "rounded-xl border border-dls-border bg-dls-hover px-3 py-2 text-xs text-dls-secondary";
   const quietControlClass =
-    "bg-white/90 text-dls-text border border-black/8 shadow-[0_1px_2px_rgba(17,24,39,0.06)]";
+    "border border-dls-border bg-dls-hover text-dls-text shadow-sm";
 
   return (
     <div class="space-y-6">
