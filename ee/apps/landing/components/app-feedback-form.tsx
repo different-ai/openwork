@@ -339,99 +339,6 @@ export function AppFeedbackForm(props: Props) {
                 />
               </div>
 
-              <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  Add a screenshot (optional)
-                </label>
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept={ACCEPTED_IMAGE_TYPES.join(",")}
-                  className="hidden"
-                  onChange={(event) => selectImage(event.target.files?.[0] ?? null)}
-                  disabled={isBusy}
-                />
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => !isBusy && inputRef.current?.click()}
-                  onKeyDown={(event) => {
-                    if (isBusy) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      inputRef.current?.click();
-                    }
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    if (!isBusy) setDragActive(true);
-                  }}
-                  onDragLeave={(event) => {
-                    event.preventDefault();
-                    setDragActive(false);
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    setDragActive(false);
-                    if (isBusy) return;
-                    selectImage(event.dataTransfer.files?.[0] ?? null);
-                  }}
-                  className={`rounded-[1.5rem] border border-dashed px-5 py-5 transition ${dragActive ? "border-sky-400 bg-sky-50/80" : "border-slate-300 bg-slate-50/75 hover:border-slate-400 hover:bg-white"} ${isBusy ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
-                  aria-label="Add a screenshot"
-                >
-                  {selectedImage ? (
-                    <div className="space-y-4">
-                      <div className="overflow-hidden rounded-[1.1rem] border border-slate-200 bg-white">
-                        {imagePreviewUrl ? (
-                          <img
-                            src={imagePreviewUrl}
-                            alt="Screenshot preview"
-                            className="max-h-[260px] w-full object-cover"
-                          />
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.15rem] border border-slate-200 bg-white px-4 py-3">
-                        <div>
-                          <div className="text-[14px] font-medium text-[#011627]">
-                            {selectedImage.name}
-                          </div>
-                          <div className="mt-1 text-[12px] text-slate-500">
-                            {formatFileSize(selectedImage.size)}
-                            {uploadedAttachment ? " - screenshot link ready" : " - uploaded when you send feedback"}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            clearImage();
-                          }}
-                          disabled={isBusy}
-                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
-                        >
-                          <X size={14} />
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center gap-3 text-center">
-                      <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm">
-                        <ImagePlus className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <div className="text-[15px] font-medium text-[#011627]">
-                          Drop a screenshot here or click to browse
-                        </div>
-                        <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-                          PNG, JPG, or WebP up to 8 MB. We upload it when you send feedback and include the hosted link in the email.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
               {state === "error" ? (
                 <div className="flex items-start gap-3 rounded-[1.25rem] border border-red-200 bg-red-50/90 px-4 py-3 text-[13px] leading-relaxed text-red-700">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -478,6 +385,100 @@ export function AppFeedbackForm(props: Props) {
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="mt-5 border-t border-white/10 pt-5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">
+              Screenshot
+            </div>
+            <p className="mt-2 text-[13px] leading-relaxed text-slate-300">
+              Optional. Upload one image and we will include its hosted link in the feedback email.
+            </p>
+            <input
+              ref={inputRef}
+              type="file"
+              accept={ACCEPTED_IMAGE_TYPES.join(",")}
+              className="hidden"
+              onChange={(event) => selectImage(event.target.files?.[0] ?? null)}
+              disabled={isBusy}
+            />
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => !isBusy && inputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (isBusy) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  inputRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                if (!isBusy) setDragActive(true);
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                setDragActive(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragActive(false);
+                if (isBusy) return;
+                selectImage(event.dataTransfer.files?.[0] ?? null);
+              }}
+              className={`mt-3 rounded-[1.1rem] border border-dashed p-3 transition ${dragActive ? "border-sky-300 bg-sky-400/10" : "border-white/15 bg-white/[0.04] hover:border-white/30 hover:bg-white/[0.06]"} ${isBusy ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+              aria-label="Add a screenshot"
+            >
+              {selectedImage ? (
+                <div className="flex items-center gap-3">
+                  <div className="h-14 w-14 overflow-hidden rounded-xl border border-white/10 bg-white/5 shrink-0">
+                    {imagePreviewUrl ? (
+                      <img
+                        src={imagePreviewUrl}
+                        alt="Screenshot preview"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-white">
+                      {selectedImage.name}
+                    </div>
+                    <div className="mt-1 text-[12px] text-slate-300">
+                      {formatFileSize(selectedImage.size)}
+                      {uploadedAttachment ? " - link ready" : " - uploads on send"}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      clearImage();
+                    }}
+                    disabled={isBusy}
+                    className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2.5 py-1.5 text-[12px] font-medium text-slate-200 transition hover:border-white/30 hover:bg-white/10 hover:text-white"
+                  >
+                    <X size={13} />
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-sky-200">
+                    <ImagePlus className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-medium text-white">
+                      Drop an image here or click to browse
+                    </div>
+                    <div className="mt-1 text-[12px] text-slate-300">
+                      PNG, JPG, or WebP up to 8 MB.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </aside>
       </div>
