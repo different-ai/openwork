@@ -333,6 +333,72 @@ body {
     color: #1d4ed8;
 }
 
+.den-social-button {
+    width: 100%;
+}
+
+.den-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--dls-text-secondary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.den-divider::before,
+.den-divider::after {
+    content: "";
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--dls-border);
+}
+
+.den-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--dls-text-secondary);
+    font-size: 0.92rem;
+}
+
+.den-bullet-list {
+    display: grid;
+    gap: 0.8rem;
+}
+
+.den-bullet-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    color: var(--dls-text-secondary);
+    font-size: 0.95rem;
+    line-height: 1.65;
+}
+
+.den-bullet-dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    margin-top: 0.55rem;
+    border-radius: 9999px;
+    flex: 0 0 auto;
+    background: #cbd5e1;
+}
+
+.den-link-inline {
+    color: var(--dls-text-primary);
+    font-weight: 600;
+    text-decoration: none;
+    transition: opacity 0.2s ease;
+}
+
+.den-link-inline:hover {
+    opacity: 0.72;
+}
+
 .ow-shell {
     position: relative;
     min-height: 100vh;

@@ -1,1 +1,2 @@
-export * from "./typeid.js";
+export * from "./typeid"
+export * from "./skill-markdown"

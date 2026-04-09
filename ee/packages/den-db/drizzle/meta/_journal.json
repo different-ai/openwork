@@ -1,0 +1,69 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1775077000001,
+      "tag": "0001_desktop_handoff_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1775077000002,
+      "tag": "0002_worker_activity_heartbeat",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1775077000003,
+      "tag": "0003_rate_limit",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1775077000004,
+      "tag": "0004_organization_plugin",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1775077000005,
+      "tag": "0005_temp_template_sharing",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1775077000006,
+      "tag": "0006_skill_hub",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1775170250887,
+      "tag": "0007_organization_metadata_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1775261156284,
+      "tag": "0008_cynical_boomerang",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1775350000000,
+      "tag": "0009_api_keys",
+      "breakpoints": true
+    }
+  ]
+}

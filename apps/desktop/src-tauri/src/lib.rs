@@ -5,7 +5,6 @@ mod engine;
 mod fs;
 mod opencode_router;
 mod openwork_server;
-mod opkg;
 mod orchestrator;
 mod paths;
 mod platform;
@@ -32,7 +31,6 @@ use commands::opencode_router::{
     opencodeRouter_stop,
 };
 use commands::openwork_server::{openwork_server_info, openwork_server_restart};
-use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
     orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
     orchestrator_workspace_activate, sandbox_cleanup_openwork_containers, sandbox_debug_probe,
@@ -40,15 +38,16 @@ use commands::orchestrator::{
 };
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::skills::{
-    install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
+    import_skill, install_skill_template, list_local_skills, read_local_skill, uninstall_skill,
+    write_local_skill,
 };
 use commands::updater::updater_environment;
 use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
     workspace_export_config, workspace_forget, workspace_import_config, workspace_openwork_read,
-    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active,
-    workspace_set_selected, workspace_update_display_name, workspace_update_remote,
+    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active, workspace_set_selected,
+    workspace_update_display_name, workspace_update_remote,
 };
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
@@ -202,7 +201,6 @@ pub fn run() {
             opencode_command_delete,
             workspace_openwork_read,
             workspace_openwork_write,
-            opkg_install,
             import_skill,
             install_skill_template,
             list_local_skills,

@@ -5,6 +5,7 @@ export type DenOrgSummary = {
   logo: string | null;
   metadata: string | null;
   role: string;
+  orgMemberId: string;
   membershipId: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -34,6 +35,22 @@ export type DenOrgInvitation = {
   createdAt: string | null;
 };
 
+export type DenOrgTeam = {
+  id: string;
+  name: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  memberIds: string[];
+};
+
+export type DenCurrentMemberTeam = {
+  id: string;
+  name: string;
+  organizationId: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type DenInvitationPreview = {
   invitation: {
     id: string;
@@ -60,6 +77,29 @@ export type DenOrgRole = {
   updatedAt: string | null;
 };
 
+export type DenOrgApiKey = {
+  id: string;
+  configId: string;
+  name: string | null;
+  start: string | null;
+  prefix: string | null;
+  enabled: boolean;
+  rateLimitEnabled: boolean;
+  rateLimitMax: number | null;
+  rateLimitTimeWindow: number | null;
+  lastRequest: string | null;
+  expiresAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  owner: {
+    userId: string;
+    memberId: string;
+    name: string;
+    email: string;
+    image: string | null;
+  };
+};
+
 export type DenOrgContext = {
   organization: {
     id: string;
@@ -80,6 +120,8 @@ export type DenOrgContext = {
   members: DenOrgMember[];
   invitations: DenOrgInvitation[];
   roles: DenOrgRole[];
+  teams: DenOrgTeam[];
+  currentMemberTeams: DenCurrentMemberTeam[];
 };
 
 export const DEN_ROLE_PERMISSION_OPTIONS = {
@@ -141,6 +183,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean) {
     canCancelInvitations: isAdmin,
     canManageMembers: isOwner,
     canManageRoles: isOwner,
+    canManageTeams: isAdmin,
+    canManageApiKeys: isAdmin,
   };
 }
 
@@ -180,8 +224,56 @@ export function getCustomLlmProvidersRoute(orgSlug: string): string {
   return `${getOrgDashboardRoute(orgSlug)}/custom-llm-providers`;
 }
 
+export function getLlmProvidersRoute(orgSlug: string): string {
+  return getCustomLlmProvidersRoute(orgSlug);
+}
+
+export function getLlmProviderRoute(orgSlug: string, llmProviderId: string): string {
+  return `${getLlmProvidersRoute(orgSlug)}/${encodeURIComponent(llmProviderId)}`;
+}
+
+export function getEditLlmProviderRoute(orgSlug: string, llmProviderId: string): string {
+  return `${getLlmProviderRoute(orgSlug, llmProviderId)}/edit`;
+}
+
+export function getNewLlmProviderRoute(orgSlug: string): string {
+  return `${getLlmProvidersRoute(orgSlug)}/new`;
+}
+
 export function getBillingRoute(orgSlug: string): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
+}
+
+export function getApiKeysRoute(orgSlug: string): string {
+  return `${getOrgDashboardRoute(orgSlug)}/api-keys`;
+}
+
+export function getSkillHubsRoute(orgSlug: string): string {
+  return `${getOrgDashboardRoute(orgSlug)}/skill-hubs`;
+}
+
+export function getSkillHubRoute(orgSlug: string, skillHubId: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/${encodeURIComponent(skillHubId)}`;
+}
+
+export function getEditSkillHubRoute(orgSlug: string, skillHubId: string): string {
+  return `${getSkillHubRoute(orgSlug, skillHubId)}/edit`;
+}
+
+export function getNewSkillHubRoute(orgSlug: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/new`;
+}
+
+export function getSkillDetailRoute(orgSlug: string, skillId: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/skills/${encodeURIComponent(skillId)}`;
+}
+
+export function getEditSkillRoute(orgSlug: string, skillId: string): string {
+  return `${getSkillDetailRoute(orgSlug, skillId)}/edit`;
+}
+
+export function getNewSkillRoute(orgSlug: string): string {
+  return `${getSkillHubsRoute(orgSlug)}/skills/new`;
 }
 
 export function parseOrgListPayload(payload: unknown): {
@@ -203,8 +295,9 @@ export function parseOrgListPayload(payload: unknown): {
       const name = asString(entry.name);
       const slug = asString(entry.slug);
       const role = asString(entry.role);
+      const orgMemberId = asString(entry.orgMemberId);
       const membershipId = asString(entry.membershipId);
-      if (!id || !name || !slug || !role || !membershipId) {
+      if (!id || !name || !slug || !role || !orgMemberId || !membershipId) {
         return null;
       }
 
@@ -215,6 +308,7 @@ export function parseOrgListPayload(payload: unknown): {
         logo: asString(entry.logo),
         metadata: asString(entry.metadata),
         role,
+        orgMemberId,
         membershipId,
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
@@ -336,6 +430,53 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
         .filter((entry): entry is DenOrgRole => entry !== null)
     : [];
 
+  const teams = Array.isArray(payload.teams)
+    ? payload.teams
+        .map((entry) => {
+          if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") {
+            return null;
+          }
+
+          const memberIds = Array.isArray(entry.memberIds)
+            ? entry.memberIds.filter((value): value is string => typeof value === "string")
+            : [];
+
+          return {
+            id: entry.id,
+            name: entry.name,
+            createdAt: asIsoString(entry.createdAt),
+            updatedAt: asIsoString(entry.updatedAt),
+            memberIds,
+          } satisfies DenOrgTeam;
+        })
+        .filter((entry): entry is DenOrgTeam => entry !== null)
+    : [];
+
+  const currentMemberTeams = Array.isArray(payload.currentMemberTeams)
+    ? payload.currentMemberTeams
+        .map((entry) => {
+          if (!isRecord(entry)) {
+            return null;
+          }
+
+          const id = asString(entry.id);
+          const name = asString(entry.name);
+          const organizationId = asString(entry.organizationId);
+          if (!id || !name || !organizationId) {
+            return null;
+          }
+
+          return {
+            id,
+            name,
+            organizationId,
+            createdAt: asIsoString(entry.createdAt),
+            updatedAt: asIsoString(entry.updatedAt),
+          } satisfies DenCurrentMemberTeam;
+        })
+        .filter((entry): entry is DenCurrentMemberTeam => entry !== null)
+    : [];
+
   return {
     organization: {
       id: organizationId,
@@ -356,6 +497,8 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     members,
     invitations,
     roles,
+    teams,
+    currentMemberTeams,
   };
 }
 
@@ -393,4 +536,53 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
       slug: organizationSlug,
     },
   };
+}
+
+export function parseOrgApiKeysPayload(payload: unknown): DenOrgApiKey[] {
+  if (!isRecord(payload) || !Array.isArray(payload.apiKeys)) {
+    return [];
+  }
+
+  return payload.apiKeys
+    .map((entry) => {
+      if (!isRecord(entry) || !isRecord(entry.owner)) {
+        return null;
+      }
+
+      const id = asString(entry.id);
+      const configId = asString(entry.configId);
+      const owner = entry.owner;
+      const ownerUserId = asString(owner.userId);
+      const ownerMemberId = asString(owner.memberId);
+      const ownerName = asString(owner.name);
+      const ownerEmail = asString(owner.email);
+
+      if (!id || !configId || !ownerUserId || !ownerMemberId || !ownerName || !ownerEmail) {
+        return null;
+      }
+
+      return {
+        id,
+        configId,
+        name: asString(entry.name),
+        start: asString(entry.start),
+        prefix: asString(entry.prefix),
+        enabled: asBoolean(entry.enabled),
+        rateLimitEnabled: asBoolean(entry.rateLimitEnabled),
+        rateLimitMax: typeof entry.rateLimitMax === "number" ? entry.rateLimitMax : null,
+        rateLimitTimeWindow: typeof entry.rateLimitTimeWindow === "number" ? entry.rateLimitTimeWindow : null,
+        lastRequest: asIsoString(entry.lastRequest),
+        expiresAt: asIsoString(entry.expiresAt),
+        createdAt: asIsoString(entry.createdAt),
+        updatedAt: asIsoString(entry.updatedAt),
+        owner: {
+          userId: ownerUserId,
+          memberId: ownerMemberId,
+          name: ownerName,
+          email: ownerEmail,
+          image: asString(owner.image),
+        },
+      } satisfies DenOrgApiKey;
+    })
+    .filter((entry): entry is DenOrgApiKey => entry !== null);
 }

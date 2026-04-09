@@ -551,9 +551,9 @@ export function createModelConfigStore(options: {
     const modelInfo = findProviderModel(ref);
     if (!modelInfo) {
       return {
-        title: "Model behavior",
+        title: t("app.model_behavior_title", currentLocale()),
         label: formatGenericBehaviorLabel(value),
-        description: "Choose the model first to see provider-specific behavior controls.",
+        description: t("app.model_behavior_desc", currentLocale()),
         options: [],
       };
     }
@@ -1070,7 +1070,7 @@ export function createModelConfigStore(options: {
         const content = formatConfigWithDefaultModel(configFile.content, nextModel);
         const result = await writeOpencodeConfig("project", root, content);
         if (!result.ok) {
-          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+          throw new Error(result.stderr || result.stdout || t("app.error_update_opencode_json", currentLocale()));
         }
         options.setLastKnownConfigSnapshot(getConfigSnapshot(content));
         if (workspaceId) {
@@ -1201,7 +1201,7 @@ export function createModelConfigStore(options: {
 
         if (workspace.workspaceType !== "local" || !root || !isTauriRuntime()) {
           throw new Error(
-            "Auto context compaction can only be changed for a local workspace or a writable OpenWork server workspace.",
+            t("app.error_auto_compact_scope", currentLocale()),
           );
         }
 
@@ -1211,7 +1211,7 @@ export function createModelConfigStore(options: {
           const content = formatConfigWithAutoCompactContext(configFile.content, nextValue);
           const result = await writeOpencodeConfig("project", root, content);
           if (!result.ok) {
-            throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+            throw new Error(result.stderr || result.stdout || t("app.error_update_opencode_json", currentLocale()));
           }
           options.setLastKnownConfigSnapshot(getConfigSnapshot(content));
           options.markOpencodeConfigReloadRequired();

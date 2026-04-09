@@ -11,6 +11,7 @@ import {
   landingDemoFlows,
   landingDemoFlowTimes
 } from "./landing-demo-flows";
+import { PricingGrid } from "./pricing-grid";
 import { LandingSharePackageCard } from "./landing-share-package-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
@@ -20,6 +21,7 @@ type Props = {
   stars: string;
   downloadHref: string;
   callHref: string;
+  windowsCheckoutUrl: string;
   isMobileVisitor: boolean;
 };
 
@@ -70,8 +72,6 @@ export function LandingHome(props: Props) {
     [activeDemoId]
   );
 
-  const downloadLinkProps = externalLinkProps(props.downloadHref);
-  const callLinkProps = externalLinkProps(props.callHref);
   const primaryCtaHref = props.isMobileVisitor
     ? "https://app.openworklabs.com"
     : "/download";
@@ -108,6 +108,14 @@ export function LandingHome(props: Props) {
               own keys, and share your setups seamlessly with your team.
             </p>
 
+            <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-gray-500 md:text-[14px]">
+              <span>Solo free forever</span>
+              <span aria-hidden="true">•</span>
+              <span>Workers $50/month</span>
+              <span aria-hidden="true">•</span>
+              <span>Enterprise talk to us</span>
+            </div>
+
             <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <a
@@ -118,11 +126,10 @@ export function LandingHome(props: Props) {
                   {primaryCtaLabel} <Download size={18} />
                 </a>
                 <a
-                  href={props.callHref}
+                  href="/pricing"
                   className="secondary-button"
-                  {...callLinkProps}
                 >
-                  Contact sales
+                  See pricing
                 </a>
               </div>
 
@@ -247,8 +254,8 @@ export function LandingHome(props: Props) {
               </div>
               <h2 className="mb-3 text-xl font-medium tracking-tight">Local AI worker</h2>
               <p className="mb-6 flex-1 text-sm leading-relaxed text-gray-500">
-                Start free on desktop with no signup, then automate email, Slack,
-                and the work you do every day.
+                Start free on desktop forever with macOS and Linux downloads,
+                then automate email, Slack, and the work you do every day.
               </p>
               <div>
                 <a href="/download" className="secondary-button">Learn more</a>
@@ -262,8 +269,8 @@ export function LandingHome(props: Props) {
               </div>
               <h2 className="mb-3 text-xl font-medium tracking-tight">Hosted sandboxed workers</h2>
               <p className="mb-6 flex-1 text-sm leading-relaxed text-gray-500">
-                Share your setup with your team and run your local setup in the
-                cloud.
+                Workers are disabled by default. Purchase one for $50/month when
+                you need hosted runtime.
               </p>
               <div>
                 <a href="/den" className="secondary-button">Learn more</a>
@@ -277,13 +284,21 @@ export function LandingHome(props: Props) {
               </div>
               <h2 className="mb-3 text-xl font-medium tracking-tight">Safe workflow sharing</h2>
               <p className="mb-6 flex-1 text-sm leading-relaxed text-gray-500">
-                Deploy on your infrastructure. Full audit trails, admin controls,
-                and data that never leaves your network.
+                Deploy on your infrastructure. Enterprise licensing includes
+                Windows support plus rollout guidance.
               </p>
               <div>
                 <a href="/enterprise" className="secondary-button">Learn more</a>
               </div>
             </div>
+          </section>
+
+          <section className="landing-shell rounded-[2.5rem] p-8 md:p-12">
+            <PricingGrid
+              windowsCheckoutUrl={props.windowsCheckoutUrl}
+              callUrl={props.callHref}
+              showHeader={true}
+            />
           </section>
 
           <section className="landing-shell-soft rounded-[2.5rem] p-8 md:p-12">

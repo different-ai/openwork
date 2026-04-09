@@ -72,6 +72,10 @@ function startDeepLinkBridge() {
 
 startDeepLinkBridge();
 
+if (import.meta.env.DEV) {
+  await import("./solid-devtools-dev");
+}
+
 const RouterComponent = isTauriRuntime() ? HashRouter : Router;
 
 function shouldOpenInCurrentTab(url: string) {

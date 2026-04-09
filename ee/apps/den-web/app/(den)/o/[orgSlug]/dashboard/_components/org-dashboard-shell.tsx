@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
+  BookOpen,
   Bot,
-  ChevronDown,
   CreditCard,
   Cpu,
   FileText,
   Home,
+  KeyRound,
   LogOut,
   MessageSquare,
   Share2,
@@ -19,11 +20,14 @@ import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import {
   formatRoleLabel,
   getBackgroundAgentsRoute,
+  getApiKeysRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getOrgAccessFlags,
   getMembersRoute,
   getOrgDashboardRoute,
   getSharedSetupsRoute,
+  getSkillHubsRoute,
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { OPENWORK_DOCS_URL, buildDenFeedbackUrl } from "./shared-setup-data";
@@ -94,11 +98,17 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getMembersRoute(orgSlug))) {
     return "Members";
   }
+  if (pathname.startsWith(getApiKeysRoute(orgSlug))) {
+    return "API Keys";
+  }
   if (pathname.startsWith(getBackgroundAgentsRoute(orgSlug))) {
     return "Shared Workspaces";
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
-    return "Custom LLMs";
+    return "LLM Providers";
+  }
+  if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
+    return "Skill Hubs";
   }
   if (pathname.startsWith(getBillingRoute(orgSlug)) || pathname === "/checkout") {
     return "Billing";
@@ -113,13 +123,17 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const {
     activeOrg,
     orgDirectory,
+    orgContext,
     orgBusy,
     orgError,
-    mutationBusy,
-    createOrganization,
     switchOrganization,
   } = useOrgDashboard();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+  );
 
   const pageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
   const feedbackHref = buildDenFeedbackUrl({
@@ -139,22 +153,35 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       icon: Share2,
     },
     {
-      href: activeOrg ? getMembersRoute(activeOrg.slug) : "#",
-      label: "Members",
-      icon: Users,
-    },
-    {
       href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
       label: "Shared Workspace",
       icon: Bot,
       badge: "Alpha",
     },
+      {
+        href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
+        label: "LLM Providers",
+        icon: Cpu,
+        badge: "New",
+      },
     {
-      href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
-      label: "Custom LLMs",
-      icon: Cpu,
-      badge: "Soon",
+      href: activeOrg ? getSkillHubsRoute(activeOrg.slug) : "#",
+      label: "Skill Hubs",
+      icon: BookOpen,
+      badge: "New",
     },
+    {
+      href: activeOrg ? getMembersRoute(activeOrg.slug) : "#",
+      label: "Members",
+      icon: Users,
+    },
+    ...(access.canManageApiKeys
+      ? [{
+          href: activeOrg ? getApiKeysRoute(activeOrg.slug) : "#",
+          label: "API Keys",
+          icon: KeyRound,
+        }]
+      : []),
     {
       href: activeOrg ? getBillingRoute(activeOrg.slug) : "/checkout",
       label: "Billing",

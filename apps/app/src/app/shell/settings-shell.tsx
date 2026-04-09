@@ -17,9 +17,10 @@ import {
 } from "../utils";
 import { usePlatform } from "../context/platform";
 import { buildFeedbackUrl } from "../lib/feedback";
-import { buildDenAuthUrl, readDenSettings } from "../lib/den";
+import { buildDenAuthUrl, readDenSettings, type DenOrgLlmProvider } from "../lib/den";
 import { useConnections } from "../connections/provider";
 import { useExtensions } from "../extensions/provider";
+import type { CloudImportedProvider } from "../cloud/import-state";
 import { getOpenWorkDeployment } from "../lib/openwork-deployment";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 import {
@@ -49,6 +50,7 @@ import Button from "../components/button";
 import SettingsView from "../pages/settings";
 import StatusBar from "../components/status-bar";
 import { ProviderAuthModal,
+  type ProviderAuthProvider,
   type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "../context/providers";
@@ -66,6 +68,7 @@ import {
   Zap,
 } from "lucide-solid";
 import type { Language } from "../../i18n";
+import { t } from "../../i18n";
 
 export type SettingsShellProps = {
   settingsTab: SettingsTab;
@@ -76,13 +79,17 @@ export type SettingsShellProps = {
   providerAuthModalOpen: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
+  providerAuthProviders: ProviderAuthProvider[];
   providerAuthPreferredProviderId: string | null;
   providerAuthWorkerType: "local" | "remote";
+  cloudOrgProviders: DenOrgLlmProvider[];
+  importedCloudProviders: Record<string, CloudImportedProvider>;
   openProviderAuthModal: (options?: {
     returnFocusTarget?: "none" | "composer";
     preferredProviderId?: string;
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
+  removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
@@ -91,8 +98,9 @@ export type SettingsShellProps = {
     code?: string
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   refreshProviders: () => Promise<unknown>;
-  view: View;
   setView: (view: View, sessionId?: string) => void;
   toggleSettings: () => void;
   startupPreference: StartupPreference | null;
@@ -100,7 +108,6 @@ export type SettingsShellProps = {
   clientConnected: boolean;
   busy: boolean;
   busyHint: string | null;
-  busyLabel: string | null;
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
@@ -134,21 +141,16 @@ export type SettingsShellProps = {
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
   reloadError: string | null;
-  workspaceAutoReloadAvailable: boolean;
-  workspaceAutoReloadEnabled: boolean;
-  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
-  workspaceAutoReloadResumeEnabled: boolean;
-  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
   selectedWorkspaceDisplay: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   selectedWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
+  selectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   switchWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
-  openCreateRemoteWorkspace: () => void;
   connectRemoteWorkspace: (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
@@ -161,8 +163,6 @@ export type SettingsShellProps = {
     templateData: unknown;
     organizationName?: string | null;
   }) => Promise<void> | void;
-  importWorkspaceConfig: () => void;
-  importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -170,10 +170,8 @@ export type SettingsShellProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  stopSandbox: (workspaceId: string) => void;
   schedulerPluginInstalled: boolean;
   selectedWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
@@ -195,11 +193,10 @@ export type SettingsShellProps = {
       path?: string;
       note?: string;
     }>;
-  }>;
+  }>; 
   addPlugin: (pluginNameOverride?: string) => void;
-  createSessionAndOpen: () => void;
-  setPrompt: (value: string) => void;
-  selectSession: (sessionId: string) => Promise<void> | void;
+  createSessionInWorkspace: (workspaceId: string, initialPrompt?: string) => Promise<string | undefined> | string | void;
+  createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   opencodeEnableExa: boolean;
@@ -267,27 +264,27 @@ export default function SettingsShell(props: SettingsShellProps) {
   const title = createMemo(() => {
     switch (props.settingsTab) {
       case "automations":
-        return "Automations";
+        return t("settings.tab_automations");
       case "skills":
-        return "Skills";
+        return t("settings.tab_skills");
       case "extensions":
-        return "Extensions";
+        return t("settings.tab_extensions");
       case "messaging":
-        return "Messaging";
+        return t("settings.tab_messaging");
       case "advanced":
-        return "Advanced";
+        return t("settings.tab_advanced");
       case "appearance":
-        return "Appearance";
+        return t("settings.tab_appearance");
       case "updates":
-        return "Updates";
+        return t("settings.tab_updates");
       case "recovery":
-        return "Recovery";
+        return t("settings.tab_recovery");
       case "den":
-        return "Cloud";
+        return t("settings.tab_cloud");
       case "debug":
-        return "Debug";
+        return t("settings.tab_debug");
       default:
-        return "Settings";
+        return t("settings.tab_general");
     }
   });
 
@@ -296,15 +293,15 @@ export default function SettingsShell(props: SettingsShellProps) {
     workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Workspace";
+    t("share.workspace_fallback");
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
       ? workspace.sandboxBackend === "docker" ||
         Boolean(workspace.sandboxRunId?.trim()) ||
         Boolean(workspace.sandboxContainerName?.trim())
-        ? "Sandbox"
-        : "Remote"
-      : "Local";
+        ? t("workspace.sandbox_badge")
+        : t("workspace.remote_badge")
+      : t("workspace.local_badge");
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     void (async () => {
@@ -318,9 +315,7 @@ export default function SettingsShell(props: SettingsShellProps) {
     const id = workspaceId.trim();
     if (!id) return;
     void (async () => {
-      const ready = await Promise.resolve(props.switchWorkspace(id));
-      if (!ready) return;
-      props.createSessionAndOpen();
+      await Promise.resolve(props.createSessionInWorkspace(id));
     })();
   };
 
@@ -356,7 +351,7 @@ export default function SettingsShell(props: SettingsShellProps) {
     methodIndex?: number,
   ): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
-      throw new Error("Provider auth is already in progress.");
+      throw new Error(t("session.provider_auth_in_progress"));
     }
     setProviderAuthActionBusy(true);
     try {
@@ -388,6 +383,19 @@ export default function SettingsShell(props: SettingsShellProps) {
     setProviderAuthActionBusy(true);
     try {
       await props.submitProviderApiKey(providerId, apiKey);
+      props.closeProviderAuthModal();
+    } catch {
+      // Errors are surfaced in the modal.
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
+  const handleCloudProviderConnect = async (cloudProviderId: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      await props.connectCloudProvider(cloudProviderId);
       props.closeProviderAuthModal();
     } catch {
       // Errors are surfaced in the modal.
@@ -444,16 +452,8 @@ export default function SettingsShell(props: SettingsShellProps) {
     props.setSettingsTab(tab);
   };
 
-  const openMessaging = () => {
-    openSettings("messaging");
-  };
-
-  const openExtensions = () => {
-    openSettings("extensions");
-  };
-
   const openAdvanced = () => {
-    openSettings(props.developerMode ? "advanced" : "messaging");
+    openSettings("advanced");
   };
 
   const revealWorkspaceInFinder = async (workspaceId: string) => {
@@ -939,13 +939,13 @@ export default function SettingsShell(props: SettingsShellProps) {
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return props.anyActiveRuns ? "Update ready" : "Install update";
+      return props.anyActiveRuns ? t("session.update_ready") : t("session.install_update");
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? "Downloading" : `Downloading ${percent}%`;
+      return percent == null ? t("session.downloading") : t("session.downloading_percent", undefined, { percent });
     }
-    return "Update available";
+    return t("session.update_available");
   });
 
   const updatePillButtonTone = createMemo(() => {
@@ -999,11 +999,11 @@ export default function SettingsShell(props: SettingsShellProps) {
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? `Update ready ${version}. Stop active runs to restart.`
-        : `Restart to apply update ${version}`;
+        ? t("session.update_ready_stop_runs_title", undefined, { version })
+        : t("session.restart_update_title", undefined, { version });
     }
-    if (state === "downloading") return `Downloading update ${version}`;
-    return `Update available ${version}`;
+    if (state === "downloading") return t("session.downloading_update_title", undefined, { version });
+    return t("session.update_available_title", undefined, { version });
   });
 
   const handleUpdatePillClick = () => {
@@ -1064,7 +1064,7 @@ export default function SettingsShell(props: SettingsShellProps) {
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
-            onSelectWorkspace={props.switchWorkspace}
+            onSelectWorkspace={props.selectWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}
             onOpenRenameWorkspace={props.openRenameWorkspace}
@@ -1080,8 +1080,8 @@ export default function SettingsShell(props: SettingsShellProps) {
         <div
           class="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 md:block"
           onPointerDown={startLeftSidebarResize}
-          title="Resize workspace column"
-          aria-label="Resize workspace column"
+          title={t("session.resize_workspace_column")}
+          aria-label={t("session.resize_workspace_column")}
         />
 
       </aside>
@@ -1134,8 +1134,8 @@ export default function SettingsShell(props: SettingsShellProps) {
               type="button"
               class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
               onClick={props.toggleSettings}
-              title="Close settings"
-              aria-label="Close settings"
+              title={t("dashboard.close_settings")}
+              aria-label={t("dashboard.close_settings")}
             >
               <X size={18} />
             </button>
@@ -1154,8 +1154,13 @@ export default function SettingsShell(props: SettingsShellProps) {
                   providers={props.providers}
                   providerConnectedIds={props.providerConnectedIds}
                   providerAuthBusy={props.providerAuthBusy}
+                  cloudOrgProviders={props.cloudOrgProviders}
+                  importedCloudProviders={props.importedCloudProviders}
                   openProviderAuthModal={props.openProviderAuthModal}
                   disconnectProvider={props.disconnectProvider}
+                  removeCloudProvider={props.removeCloudProvider}
+                  refreshCloudOrgProviders={props.refreshCloudOrgProviders}
+                  connectCloudProvider={props.connectCloudProvider}
                   openworkServerStatus={props.openworkServerStatus}
                   openworkServerUrl={props.openworkServerUrl}
                   openworkServerClient={props.openworkServerClient}
@@ -1236,21 +1241,15 @@ export default function SettingsShell(props: SettingsShellProps) {
                    pluginsAccessHint={props.pluginsAccessHint}
                    canEditPlugins={props.canEditPlugins}
                    canUseGlobalPluginScope={props.canUseGlobalPluginScope}
-                   suggestedPlugins={props.suggestedPlugins}
-                   addPlugin={props.addPlugin}
-                   createSessionAndOpen={props.createSessionAndOpen}
-                   setPrompt={props.setPrompt}
-                   canReloadWorkspace={props.canReloadWorkspace}
-                   reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                    suggestedPlugins={props.suggestedPlugins}
+                    addPlugin={props.addPlugin}
+                    createSessionAndOpen={props.createSessionAndOpen}
+                    canReloadWorkspace={props.canReloadWorkspace}
+                    reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                    reloadBusy={props.reloadBusy}
                    reloadError={props.reloadError}
-                   workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
-                   workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
-                   setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
-                   workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
-                   setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
-                   connectRemoteWorkspace={props.connectRemoteWorkspace}
-                    openTeamBundle={props.openTeamBundle}
+                    connectRemoteWorkspace={props.connectRemoteWorkspace}
+                     openTeamBundle={props.openTeamBundle}
                 />
         </div>
 
@@ -1266,7 +1265,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !props.developerMode}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {props.cacheRepairBusy ? t("dashboard.repairing_cache") : t("dashboard.repair_cache")}
                   </Button>
                   <Button
                     variant="outline"
@@ -1274,7 +1273,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                     onClick={props.stopHost}
                     disabled={props.busy}
                   >
-                    Retry
+                    {t("common.retry")}
                   </Button>
                   <Show when={props.cacheRepairResult}>
                     <span class="text-xs text-red-12/80">
@@ -1294,11 +1293,12 @@ export default function SettingsShell(props: SettingsShellProps) {
           error={props.providerAuthError}
           preferredProviderId={props.providerAuthPreferredProviderId}
           workerType={props.providerAuthWorkerType}
-          providers={props.providers}
+          providers={props.providerAuthProviders}
           connectedProviderIds={props.providerConnectedIds}
           authMethods={props.providerAuthMethods}
           onSelect={handleProviderAuthSelect}
           onSubmitApiKey={handleProviderAuthApiKey}
+          onConnectCloudProvider={handleCloudProviderConnect}
           onSubmitOAuth={handleProviderAuthOAuth}
           onRefreshProviders={props.refreshProviders}
           onClose={() => props.closeProviderAuthModal()}
@@ -1335,6 +1335,11 @@ export default function SettingsShell(props: SettingsShellProps) {
           shareWorkspaceProfileToTeamOrgName={shareWorkspaceProfileTeamOrgName()}
           shareWorkspaceProfileToTeamNeedsSignIn={shareWorkspaceProfileToTeamNeedsSignIn()}
           onShareWorkspaceProfileToTeamSignIn={startShareWorkspaceProfileToTeamSignIn}
+          templateContentSummary={{
+            skillNames: extensions.skills().map((s) => s.name),
+            commandNames: [],
+            configFiles: ["opencode.json", "openwork.json"],
+          }}
           onShareSkillsSet={publishSkillsSetLink}
           shareSkillsSetBusy={shareSkillsSetBusy()}
           shareSkillsSetUrl={shareSkillsSetUrl()}
@@ -1362,62 +1367,8 @@ export default function SettingsShell(props: SettingsShellProps) {
           showSettingsButton={true}
           onSendFeedback={openFeedback}
           onOpenSettings={props.toggleSettings}
-          onOpenMessaging={openMessaging}
-          onOpenProviders={() => props.openProviderAuthModal()}
-          onOpenMcp={openExtensions}
           providerConnectedIds={props.providerConnectedIds}
         />
-        <nav class="hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "automations" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("automations")}
-            >
-              <History size={18} />
-              Automations
-            </button>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "skills" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("skills")}
-            >
-              <Zap size={18} />
-              Skills
-            </button>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "extensions" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("extensions")}
-            >
-              <Box size={18} />
-              Extensions
-            </button>
-            <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "messaging" ? "text-gray-12" : "text-gray-10"
-                }`}
-              onClick={() => openSettings("messaging")}
-            >
-              <MessageCircle size={18} />
-              IDs
-            </button>
-            <Show when={props.developerMode}>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.settingsTab === "advanced" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={openAdvanced}
-              >
-                <SlidersHorizontal size={18} />
-                Advanced
-              </button>
-            </Show>
-          </div>
-        </nav>
       </main>
       </div>
 

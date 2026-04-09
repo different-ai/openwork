@@ -106,10 +106,6 @@ jobs:
             os_type: linux
             target: aarch64-unknown-linux-gnu
             args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
-          - platform: windows-2022
-            os_type: windows
-            target: x86_64-pc-windows-msvc
-            args: "--target x86_64-pc-windows-msvc --bundles msi"
 
     steps:
       - name: Log runner selection
@@ -202,9 +198,6 @@ jobs:
             aarch64-unknown-linux-gnu)
               opencode_asset="opencode-linux-arm64.tar.gz"
               ;;
-            x86_64-pc-windows-msvc)
-              opencode_asset="opencode-windows-x64-baseline.zip"
-              ;;
             *)
               echo "Unsupported target: ${{ matrix.target }}"
               exit 1
@@ -243,9 +236,6 @@ jobs:
           fi
 
           target_name="opencode-${{ matrix.target }}"
-          if [ "${{ matrix.os_type }}" = "windows" ]; then
-            target_name="${target_name}.exe"
-          fi
 
           mkdir -p apps/desktop/src-tauri/sidecars
           cp "$bin_path" "apps/desktop/src-tauri/sidecars/${target_name}"

@@ -1,0 +1,35 @@
+---
+title: "Deploying a shared workspace"
+description: "Launch a cloud worker in OpenWork Cloud and open it from the desktop app"
+---
+
+OpenWork Cloud currently labels shared workers as `Shared Workspaces` in the web dashboard. Once the workspace is ready, the desktop app opens it through the normal remote connect flow.
+
+## Deploy the shared workspace
+
+1. Open your org dashboard and go to `Shared Workspace`.
+2. Click `Add workspace`.
+3. Wait until the status becomes `Ready`.
+4. Click `Connect`.
+
+From the connection drawer you can choose `Open in desktop`, `Open in web`, or copy the `Connection URL` plus `Owner token` / `Client token`.
+
+## Open it from the desktop app
+
+You can open Cloud-hosted workspaces from either place:
+
+1. `Add workspace -> Shared workspaces`
+2. `Settings -> Cloud -> Cloud workers`
+
+Choose the right org, wait for the workspace to be `Ready`, then click `Connect` or `Open`.
+
+## When to use this flow
+
+Use a shared workspace when your team needs a hosted OpenWork runtime, a stable place for long-running tasks or messaging connectors, or one workspace that several people can open from the same org.
+
+## Notes
+
+- This area is currently marked `Alpha` in the Cloud dashboard.
+- A workspace must be `Ready` before the desktop app can open it.
+- OpenWork Cloud plan limits apply to hosted workspaces.
+- If you prefer to self-host, the desktop [Get Started](/get-started) guide still works with `openwork-orchestrator`.

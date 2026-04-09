@@ -4,18 +4,19 @@ import ja from "./locales/ja";
 import zh from "./locales/zh";
 import vi from "./locales/vi";
 import ptBR from "./locales/pt-BR";
+import th from "./locales/th";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th"];
 
 /**
  * Language options for UI - single source of truth
@@ -26,6 +27,7 @@ export const LANGUAGE_OPTIONS = [
   { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
   { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
   { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
+  { value: "th" as Language, label: "ไทย", nativeName: "ไทย" },
 ] as const;
 
 /**
@@ -37,6 +39,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   zh,
   vi,
     "pt-BR": ptBR,
+  th,
 };
 
 /**
@@ -90,21 +93,29 @@ export const setLocale = (newLocale: Language) => {
  * @param localeOverride - Optional locale override (defaults to current locale)
  * @returns Translated string or fallback
  */
-export const t = (key: string, localeOverride?: Language): string => {
+export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
   const loc = localeOverride ?? locale();
 
   // Try target language first
+  let result: string;
   if (TRANSLATIONS[loc]?.[key]) {
-    return TRANSLATIONS[loc][key];
+    result = TRANSLATIONS[loc][key];
+  } else if (loc !== "en" && TRANSLATIONS.en?.[key]) {
+    // Fallback to English
+    result = TRANSLATIONS.en[key];
+  } else {
+    // Final fallback to key itself (prevents raw keys from showing in UI)
+    return key;
   }
 
-  // Fallback to English
-  if (loc !== "en" && TRANSLATIONS.en?.[key]) {
-    return TRANSLATIONS.en[key];
+  // Replace params if provided
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      result = result.replace(`{${k}}`, String(v));
+    }
   }
 
-  // Final fallback to key itself (prevents raw keys from showing in UI)
-  return key;
+  return result;
 };
 
 /**

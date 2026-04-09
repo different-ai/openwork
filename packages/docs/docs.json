@@ -8,9 +8,9 @@
     "dark": "/logo/dark.svg"
   },
   "colors": {
-    "primary": "#0F766E",
-    "light": "#14B8A6",
-    "dark": "#0F766E"
+    "primary": "#011627",
+    "light": "#3b82f6",
+    "dark": "#011627"
   },
   "navigation": {
     "tabs": [
@@ -27,13 +27,13 @@
               "computer-use",
               "sharing-ow-setup",
               "accessing-ow-from-slack",
-              "how-to-automate-your",
               "automating-tasks"
             ]
           },
           {
             "group": "Tutorials",
             "pages": [
+              "how-to-get-an-anthropic-api-key",
               "how-to-connect-a-custom-provider",
               "importing-a-skill"
             ]
@@ -44,6 +44,28 @@
               "missing-docs"
             ]
           }
+        ]
+      },
+      {
+        "tab": "Cloud docs",
+        "pages": [
+          "get-started-cloud",
+          "team-provisioning",
+          "cloud-skill-hubs",
+          "cloud-shared-workspaces",
+          "cloud-llm-providers",
+          "cloud-custom-llm-providers",
+          "cloud-members-and-rbac"
+        ]
+      },
+      {
+        "tab": "Cloud API",
+        "openapi": "https://api.openworklabs.com/openapi.json"
+      },
+      {
+        "tab": "Changelog",
+        "pages": [
+          "changelog"
         ]
       }
     ]
@@ -56,6 +78,10 @@
     {
       "source": "/quickstart",
       "destination": "/get-started"
+    },
+    {
+      "source": "/introduction",
+      "destination": "/get-started-cloud"
     }
   ],
   "errors": {

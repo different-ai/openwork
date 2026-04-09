@@ -10,10 +10,9 @@ import { useDenFlow } from "../_providers/den-flow-provider";
 // Enable with: NEXT_PUBLIC_DEN_MOCK_BILLING=1
 const MOCK_BILLING = process.env.NEXT_PUBLIC_DEN_MOCK_BILLING === "1";
 const MOCK_CHECKOUT_URL = (process.env.NEXT_PUBLIC_DEN_MOCK_CHECKOUT_URL ?? "").trim() || null;
-const TRIAL_DAYS = 14;
 
 function formatSubscriptionStatus(value: string | null | undefined) {
-  if (!value) return "Trial ready";
+  if (!value) return "Purchase required";
   return value
     .split(/[_\s]+/)
     .filter(Boolean)
@@ -60,9 +59,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         featureGateEnabled: true,
         hasActivePlan: false,
         checkoutRequired: true,
-        checkoutUrl: MOCK_CHECKOUT_URL,
-        portalUrl: null,
-        price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
+              checkoutUrl: MOCK_CHECKOUT_URL,
+              portalUrl: null,
+              price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
         subscription: null,
         invoices: [],
         productId: null,
@@ -126,7 +125,18 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   ]);
 
   useEffect(() => {
-    if (!sessionHydrated || !user || resuming || onboardingPending || mockMode || redirectingRef.current) {
+    if (
+      !sessionHydrated ||
+      !user ||
+      resuming ||
+      onboardingPending ||
+      mockMode ||
+      redirectingRef.current ||
+      billingBusy ||
+      billingCheckoutBusy ||
+      !billingSummary ||
+      (billingSummary.featureGateEnabled && !billingSummary.hasActivePlan)
+    ) {
       return;
     }
 
@@ -144,7 +154,19 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
       .finally(() => {
         redirectingRef.current = false;
       });
-  }, [mockMode, onboardingPending, pathname, resolveUserLandingRoute, resuming, router, sessionHydrated, user]);
+  }, [
+    billingBusy,
+    billingCheckoutBusy,
+    billingSummary,
+    mockMode,
+    onboardingPending,
+    pathname,
+    resolveUserLandingRoute,
+    resuming,
+    router,
+    sessionHydrated,
+    user,
+  ]);
 
   if (!sessionHydrated || (!user && !mockMode)) {
     return (
@@ -175,16 +197,16 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[12ch]">Provision shared setups for your team.</h1>
+            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before creating your workspace.</h1>
             <p className="den-copy max-w-2xl">
-              Share your setup across your org, launch background agents in alpha, and prepare for team-wide provider provisioning.
+              Start with one workspace plan for $50/month. Each plan includes up to 5 members and 1 hosted worker.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             {checkoutHref ? (
               <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
-                Start free trial
+                Purchase plan — $50/month
               </a>
             ) : (
               <button
@@ -193,7 +215,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
                 disabled={billingBusy || billingCheckoutBusy}
               >
-                Refresh trial link
+                Refresh purchase link
               </button>
             )}
             <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
@@ -202,9 +224,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
-            <span>{TRIAL_DAYS}-day free trial</span>
+            <span>$50/month per workspace</span>
             <span aria-hidden="true">•</span>
-            <span>{planAmountLabel} after trial</span>
+            <span>{planAmountLabel} billed monthly</span>
             <span aria-hidden="true">•</span>
             <span>{user?.email ?? "Signed in"}</span>
           </div>
@@ -233,7 +255,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Share setup across your team and org</div>
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background agents in alpha for selected workflows</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers for teams, coming soon</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers with team access controls</div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
@@ -244,9 +266,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                   </p>
                 </div>
                 <div className="den-frame-inset rounded-[1.5rem] p-4">
-                  <p className="den-stat-label">Custom LLM providers</p>
+                  <p className="den-stat-label">LLM providers</p>
                   <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
-                    Standardize provider access for your team. Coming soon.
+                    Standardize provider access, model selection, and team rollout.
                   </p>
                 </div>
               </div>
@@ -280,7 +302,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your Cloud plan is active." : `${TRIAL_DAYS}-day free trial before billing starts.`}
+                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to create your first workspace."}
               </p>
             </div>
 
@@ -304,7 +326,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
             <div className="grid gap-3">
               {checkoutHref && !billingSummary.hasActivePlan ? (
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
-                  Start free trial
+                  Purchase plan
                 </a>
               ) : null}
               {billingSummary.portalUrl ? (
@@ -329,7 +351,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 </a>
               ) : null}
               <span>Invoices {billingSummary.invoices.length > 0 ? `(${billingSummary.invoices.length})` : ""}</span>
-              <span>Cancel anytime</span>
+              <span>Monthly billing</span>
             </div>
           </aside>
         </div>

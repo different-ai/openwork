@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenWork",
-  "version": "0.11.196",
+  "version": "0.11.206",
   "identifier": "com.differentai.openwork",
   "build": {
     "beforeDevCommand": "node ./scripts/tauri-before-dev.mjs",
-    "beforeBuildCommand": "pnpm -C ../.. --filter @openwork/desktop run prepare:sidecar && pnpm -w build:ui",
+    "beforeBuildCommand": "node ./scripts/tauri-before-build.mjs",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../app/dist"
   },

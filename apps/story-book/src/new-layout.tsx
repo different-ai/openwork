@@ -2,23 +2,23 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import { Redo2, Search, Undo2, X } from "lucide-solid";
 
 import Button from "../../app/src/app/components/button";
-import CreateWorkspaceModal from "../../app/src/app/components/create-workspace-modal";
 import DenSettingsPanel from "../../app/src/app/components/den-settings-panel";
 import ModelPickerModal from "../../app/src/app/components/model-picker-modal";
-import ShareWorkspaceModal from "../../app/src/app/components/share-workspace-modal";
 import StatusBar from "../../app/src/app/components/status-bar";
 import Composer from "../../app/src/app/components/session/composer";
-import InboxPanel from "../../app/src/app/components/session/inbox-panel";
 import MessageList from "../../app/src/app/components/session/message-list";
 import WorkspaceSessionList from "../../app/src/app/components/session/workspace-session-list";
+import {
+  CreateWorkspaceModal,
+  ShareWorkspaceModal,
+} from "../../app/src/app/workspace";
 import { MCP_QUICK_CONNECT, SUGGESTED_PLUGINS } from "../../app/src/app/constants";
 import { createWorkspaceShellLayout } from "../../app/src/app/lib/workspace-shell-layout";
 import { getModelBehaviorSummary, sanitizeModelBehaviorValue } from "../../app/src/app/lib/model-behavior";
 import type { OpenworkServerClient } from "../../app/src/app/lib/openwork-server";
 import ExtensionsView from "../../app/src/app/pages/extensions";
 import IdentitiesView from "../../app/src/app/pages/identities";
-import ScheduledTasksView from "../../app/src/app/pages/scheduled";
-import SkillsView from "../../app/src/app/pages/skills";
+import AutomationsView from "../../app/src/app/pages/automations";
 import {
   applyThemeMode,
   getInitialThemeMode,
@@ -1493,7 +1493,7 @@ export default function NewLayoutApp() {
                       </Show>
 
                       <Show when={settingsTab() === "automations"}>
-                        <ScheduledTasksView
+                        <AutomationsView
                           jobs={scheduledJobs()}
                           source="remote"
                           sourceReady={true}
@@ -1519,43 +1519,11 @@ export default function NewLayoutApp() {
                       </Show>
 
                       <Show when={settingsTab() === "skills"}>
-                        <SkillsView
-                          workspaceName={activeWorkspace().displayName ?? activeWorkspace().name}
-                          busy={false}
-                          canInstallSkillCreator={true}
-                          canUseDesktopTools={true}
-                          accessHint={null}
-                          refreshSkills={refreshSkills}
-                          refreshHubSkills={refreshHubSkills}
-                          skills={skills()}
-                          skillsStatus="Story-book sandbox loaded."
-                          hubSkills={hubSkills()}
-                          hubSkillsStatus="OpenWork Hub ready."
-                          hubRepo={hubRepo()}
-                          hubRepos={hubRepos()}
-                          importLocalSkill={importLocalSkill}
-                          installSkillCreator={installSkillCreator}
-                          installHubSkill={installHubSkill}
-                          setHubRepo={(repo) =>
-                            setHubRepo(
-                              repo
-                                ? {
-                                    owner: repo.owner?.trim() || initialHubRepo.owner,
-                                    repo: repo.repo?.trim() || initialHubRepo.repo,
-                                    ref: repo.ref?.trim() || initialHubRepo.ref,
-                                  }
-                                : null,
-                            )
-                          }
-                          addHubRepo={addHubRepo}
-                          removeHubRepo={removeHubRepo}
-                          revealSkillsFolder={revealSkillsFolder}
-                          uninstallSkill={uninstallSkill}
-                          readSkill={readSkill}
-                          saveSkill={saveSkill}
-                          createSessionAndOpen={createSessionAndOpen}
-                          setPrompt={(value) => openChatWithPrompt(value, "Skill action moved to chat.")}
-                        />
+                        <div class="rounded-[20px] border border-dls-border bg-dls-surface p-6 text-[14px] text-dls-secondary">
+                          Skills (installed, team catalog, GitHub hub) runs in the full app with{" "}
+                          <code class="rounded bg-dls-hover px-1 py-0.5 font-mono text-[12px]">ExtensionsProvider</code>.
+                          Use the OpenWork app shell to exercise this surface.
+                        </div>
                       </Show>
 
                       <Show when={settingsTab() === "extensions"}>
@@ -1569,7 +1537,6 @@ export default function NewLayoutApp() {
                           mcpServers={storyMcpServers()}
                           mcpStatus="Story-book MCP sandbox ready."
                           mcpLastUpdatedAt={now}
-                          mcpStatuses={storyMcpStatuses()}
                           mcpConnectingName={null}
                           selectedMcp={selectedMcp()}
                           setSelectedMcp={setSelectedMcp}
@@ -1616,13 +1583,8 @@ export default function NewLayoutApp() {
                             developerMode
                           />
                           <Show when={selectedWorkspaceId() === remoteWorkspace.id}>
-                            <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-                              <InboxPanel
-                                id="settings-inbox"
-                                client={mockOpenworkServerClient}
-                                workspaceId={selectedWorkspaceId()}
-                                onToast={(message) => setComposerToast(message)}
-                              />
+                            <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)] text-sm text-dls-secondary">
+                              Remote inbox preview has been removed from the app shell.
                             </div>
                           </Show>
                           <Show when={selectedWorkspaceId() !== remoteWorkspace.id}>
@@ -1709,6 +1671,8 @@ export default function NewLayoutApp() {
           <Show when={!showingSettings()}>
             <Composer
               prompt={composerPrompt()}
+              draftMode="prompt"
+              draftScopeKey="story-book-new-layout-composer"
               developerMode
               busy={false}
               isStreaming={false}
@@ -1733,10 +1697,8 @@ export default function NewLayoutApp() {
                 setAgentPickerOpen(false);
               }}
               setAgentPickerRef={() => undefined}
-              showNotionBanner={false}
-              onNotionBannerClick={() => undefined}
-              toast={composerToast()}
-              onToast={(message) => setComposerToast(message)}
+              notice={composerToast() ? { title: composerToast() } : null}
+              onNotice={(notice) => setComposerToast(notice.title)}
               listAgents={async () => []}
               recentFiles={workingFiles}
               searchFiles={async (query) => {
@@ -1748,7 +1710,9 @@ export default function NewLayoutApp() {
               isSandboxWorkspace={selectedWorkspaceId() === remoteWorkspace.id}
               attachmentsEnabled
               attachmentsDisabledReason={null}
+              skills={[]}
               listCommands={async () => commandOptions}
+              onOpenSettings={() => undefined}
             />
           </Show>
 
@@ -1763,20 +1727,7 @@ export default function NewLayoutApp() {
               setSettingsTab("general");
               setShowingSettings((prev) => !prev);
             }}
-            onOpenMessaging={() => {
-              setSettingsTab("messaging");
-              setShowingSettings(true);
-            }}
-            onOpenProviders={() => {
-              setSettingsTab("general");
-              setShowingSettings(true);
-            }}
-            onOpenMcp={() => {
-              setSettingsTab("extensions");
-              setShowingSettings(true);
-            }}
             providerConnectedIds={["anthropic", "openai"]}
-            mcpStatuses={storyMcpStatuses()}
             statusLabel="Session Ready"
           />
         </main>

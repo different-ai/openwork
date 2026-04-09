@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Search, Share2, Trash2 } from "lucide-react";
+import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
+import { DenButton, buttonVariants } from "../../../../_components/ui/button";
+import { DenInput } from "../../../../_components/ui/input";
 import { requestJson, getErrorMessage } from "../../../../_lib/den-flow";
 import { getMembersRoute } from "../../../../_lib/den-org";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
@@ -41,9 +44,9 @@ function getTemplateAccent(seed: string) {
 }
 
 export function SharedSetupsScreen() {
-  const { orgSlug, activeOrg, orgContext } = useOrgDashboard();
+  const { orgSlug, orgId, activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
-  const { templates, busy, error, reloadTemplates } = useOrgTemplates(orgSlug);
+  const { templates, busy, error, reloadTemplates } = useOrgTemplates(orgId);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -92,8 +95,12 @@ export function SharedSetupsScreen() {
     setDeletingId(templateId);
     setDeleteError(null);
     try {
+      if (!orgId) {
+        throw new Error("Organization not found.");
+      }
+
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates/${encodeURIComponent(templateId)}`,
+        `/v1/orgs/${encodeURIComponent(orgId)}/templates/${encodeURIComponent(templateId)}`,
         { method: "DELETE" },
         12000,
       );
@@ -113,52 +120,28 @@ export function SharedSetupsScreen() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-6 py-8 md:px-8">
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="mb-1 text-[12px] text-gray-400">{activeOrg?.name ?? "OpenWork Cloud"}</p>
-          <h1 className="text-[28px] font-semibold tracking-[-0.5px] text-gray-900">
-            Team Templates
-          </h1>
-          <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-gray-500">
-            Browse the shared setups your team has already published from the desktop app.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <a
-            href={OPENWORK_DOCS_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-          >
-            Learn how
-          </a>
-          <Link
-            href={getMembersRoute(orgSlug)}
-            className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-          >
-            Members
-          </Link>
-          <a
-            href="https://openworklabs.com/download"
-            className="rounded-full bg-gray-900 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-gray-800"
-          >
-            Use desktop app
-          </a>
-        </div>
+    <DashboardPageTemplate
+      icon={Share2}
+      title="Team Templates"
+      description="Browse the shared setups your team has already published from the desktop app."
+      colors={["#FFFBEB", "#78350F", "#F59E0B", "#FDE68A"]}
+    >
+      <div className="mb-4 flex flex-wrap justify-end gap-3">
+        <a href={OPENWORK_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
+          Learn how
+        </a>
+        <a href="https://openworklabs.com/download" className={buttonVariants({ variant: "primary" })}>
+          Use desktop app
+        </a>
       </div>
 
-      <div className="relative mb-6">
-        <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-          <Search className="h-4 w-4 text-gray-400" />
-        </div>
-        <input
+      <div className="mb-6">
+        <DenInput
           type="text"
+          icon={Search}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search templates"
-          className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-4 text-[14px] text-gray-900 outline-none transition-all placeholder:text-gray-400 focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5"
         />
       </div>
 
@@ -233,15 +216,17 @@ export function SharedSetupsScreen() {
                     {activeOrg?.name ?? "Workspace"}
                   </span>
                   {canDelete ? (
-                    <button
-                      type="button"
+                    <DenButton
+                      variant="destructive"
+                      size="sm"
+                      icon={Trash2}
+                      loading={deletingId === template.id}
+                      disabled={deletingId !== null}
                       onClick={() => void deleteTemplate(template.id)}
-                      disabled={deletingId === template.id}
-                      className="ml-auto inline-flex items-center gap-1 rounded-full border border-red-200 px-3 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ml-auto"
                     >
-                      <Trash2 className="h-3 w-3" />
-                      {deletingId === template.id ? "Deleting..." : "Delete"}
-                    </button>
+                      Delete
+                    </DenButton>
                   ) : null}
                 </div>
               </article>
@@ -253,6 +238,6 @@ export function SharedSetupsScreen() {
       <p className="mt-6 text-[12px] text-gray-400">
         {orgContext?.members.length ?? 0} members currently have access to this library.
       </p>
-    </div>
+    </DashboardPageTemplate>
   );
 }

@@ -161,7 +161,6 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 export type SettingsTab =
   | "general"
   | "den"
-  | "model"
   | "automations"
   | "skills"
   | "extensions"
@@ -270,6 +269,17 @@ export type HubSkillCard = {
   source: HubSkillRepo & {
     path: string;
   };
+};
+
+/** OpenWork Cloud (Den) org skill surfaced in the Skills catalog (team hub + shared). */
+export type DenOrgSkillCard = {
+  id: string;
+  title: string;
+  description: string | null;
+  skillText: string;
+  hubName: string | null;
+  shared: "org" | "public" | null;
+  updatedAt: string | null;
 };
 
 export type PluginInstallStep = {

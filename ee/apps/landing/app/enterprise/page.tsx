@@ -3,7 +3,7 @@ import { getGithubData } from "../../lib/github";
 
 export const metadata = {
   title: "OpenWork — Enterprise",
-  description: "Secure hosting for safe, permissioned AI employees."
+  description: "Enterprise OpenWork licensing with deployment support, rollout help, and included Windows support."
 };
 
 export default async function Enterprise() {

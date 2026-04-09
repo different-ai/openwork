@@ -1,17 +1,57 @@
-import { For, Show, createMemo, createSignal, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
-import type { HubSkillCard, HubSkillRepo, SkillCard } from "../types";
+import type { DenOrgSkillCard, HubSkillCard, HubSkillRepo, SkillCard } from "../types";
 import { useExtensions } from "../extensions/provider";
+import { usePlatform } from "../context/platform";
 import type { SkillBundleV1 } from "../bundles/types";
+import { saveInstalledSkillToOpenWorkOrg } from "../bundles/skill-org-publish";
 
 import Button from "../components/button";
-import { Copy, Edit2, FolderOpen, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
+import SelectMenu, { type SelectMenuOption } from "../components/select-menu";
+import {
+  ArrowLeft,
+  Cloud,
+  Copy,
+  Edit2,
+  FolderOpen,
+  Loader2,
+  Package,
+  Plus,
+  RefreshCw,
+  Rocket,
+  Search,
+  Share2,
+  Sparkles,
+  Trash2,
+  Upload,
+  Users,
+  X,
+} from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+import { buildDenAuthUrl, createDenClient, DEFAULT_DEN_BASE_URL, readDenSettings, type DenOrgSkillHubSummary } from "../lib/den";
 import { useStatusToasts, type AppStatusToastTone } from "../shell/status-toasts";
+import WorkspaceOptionCard from "../workspace/option-card";
+import {
+  inputClass,
+  modalHeaderButtonClass,
+  modalHeaderClass,
+  modalNoticeErrorClass,
+  modalNoticeSuccessClass,
+  modalOverlayClass,
+  modalShellClass,
+  modalSubtitleClass,
+  modalTitleClass,
+  pillPrimaryClass as sharePillPrimaryClass,
+  pillSecondaryClass as sharePillSecondaryClass,
+  surfaceCardClass,
+  tagClass as shareTagClass,
+} from "../workspace/modal-styles";
 
 type InstallResult = { ok: boolean; message: string };
-type SkillsFilter = "all" | "installed" | "hub";
+type SkillsFilter = "all" | "installed" | "cloud" | "hub";
+type ShareSkillSubView = "chooser" | "public" | "team";
+type CloudSkillInstallState = "available" | "installed" | "update" | "missing_local";
 
 const pageTitleClass = "text-[28px] font-semibold tracking-[-0.5px] text-dls-text";
 const sectionTitleClass = "text-[15px] font-medium tracking-[-0.2px] text-dls-text";
@@ -41,12 +81,12 @@ export type SkillsViewProps = {
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
   accessHint?: string | null;
-  createSessionAndOpen: () => void;
-  setPrompt: (value: string) => void;
+  createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
 };
 
 export default function SkillsView(props: SkillsViewProps) {
   const extensions = useExtensions();
+  const platform = usePlatform();
   const statusToasts = useStatusToasts();
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
@@ -67,9 +107,18 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const [shareTarget, setShareTarget] = createSignal<SkillCard | null>(null);
   const shareOpen = createMemo(() => shareTarget() != null);
+  const [shareSubView, setShareSubView] = createSignal<ShareSkillSubView>("chooser");
   const [shareBusy, setShareBusy] = createSignal(false);
   const [shareUrl, setShareUrl] = createSignal<string | null>(null);
   const [shareError, setShareError] = createSignal<string | null>(null);
+  const [cloudSessionNonce, setCloudSessionNonce] = createSignal(0);
+  const [shareTeamBusy, setShareTeamBusy] = createSignal(false);
+  const [shareTeamError, setShareTeamError] = createSignal<string | null>(null);
+  const [shareTeamSuccess, setShareTeamSuccess] = createSignal<string | null>(null);
+  const [sharePermissionChoice, setSharePermissionChoice] = createSignal("org");
+  const [shareHubsLoading, setShareHubsLoading] = createSignal(false);
+  const [shareHubsError, setShareHubsError] = createSignal<string | null>(null);
+  const [shareManageableHubs, setShareManageableHubs] = createSignal<DenOrgSkillHubSummary[]>([]);
 
   const [selectedSkill, setSelectedSkill] = createSignal<SkillCard | null>(null);
   const [selectedContent, setSelectedContent] = createSignal("");
@@ -79,20 +128,137 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const [installingSkillCreator, setInstallingSkillCreator] = createSignal(false);
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
+  const [installingCloudSkillId, setInstallingCloudSkillId] = createSignal<string | null>(null);
+  const [denUiTick, setDenUiTick] = createSignal(0);
 
   onMount(() => {
     extensions.ensureHubSkillsFresh();
+    extensions.ensureCloudOrgSkillsFresh();
+    const onDenSession = () => {
+      setDenUiTick((n) => n + 1);
+      setCloudSessionNonce((n) => n + 1);
+      void extensions.refreshCloudOrgSkills({ force: true });
+    };
+    window.addEventListener("openwork-den-session-updated", onDenSession);
+    onCleanup(() => window.removeEventListener("openwork-den-session-updated", onDenSession));
   });
 
-  const maskError = (value: unknown) => (value instanceof Error ? value.message : "Something went wrong");
+  const shareCloudSignedIn = createMemo(() => {
+    cloudSessionNonce();
+    return Boolean(readDenSettings().authToken?.trim());
+  });
+
+  const shareTeamOrgLabel = createMemo(() => {
+    cloudSessionNonce();
+    const name = readDenSettings().activeOrgName?.trim();
+    return name || translate("skills.share_team_org_fallback");
+  });
+
+  const shareTeamDisabledReason = createMemo(() => {
+    if (!shareCloudSignedIn()) return null;
+    const settings = readDenSettings();
+    if (!settings.activeOrgId?.trim() && !settings.activeOrgSlug?.trim()) {
+      return translate("skills.share_team_choose_org");
+    }
+    return null;
+  });
+
+  const shareModalSubtitle = createMemo(() => {
+    switch (shareSubView()) {
+      case "public":
+        return translate("skills.share_subtitle_public");
+      case "team":
+        return translate("skills.share_subtitle_team");
+      default:
+        return translate("skills.share_chooser_subtitle");
+    }
+  });
+
+  const sharePermissionOptions = createMemo(
+    (): SelectMenuOption[] => [
+      { value: "private", label: translate("skills.share_team_permission_private") },
+      { value: "org", label: translate("skills.share_team_permission_org") },
+      ...shareManageableHubs().map((h) => ({ value: h.id, label: h.name })),
+    ],
+  );
+
+  createEffect(() => {
+    if (!shareOpen()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      if (shareSubView() !== "chooser") {
+        goBackShareSubView();
+        return;
+      }
+      closeShareLink();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
+
+  createEffect(() => {
+    if (!shareOpen() || shareSubView() !== "team" || !shareCloudSignedIn()) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      setShareHubsLoading(true);
+      setShareHubsError(null);
+      try {
+        const settings = readDenSettings();
+        const token = settings.authToken?.trim() ?? "";
+        if (!token) return;
+
+        let orgId = settings.activeOrgId?.trim() ?? "";
+        const client = createDenClient({ baseUrl: settings.baseUrl, token });
+        if (!orgId) {
+          const res = await client.listOrgs();
+          orgId = res.orgs[0]?.id ?? "";
+        }
+        if (!orgId) {
+          throw new Error(translate("skills.share_team_choose_org"));
+        }
+
+        const hubs = await client.listOrgSkillHubSummaries(orgId);
+        if (cancelled) return;
+        setShareManageableHubs(hubs.filter((h) => h.canManage));
+      } catch (e) {
+        if (!cancelled) {
+          setShareHubsError(maskError(e));
+          setShareManageableHubs([]);
+        }
+      } finally {
+        if (!cancelled) setShareHubsLoading(false);
+      }
+    })();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  const maskError = (value: unknown) => (value instanceof Error ? value.message : translate("common.something_went_wrong"));
   const showToast = (title: string, tone: AppStatusToastTone = "info") => {
     statusToasts.showToast({ title, tone });
+  };
+
+  const resolveSharePermission = () => {
+    const choice = sharePermissionChoice().trim();
+    if (!choice || choice === "org") {
+      return { shared: "org" as const, hubId: null as string | null };
+    }
+    if (choice === "private") {
+      return { shared: null, hubId: null as string | null };
+    }
+    return { shared: null, hubId: choice };
   };
 
   const hubRepoKey = (repo: HubSkillRepo) => `${repo.owner}/${repo.repo}@${repo.ref}`;
   const defaultHubRepoKey = "different-ai/openwork-hub@main";
 
-  const activeHubRepoLabel = createMemo(() => (extensions.hubRepo() ? hubRepoKey(extensions.hubRepo()!) : "No hub repo selected"));
+  const activeHubRepoLabel = createMemo(() => (extensions.hubRepo() ? hubRepoKey(extensions.hubRepo()!) : translate("skills.no_hub_repo_label")));
 
   const hasDefaultHubRepo = createMemo(() => extensions.hubRepos().some((repo) => hubRepoKey(repo) === defaultHubRepoKey));
 
@@ -120,7 +286,7 @@ export default function SkillsView(props: SkillsViewProps) {
     const repo = customRepoName().trim();
     const ref = customRepoRef().trim() || "main";
     if (!owner || !repo) {
-      setCustomRepoError("Owner and repo are required.");
+      setCustomRepoError(translate("skills.owner_repo_required"));
       return;
     }
     extensions.addHubRepo({ owner, repo, ref });
@@ -161,6 +327,54 @@ export default function SkillsView(props: SkillsViewProps) {
     });
   });
 
+  const filteredCloudOrgSkills = createMemo(() => {
+    const query = searchQuery().trim().toLowerCase();
+    const items = extensions.cloudOrgSkills();
+    if (!query) return items;
+    return items.filter((skill) => {
+      const description = skill.description ?? "";
+      const hub = skill.hubName ?? "";
+      return (
+        skill.title.toLowerCase().includes(query) ||
+        description.toLowerCase().includes(query) ||
+        hub.toLowerCase().includes(query)
+      );
+    });
+  });
+
+  const cloudSkillInstallState = (skill: DenOrgSkillCard): CloudSkillInstallState => {
+    const imported = extensions.importedCloudSkills()[skill.id];
+    if (!imported) return "available";
+    if (!installedNames().has(imported.installedName)) return "missing_local";
+
+    const remoteUpdatedAt = skill.updatedAt ? Date.parse(skill.updatedAt) : Number.NaN;
+    const importedUpdatedAt = imported.updatedAt ? Date.parse(imported.updatedAt) : Number.NaN;
+    if (Number.isFinite(remoteUpdatedAt) && (!Number.isFinite(importedUpdatedAt) || remoteUpdatedAt > importedUpdatedAt)) {
+      return "update";
+    }
+    return "installed";
+  };
+
+  const cloudInstalledName = (skill: DenOrgSkillCard) => extensions.importedCloudSkills()[skill.id]?.installedName ?? null;
+
+  const cloudOrgLabel = createMemo(() => {
+    denUiTick();
+    const name = readDenSettings().activeOrgName?.trim();
+    if (name) return name;
+    return translate("skills.cloud_org_fallback");
+  });
+
+  const cloudSessionReady = createMemo(() => {
+    denUiTick();
+    const s = readDenSettings();
+    return Boolean(s.authToken?.trim() && s.activeOrgId?.trim());
+  });
+
+  const cloudNeedsSignIn = createMemo(() => {
+    denUiTick();
+    return !readDenSettings().authToken?.trim();
+  });
+
   const installSkillCreator = async () => {
     if (props.busy || installingSkillCreator()) return;
     if (!props.canInstallSkillCreator) {
@@ -179,10 +393,31 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
+  const installFromCloud = async (skill: DenOrgSkillCard) => {
+    if (props.busy || installingCloudSkillId()) return;
+    const state = cloudSkillInstallState(skill);
+    if (state === "installed") return;
+    setInstallingCloudSkillId(skill.id);
+    showToast(t(state === "update" ? "skills.cloud_updating" : "skills.cloud_installing", currentLocale(), { title: skill.title }));
+    try {
+      const result = await extensions.installCloudOrgSkill(skill);
+      showToast(result.message, result.ok ? "success" : "error");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : translate("skills.install_failed"), "error");
+    } finally {
+      setInstallingCloudSkillId(null);
+    }
+  };
+
+  const openCloudSignIn = () => {
+    const base = readDenSettings().baseUrl?.trim() || DEFAULT_DEN_BASE_URL;
+    platform.openLink(buildDenAuthUrl(base, "sign-in"));
+  };
+
   const installFromHub = async (skill: HubSkillCard) => {
     if (props.busy || installingHubSkill()) return;
     setInstallingHubSkill(skill.name);
-    showToast(`Installing ${skill.name}…`);
+    showToast(`${translate("skills.installing_prefix")} ${skill.name}…`);
     try {
       const result = await extensions.installHubSkill(skill.name);
       showToast(result.message, "success");
@@ -199,24 +434,79 @@ export default function SkillsView(props: SkillsViewProps) {
     if (props.canInstallSkillCreator && !skillCreatorInstalled()) {
       await installSkillCreator();
     }
-    // Open a new session and preselect /skill-creator.
-    await Promise.resolve(props.createSessionAndOpen());
-    props.setPrompt("/skill-creator");
+    await Promise.resolve(props.createSessionAndOpen("/skill-creator"));
   };
 
   const openShareLink = (skill: SkillCard) => {
     if (props.busy) return;
     setShareTarget(skill);
+    setShareSubView("chooser");
     setShareBusy(false);
     setShareUrl(null);
     setShareError(null);
+    setShareTeamBusy(false);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    setSharePermissionChoice("org");
+    setShareHubsError(null);
+    setShareManageableHubs([]);
+    setCloudSessionNonce((n) => n + 1);
   };
 
   const closeShareLink = () => {
     setShareTarget(null);
+    setShareSubView("chooser");
     setShareBusy(false);
     setShareUrl(null);
     setShareError(null);
+    setShareTeamBusy(false);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    setSharePermissionChoice("org");
+    setShareHubsError(null);
+    setShareManageableHubs([]);
+  };
+
+  const goBackShareSubView = () => {
+    setShareSubView("chooser");
+    setShareError(null);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    setSharePermissionChoice("org");
+    setShareHubsError(null);
+  };
+
+  const startShareSkillSignIn = () => {
+    const settings = readDenSettings();
+    platform.openLink(buildDenAuthUrl(settings.baseUrl, "sign-in"));
+  };
+
+  const publishSkillToTeam = async () => {
+    const target = shareTarget();
+    if (!target) return;
+    if (props.busy || shareTeamBusy() || shareTeamDisabledReason()) return;
+    setShareTeamBusy(true);
+    setShareTeamError(null);
+    setShareTeamSuccess(null);
+    try {
+      const skill = await extensions.readSkill(target.name);
+      if (!skill) throw new Error("Failed to load skill");
+      const sharing = resolveSharePermission();
+      const { orgName, orgId } = await saveInstalledSkillToOpenWorkOrg({
+        skillText: skill.content,
+        shared: sharing.shared,
+        skillHubId: sharing.hubId,
+      });
+      setShareTeamSuccess(t("skills.share_team_uploaded_success", currentLocale(), { org: orgName }));
+      window.dispatchEvent(
+        new CustomEvent<{ orgId: string }>("openwork-den-org-skills-changed", { detail: { orgId } }),
+      );
+      void extensions.refreshCloudOrgSkills({ force: true });
+    } catch (e) {
+      setShareTeamError(maskError(e));
+    } finally {
+      setShareTeamBusy(false);
+    }
   };
 
   const publishShareLink = async () => {
@@ -229,7 +519,7 @@ export default function SkillsView(props: SkillsViewProps) {
 
     try {
       const skill = await extensions.readSkill(target.name);
-      if (!skill) throw new Error("Failed to load skill");
+      if (!skill) throw new Error(translate("skills.skill_load_failed"));
 
       const payload: SkillBundleV1 = {
         schemaVersion: 1,
@@ -249,7 +539,7 @@ export default function SkillsView(props: SkillsViewProps) {
       setShareUrl(result.url);
       try {
         await navigator.clipboard.writeText(result.url);
-        showToast("Link copied", "success");
+        showToast(translate("skills.link_copied"), "success");
       } catch {
         // ignore
       }
@@ -265,9 +555,9 @@ export default function SkillsView(props: SkillsViewProps) {
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
-      showToast("Link copied", "success");
+      showToast(translate("skills.link_copied"), "success");
     } catch {
-      setShareError("Failed to copy link");
+      setShareError(translate("skills.copy_link_failed"));
     }
   };
 
@@ -281,12 +571,12 @@ export default function SkillsView(props: SkillsViewProps) {
     try {
       const result = await extensions.readSkill(skill.name);
       if (!result) {
-        setSelectedError("Failed to load skill.");
+        setSelectedError(translate("skills.skill_load_failed"));
         return;
       }
       setSelectedContent(result.content);
     } catch (e) {
-      setSelectedError(e instanceof Error ? e.message : "Failed to load skill.");
+      setSelectedError(e instanceof Error ? e.message : translate("skills.skill_load_failed"));
     } finally {
       setSelectedLoading(false);
     }
@@ -315,7 +605,7 @@ export default function SkillsView(props: SkillsViewProps) {
       );
       setSelectedDirty(false);
     } catch (e) {
-      setSelectedError(e instanceof Error ? e.message : "Failed to save skill.");
+      setSelectedError(e instanceof Error ? e.message : translate("skills.save_failed"));
     }
   };
 
@@ -323,8 +613,9 @@ export default function SkillsView(props: SkillsViewProps) {
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
   );
 
-  const showInstalledSection = createMemo(() => activeFilter() !== "hub");
-  const showHubSection = createMemo(() => activeFilter() !== "installed");
+  const showInstalledSection = createMemo(() => activeFilter() === "all" || activeFilter() === "installed");
+  const showCloudSection = createMemo(() => activeFilter() === "all" || activeFilter() === "cloud");
+  const showHubSection = createMemo(() => activeFilter() === "all" || activeFilter() === "hub");
 
   const isOpenworkInjectedSkill = (skill: SkillCard) => {
     const normalizedName = skill.name.trim().toLowerCase();
@@ -347,6 +638,7 @@ export default function SkillsView(props: SkillsViewProps) {
     if (props.busy) return;
     void extensions.refreshSkills({ force: true });
     void extensions.refreshHubSkills({ force: true });
+    void extensions.refreshCloudOrgSkills({ force: true });
   };
 
   return (
@@ -358,7 +650,7 @@ export default function SkillsView(props: SkillsViewProps) {
               <h2 class={pageTitleClass}>{translate("skills.title")}</h2>
             </Show>
             <p class="mt-2 max-w-2xl text-[14px] leading-relaxed text-dls-secondary">
-              Skills are the core abilities of this worker. Discover them from Hub, manage what is installed, and create new ones directly in chat.
+              {translate("skills.worker_profile_desc")}
             </p>
           </div>
 
@@ -370,7 +662,7 @@ export default function SkillsView(props: SkillsViewProps) {
               class={pillSecondaryClass}
             >
               <Upload size={14} />
-              Import local skill
+              {translate("skills.import_local_skill")}
             </button>
             <button
               type="button"
@@ -379,7 +671,7 @@ export default function SkillsView(props: SkillsViewProps) {
               class={pillSecondaryClass}
             >
               <FolderOpen size={14} />
-              Reveal folder
+              {translate("skills.reveal_folder")}
             </button>
             <button
               type="button"
@@ -388,7 +680,7 @@ export default function SkillsView(props: SkillsViewProps) {
               class={pillPrimaryClass}
             >
               <Sparkles size={14} />
-              Create skill in chat
+              {translate("skills.create_in_chat")}
             </button>
           </div>
         </div>
@@ -400,20 +692,26 @@ export default function SkillsView(props: SkillsViewProps) {
               type="text"
               value={searchQuery()}
               onInput={(event) => setSearchQuery(event.currentTarget.value)}
-              placeholder="Search installed or Hub skills"
+              placeholder={translate("skills.catalog_search_placeholder")}
               class="w-full rounded-xl border border-dls-border bg-dls-surface py-3 pl-11 pr-4 text-[14px] text-dls-text focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.12)]"
             />
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <For each={["all", "installed", "hub"] as SkillsFilter[]}>
+            <For each={["all", "installed", "cloud", "hub"] as SkillsFilter[]}>
               {(filter) => (
                 <button
                   type="button"
                   onClick={() => setActiveFilter(filter)}
                   class={activeFilter() === filter ? pillPrimaryClass : pillGhostClass}
                 >
-                  {filter === "all" ? "All" : filter === "installed" ? "Installed" : "Hub"}
+                  {filter === "all"
+                    ? translate("skills.filter_all")
+                    : filter === "installed"
+                      ? translate("skills.filter_installed")
+                      : filter === "cloud"
+                        ? translate("skills.filter_cloud")
+                        : translate("skills.filter_hub")}
                 </button>
               )}
             </For>
@@ -424,7 +722,7 @@ export default function SkillsView(props: SkillsViewProps) {
               class={pillSecondaryClass}
             >
               <RefreshCw size={14} />
-              Refresh
+              {translate("common.refresh")}
             </button>
           </div>
         </div>
@@ -455,10 +753,10 @@ export default function SkillsView(props: SkillsViewProps) {
             <div>
               <h3 class={sectionTitleClass}>{translate("skills.installed")}</h3>
               <p class="mt-1 text-[13px] text-dls-secondary">
-                Installed skills live on this worker and can be edited or shared.
+                {translate("skills.installed_desc")}
               </p>
             </div>
-            <div class="text-[12px] text-dls-secondary">{filteredSkills().length} shown</div>
+            <div class="text-[12px] text-dls-secondary">{t("skills.shown_count", currentLocale(), { count: filteredSkills().length })}</div>
           </div>
 
           <Show
@@ -497,7 +795,7 @@ export default function SkillsView(props: SkillsViewProps) {
                               <span class={tagClass}>OpenWork</span>
                             </Show>
                           </div>
-                          <Show when={skill.description} fallback={<p class="mt-2 text-[13px] text-dls-secondary">No description yet.</p>}>
+                          <Show when={skill.description} fallback={<p class="mt-2 text-[13px] text-dls-secondary">{translate("skills.no_description")}</p>}>
                             <p class="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">
                               {skill.description}
                             </p>
@@ -506,7 +804,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       </div>
 
                       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-dls-border pt-4">
-                        <span class={tagClass}>Installed</span>
+                        <span class={tagClass}>{translate("skills.installed_status")}</span>
                         <div class="flex flex-wrap gap-2">
                           <button
                             type="button"
@@ -517,10 +815,10 @@ export default function SkillsView(props: SkillsViewProps) {
                               openShareLink(skill);
                             }}
                             disabled={props.busy}
-                            title="Share"
+                            title={translate("skills.share_title")}
                           >
                             <Share2 size={14} />
-                            Share
+                            {translate("skills.share_title")}
                           </button>
                           <button
                             type="button"
@@ -531,10 +829,10 @@ export default function SkillsView(props: SkillsViewProps) {
                               void openSkill(skill);
                             }}
                             disabled={props.busy}
-                            title="Edit"
+                            title={translate("common.edit")}
                           >
                             <Edit2 size={14} />
-                            Edit
+                            {translate("common.edit")}
                           </button>
                           <button
                             type="button"
@@ -552,7 +850,7 @@ export default function SkillsView(props: SkillsViewProps) {
                             title={translate("skills.uninstall")}
                           >
                             <Trash2 size={14} />
-                            Remove
+                            {translate("common.remove")}
                           </button>
                         </div>
                       </div>
@@ -565,13 +863,161 @@ export default function SkillsView(props: SkillsViewProps) {
         </div>
       </Show>
 
+      <Show when={showCloudSection()}>
+        <div class="space-y-4">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p class="mb-0.5 text-[12px] text-dls-secondary">{cloudOrgLabel()}</p>
+              <h3 class={sectionTitleClass}>{translate("skills.cloud_section_title")}</h3>
+              <p class="mt-1 max-w-2xl text-[13px] leading-relaxed text-dls-secondary">
+                {translate("skills.cloud_section_subtitle")}
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void extensions.refreshCloudOrgSkills({ force: true })}
+                disabled={props.busy}
+                class={pillSecondaryClass}
+              >
+                <RefreshCw size={14} />
+                {translate("skills.cloud_refresh")}
+              </button>
+            </div>
+          </div>
+
+          <Show when={!cloudSessionReady()}>
+            <div class="rounded-[20px] border border-dashed border-dls-border bg-dls-surface px-5 py-6 text-[14px] text-dls-secondary">
+              <Show
+                when={cloudNeedsSignIn()}
+                fallback={
+                  <div class="space-y-3">
+                    <p>{translate("skills.cloud_choose_org_hint")}</p>
+                    <p class="text-[13px]">{translate("skills.cloud_choose_org_detail")}</p>
+                  </div>
+                }
+              >
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p>{translate("skills.cloud_sign_in_hint")}</p>
+                  <button type="button" class={pillPrimaryClass} onClick={() => openCloudSignIn()}>
+                    {translate("skills.cloud_sign_in")}
+                  </button>
+                </div>
+              </Show>
+            </div>
+          </Show>
+
+          <Show when={cloudSessionReady()}>
+            <Show when={extensions.cloudOrgSkillsStatus()}>
+              <div class="rounded-[20px] border border-dls-border bg-dls-hover px-5 py-4 text-[13px] text-dls-secondary whitespace-pre-wrap break-words">
+                {extensions.cloudOrgSkillsStatus()}
+              </div>
+            </Show>
+
+            <Show
+              when={filteredCloudOrgSkills().length}
+              fallback={
+                <div class="rounded-[20px] border border-dashed border-dls-border bg-dls-surface px-5 py-8 text-[14px] text-dls-secondary">
+                  {extensions.cloudOrgSkills().length === 0
+                    ? translate("skills.cloud_org_empty")
+                    : translate("skills.cloud_no_search_matches")}
+                </div>
+              }
+            >
+              <div class="rounded-[24px] bg-dls-hover p-4">
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <For each={filteredCloudOrgSkills()}>
+                    {(skill) => {
+                      const state = () => cloudSkillInstallState(skill);
+                      const installedName = () => cloudInstalledName(skill);
+
+                      return (
+                        <div class={`${panelCardClass} flex flex-col gap-4 text-left`}>
+                          <div class="flex gap-4 min-w-0">
+                            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                              <Cloud size={20} class="text-dls-secondary" />
+                            </div>
+                            <div class="min-w-0 flex-1">
+                              <h4 class="text-[14px] font-semibold text-dls-text truncate">{skill.title}</h4>
+                              <Show when={skill.description}>
+                                <p class="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">
+                                  {skill.description}
+                                </p>
+                              </Show>
+                              <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
+                                <Show when={skill.hubName}>
+                                  <span class={tagClass}>
+                                    {t("skills.cloud_hub_label", currentLocale(), { name: skill.hubName ?? "" })}
+                                  </span>
+                                </Show>
+                                <Show when={skill.shared === "org"}>
+                                  <span class={tagClass}>{translate("skills.cloud_shared_org")}</span>
+                                </Show>
+                                <Show when={skill.shared === "public"}>
+                                  <span class={tagClass}>{translate("skills.cloud_shared_public")}</span>
+                                </Show>
+                                <Show when={skill.shared === null && !skill.hubName}>
+                                  <span class={tagClass}>{translate("skills.cloud_shared_private")}</span>
+                                </Show>
+                                <Show when={installedName()}>
+                                  <span class={tagClass}>{t("skills.cloud_installed_as", currentLocale(), { name: installedName() ?? "" })}</span>
+                                </Show>
+                                <Show when={state() === "installed"}>
+                                  <span class={tagClass}>{translate("skills.cloud_status_installed")}</span>
+                                </Show>
+                                <Show when={state() === "update"}>
+                                  <span class={tagClass}>{translate("skills.cloud_status_update")}</span>
+                                </Show>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div class="flex items-center justify-between gap-3 border-t border-dls-border pt-4">
+                            <span class={tagClass}>{translate("skills.cloud_footer_label")}</span>
+                            <button
+                              type="button"
+                              class={
+                                installingCloudSkillId() === skill.id || state() === "installed"
+                                  ? pillSecondaryClass
+                                  : pillPrimaryClass
+                              }
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void installFromCloud(skill);
+                              }}
+                              disabled={props.busy || installingCloudSkillId() === skill.id || state() === "installed"}
+                            >
+                              <Show when={installingCloudSkillId() === skill.id} fallback={<Plus size={14} />}>
+                                <Loader2 size={14} class="animate-spin" />
+                              </Show>
+                              {installingCloudSkillId() === skill.id
+                                ? translate("skills.cloud_installing_short")
+                                : state() === "update"
+                                  ? translate("skills.cloud_update_skill")
+                                  : state() === "installed"
+                                    ? translate("skills.cloud_status_installed")
+                                    : translate("skills.install")}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+            </Show>
+          </Show>
+        </div>
+      </Show>
+
       <Show when={showHubSection()}>
         <div class="space-y-4">
           <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h3 class={sectionTitleClass}>Available from Hub</h3>
+              <h3 class={sectionTitleClass}>{translate("skills.available_from_hub")}</h3>
               <p class="mt-1 text-[13px] text-dls-secondary">
-                Browse shared skills from GitHub-backed hubs and add them to this worker.
+                {translate("skills.hub_desc")}
               </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
@@ -585,34 +1031,34 @@ export default function SkillsView(props: SkillsViewProps) {
                 disabled={props.busy || hasDefaultHubRepo()}
               >
                 <Plus size={14} />
-                Add OpenWork Hub
+                {translate("skills.add_openwork_hub")}
               </button>
             <button
               type="button"
               onClick={openCustomRepoModal}
               disabled={props.busy}
               class={pillSecondaryClass}
-              title="Add custom GitHub repo"
+              title={translate("skills.add_custom_repo")}
             >
               <Plus size={14} />
-              Add git repo
+              {translate("skills.add_git_repo")}
             </button>
             <button
               type="button"
               onClick={() => void extensions.refreshHubSkills({ force: true })}
               disabled={props.busy}
               class={pillSecondaryClass}
-              title="Refresh hub catalog"
+              title={translate("skills.refresh_hub_title")}
             >
               <RefreshCw size={14} />
-              Refresh hub
+              {translate("skills.refresh_hub")}
             </button>
             </div>
           </div>
 
           <div class="space-y-3 rounded-[20px] border border-dls-border bg-dls-surface p-4">
             <div class="text-[12px] text-dls-secondary">
-              Source: <span class="font-mono text-dls-text">{activeHubRepoLabel()}</span>
+              {translate("skills.source_label")}: <span class="font-mono text-dls-text">{activeHubRepoLabel()}</span>
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <For each={extensions.hubRepos()}>
@@ -639,7 +1085,7 @@ export default function SkillsView(props: SkillsViewProps) {
                           void extensions.refreshHubSkills({ force: true });
                         }}
                         disabled={props.busy}
-                        title="Remove saved repo"
+                        title={translate("skills.remove_saved_repo")}
                       >
                         ×
                       </button>
@@ -660,7 +1106,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={filteredHubSkills().length}
           fallback={
             <div class="rounded-[20px] border border-dashed border-dls-border bg-dls-surface px-5 py-8 text-[14px] text-dls-secondary">
-              {extensions.hubRepo() ? "No hub skills available." : "No hub repo selected. Add a GitHub repo to browse skills."}
+              {extensions.hubRepo() ? translate("skills.no_hub_skills") : translate("skills.no_hub_repo_selected")}
             </div>
           }
         >
@@ -677,7 +1123,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         <h4 class="text-[14px] font-semibold text-dls-text truncate">{skill.name}</h4>
                         <Show
                           when={skill.description}
-                          fallback={<p class="mt-2 text-[13px] text-dls-secondary">From {skill.source.owner}/{skill.source.repo}</p>}
+                          fallback={<p class="mt-2 text-[13px] text-dls-secondary">{t("skills.from_repo", currentLocale(), { owner: skill.source.owner, repo: skill.source.repo })}</p>}
                         >
                           <p class="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">{skill.description}</p>
                         </Show>
@@ -686,8 +1132,8 @@ export default function SkillsView(props: SkillsViewProps) {
                             {skill.source.owner}/{skill.source.repo}
                           </span>
                           <Show when={skill.trigger}>
-                            <span class={tagClass} title={`Trigger: ${skill.trigger}`}>
-                              Trigger: {skill.trigger}
+                            <span class={tagClass} title={t("skills.trigger_label", currentLocale(), { trigger: skill.trigger ?? "" })}>
+                              {t("skills.trigger_label", currentLocale(), { trigger: skill.trigger ?? "" })}
                             </span>
                           </Show>
                         </div>
@@ -695,7 +1141,7 @@ export default function SkillsView(props: SkillsViewProps) {
                     </div>
 
                     <div class="flex items-center justify-between gap-3 border-t border-dls-border pt-4">
-                      <span class={tagClass}>Hub</span>
+                      <span class={tagClass}>{translate("skills.hub_label")}</span>
                       <button
                         type="button"
                         class={installingHubSkill() === skill.name ? pillSecondaryClass : pillPrimaryClass}
@@ -705,7 +1151,7 @@ export default function SkillsView(props: SkillsViewProps) {
                           void installFromHub(skill);
                         }}
                         disabled={props.busy || installingHubSkill() === skill.name}
-                        title={`Install ${skill.name}`}
+                        title={t("skills.install_name_title", currentLocale(), { name: skill.name })}
                       >
                         <Show
                           when={installingHubSkill() === skill.name}
@@ -713,7 +1159,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         >
                           <Loader2 size={14} class="animate-spin" />
                         </Show>
-                        {installingHubSkill() === skill.name ? "Installing" : "Add skill"}
+                        {installingHubSkill() === skill.name ? translate("skills.installing") : translate("common.add")}
                       </button>
                     </div>
                   </div>
@@ -743,14 +1189,14 @@ export default function SkillsView(props: SkillsViewProps) {
                   disabled={!selectedDirty() || props.busy}
                   onClick={() => void saveSelectedSkill()}
                 >
-                  Save
+                  {translate("common.save")}
                 </button>
                 <button
                   type="button"
                   class="px-3 py-1.5 text-xs font-medium rounded-lg bg-dls-hover text-dls-text hover:bg-dls-active transition-colors"
                   onClick={closeSkill}
                 >
-                  Close
+                  {translate("common.close")}
                 </button>
               </div>
             </div>
@@ -763,7 +1209,7 @@ export default function SkillsView(props: SkillsViewProps) {
               </Show>
               <Show
                 when={!selectedLoading()}
-                fallback={<div class="text-xs text-dls-secondary">Loading…</div>}
+                fallback={<div class="text-xs text-dls-secondary">{translate("skills.loading")}</div>}
               >
                 <textarea
                   value={selectedContent()}
@@ -816,55 +1262,194 @@ export default function SkillsView(props: SkillsViewProps) {
       </Show>
 
       <Show when={shareOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6 space-y-4">
-              <div>
-                <h3 class="text-lg font-semibold text-dls-text">Share link</h3>
-                <p class="text-sm text-dls-secondary mt-1">
-                  Publish a public link. Anyone with the URL can install this skill.
-                </p>
+        <div class={`${modalOverlayClass} items-start pt-[10vh]`}>
+          <div class={`${modalShellClass} max-h-[78vh] max-w-md`} role="dialog" aria-modal="true">
+            <div class={modalHeaderClass}>
+              <div class="flex min-w-0 items-start gap-3">
+                <Show when={shareSubView() !== "chooser"}>
+                  <button
+                    type="button"
+                    onClick={goBackShareSubView}
+                    class={modalHeaderButtonClass}
+                    aria-label={translate("skills.share_back")}
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                </Show>
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h2 class={modalTitleClass}>{translate("skills.share_title")}</h2>
+                    <Show when={shareSubView() === "chooser"}>
+                      <span class={shareTagClass}>{shareTarget()?.name}</span>
+                    </Show>
+                  </div>
+                  <p class={modalSubtitleClass}>{shareModalSubtitle()}</p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={closeShareLink}
+                class={modalHeaderButtonClass}
+                aria-label={translate("skills.share_close")}
+                title={translate("skills.share_close")}
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-              <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
-                <div class="font-semibold text-dls-text">{shareTarget()?.name}</div>
-                <div class="mt-1 font-mono break-all">Publisher: {DEFAULT_OPENWORK_PUBLISHER_BASE_URL}</div>
-              </div>
-
-              <Show when={shareError()}>
-                <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
-                  {shareError()}
+            <div class="flex-1 overflow-y-auto px-6 pb-7 pt-2">
+              <Show when={shareSubView() === "chooser"}>
+                <div class="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
+                  <WorkspaceOptionCard
+                    title={translate("skills.share_option_team_title")}
+                    description={translate("skills.share_option_team_desc")}
+                    icon={Users}
+                    onClick={() => setShareSubView("team")}
+                  />
+                  <WorkspaceOptionCard
+                    title={translate("skills.share_option_public_title")}
+                    description={translate("skills.share_option_public_desc")}
+                    icon={Rocket}
+                    onClick={() => setShareSubView("public")}
+                  />
                 </div>
               </Show>
 
-              <Show
-                when={shareUrl()}
-                fallback={
-                  <div class="flex justify-end gap-2">
-                    <Button variant="outline" onClick={closeShareLink} disabled={shareBusy()}>
-                      {translate("common.cancel")}
-                    </Button>
-                    <Button variant="secondary" onClick={() => void publishShareLink()} disabled={shareBusy()}>
-                      {shareBusy() ? "Publishing…" : "Create link"}
-                    </Button>
+              <Show when={shareSubView() === "public"}>
+                <div class="space-y-5 pt-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <p class="text-[14px] leading-relaxed text-dls-secondary">{translate("skills.share_public_intro")}</p>
+
+                  <div class={surfaceCardClass}>
+                    <div class="mb-3 text-[12px] text-dls-secondary font-mono break-all">
+                      {translate("skills.share_publisher_label")}: {DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
+                    </div>
+
+                    <Show when={shareError()}>
+                      <div class={`mb-3 ${modalNoticeErrorClass}`}>{shareError()}</div>
+                    </Show>
+
+                    <Show
+                      when={shareUrl()}
+                      fallback={
+                        <button
+                          type="button"
+                          onClick={() => void publishShareLink()}
+                          disabled={shareBusy() || props.busy}
+                          class={`${sharePillPrimaryClass} w-full`}
+                        >
+                          {shareBusy() ? translate("skills.share_public_creating") : translate("skills.share_public_create")}
+                        </button>
+                      }
+                    >
+                      <div class="flex items-center gap-2">
+                        <input type="text" readonly value={shareUrl()!} class={`${inputClass} flex-1 font-mono text-[12px]`} />
+                        <button type="button" onClick={() => void copyShareLink()} class={sharePillSecondaryClass}>
+                          <Copy size={14} class="mr-1 inline" />
+                          {translate("skills.share_copy_link")}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void publishShareLink()}
+                        disabled={shareBusy()}
+                        class={`${sharePillSecondaryClass} mt-3 w-full`}
+                      >
+                        {shareBusy() ? translate("skills.share_public_creating") : translate("skills.share_public_regenerate")}
+                      </button>
+                    </Show>
                   </div>
-                }
-              >
-                <div class="flex items-start gap-2 rounded-xl bg-dls-hover border border-dls-border p-3">
-                  <div class="min-w-0 flex-1 text-xs text-dls-secondary font-mono break-all">{shareUrl()}</div>
-                  <Button
-                    variant="outline"
-                    onClick={() => void copyShareLink()}
-                    disabled={!shareUrl()}
-                  >
-                    <Copy size={14} />
-                    Copy link
-                  </Button>
+
+                  <div class="flex justify-end">
+                    <button type="button" onClick={closeShareLink} class={sharePillSecondaryClass}>
+                      {translate("skills.share_done")}
+                    </button>
+                  </div>
                 </div>
-                <div class="flex justify-end gap-2">
-                  <Button variant="secondary" onClick={closeShareLink}>
-                    Done
-                  </Button>
+              </Show>
+
+              <Show when={shareSubView() === "team"}>
+                <div class="space-y-5 pt-2 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <p class="text-[14px] leading-relaxed text-dls-secondary">{translate("skills.share_team_permissions_intro")}</p>
+
+                  <div class={surfaceCardClass}>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class={shareTagClass}>{shareTeamOrgLabel()}</span>
+                    </div>
+
+                    <Show when={shareTeamError()?.trim()}>
+                      <div class={`mt-4 ${modalNoticeErrorClass}`}>{shareTeamError()}</div>
+                    </Show>
+
+                    <Show when={shareTeamSuccess()?.trim()}>
+                      <div class={`mt-4 ${modalNoticeSuccessClass}`}>{shareTeamSuccess()}</div>
+                    </Show>
+
+                    <Show when={shareHubsError()?.trim()}>
+                      <div class={`mt-4 ${modalNoticeErrorClass}`}>{shareHubsError()}</div>
+                    </Show>
+
+                    <Show when={shareCloudSignedIn() && shareTeamDisabledReason()?.trim()}>
+                      <div class="mt-4 text-[12px] text-dls-secondary">{shareTeamDisabledReason()}</div>
+                    </Show>
+
+                    <Show when={shareCloudSignedIn()}>
+                      <div class="mt-4">
+                        <span
+                          id="skills-share-hub-label"
+                          class="mb-1.5 block text-[13px] font-medium text-dls-text"
+                        >
+                          {translate("skills.share_team_permissions_label")}
+                        </span>
+                        <SelectMenu
+                          aria-labelledby="skills-share-hub-label"
+                          options={sharePermissionOptions()}
+                          value={sharePermissionChoice()}
+                          onChange={setSharePermissionChoice}
+                          disabled={shareTeamBusy() || Boolean(shareTeamSuccess()?.trim())}
+                        />
+                      </div>
+                    </Show>
+
+                    <Show when={shareCloudSignedIn() && shareHubsLoading()}>
+                      <div class="mt-3 flex items-center gap-2 text-[12px] text-dls-secondary">
+                        <Loader2 size={14} class="animate-spin" />
+                        {translate("skills.share_team_hubs_loading")}
+                      </div>
+                    </Show>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!shareCloudSignedIn()) {
+                          startShareSkillSignIn();
+                          return;
+                        }
+                        void publishSkillToTeam();
+                      }}
+                      disabled={
+                        shareCloudSignedIn()
+                          ? Boolean(shareTeamDisabledReason()) || shareTeamBusy() || Boolean(shareTeamSuccess()?.trim())
+                          : false
+                      }
+                      class={`${sharePillPrimaryClass} mt-4 w-full`}
+                    >
+                      {!shareCloudSignedIn()
+                          ? translate("skills.share_team_sign_in")
+                          : shareTeamBusy()
+                          ? translate("skills.share_team_uploading")
+                          : translate("skills.share_team_upload_and_save")}
+                    </button>
+
+                    <Show when={!shareCloudSignedIn()}>
+                      <p class="mt-3 text-[12px] text-dls-secondary">{translate("skills.share_team_sign_in_hint")}</p>
+                    </Show>
+                  </div>
+
+                  <div class="flex justify-end">
+                    <button type="button" onClick={closeShareLink} class={sharePillSecondaryClass}>
+                      {translate("skills.share_done")}
+                    </button>
+                  </div>
                 </div>
               </Show>
             </div>
@@ -877,15 +1462,15 @@ export default function SkillsView(props: SkillsViewProps) {
           <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
             <div class="p-6 space-y-4">
               <div>
-                <h3 class="text-lg font-semibold text-dls-text">Add custom GitHub repo</h3>
+                <h3 class="text-lg font-semibold text-dls-text">{translate("skills.add_custom_repo")}</h3>
                 <p class="text-sm text-dls-secondary mt-1">
-                  Skills are loaded from <span class="font-mono">skills/&lt;name&gt;/SKILL.md</span>.
+                  {translate("skills.github_repo_hint")}
                 </p>
               </div>
 
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label class="space-y-1">
-                  <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Owner</div>
+                  <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">{translate("skills.owner_label")}</div>
                   <input
                     type="text"
                     value={customRepoOwner()}
@@ -896,7 +1481,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   />
                 </label>
                 <label class="space-y-1">
-                  <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Repo</div>
+                  <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">{translate("skills.repo_label")}</div>
                   <input
                     type="text"
                     value={customRepoName()}
@@ -909,7 +1494,7 @@ export default function SkillsView(props: SkillsViewProps) {
               </div>
 
               <label class="space-y-1">
-                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Ref (branch/tag/commit)</div>
+                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">{translate("skills.ref_label")}</div>
                 <input
                   type="text"
                   value={customRepoRef()}
@@ -931,7 +1516,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   {translate("common.cancel")}
                 </Button>
                 <Button variant="secondary" onClick={saveCustomRepo} disabled={props.busy}>
-                  Save and load
+                  {translate("skills.save_and_load")}
                 </Button>
               </div>
             </div>

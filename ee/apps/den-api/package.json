@@ -1,0 +1,37 @@
+{
+  "name": "@openwork-ee/den-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "OPENWORK_DEV_MODE=1 tsx watch src/server.ts",
+    "dev:local": "sh -lc 'OPENWORK_DEV_MODE=1 PORT=${DEN_API_PORT:-8790} tsx watch src/server.ts'",
+    "build": "pnpm run build:den-db && tsc -p tsconfig.json",
+    "build:den-db": "pnpm --filter @openwork-ee/den-db build",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@better-auth/api-key": "^1.5.6",
+    "@daytonaio/sdk": "^0.150.0",
+    "@hono/node-server": "^1.13.8",
+    "@hono/standard-validator": "^0.2.2",
+    "@hono/swagger-ui": "^0.6.1",
+    "@openwork-ee/den-db": "workspace:*",
+    "@openwork-ee/utils": "workspace:*",
+    "@standard-community/standard-json": "^0.3.5",
+    "@standard-community/standard-openapi": "^0.2.9",
+    "@standard-schema/spec": "^1.1.0",
+    "better-auth": "^1.5.6",
+    "better-call": "^1.3.2",
+    "dotenv": "^16.4.5",
+    "hono": "^4.7.2",
+    "hono-openapi": "^1.3.0",
+    "openapi-types": "^12.1.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/json-schema": "^7.0.15",
+    "@types/node": "^20.11.30",
+    "tsx": "^4.15.7",
+    "typescript": "^5.5.4"
+  }
+}

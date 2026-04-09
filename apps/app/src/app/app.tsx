@@ -1,5 +1,6 @@
 import {
   Match,
+  Show,
   Switch,
   createEffect,
   createMemo,
@@ -10,8 +11,6 @@ import {
 } from "solid-js";
 
 import { useLocation, useNavigate } from "@solidjs/router";
-
-import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -30,7 +29,6 @@ import { ExtensionsProvider } from "./extensions/provider";
 import { AutomationsProvider } from "./automations/provider";
 import { SessionActionsProvider } from "./session/actions-provider";
 import { createSessionActionsStore } from "./session/actions-store";
-import BootShell from "./shell/boot-shell";
 import { createDeepLinksController } from "./shell/deep-links";
 import SettingsShell from "./shell/settings-shell";
 import TopRightNotifications from "./shell/top-right-notifications";
@@ -40,8 +38,8 @@ import {
   CreateWorkspaceModal,
 } from "./workspace";
 import SessionView from "./pages/session";
-import { unwrap } from "./lib/opencode";
-import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import { clearDevLogs } from "./lib/dev-log";
+import { clearPerfLogs } from "./lib/perf-log";
 import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
 import {
   HIDE_TITLEBAR_PREF_KEY,
@@ -58,7 +56,6 @@ import type {
   View,
   WorkspaceDisplay,
   WorkspaceSessionGroup,
-  ComposerDraft,
   ProviderListItem,
   OpencodeConnectStatus,
 } from "./types";
@@ -75,7 +72,6 @@ import {
   lastUserModelFromMessages,
   readStartupPreference,
   safeStringify,
-  addOpencodeCacheHint,
 } from "./utils";
 import {
   applyThemeMode,
@@ -94,7 +90,6 @@ import { ModelControlsProvider } from "./app-settings/model-controls-provider";
 import { createModelControlsStore } from "./app-settings/model-controls-store";
 import { useSessionDisplayPreferences } from "./app-settings/session-display-preferences";
 import {
-  describeDirectoryScope,
   shouldRedirectMissingSessionAfterScopedLoad,
 } from "./lib/session-scope";
 import { createExtensionsStore } from "./context/extensions";
@@ -105,8 +100,6 @@ import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
-  readOpencodeConfig,
-  writeOpencodeConfig,
   setWindowDecorations,
 } from "./lib/tauri";
 import {
@@ -119,6 +112,7 @@ import {
   readStoredFontZoom,
 } from "./lib/font-zoom";
 import {
+  buildOpenworkWorkspaceBaseUrl,
   parseOpenworkWorkspaceIdFromUrl,
   readOpenworkConnectInviteFromSearch,
   stripOpenworkConnectInviteFromUrl,
@@ -126,14 +120,23 @@ import {
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
   writeOpenworkServerSettings,
-  type OpenworkServerDiagnostics,
   type OpenworkServerSettings,
 } from "./lib/openwork-server";
+import { ReactIsland } from "../react/island";
+import { reactSessionEnabled } from "../react/feature-flag";
+import { ReactSessionRuntime } from "../react/session/runtime-sync.react";
 import {
   parseBundleDeepLink,
   stripBundleQuery,
 } from "./bundles";
 import { createBundlesStore } from "./bundles/store";
+import {
+  classifyStartupBranch,
+  pushStartupTraceEvent,
+  type BootPhase,
+  type StartupBranch,
+  type StartupTraceEvent,
+} from "./lib/startup-boot";
 
 type SettingsReturnTarget = {
   view: View;
@@ -147,6 +150,27 @@ type PendingInitialSessionSelection = {
   readyAt: number;
 };
 
+const STARTUP_SESSION_SNAPSHOT_KEY = "openwork.startupSessionSnapshot.v1";
+const STARTUP_SESSION_SNAPSHOT_VERSION = 1;
+const STARTUP_SESSION_SNAPSHOT_MAX_PER_WORKSPACE = 12;
+
+type StartupSessionSnapshotEntry = {
+  id: string;
+  title: string;
+  parentID?: string | null;
+  directory?: string | null;
+  time?: {
+    updated?: number | null;
+    created?: number | null;
+  };
+};
+
+type StartupSessionSnapshot = {
+  version: number;
+  updatedAt: number;
+  sessionsByWorkspaceId: Record<string, StartupSessionSnapshotEntry[]>;
+};
+
 export default function App() {
   const { resetSessionDisplayPreferences } = useSessionDisplayPreferences();
   const envOpenworkWorkspaceId =
@@ -154,27 +178,10 @@ export default function App() {
       ? import.meta.env.VITE_OPENWORK_WORKSPACE_ID.trim() || null
       : null;
 
-  // Workspace switch tracing is noisy, so only emit in developer mode.
-  // (OpenWork already has a developer mode toggle in Settings.)
-  const wsDebugEnabled = () => developerMode();
-
-  const wsDebug = (label: string, payload?: unknown) => {
-    if (!wsDebugEnabled()) return;
-    try {
-      if (payload === undefined) {
-        console.log(`[WSDBG] ${label}`);
-      } else {
-        console.log(`[WSDBG] ${label}`, payload);
-      }
-    } catch {
-      // ignore
-    }
-  };
   const location = useLocation();
   const navigate = useNavigate();
 
   const [creatingSession, setCreatingSession] = createSignal(false);
-  const [sessionViewLockUntil] = createSignal(0);
   const currentView = createMemo<View>(() => {
     const path = location.pathname.toLowerCase();
     if (path.startsWith("/session")) return "session";
@@ -202,9 +209,6 @@ export default function App() {
     if (next === "settings" && creatingSession()) {
       return;
     }
-    if (next === "settings" && Date.now() < sessionViewLockUntil()) {
-      return;
-    }
     if (next === "session") {
       if (sessionId) {
         goToSession(sessionId);
@@ -225,7 +229,9 @@ export default function App() {
     navigate(`/session/${trimmed}`, options);
   };
 
-  const [startupPreference, setStartupPreference] = createSignal<StartupPreference | null>(null);
+  const [startupPreference, setStartupPreference] = createSignal<StartupPreference | null>(
+    readStartupPreference(),
+  );
   const [onboardingStep, setOnboardingStep] =
     createSignal<OnboardingStep>("welcome");
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
@@ -348,6 +354,8 @@ export default function App() {
     if (!isTauriRuntime()) return;
     if (!developerMode()) return;
     if (!documentVisible()) return;
+    if (booting()) return;
+    if (workspaceStore?.connectingWorkspaceId?.()) return;
 
     let busy = false;
 
@@ -380,12 +388,43 @@ export default function App() {
   const [error, setError] = createSignal<string | null>(null);
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
+  const [bootPhase, setBootPhase] = createSignal<BootPhase>("nativeInit");
+  const [startupBranch, setStartupBranch] = createSignal<StartupBranch>("unknown");
+  const [startupTrace, setStartupTrace] = createSignal<StartupTraceEvent[]>([]);
+  const [firstSidebarVisibleAt, setFirstSidebarVisibleAt] = createSignal<number | null>(null);
+  const [firstSessionPaintAt, setFirstSessionPaintAt] = createSignal<number | null>(null);
   const [, setLastKnownConfigSnapshot] = createSignal("");
   const [developerMode, setDeveloperMode] = createSignal(false);
   const [documentVisible, setDocumentVisible] = createSignal(true);
 
+  const markStartupTrace = (phase: BootPhase, event: string, detail?: Record<string, unknown>) => {
+    setStartupTrace((current) =>
+      pushStartupTraceEvent(current, {
+        at: Date.now(),
+        phase,
+        event,
+        ...(detail ? { detail } : {}),
+      }),
+    );
+  };
+
+  createEffect(() => {
+    const phase = bootPhase();
+    const isBooting = phase !== "ready" && phase !== "error";
+    setBooting(isBooting);
+  });
+
+  createEffect(() => {
+    if (bootPhase() === "ready" || bootPhase() === "error") return;
+    const message = error();
+    if (!message) return;
+    setBootPhase("error");
+    markStartupTrace("error", "startup-error", { message });
+  });
+
   createEffect(() => {
     if (developerMode()) return;
+    clearDevLogs();
     clearPerfLogs();
   });
 
@@ -492,25 +531,6 @@ export default function App() {
     goToSettings(nextTab);
   };
 
-  const mapLegacySurfaceToSettingsTab = (surface: string): SettingsTab => {
-    switch (surface) {
-      case "scheduled":
-        return "automations";
-      case "skills":
-        return "skills";
-      case "plugins":
-      case "mcp":
-        return "extensions";
-      case "identities":
-        return "messaging";
-      case "config":
-        return "advanced";
-      case "settings":
-      default:
-        return "general";
-    }
-  };
-
   let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
   const markReloadRequired = (reason: ReloadReason, trigger?: ReloadTrigger) => {
     markReloadRequiredHandler?.(reason, trigger);
@@ -544,6 +564,7 @@ export default function App() {
     messageIdFromInfo,
     selectedSession,
     selectedSessionStatus,
+    selectedSessionErrorTurns,
     selectedSessionCompactionState,
     messages,
     visibleMessages,
@@ -593,6 +614,9 @@ export default function App() {
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const activeTodos = createMemo(() => todos());
   const activeWorkingFiles = createMemo(() => workingFiles());
+  const [startupSessionSnapshotByWorkspaceId, setStartupSessionSnapshotByWorkspaceId] = createSignal<
+    Record<string, StartupSessionSnapshotEntry[]>
+  >({});
 
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
   const loadSessionsWithReady = async (scopeRoot?: string) => {
@@ -601,17 +625,31 @@ export default function App() {
   };
 
   createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(STARTUP_SESSION_SNAPSHOT_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as StartupSessionSnapshot;
+      if (!parsed || parsed.version !== STARTUP_SESSION_SNAPSHOT_VERSION) return;
+      if (!parsed.sessionsByWorkspaceId || typeof parsed.sessionsByWorkspaceId !== "object") return;
+      setStartupSessionSnapshotByWorkspaceId(parsed.sessionsByWorkspaceId);
+    } catch {
+      // ignore malformed snapshots
+    }
+  });
+
+  createEffect(() => {
     if (!client()) {
       setSessionsLoaded(false);
     }
   });
 
-  const ensureSelectedWorkspaceRuntime = async () => {
-    const workspaceId = workspaceStore.selectedWorkspaceId().trim();
-    if (!workspaceId) return false;
-    const ready = await workspaceStore.switchWorkspace(workspaceId);
+  const ensureWorkspaceRuntime = async (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return false;
+    const ready = await workspaceStore.activateWorkspace(id);
     if (ready) {
-      await refreshSidebarWorkspaceSessions(workspaceId).catch(() => undefined);
+      await refreshSidebarWorkspaceSessions(id).catch(() => undefined);
     }
     return ready;
   };
@@ -808,10 +846,53 @@ export default function App() {
     openworkServer: openworkServerStore,
     openworkEnvWorkspaceId: envOpenworkWorkspaceId,
     onEngineStable: () => {},
+    onBootPhaseChange: (phase, detail) => {
+      setBootPhase(phase);
+      markStartupTrace(phase, "phase-change", detail);
+    },
+    onStartupBranch: (branch, detail) => {
+      setStartupBranch(branch);
+      markStartupTrace(bootPhase(), "branch", { branch, ...(detail ?? {}) });
+    },
+    onStartupTrace: (event, detail) => {
+      markStartupTrace(bootPhase(), event, detail);
+    },
     engineRuntime,
     developerMode,
     pendingInitialSessionSelection,
     setPendingInitialSessionSelection,
+  });
+
+  createEffect(() => {
+    if (startupBranch() !== "unknown") return;
+    const active = workspaceStore.selectedWorkspaceInfo?.() ?? null;
+    const derived = classifyStartupBranch({
+      workspaceCount: workspaceStore.workspaces().length,
+      activeWorkspaceType: active?.workspaceType ?? null,
+      startupPreference: startupPreference(),
+      engineHasBaseUrl: Boolean(workspaceStore.engine()?.baseUrl),
+      selectedWorkspacePath: workspaceStore.selectedWorkspacePath?.() ?? "",
+    });
+    if (derived !== "unknown") {
+      setStartupBranch(derived);
+      markStartupTrace(bootPhase(), "branch-derived", { branch: derived });
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!developerMode()) return;
+    const payload = {
+      phase: bootPhase(),
+      branch: startupBranch(),
+      events: startupTrace(),
+    };
+    try {
+      (window as { __openworkStartupTrace?: typeof payload }).__openworkStartupTrace = payload;
+      console.log("[startup-trace]", payload);
+    } catch {
+      // ignore trace publishing failures
+    }
   });
 
   const {
@@ -819,12 +900,18 @@ export default function App() {
     providerAuthBusy,
     providerAuthError,
     providerAuthMethods,
+    providerAuthProviders,
     providerAuthPreferredProviderId,
     providerAuthWorkerType,
+    cloudOrgProviders,
+    importedCloudProviders,
     startProviderAuth,
     refreshProviders,
+    refreshCloudOrgProviders,
     completeProviderAuthOAuth,
     submitProviderApiKey,
+    connectCloudProvider,
+    removeCloudProvider,
     disconnectProvider,
     openProviderAuthModal,
     closeProviderAuthModal,
@@ -835,6 +922,9 @@ export default function App() {
     providerConnectedIds,
     disabledProviders: () => globalSync.data.config.disabled_providers ?? [],
     selectedWorkspaceDisplay: () => workspaceStore.selectedWorkspaceDisplay(),
+    selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot(),
+    runtimeWorkspaceId: () => workspaceStore.runtimeWorkspaceId(),
+    openworkServer: openworkServerStore,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
@@ -873,30 +963,6 @@ export default function App() {
     bundlesStore,
   });
 
-  const logWorkspaceScopeSnapshot = (label: string, extra?: Record<string, unknown>) => {
-    if (!developerMode()) return;
-    const activeWorkspace = workspaceStore.selectedWorkspaceInfo();
-    const selectedWorkspaceId = workspaceStore.selectedWorkspaceId().trim();
-    const selectedWorkspaceRoot = workspaceStore.selectedWorkspaceRoot().trim();
-    const engineInfo = workspaceStore.engine();
-    const map = readSessionByWorkspace();
-    wsDebug(label, {
-      selectedWorkspaceId: selectedWorkspaceId || null,
-      activeWorkspaceType: activeWorkspace?.workspaceType ?? null,
-      selectedWorkspacePath: activeWorkspace?.path?.trim() ?? null,
-      activeWorkspaceDirectory: activeWorkspace?.directory?.trim() ?? null,
-      selectedWorkspaceRoot: selectedWorkspaceRoot || null,
-      activeWorkspaceScope: describeDirectoryScope(selectedWorkspaceRoot),
-      clientDirectory: clientDirectory().trim() || null,
-      clientDirectoryScope: describeDirectoryScope(clientDirectory().trim()),
-      engineProjectDir: engineInfo?.projectDir?.trim() ?? null,
-      engineProjectScope: describeDirectoryScope(engineInfo?.projectDir?.trim() ?? null),
-      lastSessionForActiveWorkspace: selectedWorkspaceId ? map[selectedWorkspaceId] ?? null : null,
-      lastSessionMapKeys: Object.keys(map),
-      ...extra,
-    });
-  };
-
   const sidebarSessionsStore = createSidebarSessionsStore({
     workspaces: () => workspaceStore.workspaces(),
     engine: () => workspaceStore.engine(),
@@ -925,10 +991,12 @@ export default function App() {
     setBusyStartedAt,
     setCreatingSession,
     setError,
-    workspaceProjectDir: () => workspaceStore.projectDir(),
+    selectWorkspace: workspaceStore.selectWorkspace,
+    workspaceRootForId: workspaceStore.workspaceRootForId,
     selectedWorkspaceId: () => workspaceStore.selectedWorkspaceId(),
     selectedWorkspaceRoot: () => workspaceStore.selectedWorkspaceRoot(),
-    ensureSelectedWorkspaceRuntime,
+    runtimeWorkspaceRoot: () => workspaceStore.runtimeWorkspaceRoot(),
+    ensureWorkspaceRuntime,
     selectSession,
     refreshSidebarWorkspaceSessions,
     abortRefreshes,
@@ -953,6 +1021,7 @@ export default function App() {
     lastPromptSent,
     selectedSessionAgent,
     sessionRevertMessageId,
+    createSessionInWorkspace,
     createSessionAndOpen,
     sendPrompt,
     abortSession,
@@ -1037,6 +1106,98 @@ export default function App() {
         error: group.error,
       };
     });
+  });
+
+  const hydratedSidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
+    const liveGroups = sidebarWorkspaceGroups();
+    if (liveGroups.some((group) => group.sessions.length > 0)) {
+      return liveGroups;
+    }
+
+    const snapshotByWorkspaceId = startupSessionSnapshotByWorkspaceId();
+    if (!snapshotByWorkspaceId || Object.keys(snapshotByWorkspaceId).length === 0) {
+      return liveGroups;
+    }
+
+    return liveGroups.map((group) => {
+      if (group.sessions.length > 0) return group;
+      const cachedSessions = snapshotByWorkspaceId[group.workspace.id] ?? [];
+      if (!cachedSessions.length) return group;
+      return {
+        ...group,
+        sessions: cachedSessions,
+      };
+    });
+  });
+
+  const sidebarHydratedFromCache = createMemo(() => {
+    const liveGroups = sidebarWorkspaceGroups();
+    const hydratedGroups = hydratedSidebarWorkspaceGroups();
+    if (!hydratedGroups.length) return false;
+    if (liveGroups.length !== hydratedGroups.length) return false;
+    return hydratedGroups.some((group, index) => {
+      const liveGroup = liveGroups[index];
+      if (!liveGroup) return false;
+      return liveGroup.sessions.length === 0 && group.sessions.length > 0;
+    });
+  });
+
+  createEffect(() => {
+    if (firstSidebarVisibleAt()) return;
+    const anyRowsVisible = hydratedSidebarWorkspaceGroups().some((group) => group.sessions.length > 0);
+    if (!anyRowsVisible) return;
+    const at = Date.now();
+    setFirstSidebarVisibleAt(at);
+    markStartupTrace(bootPhase(), "first-sidebar-visible", {
+      at,
+      source: sidebarHydratedFromCache() ? "cache" : "live",
+    });
+  });
+
+  createEffect(() => {
+    if (firstSessionPaintAt()) return;
+    if (currentView() !== "session") return;
+    const selected = activeSessionId();
+    if (!selected) return;
+    const hasVisibleSessionSurface = visibleMessages().length > 0 || sessionsLoaded();
+    if (!hasVisibleSessionSurface) return;
+    const at = Date.now();
+    setFirstSessionPaintAt(at);
+    markStartupTrace(bootPhase(), "first-session-paint", { at, sessionId: selected });
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!sessionsLoaded()) return;
+
+    const groups = sidebarWorkspaceGroups();
+    const sessionsByWorkspaceId: Record<string, StartupSessionSnapshotEntry[]> = {};
+    for (const group of groups) {
+      if (!group.sessions.length) continue;
+      sessionsByWorkspaceId[group.workspace.id] = group.sessions
+        .slice(0, STARTUP_SESSION_SNAPSHOT_MAX_PER_WORKSPACE)
+        .map((session) => ({
+          id: session.id,
+          title: session.title,
+          parentID: session.parentID ?? null,
+          directory: session.directory ?? null,
+          time: session.time,
+        }));
+    }
+    if (Object.keys(sessionsByWorkspaceId).length === 0) return;
+
+    const payload: StartupSessionSnapshot = {
+      version: STARTUP_SESSION_SNAPSHOT_VERSION,
+      updatedAt: Date.now(),
+      sessionsByWorkspaceId,
+    };
+
+    try {
+      window.localStorage.setItem(STARTUP_SESSION_SNAPSHOT_KEY, JSON.stringify(payload));
+      setStartupSessionSnapshotByWorkspaceId(sessionsByWorkspaceId);
+    } catch {
+      // ignore storage write failures
+    }
   });
 
   createEffect(() => {
@@ -1146,7 +1307,7 @@ export default function App() {
     const workspacePath = activeLocalPath || runningProjectDir;
 
     if (!workspacePath) {
-      setError("Pick a local worker folder before restarting the local server.");
+      setError(t("app.error_pick_local_folder"));
       return false;
     }
 
@@ -1174,7 +1335,7 @@ export default function App() {
     const client = openworkServerClient();
     const workspaceId = runtimeWorkspaceId();
     if (!client || !workspaceId || openworkServerStatus() !== "connected") {
-      setError("Connect to this worker before applying runtime changes.");
+      setError(t("app.error_connect_first"));
       return false;
     }
 
@@ -1184,7 +1345,7 @@ export default function App() {
       await refreshMcpServers();
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to apply runtime changes.";
+      const message = error instanceof Error ? error.message : t("app.error_runtime_changes");
       setError(message);
       return false;
     }
@@ -1267,9 +1428,9 @@ export default function App() {
 
       resetOpenworkServerSettings();
 
-      return { ok: true, message: "Reset app config defaults. Restart OpenWork if any stale settings remain." };
+      return { ok: true, message: t("app.reset_config_ok") };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
+      const message = error instanceof Error ? error.message : t("app.error_reset_config");
       return { ok: false, message };
     }
   };
@@ -1284,40 +1445,6 @@ export default function App() {
     const lastCheckedAt = getUpdateLastCheckedAt(state);
     if (!lastCheckedAt) return true;
     return Date.now() - lastCheckedAt >= UPDATE_AUTO_CHECK_EVERY_MS;
-  };
-
-  const workspaceAutoReloadAvailable = createMemo(() =>
-    false,
-  );
-
-  const workspaceAutoReloadEnabled = createMemo(() => {
-    if (!workspaceAutoReloadAvailable()) return false;
-    const cfg = workspaceStore.workspaceConfig();
-    return Boolean(cfg?.reload?.auto);
-  });
-
-  const workspaceAutoReloadResumeEnabled = createMemo(() => {
-    if (!workspaceAutoReloadAvailable()) return false;
-    const cfg = workspaceStore.workspaceConfig();
-    return Boolean(cfg?.reload?.resume);
-  });
-
-  const setWorkspaceAutoReloadEnabled = async (next: boolean) => {
-    if (!workspaceAutoReloadAvailable()) return;
-    const cfg = workspaceStore.workspaceConfig();
-    const resume = Boolean(cfg?.reload?.resume);
-    await workspaceStore.persistReloadSettings({ auto: next, resume: next ? resume : false });
-  };
-
-  const setWorkspaceAutoReloadResumeEnabled = async (next: boolean) => {
-    if (!workspaceAutoReloadAvailable()) return;
-    const cfg = workspaceStore.workspaceConfig();
-    const auto = Boolean(cfg?.reload?.auto);
-    await workspaceStore.persistReloadSettings({ auto, resume: auto ? next : false });
-  };
-
-  const reloadWorkspaceEngineAndResume = async () => {
-    await reloadWorkspaceEngine();
   };
 
   const isActiveSessionStatus = (status: string | null | undefined) =>
@@ -1354,13 +1481,8 @@ export default function App() {
         // ignore and continue stopping the rest before reload
       }
     }
-    await reloadWorkspaceEngineAndResume();
+    await reloadWorkspaceEngine();
   };
-
-  onMount(() => {
-    // OpenCode hot reload drives freshness now; OpenWork no longer listens for
-    // legacy reload-required events.
-  });
 
   const {
     projectDir: workspaceProjectDir,
@@ -1443,26 +1565,15 @@ export default function App() {
     });
   });
 
-  const activeAuthorizedDirs = createMemo(() => workspaceStore.authorizedDirs());
   const selectedWorkspaceDisplay = createMemo(() => workspaceStore.selectedWorkspaceDisplay());
   const resolvedActiveWorkspaceConfig = createMemo(
     () => activeWorkspaceServerConfig() ?? workspaceStore.workspaceConfig(),
   );
-  const refreshActiveWorkspaceServerConfig = workspaceStore.refreshRuntimeWorkspaceConfig;
   const activePermissionMemo = createMemo(() => activePermission());
 
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(
     new Set()
   );
-  const [expandedSidebarSections, setExpandedSidebarSections] = createSignal({
-    progress: true,
-    artifacts: true,
-    context: false,
-    plugins: false,
-    mcp: false,
-    skills: true,
-    authorizedFolders: false,
-  });
   const [autoConnectAttempted, setAutoConnectAttempted] = createSignal(false);
 
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
@@ -1671,7 +1782,7 @@ export default function App() {
       });
     }
 
-    void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
+    void workspaceStore.bootstrapOnboarding();
   });
 
   createEffect(() => {
@@ -1918,21 +2029,21 @@ export default function App() {
     const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
     const skillsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills."
+        ? t("app.skills_hint_disconnected")
         : openworkStatus === "limited"
-          ? "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect."
+          ? t("app.skills_hint_limited")
           : openworkServerCanWriteSkills()
             ? null
-            : "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs."
+            : t("app.skills_hint_readonly")
       : null;
     const pluginsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Plugins are read-only."
+        ? t("app.plugins_hint_disconnected")
         : openworkStatus === "limited"
-          ? "OpenWork server needs a token to edit plugins."
+          ? t("app.plugins_hint_limited")
           : openworkServerCanWritePlugins()
             ? null
-            : "OpenWork server is read-only for plugins."
+            : t("app.plugins_hint_readonly")
       : null;
 
     return {
@@ -1944,16 +2055,21 @@ export default function App() {
       providerAuthModalOpen: providerAuthModalOpen(),
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
+      providerAuthProviders: providerAuthProviders(),
       providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
       providerAuthWorkerType: providerAuthWorkerType(),
+      cloudOrgProviders: cloudOrgProviders(),
+      importedCloudProviders: importedCloudProviders(),
       openProviderAuthModal,
       disconnectProvider,
+      removeCloudProvider,
       closeProviderAuthModal,
       startProviderAuth,
       completeProviderAuthOAuth,
       refreshProviders,
+      refreshCloudOrgProviders,
       submitProviderApiKey,
-      view: currentView(),
+      connectCloudProvider,
       setView,
       toggleSettings: () => toggleSettingsView("general"),
       startupPreference: startupPreference(),
@@ -1961,7 +2077,6 @@ export default function App() {
       clientConnected: Boolean(client()),
       busy: busy(),
       busyHint: busyHint(),
-      busyLabel: busyLabel(),
       newTaskDisabled: newTaskDisabled(),
       headerStatus: headerStatus(),
       error: error(),
@@ -1991,44 +2106,34 @@ export default function App() {
       resetOpenworkServerSettings,
       testOpenworkServerConnection,
       canReloadWorkspace: canReloadWorkspace(),
-      reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
+      reloadWorkspaceEngine,
       reloadBusy: reloadBusy(),
       reloadError: reloadError(),
-      workspaceAutoReloadAvailable: workspaceAutoReloadAvailable(),
-      workspaceAutoReloadEnabled: workspaceAutoReloadEnabled(),
-      setWorkspaceAutoReloadEnabled,
-      workspaceAutoReloadResumeEnabled: workspaceAutoReloadResumeEnabled(),
-      setWorkspaceAutoReloadResumeEnabled,
       selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
       workspaces: workspaceStore.workspaces(),
       selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
+      selectWorkspace: workspaceStore.selectWorkspace,
       switchWorkspace: workspaceStore.switchWorkspace,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-      pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
-      openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       connectRemoteWorkspace: workspaceStore.createRemoteWorkspaceFlow,
       openTeamBundle: bundlesStore.openTeamBundle,
-      importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
-      importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
       exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
       createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
       setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
       createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
       pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
-      workspaceSessionGroups: sidebarWorkspaceGroups(),
+      workspaceSessionGroups: hydratedSidebarWorkspaceGroups(),
       selectedSessionId: activeSessionId(),
       openRenameWorkspace: workspaceStore.openRenameWorkspace,
       editWorkspaceConnection: workspaceStore.openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
-      stopSandbox: workspaceStore.stopSandbox,
       schedulerPluginInstalled: schedulerPluginInstalled(),
       selectedWorkspaceRoot: workspaceStore.selectedWorkspaceRoot().trim(),
-      isRemoteWorkspace: workspaceStore.selectedWorkspaceDisplay().workspaceType === "remote",
       skillsAccessHint,
       canInstallSkillCreator,
       canUseDesktopTools,
@@ -2037,9 +2142,8 @@ export default function App() {
       canUseGlobalPluginScope,
       suggestedPlugins: SUGGESTED_PLUGINS,
       addPlugin,
+      createSessionInWorkspace,
       createSessionAndOpen,
-      setPrompt,
-      selectSession: selectSession,
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       updateAutoCheck: updateAutoCheck(),
@@ -2107,7 +2211,6 @@ export default function App() {
     providerAuthWorkerType: providerAuthWorkerType(),
     selectedSessionId: activeSessionId(),
     setView,
-    settingsTab: settingsTab(),
     setSettingsTab,
     toggleSettings: () => toggleSettingsView("general"),
     selectedWorkspaceDisplay: selectedWorkspaceDisplay(),
@@ -2117,16 +2220,13 @@ export default function App() {
     selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
     workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
+    selectWorkspace: workspaceStore.selectWorkspace,
     switchWorkspace: workspaceStore.switchWorkspace,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
     recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: workspaceStore.openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-    pickFolderWorkspace: workspaceStore.createWorkspaceFromPickedFolder,
-    openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
-    importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
-    importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     clientConnected: Boolean(client()),
@@ -2144,21 +2244,20 @@ export default function App() {
     orchestratorStatus: orchestratorStatusState(),
     opencodeRouterInfo: opencodeRouterInfoState(),
     appVersion: appVersion(),
-    stopHost,
+    booting: booting(),
+    startupPhase: bootPhase(),
+    startupBranch: startupBranch(),
+    startupTrace: startupTrace(),
     headerStatus: headerStatus(),
     busyHint: busyHint(),
     updateStatus: updateStatus(),
-    updateEnv: updateEnv(),
     anyActiveRuns: anyActiveRuns(),
     installUpdateAndRestart,
-    activePlugins: sidebarPluginList(),
-    activePluginStatus: sidebarPluginStatus(),
     skills: skills(),
-    skillsStatus: skillsStatus(),
     newTaskDisabled: newTaskDisabled(),
-    workspaceSessionGroups: sidebarWorkspaceGroups(),
+    sidebarHydratedFromCache: sidebarHydratedFromCache(),
+    workspaceSessionGroups: hydratedSidebarWorkspaceGroups(),
     openRenameWorkspace: workspaceStore.openRenameWorkspace,
-    selectSession: selectSession,
     messages: visibleMessages(),
     getSessionById: sessionById,
     getMessagesBySessionId: messagesBySessionId,
@@ -2170,10 +2269,7 @@ export default function App() {
     sessionCompactionState: selectedSessionCompactionState(),
     expandedStepIds: expandedStepIds(),
     setExpandedStepIds: setExpandedStepIds,
-    expandedSidebarSections: expandedSidebarSections(),
-    setExpandedSidebarSections: setExpandedSidebarSections,
     workingFiles: activeWorkingFiles(),
-    authorizedDirs: activeAuthorizedDirs(),
     busy: busy(),
     prompt: prompt(),
     setPrompt: setPrompt,
@@ -2189,12 +2285,14 @@ export default function App() {
     completeProviderAuthOAuth: completeProviderAuthOAuth,
     refreshProviders: refreshProviders,
     submitProviderApiKey: submitProviderApiKey,
+    connectCloudProvider: connectCloudProvider,
     openProviderAuthModal: openProviderAuthModal,
     closeProviderAuthModal: closeProviderAuthModal,
     providerAuthModalOpen: providerAuthModalOpen(),
     providerAuthBusy: providerAuthBusy(),
     providerAuthError: providerAuthError(),
     providerAuthMethods: providerAuthMethods(),
+    providerAuthProviders: providerAuthProviders(),
     providerAuthPreferredProviderId: providerAuthPreferredProviderId(),
     providers: providers(),
     providerConnectedIds: providerConnectedIds(),
@@ -2202,14 +2300,32 @@ export default function App() {
     hasEarlierMessages: selectedSessionHasEarlierMessages(),
     loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
     loadEarlierMessages,
+    sessionErrorTurns: selectedSessionErrorTurns(),
     sessionStatus: selectedSessionStatus(),
     error: error(),
   });
 
+  const reactSessionRuntimeEnabled = createMemo(() => reactSessionEnabled());
+  const reactSessionRuntimeBaseUrl = createMemo(() => {
+    const workspaceId = runtimeWorkspaceId()?.trim() ?? "";
+    const baseUrl = openworkServerClient()?.baseUrl?.trim() ?? "";
+    if (!workspaceId || !baseUrl) return "";
+    const mounted = buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl;
+    return `${mounted.replace(/\/+$/, "")}/opencode`;
+  });
+  const reactSessionRuntimeToken = createMemo(
+    () => openworkServerClient()?.token?.trim() || openworkServerSettings().token?.trim() || "",
+  );
+  const showReactSessionRuntime = createMemo(
+    () =>
+      reactSessionRuntimeEnabled() &&
+      openworkServerStatus() === "connected" &&
+      Boolean(runtimeWorkspaceId()?.trim() && reactSessionRuntimeBaseUrl() && reactSessionRuntimeToken()),
+  );
+
   const settingsTabs = new Set<SettingsTab>([
     "general",
     "den",
-    "model",
     "automations",
     "skills",
     "extensions",
@@ -2229,23 +2345,12 @@ export default function App() {
     return "general";
   };
 
-  const initialRoute = () => {
-    if (typeof window === "undefined") return "/session";
-    return "/session";
-  };
-
   createEffect(() => {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
 
     if (path === "" || path === "/") {
-      navigate(initialRoute(), { replace: true });
-      return;
-    }
-
-    if (path.startsWith("/dashboard")) {
-      const [, , tabSegment] = path.split("/");
-      goToSettings(mapLegacySurfaceToSettingsTab(tabSegment ?? "settings"), { replace: true });
+      navigate("/session", { replace: true });
       return;
     }
 
@@ -2304,16 +2409,6 @@ export default function App() {
       return;
     }
 
-    if (path.startsWith("/proto-v1-ux") || path.startsWith("/proto")) {
-      if (isTauriRuntime()) {
-        navigate("/settings/automations", { replace: true });
-        return;
-      }
-
-      navigate("/settings/automations", { replace: true });
-      return;
-    }
-
     const fallback = activeSessionId();
     if (fallback) {
       goToSession(fallback, { replace: true });
@@ -2330,10 +2425,19 @@ export default function App() {
             <ExtensionsProvider store={extensionsStore}>
               <AutomationsProvider store={automationsStore}>
                 <StatusToastsProvider store={statusToastsStore}>
+                  <Show when={showReactSessionRuntime()}>
+                    <ReactIsland
+                      class="hidden"
+                      instanceKey={`react-runtime:${runtimeWorkspaceId()!}`}
+                      component={ReactSessionRuntime}
+                      props={{
+                        workspaceId: runtimeWorkspaceId()!,
+                        opencodeBaseUrl: reactSessionRuntimeBaseUrl(),
+                        openworkToken: reactSessionRuntimeToken(),
+                      }}
+                    />
+                  </Show>
             <Switch>
-              <Match when={booting()}>
-                <BootShell />
-              </Match>
               <Match when={currentView() === "session"}>
                 <SessionView {...sessionProps()} />
               </Match>
@@ -2381,13 +2485,13 @@ export default function App() {
         activeSessions={activeReloadBlockingSessions()}
         isRemoteWorkspace={selectedWorkspaceDisplay().workspaceType === "remote"}
         onForceStopSession={(sessionID) => abortSession(sessionID)}
-        onReloadEngine={() => reloadWorkspaceEngineAndResume()}
+        onReloadEngine={() => reloadWorkspaceEngine()}
       />
 
       <BundleImportModal
         open={Boolean(bundlesStore.bundleImportChoice())}
-        title={bundlesStore.bundleImportSummary()?.title ?? "Import bundle"}
-        description={bundlesStore.bundleImportSummary()?.description ?? "Choose how to import this bundle."}
+        title={bundlesStore.bundleImportSummary()?.title ?? t("app.import_shared_bundle")}
+        description={bundlesStore.bundleImportSummary()?.description ?? t("app.import_bundle_desc")}
         items={bundlesStore.bundleImportSummary()?.items ?? []}
         workers={bundlesStore.bundleWorkerOptions()}
         busy={bundlesStore.bundleImportBusy()}
@@ -2517,7 +2621,7 @@ export default function App() {
         localDisabled={!isTauriRuntime()}
         localDisabledReason={
           !isTauriRuntime()
-            ? "Create local workspaces in the desktop app. Remote and shared workspaces still work here."
+            ? t("app.local_disabled_reason")
             : null
         }
         remoteSubmitting={busy() && busyLabel() === "status.connecting"}
@@ -2582,15 +2686,15 @@ export default function App() {
         reloadDescription={reloadCopy().body}
         reloadTrigger={reloadTrigger()}
         reloadError={reloadError()}
-        reloadLabel={activeReloadBlockingSessions().length > 0 ? "Reload & Stop Tasks" : "Reload now"}
-        dismissLabel="Later"
+        reloadLabel={activeReloadBlockingSessions().length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")}
+        dismissLabel={t("app.reload_later")}
         reloadBusy={reloadBusy()}
         canReload={canReloadWorkspace()}
         hasActiveRuns={activeReloadBlockingSessions().length > 0}
         onReload={() => {
           void (activeReloadBlockingSessions().length > 0
             ? forceStopActiveSessionsAndReload()
-            : reloadWorkspaceEngineAndResume());
+            : reloadWorkspaceEngine());
         }}
         onDismissReload={clearReloadRequired}
       />

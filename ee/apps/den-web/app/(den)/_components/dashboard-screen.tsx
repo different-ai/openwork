@@ -557,8 +557,8 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                   <p className="text-[15px] leading-relaxed text-[var(--dls-text-secondary)]">
                     {billingSummary?.featureGateEnabled
                       ? billingSummary.hasActivePlan
-                        ? "Your account has an active OpenWork Cloud plan."
-                        : "Your account needs billing before the next launch."
+                        ? "Your account has active worker billing."
+                        : "Workers stay disabled until you purchase one for $50/month."
                       : "Billing gates are disabled in this environment."}
                   </p>
                   <Link
@@ -575,7 +575,13 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
           <div className="rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] p-8">
             <div className="mx-auto max-w-[30rem] text-center">
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">No workers yet</h2>
-              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Create your first worker to unlock connection details and runtime controls.</p>
+              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Purchase your first worker to unlock connection details and runtime controls.</p>
+              <Link
+                href="/checkout"
+                className="mt-5 inline-flex rounded-[12px] border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-2 text-xs font-semibold text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)]"
+              >
+                Purchase worker billing
+              </Link>
             </div>
           </div>
         )}
@@ -653,14 +659,14 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
 
             {workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">Loading workers...</p> : null}
             {workersError ? <p className="text-xs font-medium text-rose-600">{workersError}</p> : null}
-            {workers.length === 0 && !workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">No workers yet. Create one to get started.</p> : null}
+            {workers.length === 0 && !workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">No workers yet. Purchase one to get started.</p> : null}
           </div>
 
             <div className="text-xs text-[var(--dls-text-secondary)] md:text-sm">
               Signed in as <span className="font-medium text-[var(--dls-text-primary)]">{user.email}</span>
               <div className="mt-2 text-xs text-[var(--dls-text-secondary)]">
                 {billingSummary?.featureGateEnabled && !billingSummary.hasActivePlan
-                  ? "Billing required before the next launch."
+                  ? "Purchase required before the next launch."
                   : `${ownedWorkerCount} worker${ownedWorkerCount === 1 ? "" : "s"} in your account.`}
             </div>
           </div>

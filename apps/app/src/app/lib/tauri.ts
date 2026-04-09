@@ -658,10 +658,6 @@ export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
 }
 
-export async function opkgInstall(projectDir: string, pkg: string): Promise<ExecResult> {
-  return invoke<ExecResult>("opkg_install", { projectDir, package: pkg });
-}
-
 export async function importSkill(
   projectDir: string,
   sourceDir: string,

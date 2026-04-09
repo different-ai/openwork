@@ -1,4 +1,5 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
+import { t } from "../i18n";
 
 export const MODEL_PREF_KEY = "openwork.defaultModel";
 export const SESSION_MODEL_PREF_KEY = "openwork.sessionModels";
@@ -16,7 +17,7 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
   {
     name: "opencode-scheduler",
     packageName: "opencode-scheduler",
-    description: "Run scheduled jobs with the OpenCode scheduler plugin.",
+    get description() { return t("plugins.scheduler_desc"); },
     tags: ["automation", "jobs"],
     installMode: "simple",
   },
@@ -37,44 +38,44 @@ export const CHROME_DEVTOOLS_MCP_COMMAND = ["npx", "-y", "chrome-devtools-mcp@la
 
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   {
-    name: "Notion",
-    description: "Pages, databases, and project docs in sync.",
+    get name() { return t("mcp.quick_connect_notion_title"); },
+    get description() { return t("mcp.quick_connect_notion_desc"); },
     url: "https://mcp.notion.com/mcp",
     type: "remote",
     oauth: true,
   },
   {
-    name: "Linear",
-    description: "Plan sprints and ship tickets faster.",
+    get name() { return t("mcp.quick_connect_linear_title"); },
+    get description() { return t("mcp.quick_connect_linear_desc"); },
     url: "https://mcp.linear.app/mcp",
     type: "remote",
     oauth: true,
   },
   {
-    name: "Sentry",
-    description: "Track releases and resolve production errors.",
+    get name() { return t("mcp.quick_connect_sentry_title"); },
+    get description() { return t("mcp.quick_connect_sentry_desc"); },
     url: "https://mcp.sentry.dev/mcp",
     type: "remote",
     oauth: true,
   },
   {
-    name: "Stripe",
-    description: "Inspect payments, invoices, and subscriptions.",
+    get name() { return t("mcp.quick_connect_stripe_title"); },
+    get description() { return t("mcp.quick_connect_stripe_desc"); },
     url: "https://mcp.stripe.com",
     type: "remote",
     oauth: true,
   },
   {
-    name: "Context7",
-    description: "Search product docs with richer context.",
+    get name() { return t("mcp.quick_connect_context7_title"); },
+    get description() { return t("mcp.quick_connect_context7_desc"); },
     url: "https://mcp.context7.com/mcp",
     type: "remote",
     oauth: false,
   },
   {
     id: CHROME_DEVTOOLS_MCP_ID,
-    name: "Control Chrome",
-    description: "Drive Chrome tabs with browser automation.",
+    get name() { return t("mcp.quick_connect_chrome_title"); },
+    get description() { return t("mcp.quick_connect_chrome_desc"); },
     type: "local",
     command: [...CHROME_DEVTOOLS_MCP_COMMAND],
     oauth: false,

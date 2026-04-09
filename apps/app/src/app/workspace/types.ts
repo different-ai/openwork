@@ -135,6 +135,11 @@ export type ShareWorkspaceModalProps = {
   shareWorkspaceProfileToTeamOrgName?: string | null;
   shareWorkspaceProfileToTeamNeedsSignIn?: boolean;
   onShareWorkspaceProfileToTeamSignIn?: () => void | Promise<void>;
+  templateContentSummary?: {
+    skillNames: string[];
+    commandNames: string[];
+    configFiles: string[];
+  } | null;
   onShareSkillsSet?: () => void;
   shareSkillsSetBusy?: boolean;
   shareSkillsSetUrl?: string | null;

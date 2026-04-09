@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::types::OpenworkServerInfo;
 use crate::utils::now_ms;
 use crate::utils::truncate_output;
+use crate::workspace::state::normalize_local_workspace_path;
 
 pub mod manager;
 pub mod spawn;
@@ -67,6 +68,14 @@ fn openwork_server_state_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
     Ok(data_dir.join("openwork-server-state.json"))
+}
+
+fn normalize_workspace_key(workspace_key: &str) -> String {
+    let trimmed = workspace_key.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    normalize_local_workspace_path(trimmed)
 }
 
 fn load_openwork_server_token_store(
@@ -140,12 +149,14 @@ fn save_openwork_server_state(
     Ok(())
 }
 
-fn read_preferred_openwork_port(app: &AppHandle, workspace_key: &str) -> Result<Option<u16>, String> {
-    let path = openwork_server_state_path(app)?;
-    let state = load_openwork_server_state(&path)?;
-    let trimmed = workspace_key.trim();
-    if !trimmed.is_empty() {
-        if let Some(port) = state.workspace_ports.get(trimmed) {
+fn read_preferred_openwork_port_at_path(
+    path: &Path,
+    workspace_key: &str,
+) -> Result<Option<u16>, String> {
+    let state = load_openwork_server_state(path)?;
+    let normalized = normalize_workspace_key(workspace_key);
+    if !normalized.is_empty() {
+        if let Some(port) = state.workspace_ports.get(&normalized) {
             return Ok(Some(*port));
         }
     }
@@ -155,13 +166,20 @@ fn read_preferred_openwork_port(app: &AppHandle, workspace_key: &str) -> Result<
     Ok(state.preferred_port)
 }
 
-fn reserved_openwork_ports(app: &AppHandle, exclude_workspace_key: &str) -> Result<HashSet<u16>, String> {
+fn read_preferred_openwork_port(app: &AppHandle, workspace_key: &str) -> Result<Option<u16>, String> {
     let path = openwork_server_state_path(app)?;
-    let state = load_openwork_server_state(&path)?;
-    let excluded = exclude_workspace_key.trim();
+    read_preferred_openwork_port_at_path(&path, workspace_key)
+}
+
+fn reserved_openwork_ports_at_path(
+    path: &Path,
+    exclude_workspace_key: &str,
+) -> Result<HashSet<u16>, String> {
+    let state = load_openwork_server_state(path)?;
+    let excluded = normalize_workspace_key(exclude_workspace_key);
     let mut reserved = HashSet::new();
     for (workspace_key, port) in state.workspace_ports {
-        if workspace_key.trim() == excluded {
+        if workspace_key == excluded {
             continue;
         }
         reserved.insert(port);
@@ -174,22 +192,35 @@ fn reserved_openwork_ports(app: &AppHandle, exclude_workspace_key: &str) -> Resu
     Ok(reserved)
 }
 
+fn reserved_openwork_ports(app: &AppHandle, exclude_workspace_key: &str) -> Result<HashSet<u16>, String> {
+    let path = openwork_server_state_path(app)?;
+    reserved_openwork_ports_at_path(&path, exclude_workspace_key)
+}
+
+fn persist_preferred_openwork_port_at_path(
+    path: &Path,
+    workspace_key: &str,
+    port: u16,
+) -> Result<(), String> {
+    let mut state = load_openwork_server_state(path)?;
+    state.version = OPENWORK_SERVER_STATE_VERSION;
+    let normalized = normalize_workspace_key(workspace_key);
+    if normalized.is_empty() {
+        state.preferred_port = Some(port);
+    } else {
+        state.workspace_ports.insert(normalized, port);
+        state.preferred_port = None;
+    }
+    save_openwork_server_state(path, &state)
+}
+
 fn persist_preferred_openwork_port(
     app: &AppHandle,
     workspace_key: &str,
     port: u16,
 ) -> Result<(), String> {
     let path = openwork_server_state_path(app)?;
-    let mut state = load_openwork_server_state(&path)?;
-    state.version = OPENWORK_SERVER_STATE_VERSION;
-    let trimmed = workspace_key.trim();
-    if trimmed.is_empty() {
-        state.preferred_port = Some(port);
-    } else {
-        state.workspace_ports.insert(trimmed.to_string(), port);
-        state.preferred_port = None;
-    }
-    save_openwork_server_state(&path, &state)
+    persist_preferred_openwork_port_at_path(&path, workspace_key, port)
 }
 
 fn load_or_create_workspace_tokens(
@@ -205,7 +236,8 @@ fn load_or_create_workspace_tokens_at_path(
     workspace_key: &str,
 ) -> Result<PersistedOpenworkServerTokens, String> {
     let mut store = load_openwork_server_token_store(path)?;
-    if let Some(tokens) = store.workspaces.get(workspace_key) {
+    let normalized = normalize_workspace_key(workspace_key);
+    if let Some(tokens) = store.workspaces.get(&normalized) {
         return Ok(tokens.clone());
     }
 
@@ -217,7 +249,7 @@ fn load_or_create_workspace_tokens_at_path(
     };
     store
         .workspaces
-        .insert(workspace_key.to_string(), tokens.clone());
+        .insert(normalized, tokens.clone());
     save_openwork_server_token_store(path, &store)?;
     Ok(tokens)
 }
@@ -237,7 +269,8 @@ fn persist_workspace_owner_token_at_path(
     owner_token: &str,
 ) -> Result<(), String> {
     let mut store = load_openwork_server_token_store(path)?;
-    let Some(tokens) = store.workspaces.get_mut(workspace_key) else {
+    let normalized = normalize_workspace_key(workspace_key);
+    let Some(tokens) = store.workspaces.get_mut(&normalized) else {
         return Ok(());
     };
     tokens.owner_token = Some(owner_token.to_string());
@@ -473,5 +506,54 @@ mod tests {
         assert!(state.workspace_ports.is_empty());
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reuses_workspace_tokens_across_canonical_path_aliases() {
+        let path = unique_temp_path("token-path-alias");
+        let workspace = PathBuf::from(format!(
+            "/tmp/openwork-workspace-token-alias-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&workspace).expect("create temp workspace");
+        let canonical = fs::canonicalize(&workspace).expect("canonical workspace path");
+
+        let first = load_or_create_workspace_tokens_at_path(&path, &workspace.to_string_lossy())
+            .expect("store tokens using raw path");
+        let second = load_or_create_workspace_tokens_at_path(&path, &canonical.to_string_lossy())
+            .expect("load tokens using canonical path");
+
+        assert_eq!(first.client_token, second.client_token);
+        assert_eq!(first.host_token, second.host_token);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn reuses_workspace_port_across_canonical_path_aliases() {
+        let path = unique_temp_path("port-path-alias");
+        let workspace = PathBuf::from(format!(
+            "/tmp/openwork-workspace-port-alias-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&workspace).expect("create temp workspace");
+        let canonical = fs::canonicalize(&workspace).expect("canonical workspace path");
+
+        persist_preferred_openwork_port_at_path(&path, &workspace.to_string_lossy(), 49_123)
+            .expect("persist preferred port using raw path");
+
+        let preferred = read_preferred_openwork_port_at_path(&path, &canonical.to_string_lossy())
+            .expect("read preferred port using canonical path");
+        let reserved = reserved_openwork_ports_at_path(&path, &canonical.to_string_lossy())
+            .expect("read reserved ports using canonical path");
+
+        assert_eq!(preferred, Some(49_123));
+        assert!(!reserved.contains(&49_123));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(workspace);
     }
 }

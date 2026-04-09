@@ -21,6 +21,9 @@ export function SiteFooter() {
           <Link href="/docs" target="_blank" className="transition-colors hover:text-gray-800">
             Docs
           </Link>
+          <Link href="/pricing" className="transition-colors hover:text-gray-800">
+            Pricing
+          </Link>
           <Link href="/download" className="transition-colors hover:text-gray-800">
             Desktop
           </Link>
@@ -30,7 +33,16 @@ export function SiteFooter() {
           <Link href="/enterprise" className="transition-colors hover:text-gray-800">
             Enterprise
           </Link>
-          <div>© 2026 OpenWork Project.</div>
+          <Link href="/trust" className="transition-colors hover:text-gray-800">
+            Trust Center
+          </Link>
+          <Link href="/privacy" className="transition-colors hover:text-gray-800">
+            Privacy
+          </Link>
+          <Link href="/terms" className="transition-colors hover:text-gray-800">
+            Terms
+          </Link>
+          <div>© 2026 Different AI</div>
         </div>
       </div>
     </footer>

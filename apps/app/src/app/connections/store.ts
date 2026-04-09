@@ -15,7 +15,8 @@ import {
   validateMcpServerName,
 } from "../mcp";
 import type { Client, McpServerEntry, McpStatusMap, ReloadReason, ReloadTrigger } from "../types";
-import { isTauriRuntime, normalizeDirectoryQueryPath, safeStringify } from "../utils";
+import { toSessionTransportDirectory } from "../lib/session-scope";
+import { isTauriRuntime, safeStringify } from "../utils";
 import { createWorkspaceContextKey } from "../context/workspace-context";
 import type { OpenworkServerStore } from "./openwork-server-store";
 
@@ -127,7 +128,7 @@ export function createConnectionsStore(options: {
     if (!resolvedProjectDir && activeClient) {
       try {
         const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
+        const discoveredRaw = toSessionTransportDirectory(pathInfo.directory ?? "");
         const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
         if (discovered) {
           resolvedProjectDir = discovered;

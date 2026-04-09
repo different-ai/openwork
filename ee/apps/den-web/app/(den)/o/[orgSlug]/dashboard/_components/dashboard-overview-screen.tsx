@@ -5,14 +5,17 @@ import {
   Bot,
   CreditCard,
   Cpu,
+  KeyRound,
   Monitor,
   Share2,
   Users,
 } from "lucide-react";
 import {
   getBackgroundAgentsRoute,
+  getApiKeysRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getOrgAccessFlags,
   getMembersRoute,
   getSharedSetupsRoute,
 } from "../../../../_lib/den-org";
@@ -48,6 +51,10 @@ export function DashboardOverviewScreen() {
   const { orgSlug, activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
   const { templates } = useOrgTemplates(orgSlug);
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+  );
 
   const quickActions = [
     {
@@ -62,6 +69,14 @@ export function DashboardOverviewScreen() {
       href: getMembersRoute(orgSlug),
       tint: "bg-cyan-50 text-cyan-600 group-hover:bg-cyan-100",
     },
+    ...(access.canManageApiKeys
+      ? [{
+          label: "API Keys",
+          icon: KeyRound,
+          href: getApiKeysRoute(orgSlug),
+          tint: "bg-emerald-50 text-emerald-600 group-hover:bg-emerald-100",
+        }]
+      : []),
     {
       label: "Shared Workspace",
       icon: Bot,
@@ -69,7 +84,7 @@ export function DashboardOverviewScreen() {
       tint: "bg-orange-50 text-orange-500 group-hover:bg-orange-100",
     },
     {
-      label: "Custom LLMs",
+      label: "LLM Providers",
       icon: Cpu,
       href: getCustomLlmProvidersRoute(orgSlug),
       tint: "bg-lime-50 text-lime-600 group-hover:bg-lime-100",

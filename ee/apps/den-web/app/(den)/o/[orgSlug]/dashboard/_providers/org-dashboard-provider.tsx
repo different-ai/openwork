@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
-import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
+import { getErrorMessage, getOrgLimitError, requestJson } from "../../../../_lib/den-flow";
 import {
   type DenOrgContext,
   type DenOrgSummary,
@@ -20,6 +20,7 @@ import {
 
 type OrgDashboardContextValue = {
   orgSlug: string;
+  orgId: string | null;
   orgDirectory: DenOrgSummary[];
   activeOrg: DenOrgSummary | null;
   orgContext: DenOrgContext | null;
@@ -33,6 +34,9 @@ type OrgDashboardContextValue = {
   cancelInvitation: (invitationId: string) => Promise<void>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
+  updateTeam: (teamId: string, input: { name?: string; memberIds?: string[] }) => Promise<void>;
+  deleteTeam: (teamId: string) => Promise<void>;
   createRole: (input: { roleName: string; permission: Record<string, string[]> }) => Promise<void>;
   updateRole: (roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) => Promise<void>;
   deleteRole: (roleId: string) => Promise<void>;
@@ -60,6 +64,16 @@ export function OrgDashboardProvider({
     [orgDirectory, orgSlug],
   );
 
+  const activeOrgId = activeOrg?.id ?? orgContext?.organization.id ?? null;
+
+  function getRequiredActiveOrgId() {
+    if (!activeOrgId) {
+      throw new Error("Organization not found.");
+    }
+
+    return activeOrgId;
+  }
+
   async function loadOrgDirectory() {
     const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET" }, 12000);
     if (!response.ok) {
@@ -69,8 +83,8 @@ export function OrgDashboardProvider({
     return parseOrgListPayload(payload).orgs;
   }
 
-  async function loadOrgContext(targetOrgSlug: string) {
-    const { response, payload } = await requestJson(`/v1/orgs/${encodeURIComponent(targetOrgSlug)}/context`, { method: "GET" }, 12000);
+  async function loadOrgContext(targetOrgId: string) {
+    const { response, payload } = await requestJson(`/v1/orgs/${encodeURIComponent(targetOrgId)}/context`, { method: "GET" }, 12000);
     if (!response.ok) {
       throw new Error(getErrorMessage(payload, `Failed to load organization (${response.status}).`));
     }
@@ -95,12 +109,16 @@ export function OrgDashboardProvider({
     setOrgError(null);
 
     try {
-      const [directory, context] = await Promise.all([
-        loadOrgDirectory(),
-        loadOrgContext(orgSlug),
-      ]);
+      const directory = await loadOrgDirectory();
+      const targetOrg = directory.find((entry) => entry.slug === orgSlug) ?? null;
 
-      setOrgDirectory(directory.map((entry) => ({ ...entry, isActive: entry.slug === context.organization.slug })));
+      if (!targetOrg) {
+        throw new Error("Organization not found.");
+      }
+
+      const context = await loadOrgContext(targetOrg.id);
+
+      setOrgDirectory(directory.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
       setOrgContext(context);
       await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
     } catch (error) {
@@ -140,6 +158,10 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
+        if (response.status === 402) {
+          router.push("/checkout");
+          return;
+        }
         throw new Error(getErrorMessage(payload, `Failed to create organization (${response.status}).`));
       }
 
@@ -166,7 +188,7 @@ export function OrgDashboardProvider({
   async function inviteMember(input: { email: string; role: string }) {
     await runMutation("invite-member", async () => {
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/invitations`,
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/invitations`,
         {
           method: "POST",
           body: JSON.stringify(input),
@@ -175,6 +197,10 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
+        const limitError = getOrgLimitError(payload);
+        if (limitError) {
+          throw limitError;
+        }
         throw new Error(getErrorMessage(payload, `Failed to invite member (${response.status}).`));
       }
     });
@@ -183,7 +209,7 @@ export function OrgDashboardProvider({
   async function cancelInvitation(invitationId: string) {
     await runMutation("cancel-invitation", async () => {
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/invitations/${encodeURIComponent(invitationId)}/cancel`,
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/invitations/${encodeURIComponent(invitationId)}/cancel`,
         { method: "POST", body: JSON.stringify({}) },
         12000,
       );
@@ -197,7 +223,7 @@ export function OrgDashboardProvider({
   async function updateMemberRole(memberId: string, role: string) {
     await runMutation("update-member-role", async () => {
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/members/${encodeURIComponent(memberId)}/role`,
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/members/${encodeURIComponent(memberId)}/role`,
         {
           method: "POST",
           body: JSON.stringify({ role }),
@@ -214,7 +240,7 @@ export function OrgDashboardProvider({
   async function removeMember(memberId: string) {
     await runMutation("remove-member", async () => {
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/members/${encodeURIComponent(memberId)}`,
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/members/${encodeURIComponent(memberId)}`,
         { method: "DELETE" },
         12000,
       );
@@ -228,7 +254,7 @@ export function OrgDashboardProvider({
   async function createRole(input: { roleName: string; permission: Record<string, string[]> }) {
     await runMutation("create-role", async () => {
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/roles`,
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/roles`,
         {
           method: "POST",
           body: JSON.stringify(input),
@@ -242,10 +268,58 @@ export function OrgDashboardProvider({
     });
   }
 
+  async function createTeam(input: { name: string; memberIds: string[] }) {
+    await runMutation("create-team", async () => {
+      const { response, payload } = await requestJson(
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/teams`,
+        {
+          method: "POST",
+          body: JSON.stringify(input),
+        },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to create team (${response.status}).`));
+      }
+    });
+  }
+
+  async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[] }) {
+    await runMutation("update-team", async () => {
+      const { response, payload } = await requestJson(
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/teams/${encodeURIComponent(teamId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(input),
+        },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to update team (${response.status}).`));
+      }
+    });
+  }
+
+  async function deleteTeam(teamId: string) {
+    await runMutation("delete-team", async () => {
+      const { response, payload } = await requestJson(
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/teams/${encodeURIComponent(teamId)}`,
+        { method: "DELETE" },
+        12000,
+      );
+
+      if (response.status !== 204 && !response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to delete team (${response.status}).`));
+      }
+    });
+  }
+
   async function updateRole(roleId: string, input: { roleName?: string; permission?: Record<string, string[]> }) {
     await runMutation("update-role", async () => {
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/roles/${encodeURIComponent(roleId)}`,
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/roles/${encodeURIComponent(roleId)}`,
         {
           method: "PATCH",
           body: JSON.stringify(input),
@@ -262,7 +336,7 @@ export function OrgDashboardProvider({
   async function deleteRole(roleId: string) {
     await runMutation("delete-role", async () => {
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/roles/${encodeURIComponent(roleId)}`,
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}/roles/${encodeURIComponent(roleId)}`,
         { method: "DELETE" },
         12000,
       );
@@ -289,6 +363,7 @@ export function OrgDashboardProvider({
 
   const value: OrgDashboardContextValue = {
     orgSlug,
+    orgId: activeOrgId,
     orgDirectory,
     activeOrg,
     orgContext,
@@ -302,6 +377,9 @@ export function OrgDashboardProvider({
     cancelInvitation,
     updateMemberRole,
     removeMember,
+    createTeam,
+    updateTeam,
+    deleteTeam,
     createRole,
     updateRole,
     deleteRole,

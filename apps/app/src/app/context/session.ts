@@ -1,4 +1,6 @@
 import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+
+import { t, currentLocale } from "../../i18n";
 import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
@@ -29,6 +31,7 @@ import {
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import { recordDevLog } from "../lib/dev-log";
 import { abortSessionSafe } from "../lib/opencode-session";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { describeDirectoryScope, toSessionTransportDirectory } from "../lib/session-scope";
@@ -126,16 +129,33 @@ const upsertPartInfo = (list: Part[], next: Part) => {
   const index = list.findIndex((part) => part.id === next.id);
   if (index === -1) return sortById([...list, next]);
   const copy = list.slice();
-  copy[index] = next;
+  const existing = copy[index] as Part & Record<string, unknown>;
+  const incoming = next as Part & Record<string, unknown>;
+  if ((incoming.type === "text" || incoming.type === "reasoning") && typeof existing.text === "string") {
+    const nextText = typeof incoming.text === "string" ? incoming.text : "";
+    copy[index] = { ...existing, ...incoming, text: nextText || existing.text } as Part;
+  } else {
+    copy[index] = next;
+  }
   return copy;
 };
 
 const removePartInfo = (list: Part[], partID: string) => list.filter((part) => part.id !== partID);
 
-const appendPartDelta = (list: Part[], partID: string, field: string, delta: string) => {
+const appendPartDelta = (list: Part[], messageID: string, sessionID: string | null, partID: string, field: string, delta: string) => {
   if (!delta) return list;
   const index = list.findIndex((part) => part.id === partID);
-  if (index === -1) return list;
+  if (index === -1) {
+    if (field !== "text" && field !== "reasoning") return list;
+    const synthetic = {
+      id: partID,
+      messageID,
+      sessionID: sessionID ?? "",
+      type: field === "reasoning" ? "reasoning" : "text",
+      text: delta,
+    } as Part;
+    return sortById([...list, synthetic]);
+  }
 
   const existing = list[index] as Part & Record<string, unknown>;
   const current = existing[field];
@@ -172,6 +192,7 @@ export function createSessionStore(options: {
   const sessionDebug = (label: string, payload?: unknown) => {
     if (!sessionDebugEnabled()) return;
     try {
+      recordDevLog(true, { level: "debug", source: "session", label, payload });
       if (payload === undefined) {
         console.log(`[WSDBG] ${label}`);
       } else {
@@ -185,6 +206,7 @@ export function createSessionStore(options: {
   const sessionWarn = (label: string, payload?: unknown) => {
     if (!sessionDebugEnabled()) return;
     try {
+      recordDevLog(true, { level: "warn", source: "session", label, payload });
       if (payload === undefined) {
         console.warn(`[WSWARN] ${label}`);
       } else {
@@ -510,7 +532,7 @@ export function createSessionStore(options: {
     });
   };
 
-  const addError = (error: unknown, fallback = "Unknown error") => {
+  const addError = (error: unknown, fallback = t("app.unknown_error", currentLocale())) => {
     const message = error instanceof Error ? error.message : fallback;
     if (!message) return;
     options.setError(addOpencodeCacheHint(message));
@@ -679,14 +701,14 @@ export function createSessionStore(options: {
     const heading = (() => {
       if (errorName === "ProviderAuthError") return `Provider auth error${providerID ? ` (${providerID})` : ""}`;
       if (errorName === "APIError") {
-        if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+        if (effectiveStatus === 401 || effectiveStatus === 403) return t("app.error_auth_failed", currentLocale());
         if (effectiveStatus === 413) return "Context too large";
-        if (effectiveStatus === 429) return "Rate limit exceeded";
+        if (effectiveStatus === 429) return t("app.error_rate_limit", currentLocale());
         return `API error${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
       }
-      if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+      if (effectiveStatus === 401 || effectiveStatus === 403) return t("app.error_auth_failed", currentLocale());
       if (effectiveStatus === 413) return "Context too large";
-      if (effectiveStatus === 429) return "Rate limit exceeded";
+      if (effectiveStatus === 429) return t("app.error_rate_limit", currentLocale());
       if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
       return errorName.replace(/([a-z])([A-Z])/g, "$1 $2");
     })();
@@ -1025,7 +1047,7 @@ export function createSessionStore(options: {
     if (!c) return;
     const trimmed = title.trim();
     if (!trimmed) {
-      throw new Error("Session name is required");
+      throw new Error(t("app.error_session_name_required", currentLocale()));
     }
     const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
     rememberSession(next);
@@ -1058,11 +1080,45 @@ export function createSessionStore(options: {
       .filter((info) => !!info?.id)
       .map((info) => info as MessageInfo);
 
+    const isStreaming = (store.sessionStatus[sessionID] ?? "idle") !== "idle";
+
     batch(() => {
       setStore("messages", sessionID, reconcile(sortById(infos), { key: "id" }));
       for (const message of list) {
         const parts = message.parts.filter((part) => !!part?.id);
-        setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
+
+        if (isStreaming) {
+          // During active streaming, the server snapshot may have empty/stale
+          // text fields for in-progress parts while the local store already
+          // accumulated text via message.part.delta events.  Merge carefully
+          // so we never overwrite longer local text with shorter server text.
+          const existingParts = store.parts[message.info.id] ?? [];
+          const merged = sortById(parts).map((incoming) => {
+            const existing = existingParts.find((p) => p.id === incoming.id);
+            if (!existing) return incoming;
+            const incomingRecord = incoming as Part & Record<string, unknown>;
+            const existingRecord = existing as Part & Record<string, unknown>;
+            if (
+              (incoming.type === "text" || incoming.type === "reasoning") &&
+              typeof existingRecord.text === "string" &&
+              typeof incomingRecord.text === "string" &&
+              existingRecord.text.length > incomingRecord.text.length
+            ) {
+              return { ...incoming, text: existingRecord.text } as Part;
+            }
+            return incoming;
+          });
+          // Also keep any local-only parts (created from early deltas) that
+          // the server snapshot doesn't know about yet.
+          for (const existing of existingParts) {
+            if (!merged.find((p) => p.id === existing.id)) {
+              merged.push(existing);
+            }
+          }
+          setStore("parts", message.info.id, reconcile(sortById(merged), { key: "id" }));
+        } else {
+          setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
+        }
       }
     });
   }
@@ -1070,7 +1126,8 @@ export function createSessionStore(options: {
   async function ensureSessionLoaded(sessionID: string) {
     const id = sessionID.trim();
     if (!id) return;
-    if (sessionById(id) && (store.messages[id]?.length ?? 0) > 0) return;
+    if ((store.messages[id]?.length ?? 0) > 0) return;
+    if (sessionById(id) && messageLimitBySession()[id] !== undefined) return;
 
     const existing = ensureInFlightBySession.get(id);
     if (existing) return existing;
@@ -1112,7 +1169,10 @@ export function createSessionStore(options: {
     }
   }
 
-  async function selectSession(sessionID: string) {
+  async function selectSession(
+    sessionID: string,
+    selectOptions?: { skipHealthCheck?: boolean; source?: string },
+  ) {
     const c = options.client();
     if (!c) return;
 
@@ -1153,15 +1213,20 @@ export function createSessionStore(options: {
     const run = (async () => {
       mark("start");
 
-      mark("checking health");
-      try {
-        await withTimeout(c.global.health(), 3000, "health");
-        mark("health ok");
-      } catch (error) {
-        mark("health FAILED", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        throw new Error("Server connection lost. Please reload.");
+      const skipHealthCheck = selectOptions?.skipHealthCheck === true;
+      if (skipHealthCheck) {
+        mark("health skipped", { source: selectOptions?.source ?? "unknown" });
+      } else {
+        mark("checking health");
+        try {
+          await withTimeout(c.global.health(), 3000, "health");
+          mark("health ok");
+        } catch (error) {
+          mark("health FAILED", {
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+          throw new Error(t("app.connection_lost", currentLocale()));
+        }
       }
       if (abortIfStale("selection changed after health")) return;
 
@@ -1742,6 +1807,7 @@ export function createSessionStore(options: {
     if (event.type === "message.part.delta") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
+        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         const partID = typeof record.partID === "string" ? record.partID : null;
         const field = typeof record.field === "string" ? record.field : null;
@@ -1749,10 +1815,11 @@ export function createSessionStore(options: {
         const partDeltaStartedAt = perfNow();
 
         if (messageID && partID && field && delta) {
-          setStore("parts", messageID, (current = []) => appendPartDelta(current, partID, field, delta));
+          setStore("parts", messageID, (current = []) => appendPartDelta(current, messageID, sessionID, partID, field, delta));
           const partDeltaMs = Math.round((perfNow() - partDeltaStartedAt) * 100) / 100;
           if (sessionDebugEnabled() && (partDeltaMs >= 8 || delta.length >= 120)) {
             recordPerfLog(true, "session.event", "message.part.delta", {
+              sessionID,
               messageID,
               partID,
               field,

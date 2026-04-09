@@ -13,7 +13,10 @@ Use the right channel to get faster help:
 
 - Search existing issues to avoid duplicates.
 - Include exact OpenWork/OpenCode versions, OS, and reproduction steps.
-- Add logs/screenshots when possible.
+- For desktop, worker, or session bugs, open Settings -> Debug and include both:
+  - the runtime debug report
+  - the developer log export
+- Add screenshots when they help explain the flow or failure state.
 
 ## Maintainer triage
 

@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js";
 
-import { FileCode2, FolderCode, Rocket, Settings2, Users } from "lucide-solid";
+import { FolderCode, Rocket, Users } from "lucide-solid";
 
 import WorkspaceOptionCard from "./option-card";
 import {
@@ -16,35 +16,63 @@ import {
 } from "./modal-styles";
 import type { ShareView } from "./types";
 
-type IncludedItem = {
-  title: string;
-  detail: string;
-  icon: typeof Rocket;
+type TemplateContentSummary = {
+  skillNames: string[];
+  commandNames: string[];
+  configFiles: string[];
 };
 
-const IncludedTemplateItems = (props: { items: IncludedItem[] }) => (
-  <div class="mt-5 border-t border-dls-border pt-5">
-    <div class={tagClass}>Included in this template</div>
-    <div class="mt-4 space-y-3">
-      <For each={props.items}>
-        {(item) => {
-          const Icon = item.icon;
-          return (
-            <div class="flex items-start gap-3">
-              <div class={`${iconTileClass} h-8 w-8 rounded-lg`}>
-                <Icon size={15} />
+type IncludedSection = {
+  title: string;
+  detail: string;
+  accentClass: string;
+  count: number;
+  items: string[];
+};
+
+const IncludedTemplateItems = (props: { sections: IncludedSection[] }) => {
+  const nonEmpty = () => props.sections.filter((s) => s.items.length > 0);
+
+  return (
+    <Show when={nonEmpty().length > 0}>
+      <div class="mt-5 border-t border-dls-border pt-5">
+        <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">
+          Included in this template
+        </div>
+
+        <div class="mt-3 space-y-3">
+          <For each={nonEmpty()}>
+            {(section) => (
+              <div class="rounded-2xl bg-dls-hover/60 px-4 py-3.5">
+                <div class="flex items-center gap-2.5">
+                  <div
+                    class={`h-2.5 w-2.5 shrink-0 rounded-full bg-gradient-to-br ${section.accentClass}`}
+                  />
+                  <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
+                    {section.title}
+                  </span>
+                  <span class="text-[11px] text-dls-secondary">
+                    {section.count}
+                  </span>
+                </div>
+
+                <div class="mt-2.5 flex flex-wrap gap-1.5">
+                  <For each={section.items}>
+                    {(name) => (
+                      <span class="rounded-md bg-dls-surface px-2 py-1 text-[12px] text-dls-text shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                        {name}
+                      </span>
+                    )}
+                  </For>
+                </div>
               </div>
-              <div class="min-w-0">
-                <div class="text-[13px] font-medium text-dls-text">{item.title}</div>
-                <div class="mt-0.5 text-[12px] leading-relaxed text-dls-secondary">{item.detail}</div>
-              </div>
-            </div>
-          );
-        }}
-      </For>
-    </div>
-  </div>
-);
+            )}
+          </For>
+        </div>
+      </div>
+    </Show>
+  );
+};
 
 export default function ShareWorkspaceTemplatePanel(props: {
   view: ShareView;
@@ -70,6 +98,7 @@ export default function ShareWorkspaceTemplatePanel(props: {
   shareWorkspaceProfileToTeamOrgName?: string | null;
   shareWorkspaceProfileToTeamNeedsSignIn?: boolean;
   onShareWorkspaceProfileToTeamSignIn?: () => void | Promise<void>;
+  templateContentSummary?: TemplateContentSummary | null;
 }) {
   const sensitiveWarnings = () => props.shareWorkspaceProfileSensitiveWarnings ?? [];
   const exportDecisionMissing = () => sensitiveWarnings().length > 0 && !props.shareWorkspaceProfileSensitiveMode;
@@ -157,23 +186,44 @@ export default function ShareWorkspaceTemplatePanel(props: {
     </Show>
   );
 
-  const templateIncludedItems: IncludedItem[] = [
-    {
-      title: "Workspace settings",
-      detail: "The shared workspace profile and default behavior.",
-      icon: Settings2,
-    },
-    {
-      title: "Included skills",
-      detail: "Custom skills saved in this workspace.",
-      icon: Rocket,
-    },
-    {
-      title: "Commands and config",
-      detail: "Reusable commands, OpenWork/OpenCode config, and portable .opencode files.",
-      icon: FileCode2,
-    },
-  ];
+  const templateIncludedSections = (): IncludedSection[] => {
+    const summary = props.templateContentSummary;
+    if (!summary) return [];
+
+    const sections: IncludedSection[] = [];
+
+    if (summary.skillNames.length > 0) {
+      sections.push({
+        title: "Skills",
+        detail: "Custom workspace skills bundled with this template.",
+        accentClass: "from-[#6e87ff] via-[#4f6dff] to-[#1b29ff]",
+        count: summary.skillNames.length,
+        items: summary.skillNames,
+      });
+    }
+
+    if (summary.commandNames.length > 0) {
+      sections.push({
+        title: "Commands",
+        detail: "Reusable slash commands.",
+        accentClass: "from-[#67d9d1] via-[#3fcfc3] to-[#0f9f9a]",
+        count: summary.commandNames.length,
+        items: summary.commandNames,
+      });
+    }
+
+    if (summary.configFiles.length > 0) {
+      sections.push({
+        title: "Config",
+        detail: "Workspace config and portable files.",
+        accentClass: "from-[#ffb570] via-[#ff9e43] to-[#f97316]",
+        count: summary.configFiles.length,
+        items: summary.configFiles,
+      });
+    }
+
+    return sections;
+  };
 
   const needsSignIn = props.shareWorkspaceProfileToTeamNeedsSignIn === true;
 
@@ -236,7 +286,7 @@ export default function ShareWorkspaceTemplatePanel(props: {
               sensitiveDecisionDisabledReason(),
             )}
 
-            <IncludedTemplateItems items={templateIncludedItems} />
+            <IncludedTemplateItems sections={templateIncludedSections()} />
           </div>
         </div>
       </Show>
@@ -307,7 +357,7 @@ export default function ShareWorkspaceTemplatePanel(props: {
               <div class="mt-3 text-[12px] text-dls-secondary">OpenWork Cloud opens in your browser and returns here after sign-in.</div>
             </Show>
 
-            <IncludedTemplateItems items={templateIncludedItems} />
+            <IncludedTemplateItems sections={templateIncludedSections()} />
           </div>
         </div>
       </Show>

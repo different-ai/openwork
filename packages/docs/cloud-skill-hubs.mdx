@@ -1,0 +1,59 @@
+---
+title: "Skill hubs for teams"
+description: "Create org skill hubs, assign them to teams, and import them into the desktop app"
+---
+
+Skill hubs are the team-wide way to distribute shared skills in OpenWork Cloud. You create the skills and team assignments in the Cloud dashboard, then each desktop workspace can import the hub in one step.
+
+## 1. Create the organization
+
+If you do not already have one, open [app.openworklabs.com](https://app.openworklabs.com/), click `Create organization`, enter the org name, and finish checkout if prompted.
+
+## 2. Create the team
+
+1. Open `Members -> Teams`.
+2. Click `Create Team`.
+3. Enter `Team name`.
+4. Select the `Team members` that should receive the hub.
+5. Click `Create team`.
+
+Note: __Only `Owner` and `Admin` members can manage teams.__
+
+## 3. Create the skill
+
+1. Open `Skill Hubs -> All Skills`.
+2. Click `Add Skill`.
+3. Choose `Manual Entry` or `Upload SKILL.md`.
+4. Fill `Skill Name`, `Short Description`, and `Detailed Instructions (Markdown)`.
+5. Choose the right `Visibility`.
+6. Click `Create Skill`.
+
+Skill creators and org admins can manage skills and hubs.
+
+## 4. Create the hub and assign it to the team
+
+1. Open `Skill Hubs -> Hubs`.
+2. Click `Create Hub`.
+3. Set `Hub Name` and optional `Description`.
+4. Under `Assigned Teams`, select the teams that should access the hub.
+5. Under `Hub Skills`, select the skills to include.
+6. Click `Create Hub`.
+
+<Frame>
+  ![Skill hub access and included skills in OpenWork Cloud](/images/cloud-skill-hub-access-and-skills.png)
+</Frame>
+
+## 5. Import the hub into the desktop app
+
+1. Open the desktop app and go to `Settings -> Cloud`.
+2. Choose the same `Active org`.
+3. Under `Skill hubs`, click `Import all` on the hub.
+4. Reload the workspace when OpenWork asks.
+
+OpenWork installs the hub's skills into `.opencode/skills` for that workspace.
+
+
+## Keeping it up to date
+
+- Use `Sync` in `Settings -> Cloud -> Skill hubs` after the hub changes.
+- Use `Remove` to stop managing the hub from this workspace.

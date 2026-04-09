@@ -1,0 +1,233 @@
+---
+title: "Changelog"
+---
+<Update label="April 7th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.205](https://github.com/different-ai/openwork/compare/v0.11.202...v0.11.205): OpenWork Cloud launches for teams
+
+  - OpenWork Cloud now has orgs, teams, shared skills and workers.
+  - Added custom LLM providers so everyone in the company can use the same org-approved LLMs in Openwork.
+  - As an org admin, you can control members, invitations, teams, and custom RBAC roles for your company.
+
+  <table>
+    <tr>
+      <td>
+        <img src="/images/cloud-dashboard-overview.png" alt="OpenWork Cloud dashboard overview" />
+        <p><em>OpenWork Cloud</em></p>
+      </td>
+      <td>
+        <img src="/images/cloud-skill-hub-access-and-skills.png" alt="Skill hub access and included skills in OpenWork Cloud" />
+        <p><em>Shared skills</em></p>
+      </td>
+    </tr>
+  </table>
+
+</Update>
+
+<Update label="April 4th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.202](https://github.com/different-ai/openwork/compare/v0.11.200...v0.11.202): Translations support for several languages
+
+  - Added Thai and Japanese in-app translations
+  - Additional documentation, privacy, terms and conditions.
+
+</Update>
+
+<Update label="April 3rd" tags={["🚀 New Features"]}>
+
+  ## [v0.11.200](https://github.com/different-ai/openwork/compare/v0.11.199...v0.11.200): Minor improvements around Cloud skills
+
+  - Added an OpenWork Cloud skills catalog to the Skills page. 
+
+</Update>
+
+<Update label="April 2nd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.11.199](https://github.com/different-ai/openwork/compare/v0.11.198...v0.11.199): Paywall for windows, skillsHub
+
+  - Added a pricing page for Windows versions. 
+  - Expanded Den with skill hubs, a new `den-api`, and a simpler org-invite signup flow.
+
+</Update>
+
+<Update label="March 31st" tags={["🐛 Bug Fixes"]}>
+
+  ## [v0.11.198](https://github.com/different-ai/openwork/compare/v0.11.196...v0.11.198): Improved workspace export security 
+
+  - Blocked sensitive workspace exports and showed warnings before sharing risky config or secrets.
+  - Trusted bundle imports only from the configured publisher unless users explicitly choose a warning-backed manual path.
+
+</Update>
+
+<Update label="March 30th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.11.196](https://github.com/different-ai/openwork/compare/v0.11.194...v0.11.196): OpenWork resumes where you left off
+
+  - Moved automations onto a dedicated page inside settings.
+  - Got rid of the initial loading state on app open.
+
+</Update>
+
+<Update label="March 26th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.194](https://github.com/different-ai/openwork/compare/v0.11.192...v0.11.194): Team template sharing and autocompaction
+
+  - Auto compaction is done into the workspace config.
+  - Keeps scheduled jobs live in-app, and adds a faster Den local-dev path.
+  - Introduces Den organizations, member roles, invitations, custom roles, and org-scoped template APIs and screens.
+
+</Update>
+
+<Update label="March 25th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.192](https://github.com/different-ai/openwork/compare/v0.11.190...v0.11.192): Better Workspace switching and detached workers
+
+  - Switching a workspace no longer  flips the active worker.
+  - Detached workers share credentials are now preserved across restarts
+
+</Update>
+
+<Update label="March 24th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
+
+  ## [v0.11.190](https://github.com/different-ai/openwork/compare/v0.11.184...v0.11.190): More docs, improved safety around sharing.
+
+  - More docs regarding onboarding and connection guides
+  - Better restart and reconnect flows so it stays attached to the intended directory.
+  - Local workers now stay localhost-only unles users opt into remote exposure
+
+</Update>
+
+<Update label="March 23rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.184](https://github.com/different-ai/openwork/compare/v0.11.181...v0.11.184): Docs reset, exa and local workspaces
+
+  - Rebuilt the docs around a single CLI-first quickstart.
+  - Enables Exa search from opencode settings.
+  - More reliable first-runs and simplified remote connect modal.
+
+</Update>
+
+<Update label="March 22nd" tags={["🐛 Bug Fixes", "🏗️ Refactoring", "🚀 New Features"]}>
+
+  ## [v0.11.181](https://github.com/different-ai/openwork/compare/v0.11.177...v0.11.181): Simplified den checkout and workspace sharing
+
+  - Simplifies Den billing, dashboard and workspace creation flows.
+  - Made model pickers model-aware with provider icons and per-model reasoning or behavior controls.
+
+</Update>
+
+<Update label="March 20th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
+
+  ## [v0.11.177](https://github.com/different-ai/openwork/compare/v0.11.172...v0.11.177): Cloud worker heartbeats
+
+  - Adds worker heartbeats for Cloud workers
+  - Added Settings-based folder authorization and server-backed empty states
+
+</Update>
+
+<Update label="March 19th" tags={["🐛 Bug Fixes", "🏗️ Refactoring", "🚀 New Features"]}>
+
+  ## [v0.11.172](https://github.com/different-ai/openwork/compare/v0.11.168...v0.11.172): Remote reconnects and cloud flows
+
+  - Rebuilt Den webapp onboarding and billing.
+  - Persisted worker share tokens and repeated deeplinks across restarts.
+  - Added self-serve Cloud settings, OpenAI headless auth, and tray-on-close desktop behavior.
+
+</Update>
+
+<Update label="March 17th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
+
+  ## [v0.11.168](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.168): Release recovery with repaired installers
+  - Cloud Migration from render VMs to Daytona Sandbox workers
+  - pnpm web:dev-local working reliably when starting from scratch in a new worktree 
+  - Restored Shared bundle installs and better cache clearing of disconnected provider credentials.
+
+</Update>
+
+<Update label="March 16th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.164](https://github.com/different-ai/openwork/compare/v0.11.160...v0.11.164): Public skills and subagents
+
+  - You can now add public repos as skill repository
+  - Simplified docker testing pipeline
+  - Minor sidebar bug fixes
+  
+</Update>
+
+<Update label="March 15th" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
+
+  ## [v0.11.160](https://github.com/different-ai/openwork/compare/v0.11.159...v0.11.160): Bug fixes on den, telemetry and providers
+
+  - Checkout handling for additional den workers
+  - Landing page downloads points tot he right installer
+  - Fixed release-pipeline diagnostics and in-app feedback email
+  
+
+</Update>
+
+<Update label="March 14th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
+
+  ## [v0.11.149](https://github.com/different-ai/openwork/compare/v0.11.146...v0.11.149): Better share page, den onboarding flow and Oath
+
+  - Simplified Den onboarding flow and openworkshare page to publish a single skill
+  - More polished feedback card and telemetry around bug reporting. 
+  - Shared skills can now be imported into existing workers. 
+  - ChatGPT Oath added to "New chat Session"
+
+    <img src="/images/chatgptOauth.png" alt="ChatGPT Oauth" />
+
+</Update>
+
+<Update label="March 13th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.146](https://github.com/different-ai/openwork/compare/v0.11.1444...v0.11.146): Den admin view and Aesthetic changes 
+
+  - Den worker redeploys, better dekstop skill reload and adjustable sidebar width. 
+
+</Update>
+
+<Update label="March 12th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
+
+  ## [v0.11.144](https://github.com/different-ai/openwork/compare/v0.11.140...v0.11.144): Workspace shell recovery and clearer docs entrypoints
+
+  - Improved workspace shell recovery and inline error sessions
+  - Cloud worker creation
+  - Deprecated soul mode
+
+</Update>
+
+<Update label="March 11th" tags={["🚀 New features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.140](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.140): Improved workers, sharing skills, GOAuth
+
+  - Creating a new worker opens up an empty session instead of automations
+  - Share skills with one click at share.openworklabs.com
+  - Task list not sticking to the composer box
+  - Google and GitHub
+
+  <img src="/images/improved-skills-march11th.gif" alt="New worker opens on an empty session" />
+
+</Update>
+
+<Update label="March 10th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136): Improved model picker, Share and MCP auth
+
+  - Model picker now separates enabled and not-enabled providers, and clicking a disabled provider opens its settings.
+  - OpenWork Share now packages dropped skills, agents, commands, and MCP or OpenWork config into worker bundles.
+  - MCP auth now waits for agents to stop or finish before continuing.
+
+  <table>
+    <tr>
+      <td>
+        <img src="/images/10thMarch-model-picker.gif" alt="Model picker grouped by enabled and not-enabled providers" />
+        <p><em>Model picker</em></p>
+      </td>
+      <td>
+        <img src="/images/10thMarch-better-mcp-auth.gif" alt="MCP settings with connected provider and improved auth handling" />
+        <p><em>MCP auth</em></p>
+      </td>
+    </tr>
+  </table>
+
+</Update>

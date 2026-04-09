@@ -1,0 +1,63 @@
+---
+title: "Managing members and RBAC"
+description: "Invite teammates, create teams, and control Cloud access with owners, admins, members, and custom roles"
+---
+
+OpenWork Cloud separates org membership from team assignment. Teams are used for skill hub and provider access; roles control what a person can manage across the org.
+
+## Default roles
+
+OpenWork Cloud comes with three default roles:
+
+- `Owner`: full org control, including member roles and custom roles.
+- `Admin`: can invite people, manage teams, and manage most shared Cloud resources.
+- `Member`: can use resources shared with them but cannot manage org administration.
+
+Only `Owner` can change member roles, remove members, or create, edit, and delete custom roles.
+
+## Invite members
+
+1. Open `Members`.
+2. On the `Members` or `Invitations` tab, click `Add member` or `Invite member`.
+3. Enter the teammate `Email`.
+4. Choose the initial `Role`.
+5. Click `Send invite`.
+
+<Frame>
+  ![Members and RBAC dashboard in OpenWork Cloud](/images/cloud-members-and-rbac-dashboard.png)
+</Frame>
+
+Invites are tied to the invited email address.
+
+## Create teams
+
+1. Open `Members -> Teams`.
+2. Click `Create Team`.
+3. Set `Team name`.
+4. Choose `Team members`.
+5. Click `Create team`.
+
+You can use teams to control access to skill hubs and LLM providers without assigning people one by one.
+
+## Use custom roles when needed
+
+1. Open `Members -> Roles`.
+2. Click `Create role`.
+3. Enter `Role name`.
+4. Choose the permissions that role should have.
+5. Click `Create role`.
+
+## Practical access pattern
+
+A simple setup that works well for most orgs:
+
+- keep 1-2 `Owner` users
+- give day-to-day operators `Admin`
+- keep most people as `Member`
+- use `Teams` to decide who can see specific skill hubs or providers
+
+## Notes
+
+- You cannot change the org owner's role or remove the owner.
+- Owners and admins can manage teams and invitations, but only owners can handle the sensitive RBAC changes.
+- You cannot delete a custom role while members or pending invitations still use it.

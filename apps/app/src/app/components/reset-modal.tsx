@@ -1,10 +1,13 @@
 import { Match, Show, Switch } from "solid-js";
 
 import { X } from "lucide-solid";
-import { t, currentLocale, type Language } from "../../i18n";
+import { t, type Language } from "../../i18n";
 
 import Button from "./button";
 import TextInput from "./text-input";
+
+const RESET_CONFIRM_PLACEHOLDER = "{resetWord}";
+const RESET_CONFIRM_WORD = "RESET";
 
 export type ResetModalProps = {
   open: boolean;
@@ -21,6 +24,18 @@ export type ResetModalProps = {
 
 export default function ResetModal(props: ResetModalProps) {
   const translate = (key: string) => t(key, props.language);
+  const resetConfirmationHint = () => {
+    const template = translate("settings.reset_confirmation_hint");
+    const parts = template.split(RESET_CONFIRM_PLACEHOLDER);
+
+    if (parts.length === 1) return template;
+
+    return parts.flatMap((part, index) =>
+      index < parts.length - 1
+        ? [part, <span class="font-mono">{RESET_CONFIRM_WORD}</span>]
+        : [part],
+    );
+  };
 
   return (
     <Show when={props.open}>
@@ -35,7 +50,7 @@ export default function ResetModal(props: ResetModalProps) {
                     <Match when={true}>{translate("settings.reset_app_data_title")}</Match>
                   </Switch>
                 </h3>
-                <p class="text-sm text-gray-11 mt-1" innerHTML={translate("settings.reset_confirmation_hint")} />
+                <p class="text-sm text-gray-11 mt-1">{resetConfirmationHint()}</p>
               </div>
               <Button
                 variant="ghost"

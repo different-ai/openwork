@@ -2,25 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
+import { OPENWORK_FEEDBACK_URL, buildDenFeedbackUrl } from "../../../../_lib/feedback";
 
 export const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
-export const OPENWORK_FEEDBACK_URL = "https://openworklabs.com/feedback";
-
-export function buildDenFeedbackUrl(options?: {
-  pathname?: string;
-  orgSlug?: string;
-}) {
-  const url = new URL(OPENWORK_FEEDBACK_URL);
-  url.searchParams.set("source", "openwork-web-app");
-  url.searchParams.set("deployment", "web");
-  url.searchParams.set("entrypoint", options?.pathname ?? "dashboard");
-
-  if (options?.orgSlug) {
-    url.searchParams.set("org", options.orgSlug);
-  }
-
-  return url.toString();
-}
+export { OPENWORK_FEEDBACK_URL, buildDenFeedbackUrl };
 
 export function formatTemplateTimestamp(value: string | null, options?: { includeTime?: boolean }) {
   if (!value) {
@@ -86,7 +71,7 @@ function asTemplateCard(value: unknown): TemplateCard | null {
   };
 }
 
-export function useOrgTemplates(orgSlug: string) {
+export function useOrgTemplates(orgId: string | null) {
   const [templates, setTemplates] = useState<TemplateCard[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,8 +80,14 @@ export function useOrgTemplates(orgSlug: string) {
     setBusy(true);
     setError(null);
     try {
+      if (!orgId) {
+        setTemplates([]);
+        setError("Organization not found.");
+        return;
+      }
+
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates`,
+        `/v1/orgs/${encodeURIComponent(orgId)}/templates`,
         { method: "GET" },
         12000,
       );
@@ -120,7 +111,7 @@ export function useOrgTemplates(orgSlug: string) {
 
   useEffect(() => {
     void loadTemplates();
-  }, [orgSlug]);
+  }, [orgId]);
 
   return {
     templates,

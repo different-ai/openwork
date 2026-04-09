@@ -10,6 +10,12 @@ set -euo pipefail
 # - Cloud web app URL
 # - Den control plane demo/API URL
 # - Runtime env file path with ports + project name
+#
+# Notes:
+# - This script auto-generates a Better Auth secret per run.
+# - It also uses a premade dev-only DB encryption key unless you override
+#   DEN_DB_ENCRYPTION_KEY yourself.
+# - Generate a replacement with: openssl rand -base64 128
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/packaging/docker/docker-compose.den-dev.yml"
@@ -136,6 +142,7 @@ LAN_IPV4="$(detect_lan_ipv4 || true)"
 TAILSCALE_DNS_NAME="$(detect_tailscale_dns_name || true)"
 
 DEN_BETTER_AUTH_SECRET="${DEN_BETTER_AUTH_SECRET:-$(random_hex 32)}"
+DEN_DB_ENCRYPTION_KEY="${DEN_DB_ENCRYPTION_KEY:-dev-den-db-encryption-key-please-change-1234567890}"
 DEN_BETTER_AUTH_URL="${DEN_BETTER_AUTH_URL:-http://$PUBLIC_HOST:$DEN_WEB_PORT}"
 DEN_PROVISIONER_MODE="${DEN_PROVISIONER_MODE:-stub}"
 DEN_WORKER_URL_TEMPLATE="${DEN_WORKER_URL_TEMPLATE:-https://workers.local/{workerId}}"
@@ -202,6 +209,7 @@ DEN_WEB_PUBLIC_URL=http://$PUBLIC_HOST:$DEN_WEB_PORT
 DEN_WORKER_PROXY_PUBLIC_URL=http://$PUBLIC_HOST:$DEN_WORKER_PROXY_PORT
 DEN_MYSQL_URL=mysql://root:password@127.0.0.1:$DEN_MYSQL_PORT/openwork_den
 DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL
+DEN_DB_ENCRYPTION_KEY=$DEN_DB_ENCRYPTION_KEY
 COMPOSE_FILE=$COMPOSE_FILE
 DEN_WATCH_OTP_CODES=$DEN_WATCH_OTP_CODES
 EOF
@@ -212,6 +220,7 @@ echo "- DEN_WEB_PORT=$DEN_WEB_PORT" >&2
 echo "- DEN_WORKER_PROXY_PORT=$DEN_WORKER_PROXY_PORT" >&2
 echo "- DEN_MYSQL_PORT=$DEN_MYSQL_PORT" >&2
 echo "- DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL" >&2
+echo "- DEN_DB_ENCRYPTION_KEY=[set] (dev default unless overridden)" >&2
 echo "- DEN_PROVISIONER_MODE=$DEN_PROVISIONER_MODE" >&2
 echo "- OTP verification codes will stream back to this terminal" >&2
 if [ "$DEN_PROVISIONER_MODE" = "daytona" ]; then
@@ -226,6 +235,7 @@ if ! DEN_API_PORT="$DEN_API_PORT" \
   DEN_WORKER_PROXY_PORT="$DEN_WORKER_PROXY_PORT" \
   DEN_MYSQL_PORT="$DEN_MYSQL_PORT" \
   DEN_BETTER_AUTH_SECRET="$DEN_BETTER_AUTH_SECRET" \
+  DEN_DB_ENCRYPTION_KEY="$DEN_DB_ENCRYPTION_KEY" \
   DEN_BETTER_AUTH_URL="$DEN_BETTER_AUTH_URL" \
   DEN_CORS_ORIGINS="$DEN_CORS_ORIGINS" \
   DEN_BETTER_AUTH_TRUSTED_ORIGINS="$DEN_BETTER_AUTH_TRUSTED_ORIGINS" \

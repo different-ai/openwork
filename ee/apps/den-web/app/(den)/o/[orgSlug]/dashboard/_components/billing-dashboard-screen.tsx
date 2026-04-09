@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect } from "react";
+import { CreditCard } from "lucide-react";
+import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
   formatIsoDate,
   formatMoneyMinor,
   formatRecurringInterval,
   formatSubscriptionStatus,
 } from "../../../../_lib/den-flow";
+import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 
 export function BillingDashboardScreen() {
@@ -40,11 +43,16 @@ export function BillingDashboardScreen() {
 
   if (!sessionHydrated) {
     return (
-      <div className="mx-auto w-full max-w-[960px] px-6 py-8 md:px-8">
+      <DashboardPageTemplate
+        icon={CreditCard}
+        title="Billing"
+        description="Manage your plan, view usage, and update payment details."
+        colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
+      >
         <div className="rounded-[20px] border border-gray-100 bg-white px-5 py-8 text-[14px] text-gray-500">
           Checking billing details…
         </div>
-      </div>
+      </DashboardPageTemplate>
     );
   }
 
@@ -60,7 +68,7 @@ export function BillingDashboardScreen() {
     ? formatSubscriptionStatus(subscription.status)
     : billingSummary?.hasActivePlan
       ? "Active"
-      : "Trial ready";
+      : "Purchase required";
   const nextBillingDate = subscription?.currentPeriodEnd
     ? formatIsoDate(subscription.currentPeriodEnd)
     : "Not available";
@@ -71,16 +79,12 @@ export function BillingDashboardScreen() {
       : "Not available";
 
   return (
-    <div className="mx-auto w-full max-w-[960px] px-6 py-8 md:px-8">
-      <div className="mb-8">
-        <h1 className="mb-2 text-[28px] font-semibold tracking-[-0.5px] text-gray-900">
-          Billing
-        </h1>
-        <p className="text-[15px] text-gray-500">
-          Manage your billing information and subscription settings.
-        </p>
-      </div>
-
+    <DashboardPageTemplate
+      icon={CreditCard}
+      title="Billing"
+      description="Manage your plan, view usage, and update payment details."
+      colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
+    >
       {billingError ? (
         <div className="mb-6 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
           {billingError}
@@ -89,11 +93,11 @@ export function BillingDashboardScreen() {
 
       <div className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
         <div className="mb-8 border-b border-gray-100 pb-6">
-          <p className="text-[15px] text-gray-700">
-            {billingSummary?.hasActivePlan
-              ? `This workspace's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
-              : "Start your OpenWork Cloud billing flow when your team is ready to share templates and cloud workflows."}
-          </p>
+            <p className="text-[15px] text-gray-700">
+              {billingSummary?.hasActivePlan
+                ? `This workspace's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
+                : "Workspace plans are $50/month and include up to 5 members plus 1 hosted worker."}
+            </p>
         </div>
 
         <div className="mb-10 grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-2 lg:grid-cols-3">
@@ -139,48 +143,47 @@ export function BillingDashboardScreen() {
 
         <div className="flex flex-wrap items-center gap-3">
           {effectiveCheckoutUrl && !billingSummary?.hasActivePlan ? (
-            <a
-              href={effectiveCheckoutUrl}
-              rel="noreferrer"
-              className="rounded-full bg-gray-900 px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-gray-800"
-            >
-              Start free trial
+            <a href={effectiveCheckoutUrl} rel="noreferrer" className={buttonVariants({ variant: "primary" })}>
+              Purchase plan
             </a>
           ) : null}
 
           {billingSummary?.portalUrl ? (
-            <a
-              href={billingSummary.portalUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-            >
+            <a href={billingSummary.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
               Open billing portal
             </a>
           ) : null}
 
           {billingSummary?.hasActivePlan ? (
-            <button
-              type="button"
-              onClick={() =>
-                void handleSubscriptionCancellation(
-                  !Boolean(subscription?.cancelAtPeriodEnd),
-                )
-              }
-              disabled={billingSubscriptionBusy}
-              className={`rounded-full px-5 py-2.5 text-[14px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                subscription?.cancelAtPeriodEnd
-                  ? "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-                  : "border border-red-200 bg-white text-red-600 hover:bg-red-50"
-              }`}
+            <DenButton
+              variant={subscription?.cancelAtPeriodEnd ? "secondary" : "destructive"}
+              loading={billingSubscriptionBusy}
+              onClick={() => void handleSubscriptionCancellation(!Boolean(subscription?.cancelAtPeriodEnd))}
             >
-              {billingSubscriptionBusy
-                ? "Updating..."
-                : subscription?.cancelAtPeriodEnd
-                  ? "Resume plan"
-                  : "Cancel plan"}
-            </button>
+              {subscription?.cancelAtPeriodEnd ? "Resume plan" : "Cancel plan"}
+            </DenButton>
           ) : null}
+        </div>
+      </div>
+
+      <div className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
+        <h2 className="mb-4 text-[15px] font-medium text-gray-900">Pricing</h2>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
+            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Solo</p>
+            <p className="text-[20px] font-semibold text-gray-900">$0</p>
+            <p className="mt-1 text-[13px] text-gray-500">Free forever · open source</p>
+          </div>
+          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
+            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Workspace plan</p>
+            <p className="text-[20px] font-semibold text-gray-900">$50<span className="text-[13px] font-medium text-gray-500">/month</span></p>
+            <p className="mt-1 text-[13px] text-gray-500">5 members included · 1 hosted worker</p>
+          </div>
+          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
+            <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Enterprise</p>
+            <p className="text-[20px] font-semibold text-gray-900">Custom</p>
+            <p className="mt-1 text-[13px] text-gray-500">Windows included · talk to us</p>
+          </div>
         </div>
       </div>
 
@@ -193,25 +196,20 @@ export function BillingDashboardScreen() {
         </div>
 
         {billingSummary?.portalUrl ? (
-          <a
-            href={billingSummary.portalUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50"
-          >
+          <a href={billingSummary.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
             View invoices
           </a>
         ) : (
-          <button
-            type="button"
+          <DenButton
+            variant="secondary"
+            size="sm"
+            loading={billingBusy || billingCheckoutBusy}
             onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
-            disabled={billingBusy || billingCheckoutBusy}
-            className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-5 py-2.5 text-[14px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {billingBusy || billingCheckoutBusy ? "Refreshing..." : "Refresh billing"}
-          </button>
+            Refresh billing
+          </DenButton>
         )}
       </div>
-    </div>
+    </DashboardPageTemplate>
   );
 }

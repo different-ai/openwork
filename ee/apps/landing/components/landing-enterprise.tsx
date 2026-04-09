@@ -71,7 +71,8 @@ export function LandingEnterprise(props: Props) {
               Run agentic workflows through your existing gateway, with
               approved tools, clear permissions, and a rollout path your
               non-technical teams can actually use, whether you self-host in
-              your own infrastructure or deploy with OpenWork.
+              your own infrastructure or deploy with OpenWork. Enterprise
+              licensing includes Windows support.
             </p>
 
             <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
@@ -97,6 +98,12 @@ export function LandingEnterprise(props: Props) {
                   </span>
                 </div>
               </div>
+            </div>
+
+            <div className="mt-4">
+              <a href="/trust" className="text-[14px] font-medium text-[#011627] transition-colors hover:text-slate-700">
+                Trust details
+              </a>
             </div>
           </section>
 
@@ -185,7 +192,8 @@ export function LandingEnterprise(props: Props) {
                 <p className="text-[14px] leading-relaxed text-slate-600">
                   Deploy inside your own environment or work with us on a
                   managed rollout, with your gateway, MCP servers, skills, and
-                  internal data sources connected.
+                  internal data sources connected. Windows support is included in
+                  enterprise licensing.
                 </p>
               </div>
             </div>

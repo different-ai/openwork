@@ -158,14 +158,46 @@ fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T, String> {
         .map_err(|e| format!("Failed to parse response: {e}"))
 }
 
+fn fetch_json_with_timeout<T: DeserializeOwned>(url: &str, timeout_ms: u64) -> Result<T, String> {
+    let timeout = std::time::Duration::from_millis(timeout_ms.max(50));
+    let agent = ureq::AgentBuilder::new().timeout(timeout).build();
+    let response = agent
+        .get(url)
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|e| format!("{e}"))?;
+    response
+        .into_json::<T>()
+        .map_err(|e| format!("Failed to parse response: {e}"))
+}
+
 pub fn fetch_orchestrator_health(base_url: &str) -> Result<OrchestratorHealth, String> {
     let url = format!("{}/health", base_url.trim_end_matches('/'));
     fetch_json(&url)
 }
 
-pub fn fetch_orchestrator_workspaces(base_url: &str) -> Result<OrchestratorWorkspaceList, String> {
+fn fetch_orchestrator_health_with_timeout(
+    base_url: &str,
+    timeout_ms: u64,
+) -> Result<OrchestratorHealth, String> {
+    let url = format!("{}/health", base_url.trim_end_matches('/'));
+    fetch_json_with_timeout(&url, timeout_ms)
+}
+
+fn fetch_orchestrator_workspaces_with_timeout(
+    base_url: &str,
+    timeout_ms: u64,
+) -> Result<OrchestratorWorkspaceList, String> {
     let url = format!("{}/workspaces", base_url.trim_end_matches('/'));
-    fetch_json(&url)
+    fetch_json_with_timeout(&url, timeout_ms)
+}
+
+fn resolve_orchestrator_status_timeout_ms() -> u64 {
+    std::env::var("OPENWORK_ORCHESTRATOR_STATUS_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value >= 50 && *value <= 5_000)
+        .unwrap_or(250)
 }
 
 pub fn wait_for_orchestrator(
@@ -397,9 +429,10 @@ pub fn resolve_orchestrator_status(
         return fallback;
     };
 
-    match fetch_orchestrator_health(&base_url) {
+    let timeout_ms = resolve_orchestrator_status_timeout_ms();
+    match fetch_orchestrator_health_with_timeout(&base_url, timeout_ms) {
         Ok(health) => {
-            let workspace_payload = fetch_orchestrator_workspaces(&base_url).ok();
+            let workspace_payload = fetch_orchestrator_workspaces_with_timeout(&base_url, timeout_ms).ok();
             let workspaces = workspace_payload
                 .as_ref()
                 .map(|payload| payload.workspaces.clone())

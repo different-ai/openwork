@@ -7,7 +7,6 @@ import type { WorkspaceInfo, EngineInfo } from "../lib/tauri";
 import type { SidebarSessionItem, WorkspaceSessionGroup } from "../types";
 import {
   normalizeDirectoryPath,
-  normalizeDirectoryQueryPath,
   safeStringify,
 } from "../utils";
 import { toSessionTransportDirectory } from "../lib/session-scope";
