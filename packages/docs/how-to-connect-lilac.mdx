@@ -31,7 +31,8 @@ If Lilac doesn't appear as a built-in provider yet, add it manually to your work
       "npm": "@ai-sdk/openai-compatible",
       "name": "Lilac",
       "options": {
-        "baseURL": "https://api.getlilac.com/v1"
+        "baseURL": "https://api.getlilac.com/v1",
+        "apiKey": "your-api-key"
       },
       "models": {
         "z-ai/glm-5.1": {
@@ -46,11 +47,7 @@ If Lilac doesn't appear as a built-in provider yet, add it manually to your work
 }
 ```
 
-Set your API key as an environment variable:
-
-```bash
-export LILAC_API_KEY="your-api-key"
-```
+<Note>You can also set the API key via the `LILAC_API_KEY` environment variable instead of `options.apiKey`.</Note>
 
 Reload the workspace when OpenWork asks, then select a Lilac model from the model picker.
 
