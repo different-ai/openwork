@@ -3,7 +3,7 @@ title: "How to connect Lilac to OpenWork"
 description: "Connect Lilac's OpenAI-compatible API and use models like GLM 5.1 and Kimi K2.5"
 ---
 
-[Lilac](https://getlilac.com) provides affordable GPU inference through an OpenAI-compatible API at `api.getlilac.com/v1`. It supports chat completions, streaming, vision, tool/function calling, reasoning, and structured output — everything OpenWork needs. See [Lilac's OpenAI compatibility docs](https://docs.getlilac.com/inference/openai-compatibility) for the full feature matrix.
+[Lilac](https://getlilac.com) provides affordable GPU inference through an OpenAI-compatible API at `api.getlilac.com/v1`. It supports chat completions, streaming, tool/function calling, reasoning, and structured output; some models (like Kimi K2.5) also support vision/image inputs. See [Lilac's OpenAI compatibility docs](https://docs.getlilac.com/inference/openai-compatibility) for the full feature matrix.
 
 You can get an API key from the [Lilac console](https://console.getlilac.com). See [Lilac's API key guide](https://docs.getlilac.com/inference/api-keys) for details.
 
@@ -64,7 +64,7 @@ Use this when you want the org to manage the Lilac credential and model list cen
     {
       "id": "zai-org/glm-5.1",
       "name": "GLM 5.1",
-      "attachment": true,
+      "attachment": false,
       "reasoning": true,
       "tool_call": true,
       "structured_output": true,
@@ -79,8 +79,7 @@ Use this when you want the org to manage the Lilac credential and model list cen
       },
       "modalities": {
         "input": [
-          "text",
-          "image"
+          "text"
         ],
         "output": [
           "text"
