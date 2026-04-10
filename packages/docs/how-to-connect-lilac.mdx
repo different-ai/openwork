@@ -21,7 +21,7 @@ Add the following to your workspace `.opencode.json` (or `~/.config/opencode/ope
         "baseURL": "https://api.getlilac.com/v1"
       },
       "models": {
-        "zai-org/glm-5.1": {
+        "z-ai/glm-5.1": {
           "name": "GLM 5.1"
         },
         "moonshotai/kimi-k2.5": {
@@ -62,7 +62,7 @@ Use this when you want the org to manage the Lilac credential and model list cen
   "api": "https://api.getlilac.com/v1",
   "models": [
     {
-      "id": "zai-org/glm-5.1",
+      "id": "z-ai/glm-5.1",
       "name": "GLM 5.1",
       "attachment": false,
       "reasoning": true,
@@ -71,11 +71,11 @@ Use this when you want the org to manage the Lilac credential and model list cen
       "temperature": true,
       "release_date": "2025-01-01",
       "last_updated": "2025-01-01",
-      "open_weights": false,
+      "open_weights": true,
       "limit": {
-        "context": 128000,
-        "input": 128000,
-        "output": 8192
+        "context": 202800,
+        "input": 202800,
+        "output": 131072
       },
       "modalities": {
         "input": [
@@ -98,8 +98,8 @@ Use this when you want the org to manage the Lilac credential and model list cen
       "last_updated": "2025-01-01",
       "open_weights": false,
       "limit": {
-        "context": 128000,
-        "input": 128000,
+        "context": 262144,
+        "input": 262144,
         "output": 8192
       },
       "modalities": {
@@ -140,12 +140,21 @@ curl https://api.getlilac.com/v1/chat/completions \
   -H "Authorization: Bearer $LILAC_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "zai-org/glm-5.1",
+    "model": "z-ai/glm-5.1",
     "messages": [
       {"role": "user", "content": "Hello!"}
     ]
   }'
 ```
+
+## Model details
+
+| Model | Model ID | Context | Vision | Reasoning | Tool calling | Input price | Output price |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| GLM 5.1 | `z-ai/glm-5.1` | 202,800 | No | Yes (on by default) | Yes | $0.90/M tokens | $3.00/M tokens |
+| Kimi K2.5 | `moonshotai/kimi-k2.5` | 262,144 | Yes | Yes (on by default) | Yes | $0.40/M tokens | $2.00/M tokens |
+
+Pricing is from [Lilac's models page](https://docs.getlilac.com/inference/models) and may change.
 
 ## More Lilac resources
 
