@@ -1,0 +1,111 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenWork Server V2",
+    "description": "OpenAPI spec for the OpenWork Server V2 scaffold.\n\nThis is the contract-first replacement surface for the current Bun server.",
+    "version": "dev"
+  },
+  "servers": [
+    {
+      "url": "/v2"
+    }
+  ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "Service health and contract routes."
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "System"
+        ],
+        "summary": "Check OpenWork Server V2 health",
+        "description": "Returns a lightweight health payload for the V2 server scaffold.",
+        "responses": {
+          "200": {
+            "description": "OpenWork Server V2 is reachable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "OpenWorkServerV2HealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "service": {
+            "type": "string",
+            "const": "openwork-server-v2"
+          }
+        },
+        "required": [
+          "ok",
+          "service"
+        ]
+      },
+      "OpenWorkServerV2OpenApiDocument": {
+        "type": "object",
+        "properties": {
+          "openapi": {
+            "type": "string"
+          },
+          "info": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "version"
+            ],
+            "additionalProperties": {}
+          },
+          "paths": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "components": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "openapi",
+          "info",
+          "paths"
+        ],
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2RootRedirect": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      }
+    }
+  }
+}

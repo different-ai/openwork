@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
+    "dev:server-v2": "node scripts/dev-server-v2.mjs",
+    "dev:server-v2:app": "node scripts/dev-server-v2.mjs --app",
     "dev:windows": ".\\scripts\\dev-windows.cmd",
     "dev:windows:x64": ".\\scripts\\dev-windows.cmd x64",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
@@ -18,6 +20,8 @@
     "build:ui": "pnpm --filter @openwork/app build",
     "build:web": "pnpm --filter @openwork-ee/den-web build",
     "preview": "pnpm --filter @openwork/app preview",
+    "sdk:generate": "pnpm --filter openwork-server openapi:generate && pnpm --filter @openwork/server-sdk generate",
+    "sdk:watch": "pnpm --filter @openwork/server-sdk watch",
     "typecheck": "pnpm --filter @openwork/app typecheck",
     "test:health": "pnpm --filter @openwork/app test:health",
     "test:sessions": "pnpm --filter @openwork/app test:sessions",

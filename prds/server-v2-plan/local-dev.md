@@ -1,0 +1,269 @@
+# Server V2 Local Dev Workflow
+
+## Status: Draft
+## Date: 2026-04-09
+
+## Purpose
+
+This document defines how Server V2, the generated SDK, and the app should stay in sync during local development without manual rebuilds or process restarts after every change.
+
+Detailed generator selection and script shape live in `prds/server-v2-plan/sdk-generation.md`.
+
+## Goal
+
+The ideal local loop is:
+
+```text
+edit a V2 route or schema
+-> server reloads
+-> OpenAPI spec regenerates
+-> SDK regenerates
+-> app sees the updated types and client methods
+-> continue coding without restarting everything
+```
+
+## Principle
+
+We should treat local development as three separate but connected loops:
+
+- server runtime loop
+- contract generation loop
+- app dev loop
+
+Each loop watches its own inputs and reacts only to the changes it actually cares about.
+
+## Watch Graph
+
+```text
+apps/server/src/v2/**
+-> server watch reloads server runtime
+-> OpenAPI watch regenerates apps/server/openapi/v2.json
+-> SDK watch regenerates packages/openwork-server-sdk/src/generated/**
+-> app dev server sees workspace package changes
+-> app recompiles with updated types and methods
+```
+
+## Watchers
+
+### 1. Server runtime watcher
+
+Purpose:
+
+- reload the backend when server code changes
+
+Inputs:
+
+- `apps/server/src/**`
+
+Should ignore:
+
+- `apps/server/openapi/**`
+- `packages/openwork-server-sdk/**`
+
+Reason:
+
+- generated contract artifacts should not cause unnecessary backend restarts
+
+### 2. OpenAPI watcher
+
+Purpose:
+
+- regenerate the V2 contract when routes or schemas change
+
+Inputs:
+
+- `apps/server/src/v2/**`
+
+Output:
+
+- `apps/server/openapi/v2.json`
+
+Notes:
+
+- this should use `hono-openapi`
+- it should be narrowly scoped to V2 sources
+- it should debounce rapid file changes to avoid overlapping runs
+
+### 3. SDK watcher
+
+Purpose:
+
+- regenerate the TypeScript SDK when the OpenAPI spec changes
+
+Input:
+
+- `apps/server/openapi/v2.json`
+
+Output:
+
+- `packages/openwork-server-sdk/src/generated/**`
+
+Notes:
+
+- it should only react when the spec actually changes
+- it should not trigger server reloads
+- it should be fast enough to run continuously in dev
+
+### 4. App dev watcher
+
+Purpose:
+
+- recompile the app when app code or SDK package code changes
+
+Inputs:
+
+- `apps/app/**`
+- `packages/openwork-server-sdk/src/**`
+
+Notes:
+
+- the app should consume the SDK package through a workspace dependency
+- in dev, the SDK package should preferably expose TypeScript source directly rather than requiring a full `dist/` build on every change
+
+## Preferred SDK Package Dev Shape
+
+To keep iteration fast, `packages/openwork-server-sdk` should ideally work like this in development:
+
+- generated files land in `src/generated/**`
+- handwritten files like `src/index.ts` and SSE helpers live beside them
+- the app imports the package source through the workspace
+- Vite and TypeScript pick up changes automatically
+
+That avoids a slow extra cycle like:
+
+```text
+regenerate SDK
+-> rebuild package dist
+-> app sees dist change
+```
+
+If a build step is still needed for packaging or publishing, it should exist, but dev should prefer source consumption whenever possible.
+
+## Runtime Client Creation
+
+The app-facing entrypoint stays:
+
+```ts
+const sdk = createSdk({ serverId })
+```
+
+or directly:
+
+```ts
+await createSdk({ serverId }).sessions.listMessages({ workspaceId, sessionId })
+```
+
+`createSdk({ serverId })` should remain lightweight.
+
+It should only:
+
+- resolve `serverId` to the latest known `baseUrl`, `token`, and capability info
+- prepare a fetch client or generated SDK instance
+- return the typed SDK object
+
+It should not:
+
+- perform network discovery by default
+- make a capability request on every call
+- do expensive initialization work
+
+This keeps per-call SDK creation cheap enough that we do not need to cache or reuse it aggressively.
+
+## What Changes Trigger What
+
+### Change: V2 route handler or schema
+
+- server reloads
+- OpenAPI spec regenerates
+- SDK regenerates
+- app sees updated methods and types
+
+### Change: server internals only, no contract change
+
+- server reloads
+- OpenAPI may regenerate
+- SDK may regenerate to identical output
+- app usually does not need any meaningful change
+
+### Change: generated SDK mapping or SSE helper
+
+- SDK package changes
+- app recompiles
+- server does not need to restart unless server code also changed
+
+### Change: app feature code only
+
+- app recompiles
+- server and SDK do not need to restart
+
+## SSE in Local Dev
+
+There will likely be only one or two SSE endpoints.
+
+Recommended approach:
+
+- document the SSE endpoints in the V2 contract
+- keep event payloads typed from server-owned schemas
+- expose small handwritten SSE helpers from `packages/openwork-server-sdk`
+- let the app consume those helpers through the same `createSdk({ serverId })` entrypoint
+
+That means SSE changes still fit the same watch graph:
+
+- server-side event contract change -> spec generation -> SDK or helper update -> app sees new types
+- helper implementation change -> app recompiles immediately
+
+## Avoiding Restart Loops
+
+The main risk in this setup is watchers causing each other to loop.
+
+We should prevent that by keeping responsibilities clean:
+
+- server watcher ignores generated spec and SDK files
+- OpenAPI watcher only watches V2 source
+- SDK watcher only watches the spec file
+- app watcher only consumes the SDK package output, not the server source tree directly
+
+If needed, generation steps should write files only when contents actually change.
+
+## CI Mirror of the Dev Flow
+
+Local dev should be convenient, but CI should still enforce correctness.
+
+CI should run the same core graph without watch mode:
+
+```text
+generate openapi spec
+-> generate sdk
+-> fail if git diff is non-empty
+```
+
+That ensures local convenience never replaces contract discipline.
+
+## Suggested Scripts
+
+Exact tooling is still open, but the shape should look like this:
+
+```text
+apps/server
+- dev                 # backend watch mode
+- openapi:generate    # one-shot spec generation
+- openapi:watch       # watch V2 sources and regenerate spec
+
+packages/openwork-server-sdk
+- generate            # one-shot SDK generation
+- watch               # watch spec and regenerate sdk
+
+repo root
+- dev:server-v2       # run server watch + openapi watch + sdk watch + app dev together
+```
+
+## Developer Experience Target
+
+From a developer's point of view, the happy path should be:
+
+1. run one dev command
+2. edit V2 routes, schemas, or app code freely
+3. let watchers keep server runtime, spec, SDK, and app types synchronized
+4. avoid manual kill/restart/build loops except when tooling itself changes
+
+That is the standard we should design toward.
