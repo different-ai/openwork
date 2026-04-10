@@ -89,7 +89,7 @@ const buildAuthorizedFoldersStatus = (preservedCount: number, action?: string) =
     preservedCount > 0
       ? preservedCount === 1
         ? t("context_panel.preserving_entry")
-        : t("context_panel.preserving_entries", undefined, { count: preservedCount })
+        : t("context_panel.preserving_entries", { count: preservedCount })
       : null;
   if (action && preservedLabel) return `${action} ${preservedLabel}`;
   return action ?? preservedLabel;
@@ -406,7 +406,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
                             authorizedFoldersSaving() ||
                             !canWriteConfig()
                           }
-                          aria-label={t("context_panel.remove_folder", undefined, { name: folderName })}
+                          aria-label={t("context_panel.remove_folder", { name: folderName })}
                         >
                           <X size={16} class="text-current" />
                         </Button>

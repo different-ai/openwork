@@ -93,8 +93,8 @@ export const setLocale = (newLocale: Language) => {
  * @param localeOverride - Optional locale override (defaults to current locale)
  * @returns Translated string or fallback
  */
-export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
-  const loc = localeOverride ?? locale();
+export const t = (key: string, params?: Record<string, string | number> & { lng?: Language }): string => {
+  const loc = params?.lng ?? locale();
 
   // Try target language first
   let result: string;
@@ -108,9 +108,10 @@ export const t = (key: string, localeOverride?: Language, params?: Record<string
     return key;
   }
 
-  // Replace params if provided
+  // Replace params if provided (skip the lng meta-key)
   if (params) {
     for (const [k, v] of Object.entries(params)) {
+      if (k === "lng") continue;
       result = result.replace(`{${k}}`, String(v));
     }
   }

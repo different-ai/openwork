@@ -1309,7 +1309,7 @@ export default function Composer(props: ComposerProps) {
         for (const file of supportedFiles) {
             if (file.size > MAX_ATTACHMENT_BYTES) {
                 props.onNotice({
-                    title: t("composer.file_exceeds_limit", undefined, {
+                    title: t("composer.file_exceeds_limit", {
                         name: file.name,
                     }),
                     tone: "warning",

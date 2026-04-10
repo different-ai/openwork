@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from
 
 import { parse } from "jsonc-parser";
 
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 import { DEFAULT_MODEL, MODEL_PREF_KEY, SESSION_MODEL_PREF_KEY, VARIANT_PREF_KEY } from "../constants";
 import { readOpencodeConfig, writeOpencodeConfig } from "../lib/tauri";
 import {
@@ -551,9 +551,9 @@ export function createModelConfigStore(options: {
     const modelInfo = findProviderModel(ref);
     if (!modelInfo) {
       return {
-        title: t("app.model_behavior_title", currentLocale()),
+        title: t("app.model_behavior_title"),
         label: formatGenericBehaviorLabel(value),
-        description: t("app.model_behavior_desc", currentLocale()),
+        description: t("app.model_behavior_desc"),
         options: [],
       };
     }
@@ -597,7 +597,7 @@ export function createModelConfigStore(options: {
           modelID: DEFAULT_MODEL.modelID,
           title: DEFAULT_MODEL.modelID,
           description: DEFAULT_MODEL.providerID,
-          footer: t("settings.model_fallback", currentLocale()),
+          footer: t("settings.model_fallback"),
           behaviorTitle: behavior.title,
           behaviorLabel: behavior.label,
           behaviorDescription: behavior.description,
@@ -637,9 +637,9 @@ export function createModelConfigStore(options: {
         const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, activeVariant);
         const footerBits: string[] = [];
         if (defaultModelID === model.id || isDefault) {
-          footerBits.push(t("settings.model_default", currentLocale()));
+          footerBits.push(t("settings.model_default"));
         }
-        if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
+        if (model.reasoning) footerBits.push(t("settings.model_reasoning"));
 
         next.push({
           providerID: provider.id,
@@ -1070,7 +1070,7 @@ export function createModelConfigStore(options: {
         const content = formatConfigWithDefaultModel(configFile.content, nextModel);
         const result = await writeOpencodeConfig("project", root, content);
         if (!result.ok) {
-          throw new Error(result.stderr || result.stdout || t("app.error_update_opencode_json", currentLocale()));
+          throw new Error(result.stderr || result.stdout || t("app.error_update_opencode_json"));
         }
         options.setLastKnownConfigSnapshot(getConfigSnapshot(content));
         if (workspaceId) {
@@ -1201,7 +1201,7 @@ export function createModelConfigStore(options: {
 
         if (workspace.workspaceType !== "local" || !root || !isTauriRuntime()) {
           throw new Error(
-            t("app.error_auto_compact_scope", currentLocale()),
+            t("app.error_auto_compact_scope"),
           );
         }
 
@@ -1211,7 +1211,7 @@ export function createModelConfigStore(options: {
           const content = formatConfigWithAutoCompactContext(configFile.content, nextValue);
           const result = await writeOpencodeConfig("project", root, content);
           if (!result.ok) {
-            throw new Error(result.stderr || result.stdout || t("app.error_update_opencode_json", currentLocale()));
+            throw new Error(result.stderr || result.stdout || t("app.error_update_opencode_json"));
           }
           options.setLastKnownConfigSnapshot(getConfigSnapshot(content));
           options.markOpencodeConfigReloadRequired();

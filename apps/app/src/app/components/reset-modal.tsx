@@ -23,9 +23,8 @@ export type ResetModalProps = {
 };
 
 export default function ResetModal(props: ResetModalProps) {
-  const translate = (key: string) => t(key, props.language);
   const resetConfirmationHint = () => {
-    const template = translate("settings.reset_confirmation_hint");
+    const template = t("settings.reset_confirmation_hint");
     const parts = template.split(RESET_CONFIRM_PLACEHOLDER);
 
     if (parts.length === 1) return template;
@@ -46,8 +45,8 @@ export default function ResetModal(props: ResetModalProps) {
               <div>
                 <h3 class="text-lg font-semibold text-gray-12">
                   <Switch>
-                    <Match when={props.mode === "onboarding"}>{translate("settings.reset_onboarding_title")}</Match>
-                    <Match when={true}>{translate("settings.reset_app_data_title")}</Match>
+                    <Match when={props.mode === "onboarding"}>{t("settings.reset_onboarding_title")}</Match>
+                    <Match when={true}>{t("settings.reset_app_data_title")}</Match>
                   </Switch>
                 </h3>
                 <p class="text-sm text-gray-11 mt-1">{resetConfirmationHint()}</p>
@@ -66,19 +65,19 @@ export default function ResetModal(props: ResetModalProps) {
               <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11">
                 <Switch>
                   <Match when={props.mode === "onboarding"}>
-                    {translate("settings.reset_onboarding_warning")}
+                    {t("settings.reset_onboarding_warning")}
                   </Match>
-                  <Match when={true}>{translate("settings.reset_app_data_warning")}</Match>
+                  <Match when={true}>{t("settings.reset_app_data_warning")}</Match>
                 </Switch>
               </div>
 
               <Show when={props.hasActiveRuns}>
-                <div class="text-xs text-red-11">{translate("settings.reset_stop_active_runs")}</div>
+                <div class="text-xs text-red-11">{t("settings.reset_stop_active_runs")}</div>
               </Show>
 
               <TextInput
-                label={translate("settings.reset_confirmation_label")}
-                placeholder={translate("settings.reset_confirmation_placeholder")}
+                label={t("settings.reset_confirmation_label")}
+                placeholder={t("settings.reset_confirmation_placeholder")}
                 value={props.text}
                 onInput={(e) => props.onTextChange(e.currentTarget.value)}
                 disabled={props.busy}
@@ -87,10 +86,10 @@ export default function ResetModal(props: ResetModalProps) {
 
             <div class="mt-6 flex justify-end gap-2">
               <Button variant="outline" onClick={props.onClose} disabled={props.busy}>
-                {translate("settings.reset_cancel")}
+                {t("settings.reset_cancel")}
               </Button>
               <Button variant="danger" onClick={props.onConfirm} disabled={!props.canReset}>
-                {translate("settings.reset_confirm_button")}
+                {t("settings.reset_confirm_button")}
               </Button>
             </div>
           </div>

@@ -14,7 +14,6 @@ export type ControlChromeSetupModalProps = {
 };
 
 export default function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
-  const tr = (key: string) => t(key, props.language);
   const [useExistingProfile, setUseExistingProfile] = createSignal(props.initialUseExistingProfile);
 
   createEffect(() => {
@@ -37,10 +36,10 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 </div>
                 <div>
                   <h2 class="text-xl font-semibold text-gray-12 sm:text-2xl">
-                    {tr("mcp.control_chrome_setup_title")}
+                    {t("mcp.control_chrome_setup_title")}
                   </h2>
                   <p class="mt-1 max-w-xl text-sm leading-6 text-gray-11">
-                    {tr("mcp.control_chrome_setup_subtitle")}
+                    {t("mcp.control_chrome_setup_subtitle")}
                   </p>
                 </div>
               </div>
@@ -48,7 +47,7 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 type="button"
                 class="rounded-xl p-2 text-gray-11 transition-colors hover:bg-gray-4 hover:text-gray-12"
                 onClick={props.onClose}
-                aria-label={tr("common.cancel")}
+                aria-label={t("common.cancel")}
               >
                 <X size={20} />
               </button>
@@ -63,15 +62,15 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 </div>
                 <div class="min-w-0 flex-1">
                   <h3 class="text-sm font-semibold text-gray-12">
-                    {tr("mcp.control_chrome_browser_title")}
+                    {t("mcp.control_chrome_browser_title")}
                   </h3>
                   <p class="mt-1 text-sm text-gray-11">
-                    {tr("mcp.control_chrome_browser_hint")}
+                    {t("mcp.control_chrome_browser_hint")}
                   </p>
                   <ol class="mt-3 space-y-2 text-sm leading-6 text-gray-12">
-                    <li>1. {tr("mcp.control_chrome_browser_step_one")}</li>
-                    <li>2. {tr("mcp.control_chrome_browser_step_two")}</li>
-                    <li>3. {tr("mcp.control_chrome_browser_step_three")}</li>
+                    <li>1. {t("mcp.control_chrome_browser_step_one")}</li>
+                    <li>2. {t("mcp.control_chrome_browser_step_two")}</li>
+                    <li>3. {t("mcp.control_chrome_browser_step_three")}</li>
                   </ol>
                   <a
                     href="https://github.com/ChromeDevTools/chrome-devtools-mcp"
@@ -79,7 +78,7 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                     rel="noopener noreferrer"
                     class="mt-3 inline-flex items-center gap-1 text-xs font-medium text-blue-11 transition-colors hover:text-blue-12"
                   >
-                    {tr("mcp.control_chrome_docs")}
+                    {t("mcp.control_chrome_docs")}
                     <ExternalLink size={12} />
                   </a>
                 </div>
@@ -93,10 +92,10 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                 </div>
                 <div class="min-w-0 flex-1">
                   <h3 class="text-sm font-semibold text-gray-12">
-                    {tr("mcp.control_chrome_profile_title")}
+                    {t("mcp.control_chrome_profile_title")}
                   </h3>
                   <p class="mt-1 text-sm leading-6 text-gray-11">
-                    {tr("mcp.control_chrome_profile_hint")}
+                    {t("mcp.control_chrome_profile_hint")}
                   </p>
 
                   <button
@@ -108,10 +107,10 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
                   >
                     <div class="space-y-1">
                       <div class="text-sm font-semibold text-gray-12">
-                        {tr("mcp.control_chrome_toggle_label")}
+                        {t("mcp.control_chrome_toggle_label")}
                       </div>
                       <div class="text-xs leading-5 text-gray-11">
-                        {tr("mcp.control_chrome_toggle_hint")}
+                        {t("mcp.control_chrome_toggle_hint")}
                       </div>
                     </div>
 
@@ -122,8 +121,8 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
 
                   <div class="mt-3 rounded-2xl border border-dashed border-gray-6 bg-gray-2/70 px-4 py-3 text-xs leading-5 text-gray-11">
                     {useExistingProfile()
-                      ? tr("mcp.control_chrome_toggle_on")
-                      : tr("mcp.control_chrome_toggle_off")}
+                      ? t("mcp.control_chrome_toggle_on")
+                      : t("mcp.control_chrome_toggle_off")}
                   </div>
                 </div>
               </div>
@@ -132,13 +131,13 @@ export default function ControlChromeSetupModal(props: ControlChromeSetupModalPr
 
           <div class="flex flex-col-reverse gap-3 border-t border-gray-6 bg-gray-2/80 px-6 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-7">
             <Button variant="ghost" onClick={props.onClose}>
-              {tr("mcp.auth.cancel")}
+              {t("mcp.auth.cancel")}
             </Button>
             <Button variant="secondary" onClick={() => props.onSave(useExistingProfile())} disabled={props.busy}>
-              <Show when={props.busy} fallback={props.mode === "edit" ? tr("mcp.control_chrome_save") : tr("mcp.control_chrome_connect")}>
+              <Show when={props.busy} fallback={props.mode === "edit" ? t("mcp.control_chrome_save") : t("mcp.control_chrome_connect")}>
                 <>
                   <Loader2 size={16} class="animate-spin" />
-                  {props.mode === "edit" ? tr("mcp.control_chrome_save") : tr("mcp.control_chrome_connect")}
+                  {props.mode === "edit" ? t("mcp.control_chrome_save") : t("mcp.control_chrome_connect")}
                 </>
               </Show>
             </Button>

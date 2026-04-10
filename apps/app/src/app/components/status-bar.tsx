@@ -45,10 +45,10 @@ export default function StatusBar(props: StatusBarProps) {
     if (props.clientConnected) {
       const detailBits: string[] = [];
       if (providers > 0) {
-        detailBits.push(t("status.providers_connected", undefined, { count: providers, plural: providers === 1 ? "" : "s" }));
+        detailBits.push(t("status.providers_connected", { count: providers, plural: providers === 1 ? "" : "s" }));
       }
       if (mcp > 0) {
-        detailBits.push(t("status.mcp_connected", undefined, { count: mcp }));
+        detailBits.push(t("status.mcp_connected", { count: mcp }));
       }
       if (!detailBits.length) {
         detailBits.push(t("status.ready_for_tasks"));
@@ -70,7 +70,7 @@ export default function StatusBar(props: StatusBarProps) {
         label: t("status.limited_mode"),
         detail:
           mcp > 0
-            ? t("status.limited_mcp_hint", undefined, { count: mcp })
+            ? t("status.limited_mcp_hint", { count: mcp })
             : t("status.limited_hint"),
         dotClass: "bg-amber-9",
         pingClass: "bg-amber-9/35",

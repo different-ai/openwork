@@ -943,7 +943,7 @@ export default function SettingsShell(props: SettingsShellProps) {
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? t("session.downloading") : t("session.downloading_percent", undefined, { percent });
+      return percent == null ? t("session.downloading") : t("session.downloading_percent", { percent });
     }
     return t("session.update_available");
   });
@@ -999,11 +999,11 @@ export default function SettingsShell(props: SettingsShellProps) {
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? t("session.update_ready_stop_runs_title", undefined, { version })
-        : t("session.restart_update_title", undefined, { version });
+        ? t("session.update_ready_stop_runs_title", { version })
+        : t("session.restart_update_title", { version });
     }
-    if (state === "downloading") return t("session.downloading_update_title", undefined, { version });
-    return t("session.update_available_title", undefined, { version });
+    if (state === "downloading") return t("session.downloading_update_title", { version });
+    return t("session.update_available_title", { version });
   });
 
   const handleUpdatePillClick = () => {

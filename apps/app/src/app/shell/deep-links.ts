@@ -1,6 +1,6 @@
 import { createEffect, createSignal, type Accessor } from "solid-js";
 
-import { t, currentLocale } from "../../i18n";
+import { t } from "../../i18n";
 
 import { createDenClient, writeDenSettings } from "../lib/den";
 import { dispatchDenSessionUpdated } from "../lib/den-session-events";
@@ -169,7 +169,7 @@ export function createDeepLinksController(options: {
   const openDebugDeepLink = async (rawUrl: string): Promise<{ ok: boolean; message: string }> => {
     const parsed = parseDebugDeepLinkInput(rawUrl);
     if (!parsed) {
-      return { ok: false, message: t("app.error_deep_link_unrecognized", currentLocale()) };
+      return { ok: false, message: t("app.error_deep_link_unrecognized") };
     }
 
     options.setError(null);
@@ -179,12 +179,12 @@ export function createDeepLinksController(options: {
     }
     if (parsed.kind === "auth") {
       setPendingDenAuthDeepLink(parsed.link);
-      return { ok: true, message: t("app.deep_link_auth_queued", currentLocale()) };
+      return { ok: true, message: t("app.deep_link_auth_queued") };
     }
 
     setPendingRemoteConnectDeepLink(parsed.kind === "remote" ? parsed.link : null);
     options.setSettingsTab("automations");
-    return { ok: true, message: t("app.deep_link_remote_queued", currentLocale()) };
+    return { ok: true, message: t("app.deep_link_remote_queued") };
   };
 
   createEffect(() => {
@@ -204,7 +204,7 @@ export function createDeepLinksController(options: {
       .exchangeDesktopHandoff(pending.grant)
       .then((result) => {
         if (!result.token) {
-          throw new Error(t("app.error_desktop_signin", currentLocale()));
+          throw new Error(t("app.error_desktop_signin"));
         }
 
         writeDenSettings({
@@ -227,7 +227,7 @@ export function createDeepLinksController(options: {
         recentHandledDenGrants.delete(pending.grant);
         dispatchDenSessionUpdated({
           status: "error",
-          message: error instanceof Error ? error.message : t("app.error_cloud_signin", currentLocale()),
+          message: error instanceof Error ? error.message : t("app.error_cloud_signin"),
         });
       })
       .finally(() => {

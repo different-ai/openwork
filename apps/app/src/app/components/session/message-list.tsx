@@ -229,39 +229,39 @@ function toolHeadline(part: Part) {
     const description = pick("description");
     if (description) return compactText(description);
     const command = pick("command", "cmd");
-    return command ? compactText(t("message_list.tool_run_command", undefined, { command }), 48) : t("message_list.tool_run_command_fallback");
+    return command ? compactText(t("message_list.tool_run_command", { command }), 48) : t("message_list.tool_run_command_fallback");
   }
 
   if (tool === "read") {
     const file = target("filePath", "path", "file");
-    return file ? t("message_list.tool_reviewed_file", undefined, { file }) : t("message_list.tool_reviewed_file_fallback");
+    return file ? t("message_list.tool_reviewed_file", { file }) : t("message_list.tool_reviewed_file_fallback");
   }
 
   if (tool === "edit") {
     const file = target("filePath", "path", "file");
-    return file ? t("message_list.tool_updated_file", undefined, { file }) : t("message_list.tool_updated_file_fallback");
+    return file ? t("message_list.tool_updated_file", { file }) : t("message_list.tool_updated_file_fallback");
   }
 
   if (tool === "write" || tool === "apply_patch") {
     const file = target("filePath", "path", "file");
-    return file ? t("message_list.tool_update_file", undefined, { file }) : t("message_list.tool_update_file_fallback");
+    return file ? t("message_list.tool_update_file", { file }) : t("message_list.tool_update_file_fallback");
   }
 
   if (tool === "grep" || tool === "glob" || tool === "search") {
     const pattern = pick("pattern", "query");
-    return pattern ? t("message_list.tool_searched_pattern", undefined, { pattern: compactText(pattern, 36) }) : t("message_list.tool_searched_code_fallback");
+    return pattern ? t("message_list.tool_searched_pattern", { pattern: compactText(pattern, 36) }) : t("message_list.tool_searched_code_fallback");
   }
 
   if (tool === "list" || tool === "list_files") {
     const path = target("path");
-    return path ? t("message_list.tool_reviewed_path", undefined, { path }) : t("message_list.tool_reviewed_files_fallback");
+    return path ? t("message_list.tool_reviewed_path", { path }) : t("message_list.tool_reviewed_files_fallback");
   }
 
   if (tool === "task") {
     const description = pick("description");
     if (description) return compactText(description);
     const agent = pick("subagent_type");
-    return agent ? t("message_list.tool_delegate_agent", undefined, { agent }) : t("message_list.tool_delegate_task_fallback");
+    return agent ? t("message_list.tool_delegate_agent", { agent }) : t("message_list.tool_delegate_task_fallback");
   }
 
   if (tool === "todowrite") {
@@ -274,12 +274,12 @@ function toolHeadline(part: Part) {
 
   if (tool === "webfetch") {
     const url = pick("url");
-    return url ? t("message_list.tool_checked_url", undefined, { url: compactText(url, 36) }) : t("message_list.tool_checked_web_fallback");
+    return url ? t("message_list.tool_checked_url", { url: compactText(url, 36) }) : t("message_list.tool_checked_web_fallback");
   }
 
   if (tool === "skill") {
     const name = pick("name");
-    return name ? t("message_list.tool_load_skill_named", undefined, { name }) : t("message_list.tool_load_skill_fallback");
+    return name ? t("message_list.tool_load_skill_named", { name }) : t("message_list.tool_load_skill_fallback");
   }
 
   const fallback = tool
@@ -696,7 +696,7 @@ export default function MessageList(props: MessageListProps) {
       const title = session()?.title?.trim();
       if (title) return title;
       if (task().description) return task().description!;
-      if (task().agentType) return t("message_list.subagent_type_task", undefined, { agentType: task().agentType! });
+      if (task().agentType) return t("message_list.subagent_type_task", { agentType: task().agentType! });
       return t("message_list.subagent_session_fallback");
     });
     const statusLabel = createMemo(() => {
@@ -704,7 +704,7 @@ export default function MessageList(props: MessageListProps) {
       if (streaming()) return t("message_list.subagent_running");
       if (childMessages().length > 0) {
         const count = childMessages().length;
-        return t("message_list.subagent_message_count", undefined, { count, plural: count === 1 ? "" : "s" });
+        return t("message_list.subagent_message_count", { count, plural: count === 1 ? "" : "s" });
       }
       return t("message_list.subagent_waiting_transcript");
     });

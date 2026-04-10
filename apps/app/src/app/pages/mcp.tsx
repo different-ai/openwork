@@ -133,7 +133,6 @@ const serviceIconBg = (name: string) => {
 
 export default function McpView(props: McpViewProps) {
   const locale = () => currentLocale();
-  const tr = (key: string) => t(key, locale());
   const showHeader = () => props.showHeader !== false;
 
   const [logoutOpen, setLogoutOpen] = createSignal(false);
@@ -189,7 +188,7 @@ export default function McpView(props: McpViewProps) {
         if (nextId !== configRequestId) return;
         setProjectConfig(null);
         setGlobalConfig(null);
-        setConfigError(e instanceof Error ? e.message : tr("mcp.config_load_failed"));
+        setConfigError(e instanceof Error ? e.message : t("mcp.config_load_failed"));
       }
     })();
   });
@@ -199,7 +198,7 @@ export default function McpView(props: McpViewProps) {
   );
 
   const revealLabel = () =>
-    isWindowsPlatform() ? tr("mcp.open_file") : tr("mcp.reveal_in_finder");
+    isWindowsPlatform() ? t("mcp.open_file") : t("mcp.reveal_in_finder");
 
   const canRevealConfig = () => {
     if (!isTauriRuntime() || revealBusy()) return false;
@@ -212,7 +211,7 @@ export default function McpView(props: McpViewProps) {
     const root = props.selectedWorkspaceRoot.trim();
 
     if (configScope() === "project" && !root) {
-      setConfigError(tr("mcp.pick_workspace_error"));
+      setConfigError(t("mcp.pick_workspace_error"));
       return;
     }
 
@@ -223,7 +222,7 @@ export default function McpView(props: McpViewProps) {
         ? await props.readConfigFile(configScope())
         : await readOpencodeConfig(configScope(), root);
       if (!resolved) {
-        throw new Error(tr("mcp.config_load_failed"));
+        throw new Error(t("mcp.config_load_failed"));
       }
       const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
       if (isWindowsPlatform()) {
@@ -232,7 +231,7 @@ export default function McpView(props: McpViewProps) {
         await revealItemInDir(resolved.path);
       }
     } catch (e) {
-      setConfigError(e instanceof Error ? e.message : tr("mcp.reveal_config_failed"));
+      setConfigError(e instanceof Error ? e.message : t("mcp.reveal_config_failed"));
     } finally {
       setRevealBusy(false);
     }
@@ -308,15 +307,15 @@ export default function McpView(props: McpViewProps) {
       {/* ── Header ───────────────────────────────────── */}
       <Show when={showHeader()}>
         <div>
-          <h2 class="text-3xl font-bold text-dls-text">{tr("mcp.apps_title")}</h2>
+          <h2 class="text-3xl font-bold text-dls-text">{t("mcp.apps_title")}</h2>
           <p class="text-sm text-dls-secondary mt-1.5">
-            {tr("mcp.apps_subtitle")}
+            {t("mcp.apps_subtitle")}
           </p>
           <Show when={connectedCount() > 0}>
             <div class="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
               <div class="w-2 h-2 rounded-full bg-green-9" />
               <span class="text-xs font-medium text-green-11">
-                {connectedCount()} {connectedCount() === 1 ? tr("mcp.app_connected") : tr("mcp.apps_connected")}
+                {connectedCount()} {connectedCount() === 1 ? t("mcp.app_connected") : t("mcp.apps_connected")}
               </span>
             </div>
           </Show>
@@ -333,12 +332,12 @@ export default function McpView(props: McpViewProps) {
       <div class="rounded-2xl border border-blue-6/30 bg-[linear-gradient(180deg,rgba(59,130,246,0.08),rgba(59,130,246,0.03))] px-5 py-5 sm:px-6">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div class="space-y-1">
-            <div class="text-base font-semibold text-dls-text">{tr("mcp.add_modal_title")}</div>
-            <div class="text-sm text-dls-secondary">{tr("mcp.custom_app_cta_hint")}</div>
+            <div class="text-base font-semibold text-dls-text">{t("mcp.add_modal_title")}</div>
+            <div class="text-sm text-dls-secondary">{t("mcp.custom_app_cta_hint")}</div>
           </div>
           <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)}>
             <Plus size={14} />
-            {tr("mcp.add_modal_title")}
+            {t("mcp.add_modal_title")}
           </Button>
         </div>
       </div>
@@ -347,9 +346,9 @@ export default function McpView(props: McpViewProps) {
       <div class="space-y-4">
         <div class="flex items-center justify-between">
           <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">
-            {tr("mcp.available_apps")}
+            {t("mcp.available_apps")}
           </h3>
-          <span class="text-[11px] text-dls-secondary">{tr("mcp.one_click_connect")}</span>
+          <span class="text-[11px] text-dls-secondary">{t("mcp.one_click_connect")}</span>
         </div>
 
         <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
@@ -366,7 +365,7 @@ export default function McpView(props: McpViewProps) {
                       <button
                         type="button"
                         class="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-green-6 bg-white/90 text-green-11 transition-colors hover:bg-white"
-                        aria-label={tr("mcp.control_chrome_edit")}
+                        aria-label={t("mcp.control_chrome_edit")}
                         onClick={(event) => {
                           event.stopPropagation();
                           const existingEntry = props.mcpServers.find((server) => server.name === getMcpIdentityKey(entry));
@@ -416,7 +415,7 @@ export default function McpView(props: McpViewProps) {
                             <h4 class="text-sm font-semibold text-dls-text">{entry.name}</h4>
                             <Show when={configured()}>
                               <span class="text-[10px] font-medium text-green-11 bg-green-3 px-1.5 py-0.5 rounded-md">
-                                {tr("mcp.connected_badge")}
+                                {t("mcp.connected_badge")}
                               </span>
                             </Show>
                             <Show when={!configured() && quickConnectStatus(entry)}>
@@ -432,7 +431,7 @@ export default function McpView(props: McpViewProps) {
                           </p>
                           <Show when={!configured() && !connecting()}>
                             <div class="mt-2 text-[11px] font-medium text-blue-11 group-hover:text-blue-12 transition-colors">
-                              {tr("mcp.tap_to_connect")}
+                              {t("mcp.tap_to_connect")}
                             </div>
                           </Show>
                         </div>
@@ -449,11 +448,11 @@ export default function McpView(props: McpViewProps) {
       <div class="space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">
-            {tr("mcp.your_apps")}
+            {t("mcp.your_apps")}
           </h3>
           <Show when={props.mcpLastUpdatedAt}>
             <span class="text-[11px] text-dls-secondary tabular-nums">
-              {tr("mcp.last_synced")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}
+              {t("mcp.last_synced")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}
             </span>
           </Show>
         </div>
@@ -463,8 +462,8 @@ export default function McpView(props: McpViewProps) {
           fallback={
             <div class="rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
               <Unplug size={24} class="mx-auto text-dls-secondary/30 mb-3" />
-              <div class="text-sm font-medium text-dls-secondary">{tr("mcp.no_apps_yet")}</div>
-              <div class="text-xs text-dls-secondary/60 mt-1">{tr("mcp.no_apps_hint")}</div>
+              <div class="text-sm font-medium text-dls-secondary">{t("mcp.no_apps_yet")}</div>
+              <div class="text-xs text-dls-secondary/60 mt-1">{t("mcp.no_apps_hint")}</div>
             </div>
           }
         >
@@ -477,7 +476,7 @@ export default function McpView(props: McpViewProps) {
                 const errorInfo = () => {
                   const resolved = props.mcpStatuses[entry.name];
                   if (!resolved || resolved.status !== "failed") return null;
-                  return "error" in resolved ? resolved.error : tr("mcp.connection_failed");
+                  return "error" in resolved ? resolved.error : t("mcp.connection_failed");
                 };
 
                 return (
@@ -518,20 +517,20 @@ export default function McpView(props: McpViewProps) {
                       <div class="border-t border-blue-6/20 px-4 py-3 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
                         {/* Connection type */}
                         <div class="flex items-center gap-4 text-xs">
-                          <span class="text-dls-secondary">{tr("mcp.connection_type")}</span>
+                          <span class="text-dls-secondary">{t("mcp.connection_type")}</span>
                           <span class="text-dls-text">
-                            {entry.config.type === "remote" ? tr("mcp.type_cloud") : tr("mcp.type_local")}
+                            {entry.config.type === "remote" ? t("mcp.type_cloud") : t("mcp.type_local")}
                           </span>
                         </div>
 
                         {/* Capabilities */}
                         <div class="flex items-center gap-2">
                           <span class="text-[10px] font-medium bg-dls-surface text-dls-text border border-dls-border px-2 py-0.5 rounded-md">
-                            {tr("mcp.cap_tools")}
+                            {t("mcp.cap_tools")}
                           </span>
                           <Show when={entry.config.type === "remote"}>
                             <span class="text-[10px] font-medium bg-dls-surface text-dls-text border border-dls-border px-2 py-0.5 rounded-md">
-                              {tr("mcp.cap_signin")}
+                              {t("mcp.cap_signin")}
                             </span>
                           </Show>
                         </div>
@@ -549,7 +548,7 @@ export default function McpView(props: McpViewProps) {
                         <details class="group">
                           <summary class="flex items-center gap-1.5 text-[11px] text-dls-secondary cursor-pointer hover:text-dls-text transition-colors list-none">
                             <Code2 size={11} />
-                            {tr("mcp.technical_details")}
+                            {t("mcp.technical_details")}
                             <ChevronDown size={10} class="group-open:rotate-180 transition-transform" />
                           </summary>
                           <div class="mt-1.5 rounded-lg bg-dls-hover px-3 py-2 text-[11px] font-mono text-dls-secondary break-all">
@@ -562,7 +561,7 @@ export default function McpView(props: McpViewProps) {
                         <Show when={supportsOauth(entry) && status() !== "connected"}>
                           <div class="pt-1 flex items-center justify-between gap-3">
                             <div class="text-xs text-dls-secondary">
-                              {tr("mcp.logout_label")}
+                              {t("mcp.logout_label")}
                             </div>
                             <Button
                               variant="secondary"
@@ -570,18 +569,18 @@ export default function McpView(props: McpViewProps) {
                               disabled={props.busy}
                               onClick={() => props.authorizeMcp(entry)}
                             >
-                              {tr("mcp.login_action")}
+                              {t("mcp.login_action")}
                             </Button>
                           </div>
                           <div class="text-[11px] text-dls-secondary/70">
-                            {tr("mcp.login_hint")}
+                            {t("mcp.login_hint")}
                           </div>
                         </Show>
 
                         <Show when={supportsOauth(entry) && status() === "connected"}>
                           <div class="pt-1 flex items-center justify-between gap-3">
                             <div class="text-xs text-dls-secondary">
-                              {tr("mcp.logout_label")}
+                              {t("mcp.logout_label")}
                             </div>
                             <Button
                               variant="danger"
@@ -589,11 +588,11 @@ export default function McpView(props: McpViewProps) {
                               disabled={props.busy || logoutBusy()}
                               onClick={() => requestLogout(entry.name)}
                             >
-                              {logoutBusy() && logoutTarget() === entry.name ? tr("mcp.logout_working") : tr("mcp.logout_action")}
+                              {logoutBusy() && logoutTarget() === entry.name ? t("mcp.logout_working") : t("mcp.logout_action")}
                             </Button>
                           </div>
                           <div class="text-[11px] text-dls-secondary/70">
-                            {tr("mcp.logout_hint")}
+                            {t("mcp.logout_hint")}
                           </div>
                         </Show>
 
@@ -605,7 +604,7 @@ export default function McpView(props: McpViewProps) {
                               onClick={() => openControlChromeModal("edit", entry)}
                             >
                               <Settings size={13} />
-                              {tr("mcp.control_chrome_edit")}
+                              {t("mcp.control_chrome_edit")}
                             </Button>
                           </Show>
                           <Button
@@ -617,7 +616,7 @@ export default function McpView(props: McpViewProps) {
                               setRemoveOpen(true);
                             }}
                           >
-                            {tr("mcp.remove_app")}
+                            {t("mcp.remove_app")}
                           </Button>
                         </div>
                       </div>
@@ -632,10 +631,10 @@ export default function McpView(props: McpViewProps) {
 
       <ConfirmModal
         open={logoutOpen()}
-        title={tr("mcp.logout_modal_title")}
-        message={tr("mcp.logout_modal_message").replace("{server}", displayName(logoutTarget() ?? ""))}
-        confirmLabel={logoutBusy() ? tr("mcp.logout_working") : tr("mcp.logout_action")}
-        cancelLabel={tr("common.cancel")}
+        title={t("mcp.logout_modal_title")}
+        message={t("mcp.logout_modal_message").replace("{server}", displayName(logoutTarget() ?? ""))}
+        confirmLabel={logoutBusy() ? t("mcp.logout_working") : t("mcp.logout_action")}
+        cancelLabel={t("common.cancel")}
         variant="danger"
         onCancel={() => {
           if (logoutBusy()) return;
@@ -649,10 +648,10 @@ export default function McpView(props: McpViewProps) {
 
       <ConfirmModal
         open={removeOpen()}
-        title={tr("mcp.remove_modal_title")}
-        message={tr("mcp.remove_modal_message").replace("{server}", displayName(removeTarget() ?? ""))}
-        confirmLabel={tr("mcp.remove_app")}
-        cancelLabel={tr("common.cancel")}
+        title={t("mcp.remove_modal_title")}
+        message={t("mcp.remove_modal_message").replace("{server}", displayName(removeTarget() ?? ""))}
+        confirmLabel={t("mcp.remove_app")}
+        cancelLabel={t("common.cancel")}
         variant="danger"
         onCancel={() => {
           setRemoveOpen(false);
@@ -676,8 +675,8 @@ export default function McpView(props: McpViewProps) {
           <div class="flex items-center gap-3">
             <Settings2 size={16} class="text-dls-secondary" />
             <div class="text-left">
-              <div class="text-sm font-medium text-dls-text">{tr("mcp.advanced_settings")}</div>
-              <div class="text-xs text-dls-secondary">{tr("mcp.advanced_settings_hint")}</div>
+              <div class="text-sm font-medium text-dls-text">{t("mcp.advanced_settings")}</div>
+              <div class="text-xs text-dls-secondary">{t("mcp.advanced_settings_hint")}</div>
             </div>
           </div>
           <div class={`transition-transform ${showAdvanced() ? "rotate-180" : ""}`}>
@@ -697,7 +696,7 @@ export default function McpView(props: McpViewProps) {
                 }`}
                 onClick={() => setConfigScope("project")}
               >
-                {tr("mcp.scope_project")}
+                {t("mcp.scope_project")}
               </button>
               <button
                 class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -707,15 +706,15 @@ export default function McpView(props: McpViewProps) {
                 }`}
                 onClick={() => setConfigScope("global")}
               >
-                {tr("mcp.scope_global")}
+                {t("mcp.scope_global")}
               </button>
             </div>
 
             {/* Config path */}
             <div class="flex flex-col gap-1 text-xs">
-              <div class="text-dls-secondary">{tr("mcp.config_file")}</div>
+              <div class="text-dls-secondary">{t("mcp.config_file")}</div>
               <div class="text-dls-secondary/80 font-mono text-[11px] truncate">
-                {activeConfig()?.path ?? tr("mcp.config_not_loaded")}
+                {activeConfig()?.path ?? t("mcp.config_not_loaded")}
               </div>
             </div>
 
@@ -728,7 +727,7 @@ export default function McpView(props: McpViewProps) {
                     fallback={<><FolderOpen size={14} /> {revealLabel()}</>}
                   >
                     <Loader2 size={14} class="animate-spin" />
-                    {tr("mcp.opening_label")}
+                    {t("mcp.opening_label")}
                   </Show>
                 </Button>
                 <a
@@ -737,12 +736,12 @@ export default function McpView(props: McpViewProps) {
                   rel="noopener noreferrer"
                   class="inline-flex items-center gap-1 text-xs text-dls-secondary hover:text-dls-text transition-colors"
                 >
-                  {tr("mcp.docs_link")}
+                  {t("mcp.docs_link")}
                   <ExternalLink size={11} />
                 </a>
               </div>
               <Show when={activeConfig() && activeConfig()!.exists === false}>
-                <div class="text-[11px] text-dls-secondary">{tr("mcp.file_not_found")}</div>
+                <div class="text-[11px] text-dls-secondary">{t("mcp.file_not_found")}</div>
               </Show>
             </div>
 

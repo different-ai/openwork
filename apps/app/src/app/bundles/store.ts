@@ -639,7 +639,7 @@ export function createBundlesStore(options: {
           b.path?.trim() ||
           b.baseUrl?.trim() ||
           "";
-        return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });
+        return aLabel.localeCompare(bLabel, { sensitivity: "base" });
       });
   });
 

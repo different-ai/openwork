@@ -50,7 +50,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
-    () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
+    () => createClient(props.opencodeBaseUrl, { token: props.openworkToken, mode: "openwork" }),
     [props.opencodeBaseUrl, props.openworkToken],
   );
 

@@ -116,7 +116,7 @@ const getVariantDescription = (providerID: string, key: string, label: string) =
   if (key === "xhigh" || key === "max") return providerID === "anthropic"
     ? t("model_behavior.desc_max_anthropic")
     : t("model_behavior.desc_max");
-  return t("model_behavior.desc_generic", undefined, { label: label.toLowerCase() });
+  return t("model_behavior.desc_generic", { label: label.toLowerCase() });
 };
 
 export const getModelBehaviorOptions = (

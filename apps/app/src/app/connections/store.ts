@@ -3,7 +3,7 @@ import { createEffect, createSignal } from "solid-js";
 import { homeDir } from "@tauri-apps/api/path";
 import { parse } from "jsonc-parser";
 
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 import { CHROME_DEVTOOLS_MCP_ID, MCP_QUICK_CONNECT, type McpDirectoryInfo } from "../constants";
 import { createClient, unwrap } from "../lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
@@ -36,7 +36,6 @@ export function createConnectionsStore(options: {
   developerMode: () => boolean;
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
 }) {
-  const translate = (key: string) => t(key, currentLocale());
 
   const [mcpServers, setMcpServers] = createSignal<McpServerEntry[]>([]);
   const [mcpStatus, setMcpStatus] = createSignal<string | null>(null);
@@ -94,7 +93,7 @@ export function createConnectionsStore(options: {
       return null;
     }
 
-    activeClient = createClient(`${openworkBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
+    activeClient = createClient(`${openworkBaseUrl.replace(/\/+$/, "")}/opencode`, {
       token,
       mode: "openwork",
     });
@@ -303,7 +302,7 @@ export function createConnectionsStore(options: {
     }
 
     if (!canUseOpenworkServer && !isTauriRuntime()) {
-      setMcpStatus(translate("mcp.desktop_required"));
+      setMcpStatus(t("mcp.desktop_required"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "desktop-required",
       });
@@ -311,7 +310,7 @@ export function createConnectionsStore(options: {
     }
 
     if (!isRemoteWorkspace && !projectDir) {
-      setMcpStatus(translate("mcp.pick_workspace_first"));
+      setMcpStatus(t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace",
       });
@@ -320,7 +319,7 @@ export function createConnectionsStore(options: {
 
     const activeClient = await ensureActiveClient();
     if (!activeClient) {
-      setMcpStatus(translate("mcp.connect_server_first"));
+      setMcpStatus(t("mcp.connect_server_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "no-active-client",
       });
@@ -329,7 +328,7 @@ export function createConnectionsStore(options: {
 
     const resolvedProjectDir = await resolveProjectDir(activeClient, projectDir);
     if (!resolvedProjectDir) {
-      setMcpStatus(translate("mcp.pick_workspace_first"));
+      setMcpStatus(t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace-after-discovery",
       });
@@ -449,7 +448,7 @@ export function createConnectionsStore(options: {
         setMcpAuthNeedsReload(true);
         setMcpAuthModalOpen(true);
       } else {
-        setMcpStatus(translate("mcp.connected"));
+        setMcpStatus(t("mcp.connected"));
       }
 
       await refreshMcpServers();
@@ -459,7 +458,7 @@ export function createConnectionsStore(options: {
         slug,
       });
     } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : translate("mcp.connect_failed"));
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.connect_failed"));
       finishPerf(options.developerMode(), "mcp.connect", "error", startedAt, {
         name: entry.name,
         type: entryType,
@@ -472,7 +471,7 @@ export function createConnectionsStore(options: {
 
   function authorizeMcp(entry: McpServerEntry) {
     if (entry.config.type !== "remote" || entry.config.oauth === false) {
-      setMcpStatus(translate("mcp.login_unavailable"));
+      setMcpStatus(t("mcp.login_unavailable"));
       return;
     }
 
@@ -508,19 +507,19 @@ export function createConnectionsStore(options: {
     }
 
     if (!canUseOpenworkServer && !isTauriRuntime()) {
-      setMcpStatus(translate("mcp.desktop_required"));
+      setMcpStatus(t("mcp.desktop_required"));
       return;
     }
 
     const activeClient = await ensureActiveClient();
     if (!activeClient) {
-      setMcpStatus(translate("mcp.connect_server_first"));
+      setMcpStatus(t("mcp.connect_server_first"));
       return;
     }
 
     const resolvedProjectDir = await resolveProjectDir(activeClient, projectDir);
     if (!resolvedProjectDir) {
-      setMcpStatus(translate("mcp.pick_workspace_first"));
+      setMcpStatus(t("mcp.pick_workspace_first"));
       return;
     }
 
@@ -547,9 +546,9 @@ export function createConnectionsStore(options: {
       }
 
       await refreshMcpServers();
-      setMcpStatus(translate("mcp.logout_success").replace("{server}", safeName));
+      setMcpStatus(t("mcp.logout_success").replace("{server}", safeName));
     } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : translate("mcp.logout_failed"));
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.logout_failed"));
     }
   }
 
@@ -570,7 +569,7 @@ export function createConnectionsStore(options: {
       } else {
         const projectDir = options.projectDir().trim();
         if (!projectDir) {
-          setMcpStatus(translate("mcp.pick_workspace_first"));
+          setMcpStatus(t("mcp.pick_workspace_first"));
           return;
         }
         await removeMcpFromConfig(projectDir, name);
@@ -583,7 +582,7 @@ export function createConnectionsStore(options: {
       }
       setMcpStatus(null);
     } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : translate("mcp.remove_failed"));
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.remove_failed"));
     }
   }
 

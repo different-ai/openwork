@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { CheckCircle2, Folder, FolderPlus, Globe, Loader2, Sparkles, X } from "lucide-solid";
 import type { WorkspaceInfo } from "../lib/tauri";
-import { t, currentLocale } from "../../i18n";
+import { t } from "../../i18n";
 
 import Button from "../components/button";
 
@@ -23,7 +23,6 @@ export default function SkillDestinationModal(props: {
   onCreateWorker?: () => void;
   onConnectRemote?: () => void;
 }) {
-  const translate = (key: string) => t(key, currentLocale());
   const [selectedWorkspaceId, setSelectedWorkspaceId] = createSignal<string | null>(null);
 
   const displayName = (workspace: WorkspaceInfo) =>
@@ -37,14 +36,14 @@ export default function SkillDestinationModal(props: {
 
   const subtitle = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType === "local") {
-      return workspace.path?.trim() || translate("share_skill_destination.local_badge");
+      return workspace.path?.trim() || t("share_skill_destination.local_badge");
     }
     return (
       workspace.directory?.trim() ||
       workspace.openworkHostUrl?.trim() ||
       workspace.baseUrl?.trim() ||
       workspace.path?.trim() ||
-      translate("share_skill_destination.remote_badge")
+      t("share_skill_destination.remote_badge")
     );
   };
 
@@ -55,12 +54,12 @@ export default function SkillDestinationModal(props: {
         Boolean(workspace.sandboxRunId?.trim()) ||
         Boolean(workspace.sandboxContainerName?.trim()))
     ) {
-      return translate("share_skill_destination.sandbox_badge");
+      return t("share_skill_destination.sandbox_badge");
     }
     if (workspace.workspaceType === "remote") {
-      return translate("share_skill_destination.remote_badge");
+      return t("share_skill_destination.remote_badge");
     }
-    return translate("share_skill_destination.local_badge");
+    return t("share_skill_destination.local_badge");
   };
 
   const footerBusy = () => Boolean(props.busyWorkspaceId?.trim());
@@ -106,7 +105,7 @@ export default function SkillDestinationModal(props: {
               <div class="min-w-0 space-y-3">
                 <div class="inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-2 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-10">
                   <Sparkles size={12} />
-                  {translate("share_skill_destination.skill_label")}
+                  {t("share_skill_destination.skill_label")}
                 </div>
                 <div class="rounded-xl border border-gray-6 bg-gray-2/40 px-4 py-4">
                   <div class="flex items-start gap-3">
@@ -115,17 +114,17 @@ export default function SkillDestinationModal(props: {
                     </div>
                     <div class="min-w-0 flex-1">
                       <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-9">
-                        {translate("share_skill_destination.skill_label")}
+                        {t("share_skill_destination.skill_label")}
                       </div>
                       <h3 class="mt-1 text-lg font-semibold text-gray-12 break-words">
-                        {props.skill?.name ?? translate("share_skill_destination.fallback_skill_name")}
+                        {props.skill?.name ?? t("share_skill_destination.fallback_skill_name")}
                       </h3>
                       <Show when={props.skill?.description?.trim()}>
                         <p class="mt-1 text-sm leading-relaxed text-gray-10 break-words">{props.skill?.description?.trim()}</p>
                       </Show>
                       <Show when={props.skill?.trigger?.trim()}>
                         <div class="mt-3 inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1 px-3 py-1 text-[11px] text-gray-10">
-                          <span class="font-semibold text-gray-12">{translate("share_skill_destination.trigger_label")}</span>
+                          <span class="font-semibold text-gray-12">{t("share_skill_destination.trigger_label")}</span>
                           <span class="font-mono">{props.skill?.trigger?.trim()}</span>
                         </div>
                       </Show>
@@ -133,8 +132,8 @@ export default function SkillDestinationModal(props: {
                   </div>
                 </div>
                 <div>
-                  <h4 class="text-sm font-medium text-gray-12">{translate("share_skill_destination.title")}</h4>
-                  <p class="mt-1 text-sm leading-relaxed text-gray-10">{translate("share_skill_destination.subtitle")}</p>
+                  <h4 class="text-sm font-medium text-gray-12">{t("share_skill_destination.title")}</h4>
+                  <p class="mt-1 text-sm leading-relaxed text-gray-10">{t("share_skill_destination.subtitle")}</p>
                 </div>
               </div>
 
@@ -142,7 +141,7 @@ export default function SkillDestinationModal(props: {
                 onClick={props.onClose}
                 disabled={footerBusy()}
                 class={`rounded-full p-2 text-gray-9 transition hover:bg-gray-2 hover:text-gray-12 ${footerBusy() ? "cursor-not-allowed opacity-50" : ""}`.trim()}
-                aria-label={translate("common.close")}
+                aria-label={t("common.close")}
               >
                 <X size={18} />
               </button>
@@ -152,7 +151,7 @@ export default function SkillDestinationModal(props: {
           <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
             <div class="space-y-3">
               <div class="flex items-center justify-between gap-3">
-                <div class="text-sm font-medium text-gray-12">{translate("share_skill_destination.existing_workers")}</div>
+                <div class="text-sm font-medium text-gray-12">{t("share_skill_destination.existing_workers")}</div>
                 <Show when={props.workspaces.length > 0}>
                   <span class="text-[11px] uppercase tracking-[0.18em] text-gray-9">{props.workspaces.length}</span>
                 </Show>
@@ -162,7 +161,7 @@ export default function SkillDestinationModal(props: {
                 when={props.workspaces.length > 0}
                 fallback={
                   <div class="rounded-xl border border-dashed border-gray-6 bg-gray-2/20 px-4 py-5 text-sm leading-relaxed text-gray-10">
-                    {translate("share_skill_destination.no_workers")}
+                    {t("share_skill_destination.no_workers")}
                   </div>
                 }
               >
@@ -196,7 +195,7 @@ export default function SkillDestinationModal(props: {
                                 <div class="text-sm font-semibold text-gray-12 break-words">{displayName(workspace)}</div>
                                 <Show when={isActive()}>
                                   <span class="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-gray-11">
-                                    {translate("share_skill_destination.current_badge")}
+                                    {t("share_skill_destination.current_badge")}
                                   </span>
                                 </Show>
                                 <span class="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-gray-11">
@@ -204,14 +203,14 @@ export default function SkillDestinationModal(props: {
                                 </span>
                                 <Show when={isSelected()}>
                                   <span class="rounded-full bg-indigo-3/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-indigo-11">
-                                    {translate("share_skill_destination.selected_badge")}
+                                    {t("share_skill_destination.selected_badge")}
                                   </span>
                                 </Show>
                               </div>
 
                               <div class="mt-1 text-[11px] font-mono break-all text-gray-8/80">{subtitle(workspace)}</div>
                               <Show when={isSelected()}>
-                                <div class="mt-2 text-xs font-medium text-gray-11">{translate("share_skill_destination.selected_hint")}</div>
+                                <div class="mt-2 text-xs font-medium text-gray-11">{t("share_skill_destination.selected_hint")}</div>
                               </Show>
                             </div>
 
@@ -231,7 +230,7 @@ export default function SkillDestinationModal(props: {
 
             <Show when={props.onCreateWorker || props.onConnectRemote}>
               <div class="space-y-3 border-t border-gray-6 pt-5">
-                <div class="text-sm font-medium text-gray-12">{translate("share_skill_destination.more_options")}</div>
+                <div class="text-sm font-medium text-gray-12">{t("share_skill_destination.more_options")}</div>
                 <div class="grid gap-3 md:grid-cols-2">
                   <Show when={props.onCreateWorker}>
                     <button
@@ -245,8 +244,8 @@ export default function SkillDestinationModal(props: {
                           <FolderPlus size={17} />
                         </div>
                         <div>
-                          <div class="text-sm font-semibold text-gray-12">{translate("share_skill_destination.create_worker")}</div>
-                          <div class="mt-1 text-sm text-gray-10">{translate("share_skill_destination.create_worker_hint")}</div>
+                          <div class="text-sm font-semibold text-gray-12">{t("share_skill_destination.create_worker")}</div>
+                          <div class="mt-1 text-sm text-gray-10">{t("share_skill_destination.create_worker_hint")}</div>
                         </div>
                       </div>
                     </button>
@@ -264,8 +263,8 @@ export default function SkillDestinationModal(props: {
                           <Globe size={17} />
                         </div>
                         <div>
-                          <div class="text-sm font-semibold text-gray-12">{translate("share_skill_destination.connect_remote")}</div>
-                          <div class="mt-1 text-sm text-gray-10">{translate("share_skill_destination.connect_remote_hint")}</div>
+                          <div class="text-sm font-semibold text-gray-12">{t("share_skill_destination.connect_remote")}</div>
+                          <div class="mt-1 text-sm text-gray-10">{t("share_skill_destination.connect_remote_hint")}</div>
                         </div>
                       </div>
                     </button>
@@ -289,13 +288,13 @@ export default function SkillDestinationModal(props: {
 
               <div class="flex items-center justify-end gap-3">
                 <Button variant="ghost" onClick={props.onClose} disabled={footerBusy()}>
-                  {translate("common.cancel")}
+                  {t("common.cancel")}
                 </Button>
                 <Button variant="primary" onClick={submitSelectedWorkspace} disabled={!selectedWorkspace() || footerBusy()}>
-                  <Show when={footerBusy()} fallback={translate("share_skill_destination.add_to_workspace")}>
+                  <Show when={footerBusy()} fallback={t("share_skill_destination.add_to_workspace")}>
                     <span class="inline-flex items-center gap-2">
                       <Loader2 size={16} class="animate-spin" />
-                      {translate("share_skill_destination.adding")}
+                      {t("share_skill_destination.adding")}
                     </span>
                   </Show>
                 </Button>

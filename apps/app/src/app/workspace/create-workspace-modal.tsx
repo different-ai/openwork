@@ -2,7 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-j
 
 import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2, X } from "lucide-solid";
 
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 import { usePlatform } from "../context/platform";
 import {
   buildDenAuthUrl,
@@ -45,20 +45,20 @@ function workerStatusMeta(status: string, translate: (key: string) => string) {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "healthy":
-      return { label: translate("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
+      return { label: t("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
     case "provisioning":
     case "starting":
-      return { label: translate("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
     case "failed":
     case "error":
-      return { label: translate("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
     case "stopped":
-      return { label: translate("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
     default:
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : translate("common.unknown"),
+          : t("common.unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
@@ -66,9 +66,9 @@ function workerStatusMeta(status: string, translate: (key: string) => string) {
 }
 
 function formatTemplateTimestamp(value: string | null, translate: (key: string) => string) {
-  if (!value) return translate("dashboard.recently_updated");
+  if (!value) return t("dashboard.recently_updated");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return translate("dashboard.recently_updated");
+  if (Number.isNaN(date.getTime())) return t("dashboard.recently_updated");
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
@@ -78,19 +78,18 @@ function formatTemplateTimestamp(value: string | null, translate: (key: string) 
 
 function templateCreatorLabel(template: DenTemplate, translate: (key: string) => string) {
   const creator = template.creator;
-  if (!creator) return translate("dashboard.unknown_creator");
-  return creator.name?.trim() || creator.email?.trim() || translate("dashboard.unknown_creator");
+  if (!creator) return t("dashboard.unknown_creator");
+  return creator.name?.trim() || creator.email?.trim() || t("dashboard.unknown_creator");
 }
 
 function workerSecondaryLine(worker: DenWorkerSummary, translate: (key: string) => string) {
-  const parts = [worker.provider?.trim() || translate("dashboard.cloud_worker")];
+  const parts = [worker.provider?.trim() || t("dashboard.cloud_worker")];
   if (worker.instanceUrl?.trim()) parts.push(worker.instanceUrl.trim());
   return parts.join(" · ");
 }
 
 export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   let remoteUrlRef: HTMLInputElement | undefined;
-  const translate = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
   const platform = usePlatform();
 
   const [screen, setScreen] = createSignal<CreateWorkspaceScreen>("chooser");
@@ -186,28 +185,28 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const headerTitle = createMemo(() => {
     switch (screen()) {
       case "local":
-        return translate("dashboard.create_local_workspace_title");
+        return t("dashboard.create_local_workspace_title");
       case "remote":
-        return translate("dashboard.create_remote_custom_title");
+        return t("dashboard.create_remote_custom_title");
       case "shared":
-        return translate("dashboard.create_shared_title");
+        return t("dashboard.create_shared_title");
       default:
-        return props.title ?? translate("dashboard.create_workspace_title");
+        return props.title ?? t("dashboard.create_workspace_title");
     }
   });
 
   const headerSubtitle = createMemo(() => {
     switch (screen()) {
       case "local":
-        return translate("dashboard.create_local_workspace_subtitle");
+        return t("dashboard.create_local_workspace_subtitle");
       case "remote":
-        return translate("dashboard.create_remote_custom_subtitle");
+        return t("dashboard.create_remote_custom_subtitle");
       case "shared":
         return isSignedIn()
-          ? translate("dashboard.create_shared_subtitle_signed_in")
-          : translate("dashboard.create_shared_subtitle_signed_out");
+          ? t("dashboard.create_shared_subtitle_signed_in")
+          : t("dashboard.create_shared_subtitle_signed_out");
       default:
-        return props.subtitle ?? translate("dashboard.create_workspace_subtitle");
+        return props.subtitle ?? t("dashboard.create_workspace_subtitle");
     }
   });
 
@@ -324,7 +323,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       applyActiveOrg(nextActive);
     } catch (error) {
       setOrgsError(
-        error instanceof Error ? error.message : translate("dashboard.error_load_orgs"),
+        error instanceof Error ? error.message : t("dashboard.error_load_orgs"),
       );
     } finally {
       setOrgsBusy(false);
@@ -340,7 +339,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       setWorkers(nextWorkers);
     } catch (error) {
       setWorkersError(
-        error instanceof Error ? error.message : translate("dashboard.error_load_shared_workspaces"),
+        error instanceof Error ? error.message : t("dashboard.error_load_shared_workspaces"),
       );
     } finally {
       setWorkersBusy(false);
@@ -372,7 +371,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     if (!props.onConfirmRemote) return;
     const orgId = activeOrgId().trim();
     if (!orgId) {
-      setWorkersError(translate("dashboard.error_choose_org"));
+      setWorkersError(t("dashboard.error_choose_org"));
       return;
     }
     setOpeningWorkerId(worker.workerId);
@@ -383,7 +382,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       const accessToken =
         tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
       if (!openworkUrl || !accessToken) {
-        throw new Error(translate("dashboard.error_workspace_not_ready"));
+        throw new Error(t("dashboard.error_workspace_not_ready"));
       }
       const ok = await Promise.resolve(
         props.onConfirmRemote({
@@ -397,13 +396,13 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         }),
       );
       if (ok === false) {
-        throw new Error(translate("dashboard.error_connect_worker", { name: worker.workerName }));
+        throw new Error(t("dashboard.error_connect_worker", { name: worker.workerName }));
       }
     } catch (error) {
       setWorkersError(
         error instanceof Error
           ? error.message
-          : translate("dashboard.error_connect_worker", { name: worker.workerName }),
+          : t("dashboard.error_connect_worker", { name: worker.workerName }),
       );
     } finally {
       setOpeningWorkerId(null);
@@ -420,7 +419,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         setTemplateError(
           error instanceof Error
             ? error.message
-            : translate("dashboard.error_create_template", { name: template.name }),
+            : t("dashboard.error_create_template", { name: template.name }),
         );
       }
       return;
@@ -438,7 +437,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               onClick={() => setScreen("chooser")}
               disabled={submitting() || remoteSubmitting()}
               class={modalHeaderButtonClass}
-              aria-label={translate("dashboard.modal_back")}
+              aria-label={t("dashboard.modal_back")}
             >
               <ArrowLeft size={18} />
             </button>
@@ -454,7 +453,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             onClick={props.onClose}
             disabled={submitting() || remoteSubmitting()}
             class={modalHeaderButtonClass}
-            aria-label={translate("dashboard.modal_close")}
+            aria-label={t("dashboard.modal_close")}
           >
             <X size={18} />
           </button>
@@ -465,26 +464,26 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         <div class={modalBodyClass}>
           <div class="space-y-3">
             <WorkspaceOptionCard
-              title={translate("dashboard.create_local_workspace_title")}
+              title={t("dashboard.create_local_workspace_title")}
               description={
                 props.localDisabled
-                  ? props.localDisabledReason?.trim() || translate("dashboard.chooser_local_desc")
-                  : translate("dashboard.chooser_local_desc")
+                  ? props.localDisabledReason?.trim() || t("dashboard.chooser_local_desc")
+                  : t("dashboard.chooser_local_desc")
               }
               icon={FolderPlus}
               onClick={() => setScreen("local")}
               disabled={props.localDisabled}
-              endAdornment={props.localDisabled ? <span class={tagClass}>{translate("dashboard.desktop_badge")}</span> : undefined}
+              endAdornment={props.localDisabled ? <span class={tagClass}>{t("dashboard.desktop_badge")}</span> : undefined}
             />
             <WorkspaceOptionCard
-              title={translate("dashboard.create_remote_custom_title")}
-              description={translate("dashboard.chooser_remote_desc")}
+              title={t("dashboard.create_remote_custom_title")}
+              description={t("dashboard.chooser_remote_desc")}
               icon={Globe}
               onClick={() => setScreen("remote")}
             />
             <WorkspaceOptionCard
-              title={translate("dashboard.create_shared_title")}
-              description={translate("dashboard.chooser_shared_desc")}
+              title={t("dashboard.create_shared_title")}
+              description={t("dashboard.chooser_shared_desc")}
               icon={Cloud}
               onClick={() => setScreen("shared")}
             />
@@ -497,10 +496,10 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                   disabled={props.importingConfig}
                   class={pillGhostClass}
                 >
-                  <Show when={props.importingConfig} fallback={translate("dashboard.import_config")}>
+                  <Show when={props.importingConfig} fallback={t("dashboard.import_config")}>
                     <span class="inline-flex items-center gap-2">
                       <Loader2 size={14} class="animate-spin" />
-                      {translate("dashboard.importing")}
+                      {t("dashboard.importing")}
                     </span>
                   </Show>
                 </button>
@@ -563,15 +562,15 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               onDisplayNameInput={setRemoteDisplayName}
               submitting={remoteSubmitting()}
               hostInputRef={remoteUrlRef}
-              title={translate("dashboard.remote_server_details_title")}
-              description={translate("dashboard.remote_server_details_hint")}
+              title={t("dashboard.remote_server_details_title")}
+              description={t("dashboard.remote_server_details_hint")}
             />
           </div>
           <div class="space-y-3 border-t border-dls-border px-6 py-5">
             <Show when={remoteError()}>{(value) => <div class="rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">{value()}</div>}</Show>
             <div class="flex justify-end gap-3">
               <button type="button" class={pillGhostClass} onClick={props.onClose} disabled={remoteSubmitting()}>
-                {translate("common.cancel")}
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -579,10 +578,10 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                 disabled={!remoteUrl().trim() || remoteSubmitting()}
                 onClick={() => void handleRemoteSubmit()}
               >
-                <Show when={remoteSubmitting()} fallback={translate("dashboard.connect_remote_button")}>
+                <Show when={remoteSubmitting()} fallback={t("dashboard.connect_remote_button")}>
                   <span class="inline-flex items-center gap-2">
                     <Loader2 size={16} class="animate-spin" />
-                    {translate("dashboard.connecting")}
+                    {t("dashboard.connecting")}
                   </span>
                 </Show>
               </button>

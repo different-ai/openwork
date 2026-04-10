@@ -141,7 +141,7 @@ export default function QuestionModal(props: QuestionModalProps) {
                                     {currentQuestion()!.header || t("common.question")}
                                 </h3>
                                 <div class="text-xs text-gray-11 font-medium">
-                                    {t("question_modal.question_counter", undefined, { current: currentIndex() + 1, total: props.questions.length })}
+                                    {t("question_modal.question_counter", { current: currentIndex() + 1, total: props.questions.length })}
                                 </div>
                             </div>
                         </div>

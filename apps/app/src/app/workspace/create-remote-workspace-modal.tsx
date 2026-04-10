@@ -2,7 +2,7 @@ import { Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { X } from "lucide-solid";
 
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 import {
   modalHeaderButtonClass,
   modalHeaderClass,
@@ -20,7 +20,6 @@ import type { CreateRemoteWorkspaceModalProps } from "./types";
 
 export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceModalProps) {
   let inputRef: HTMLInputElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
 
   const [openworkHostUrl, setOpenworkHostUrl] = createSignal("");
   const [openworkToken, setOpenworkToken] = createSignal("");
@@ -29,9 +28,9 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
   const [displayName, setDisplayName] = createSignal("");
 
   const showClose = () => props.showClose ?? true;
-  const title = () => props.title ?? translate("dashboard.create_remote_workspace_title");
-  const subtitle = () => props.subtitle ?? translate("dashboard.create_remote_workspace_subtitle");
-  const confirmLabel = () => props.confirmLabel ?? translate("dashboard.create_remote_workspace_confirm");
+  const title = () => props.title ?? t("dashboard.create_remote_workspace_title");
+  const subtitle = () => props.subtitle ?? t("dashboard.create_remote_workspace_subtitle");
+  const confirmLabel = () => props.confirmLabel ?? t("dashboard.create_remote_workspace_confirm");
   const isInline = () => props.inline ?? false;
   const submitting = () => props.submitting ?? false;
 
@@ -106,7 +105,7 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
               disabled={submitting()}
               class={pillGhostClass}
             >
-              {translate("common.cancel")}
+              {t("common.cancel")}
             </button>
           </Show>
           <button
@@ -120,7 +119,7 @@ export default function CreateRemoteWorkspaceModal(props: CreateRemoteWorkspaceM
               })
             }
             disabled={!canSubmit()}
-            title={!openworkHostUrl().trim() ? translate("dashboard.remote_base_url_required") : undefined}
+            title={!openworkHostUrl().trim() ? t("dashboard.remote_base_url_required") : undefined}
             class={pillPrimaryClass}
           >
             {confirmLabel()}

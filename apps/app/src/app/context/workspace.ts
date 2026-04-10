@@ -69,7 +69,7 @@ import {
 import type { BootPhase, StartupBranch } from "../lib/startup-boot";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
-import { t, currentLocale } from "../../i18n";
+import { t } from "../../i18n";
 import { filterProviderList, mapConfigProvidersToList } from "../utils/providers";
 import { buildDefaultWorkspaceBlueprint, normalizeWorkspaceOpenworkConfig } from "../lib/workspace-blueprints";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
@@ -1551,7 +1551,7 @@ export function createWorkspaceStore(options: {
           }
 
           if (!resolvedBaseUrl) {
-            options.setError(t("app.error.remote_base_url_required", currentLocale()));
+            options.setError(t("app.error.remote_base_url_required"));
             updateWorkspaceConnectionState(id, {
               status: "error",
               message: "Remote base URL is required.",
@@ -1583,7 +1583,7 @@ export function createWorkspaceStore(options: {
         }
 
         if (!baseUrl) {
-          options.setError(t("app.error.remote_base_url_required", currentLocale()));
+          options.setError(t("app.error.remote_base_url_required"));
           updateWorkspaceConnectionState(id, {
             status: "error",
             message: "Remote base URL is required.",
@@ -2171,12 +2171,12 @@ export function createWorkspaceStore(options: {
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null): Promise<boolean> {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(t("app.error.tauri_required"));
       return false;
     }
 
     if (!folder) {
-      options.setError(t("app.error.choose_folder", currentLocale()));
+      options.setError(t("app.error.choose_folder"));
       return false;
     }
 
@@ -2190,7 +2190,7 @@ export function createWorkspaceStore(options: {
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
+        options.setError(t("app.error.choose_folder"));
         return false;
       }
 
@@ -2275,12 +2275,12 @@ export function createWorkspaceStore(options: {
     input?: { onReady?: () => Promise<void> | void },
   ): Promise<boolean> {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(t("app.error.tauri_required"));
       return false;
     }
 
     if (!folder) {
-      options.setError(t("app.error.choose_folder", currentLocale()));
+      options.setError(t("app.error.choose_folder"));
       return false;
     }
 
@@ -2346,7 +2346,7 @@ export function createWorkspaceStore(options: {
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
+        options.setError(t("app.error.choose_folder"));
         setSandboxStep("workspace", { status: "error", detail: "No folder selected" });
         setSandboxError("No folder selected");
         return false;
@@ -2559,7 +2559,7 @@ export function createWorkspaceStore(options: {
     const displayName = input.displayName?.trim() || null;
 
     if (!hostUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(t("app.error.remote_base_url_required"));
       return false;
     }
 
@@ -2632,7 +2632,7 @@ export function createWorkspaceStore(options: {
     }
 
     if (!resolvedBaseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(t("app.error.remote_base_url_required"));
       return false;
     }
 
@@ -2798,7 +2798,7 @@ export function createWorkspaceStore(options: {
     const displayName = input.displayName?.trim() || null;
 
     if (!hostUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(t("app.error.remote_base_url_required"));
       return false;
     }
 
@@ -2840,7 +2840,7 @@ export function createWorkspaceStore(options: {
     }
 
     if (!resolvedBaseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      options.setError(t("app.error.remote_base_url_required"));
       return false;
     }
 
@@ -2928,7 +2928,7 @@ export function createWorkspaceStore(options: {
 
   async function forgetWorkspace(workspaceId: string) {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(t("app.error.tauri_required"));
       return;
     }
 
@@ -3018,10 +3018,10 @@ export function createWorkspaceStore(options: {
       }
 
       if (!isTauriRuntime()) {
-        options.setError(t("app.error.tauri_required", currentLocale()));
+        options.setError(t("app.error.tauri_required"));
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: t("app.error.tauri_required", currentLocale()),
+          message: t("app.error.tauri_required"),
         });
         return false;
       }
@@ -3106,12 +3106,12 @@ export function createWorkspaceStore(options: {
 
   async function pickWorkspaceFolder() {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(t("app.error.tauri_required"));
       return null;
     }
 
     try {
-      const selection = await pickDirectory({ title: t("onboarding.choose_workspace_folder", currentLocale()) });
+      const selection = await pickDirectory({ title: t("onboarding.choose_workspace_folder") });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 
@@ -3142,7 +3142,7 @@ export function createWorkspaceStore(options: {
   async function exportWorkspaceConfig(workspaceId?: string) {
     if (exportingWorkspaceConfig()) return;
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(t("app.error.tauri_required"));
       return;
     }
 
@@ -3200,7 +3200,7 @@ export function createWorkspaceStore(options: {
   async function importWorkspaceConfig() {
     if (importingWorkspaceConfig()) return;
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(t("app.error.tauri_required"));
       return;
     }
 
@@ -3225,7 +3225,7 @@ export function createWorkspaceStore(options: {
 
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
+        options.setError(t("app.error.choose_folder"));
         return;
       }
 
@@ -3254,19 +3254,19 @@ export function createWorkspaceStore(options: {
 
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
+      options.setError(t("app.error.tauri_required"));
       return false;
     }
 
     const overrideWorkspacePath = optionsOverride?.workspacePath?.trim() ?? "";
     if (selectedWorkspaceInfo()?.workspaceType === "remote" && !overrideWorkspacePath) {
-      options.setError(t("app.error.host_requires_local", currentLocale()));
+      options.setError(t("app.error.host_requires_local"));
       return false;
     }
 
     const dir = (overrideWorkspacePath || selectedWorkspacePath() || projectDir()).trim();
     if (!dir) {
-      options.setError(t("app.error.pick_workspace_folder", currentLocale()));
+      options.setError(t("app.error.pick_workspace_folder"));
       return false;
     }
 
@@ -3477,10 +3477,10 @@ export function createWorkspaceStore(options: {
         closeWorkspaceConnectionSettings();
         return;
       }
-      setEditRemoteWorkspaceError(t("app.error_connection_failed_url", currentLocale()));
+      setEditRemoteWorkspaceError(t("app.error_connection_failed_url"));
       options.setError(null);
     } catch (e) {
-      const message = e instanceof Error ? e.message : t("app.error_connection_failed", currentLocale());
+      const message = e instanceof Error ? e.message : t("app.error_connection_failed");
       setEditRemoteWorkspaceError(message);
       options.setError(null);
     }
@@ -3657,7 +3657,7 @@ export function createWorkspaceStore(options: {
       setEngineInstallLogs(combined || null);
 
       if (!result.ok) {
-        options.setError(result.stderr.trim() || t("app.error.install_failed", currentLocale()));
+        options.setError(result.stderr.trim() || t("app.error.install_failed"));
       }
 
       await refreshEngineDoctor();
@@ -3750,7 +3750,7 @@ export function createWorkspaceStore(options: {
     if (selectedWorkspaceInfo()?.workspaceType === "remote") return;
 
     try {
-      const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
+      const selection = await pickDirectory({ title: t("onboarding.authorize_folder") });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
       if (!folder) return;

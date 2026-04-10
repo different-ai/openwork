@@ -260,7 +260,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 }
 
 function startSync(input: SyncOptions) {
-  const client = createClient(input.baseUrl, undefined, { token: input.openworkToken, mode: "openwork" });
+  const client = createClient(input.baseUrl, { token: input.openworkToken, mode: "openwork" });
   const controller = new AbortController();
   const entry = syncs.get(syncKey(input));
 

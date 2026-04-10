@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal } from "solid-js";
 
 import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 
 import type { Client, DenOrgSkillCard, HubSkillCard, HubSkillRepo, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
@@ -96,7 +96,6 @@ export function createExtensionsStore(options: {
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
 }) {
   // Translation helper that uses current language from i18n
-  const translate = (key: string) => t(key, currentLocale());
 
   // ── Workspace context tracking ──────────────────────
   const workspaceContextKey = createWorkspaceContextKey({
@@ -335,18 +334,18 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      throw new Error(translate("skills.desktop_required"));
+      throw new Error(t("skills.desktop_required"));
     }
 
     if (!isLocalWorkspace || !root) {
-      throw new Error(translate("skills.pick_workspace_first"));
+      throw new Error(t("skills.pick_workspace_first"));
     }
 
     const result = await installSkillTemplate(root, name, content, {
       overwrite: optionsOverride?.overwrite ?? false,
     });
     if (!result.ok) {
-      throw new Error(result.stderr || result.stdout || translate("skills.install_failed"));
+      throw new Error(result.stderr || result.stdout || t("skills.install_failed"));
     }
   };
 
@@ -428,16 +427,16 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      throw new Error(translate("skills.desktop_required"));
+      throw new Error(t("skills.desktop_required"));
     }
 
     if (!isLocalWorkspace || !root) {
-      throw new Error(translate("skills.pick_workspace_first"));
+      throw new Error(t("skills.pick_workspace_first"));
     }
 
     const result = await uninstallSkillCommand(root, name);
     if (!result.ok) {
-      throw new Error(result.stderr || result.stdout || translate("skills.uninstall_failed"));
+      throw new Error(result.stderr || result.stdout || t("skills.uninstall_failed"));
     }
   };
 
@@ -666,7 +665,7 @@ export function createExtensionsStore(options: {
       if (refreshCloudOrgSkillsAborted) return;
       setCloudOrgSkills(catalog);
       if (!catalog.length) {
-        setCloudOrgSkillsStatus(translate("skills.cloud_org_empty"));
+        setCloudOrgSkillsStatus(t("skills.cloud_org_empty"));
       }
       cloudOrgSkillsLoaded = true;
       cloudOrgSkillsLoadKey = loadKey;
@@ -674,7 +673,7 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshCloudOrgSkillsAborted) return;
       setCloudOrgSkills([]);
-      setCloudOrgSkillsStatus(e instanceof Error ? e.message : translate("skills.cloud_org_load_failed"));
+      setCloudOrgSkillsStatus(e instanceof Error ? e.message : t("skills.cloud_org_load_failed"));
     } finally {
       refreshCloudOrgSkillsInFlight = false;
     }
@@ -771,7 +770,7 @@ export function createExtensionsStore(options: {
         importedNames,
       };
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message, importedNames };
     } finally {
@@ -818,7 +817,7 @@ export function createExtensionsStore(options: {
         importedNames: applied.nextSkillNames,
       };
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message, importedNames: [] };
     } finally {
@@ -860,7 +859,7 @@ export function createExtensionsStore(options: {
         removedNames: imported.skillNames,
       };
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message, removedNames: [] };
     } finally {
@@ -914,7 +913,7 @@ export function createExtensionsStore(options: {
       }
       return { ok: true, message: `Installed ${trimmed}.` };
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message };
     } finally {
@@ -944,9 +943,9 @@ export function createExtensionsStore(options: {
       });
       await refreshSkills({ force: true });
       await refreshCloudOrgSkills({ force: true });
-      return { ok: true, message: t("skills.cloud_installed", currentLocale(), { name: installName }) };
+      return { ok: true, message: t("skills.cloud_installed", { name: installName }) };
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message };
     } finally {
@@ -976,7 +975,7 @@ export function createExtensionsStore(options: {
 
     if (!root) {
       setSkills([]);
-      setSkillsStatus(translate("skills.pick_workspace_first"));
+      setSkillsStatus(t("skills.pick_workspace_first"));
       return;
     }
 
@@ -1013,7 +1012,7 @@ export function createExtensionsStore(options: {
           : [];
         setSkills(next);
         if (!next.length) {
-          setSkillsStatus(translate("skills.no_skills_found"));
+          setSkillsStatus(t("skills.no_skills_found"));
         }
         skillsLoaded = true;
         skillsRoot = root;
@@ -1021,7 +1020,7 @@ export function createExtensionsStore(options: {
       } catch (e) {
         if (refreshSkillsAborted) return;
         setSkills([]);
-        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+        setSkillsStatus(e instanceof Error ? e.message : t("skills.failed_to_load"));
       } finally {
         refreshSkillsInFlight = false;
       }
@@ -1063,7 +1062,7 @@ export function createExtensionsStore(options: {
 
         setSkills(next);
         if (!next.length) {
-          setSkillsStatus(translate("skills.no_skills_found"));
+          setSkillsStatus(t("skills.no_skills_found"));
         }
         skillsLoaded = true;
         skillsRoot = root;
@@ -1071,7 +1070,7 @@ export function createExtensionsStore(options: {
       } catch (e) {
         if (refreshSkillsAborted) return;
         setSkills([]);
-        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+        setSkillsStatus(e instanceof Error ? e.message : t("skills.failed_to_load"));
       } finally {
         refreshSkillsInFlight = false;
       }
@@ -1115,7 +1114,7 @@ export function createExtensionsStore(options: {
       if (result?.data === undefined) {
         const err = result?.error;
         const message =
-          err instanceof Error ? err.message : typeof err === "string" ? err : translate("skills.failed_to_load");
+          err instanceof Error ? err.message : typeof err === "string" ? err : t("skills.failed_to_load");
         throw new Error(message);
       }
       const data = result.data as Array<{
@@ -1136,7 +1135,7 @@ export function createExtensionsStore(options: {
 
       setSkills(next);
       if (!next.length) {
-        setSkillsStatus(translate("skills.no_skills_found"));
+        setSkillsStatus(t("skills.no_skills_found"));
       }
       skillsLoaded = true;
       skillsRoot = root;
@@ -1144,7 +1143,7 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshSkillsAborted) return;
       setSkills([]);
-      setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+      setSkillsStatus(e instanceof Error ? e.message : t("skills.failed_to_load"));
     } finally {
       refreshSkillsInFlight = false;
     }
@@ -1218,9 +1217,9 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
+      setPluginStatus(t("skills.plugin_management_host_only"));
       setPluginList([]);
-      setSidebarPluginStatus(translate("skills.plugins_host_only"));
+      setSidebarPluginStatus(t("skills.plugins_host_only"));
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -1236,9 +1235,9 @@ export function createExtensionsStore(options: {
     }
 
     if (scope === "project" && !targetDir) {
-      setPluginStatus(translate("skills.pick_project_for_plugins"));
+      setPluginStatus(t("skills.pick_project_for_plugins"));
       setPluginList([]);
-      setSidebarPluginStatus(translate("skills.pick_project_for_active"));
+      setSidebarPluginStatus(t("skills.pick_project_for_active"));
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -1259,9 +1258,9 @@ export function createExtensionsStore(options: {
 
       if (!config.exists) {
         setPluginList([]);
-        setPluginStatus(translate("skills.no_opencode_found"));
+        setPluginStatus(t("skills.no_opencode_found"));
         setSidebarPluginList([]);
-        setSidebarPluginStatus(translate("skills.no_opencode_workspace"));
+        setSidebarPluginStatus(t("skills.no_opencode_workspace"));
         return;
       }
 
@@ -1270,7 +1269,7 @@ export function createExtensionsStore(options: {
         setSidebarPluginList(next);
       } catch {
         setSidebarPluginList([]);
-        setSidebarPluginStatus(translate("skills.failed_parse_opencode"));
+        setSidebarPluginStatus(t("skills.failed_parse_opencode"));
       }
 
       loadPluginsFromConfig(config);
@@ -1280,8 +1279,8 @@ export function createExtensionsStore(options: {
       setPluginConfig(null);
       setPluginConfigPath(null);
       setPluginList([]);
-      setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_load_opencode"));
-      setSidebarPluginStatus(translate("skills.failed_load_active"));
+      setPluginStatus(e instanceof Error ? e.message : t("skills.failed_load_opencode"));
+      setSidebarPluginStatus(t("skills.failed_load_active"));
       setSidebarPluginList([]);
     } finally {
       refreshPluginsInFlight = false;
@@ -1306,7 +1305,7 @@ export function createExtensionsStore(options: {
 
     if (!pluginName) {
       if (isManualInput) {
-        setPluginStatus(translate("skills.enter_plugin_name"));
+        setPluginStatus(t("skills.enter_plugin_name"));
       }
       return;
     }
@@ -1332,7 +1331,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
+      setPluginStatus(t("skills.plugin_management_host_only"));
       return;
     }
 
@@ -1345,7 +1344,7 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope === "project" && !targetDir) {
-      setPluginStatus(translate("skills.pick_project_for_plugins"));
+      setPluginStatus(t("skills.pick_project_for_plugins"));
       return;
     }
 
@@ -1372,7 +1371,7 @@ export function createExtensionsStore(options: {
 
       const desired = stripPluginVersion(pluginName).toLowerCase();
       if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
-        setPluginStatus(translate("skills.plugin_already_listed"));
+        setPluginStatus(t("skills.plugin_already_listed"));
         return;
       }
 
@@ -1389,7 +1388,7 @@ export function createExtensionsStore(options: {
       }
       await refreshPlugins(scope);
     } catch (e) {
-      setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_update_opencode"));
+      setPluginStatus(e instanceof Error ? e.message : t("skills.failed_update_opencode"));
     }
   }
 
@@ -1427,7 +1426,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
+      setPluginStatus(t("skills.plugin_management_host_only"));
       return;
     }
 
@@ -1440,7 +1439,7 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope === "project" && !targetDir) {
-      setPluginStatus(translate("skills.pick_project_for_plugins"));
+      setPluginStatus(t("skills.pick_project_for_plugins"));
       return;
     }
 
@@ -1469,7 +1468,7 @@ export function createExtensionsStore(options: {
       options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "removed" });
       await refreshPlugins(scope);
     } catch (e) {
-      setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_update_opencode"));
+      setPluginStatus(e instanceof Error ? e.message : t("skills.failed_update_opencode"));
     }
   }
 
@@ -1477,7 +1476,7 @@ export function createExtensionsStore(options: {
     const isLocalWorkspace = options.workspaceType() === "local";
 
     if (!isTauriRuntime()) {
-      options.setError(translate("skills.desktop_required"));
+      options.setError(t("skills.desktop_required"));
       return;
     }
 
@@ -1488,7 +1487,7 @@ export function createExtensionsStore(options: {
 
     const targetDir = options.projectDir().trim();
     if (!targetDir) {
-      options.setError(translate("skills.pick_project_first"));
+      options.setError(t("skills.pick_project_first"));
       return;
     }
 
@@ -1497,7 +1496,7 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
-      const selection = await pickDirectory({ title: translate("skills.select_skill_folder") });
+      const selection = await pickDirectory({ title: t("skills.select_skill_folder") });
       const sourceDir = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 
       if (!sourceDir) {
@@ -1507,9 +1506,9 @@ export function createExtensionsStore(options: {
       const inferredName = sourceDir.split(/[\\/]/).filter(Boolean).pop();
       const result = await importSkill(targetDir, sourceDir, { overwrite: false });
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || translate("skills.import_failed").replace("{status}", String(result.status)));
+        setSkillsStatus(result.stderr || result.stdout || t("skills.import_failed").replace("{status}", String(result.status)));
       } else {
-        setSkillsStatus(result.stdout || translate("skills.imported"));
+        setSkillsStatus(result.stdout || t("skills.imported"));
         options.markReloadRequired?.("skills", {
           type: "skill",
           name: inferredName,
@@ -1519,7 +1518,7 @@ export function createExtensionsStore(options: {
 
       await refreshSkills({ force: true });
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
@@ -1542,20 +1541,20 @@ export function createExtensionsStore(options: {
     if (canUseOpenworkServer) {
       options.setBusy(true);
       options.setError(null);
-      setSkillsStatus(translate("skills.installing_skill_creator"));
+      setSkillsStatus(t("skills.installing_skill_creator"));
 
       try {
         await openworkClient.upsertSkill(openworkWorkspaceId, {
           name: "skill-creator",
           content: skillCreatorTemplate,
         });
-        const message = translate("skills.skill_creator_installed");
+        const message = t("skills.skill_creator_installed");
         setSkillsStatus(message);
         options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
         await refreshSkills({ force: true });
         return { ok: true, message };
       } catch (e) {
-        const raw = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const raw = e instanceof Error ? e.message : t("skills.unknown_error");
         const message = addOpencodeCacheHint(raw);
         // Ensure we show feedback on the Skills page (not just the global error banner).
         setSkillsStatus(message);
@@ -1574,7 +1573,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      const message = translate("skills.desktop_required");
+      const message = t("skills.desktop_required");
       setSkillsStatus(message);
       return { ok: false, message };
     }
@@ -1588,37 +1587,37 @@ export function createExtensionsStore(options: {
 
     const targetDir = options.selectedWorkspaceRoot().trim();
     if (!targetDir) {
-      const message = translate("skills.pick_workspace_first");
+      const message = t("skills.pick_workspace_first");
       setSkillsStatus(message);
       return { ok: false, message };
     }
 
     options.setBusy(true);
     options.setError(null);
-    setSkillsStatus(translate("skills.installing_skill_creator"));
+    setSkillsStatus(t("skills.installing_skill_creator"));
 
     try {
       const result = await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false });
 
       if (!result.ok && /already exists/i.test(result.stderr)) {
-        const message = translate("skills.skill_creator_already_installed");
+        const message = t("skills.skill_creator_already_installed");
         setSkillsStatus(message);
         await refreshSkills({ force: true });
         return { ok: true, message };
       } else if (!result.ok) {
-        const message = result.stderr || result.stdout || translate("skills.install_failed");
+        const message = result.stderr || result.stdout || t("skills.install_failed");
         setSkillsStatus(message);
         await refreshSkills({ force: true });
         return { ok: false, message };
       } else {
-        const message = result.stdout || translate("skills.skill_creator_installed");
+        const message = result.stdout || t("skills.skill_creator_installed");
         setSkillsStatus(message);
         options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
         await refreshSkills({ force: true });
         return { ok: true, message };
       }
     } catch (e) {
-      const raw = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const raw = e instanceof Error ? e.message : t("skills.unknown_error");
       const message = addOpencodeCacheHint(raw);
       setSkillsStatus(message);
       options.setError(message);
@@ -1628,18 +1627,18 @@ export function createExtensionsStore(options: {
     }
 
     // Should be unreachable, but keep TS happy.
-    return { ok: false, message: translate("skills.install_failed") };
+    return { ok: false, message: t("skills.install_failed") };
   }
 
   async function revealSkillsFolder() {
     if (!isTauriRuntime()) {
-      setSkillsStatus(translate("skills.desktop_required"));
+      setSkillsStatus(t("skills.desktop_required"));
       return;
     }
 
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
+      setSkillsStatus(t("skills.pick_workspace_first"));
       return;
     }
 
@@ -1664,14 +1663,14 @@ export function createExtensionsStore(options: {
       if (await tryOpen(legacySkills)) return;
       await revealItemInDir(opencodeSkills);
     } catch (e) {
-      setSkillsStatus(e instanceof Error ? e.message : translate("skills.reveal_failed"));
+      setSkillsStatus(e instanceof Error ? e.message : t("skills.reveal_failed"));
     }
   }
 
   async function uninstallSkill(name: string) {
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
+      setSkillsStatus(t("skills.pick_workspace_first"));
       return;
     }
 
@@ -1686,11 +1685,11 @@ export function createExtensionsStore(options: {
 
     try {
       await deleteWorkspaceSkill(trimmed);
-      setSkillsStatus(translate("skills.uninstalled"));
+      setSkillsStatus(t("skills.uninstalled"));
       options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "removed" });
       await refreshSkills({ force: true });
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       setSkillsStatus(message);
       options.setError(addOpencodeCacheHint(message));
     } finally {
@@ -1704,7 +1703,7 @@ export function createExtensionsStore(options: {
 
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
+      setSkillsStatus(t("skills.pick_workspace_first"));
       return null;
     }
 
@@ -1734,7 +1733,7 @@ export function createExtensionsStore(options: {
           content: result.content,
         };
       } catch (e) {
-        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+        setSkillsStatus(e instanceof Error ? e.message : t("skills.failed_to_load"));
         return null;
       }
     }
@@ -1745,7 +1744,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      setSkillsStatus(translate("skills.desktop_required"));
+      setSkillsStatus(t("skills.desktop_required"));
       return null;
     }
 
@@ -1759,7 +1758,7 @@ export function createExtensionsStore(options: {
       const result = await readLocalSkill(root, trimmed);
       return { name: trimmed, path: result.path, content: result.content };
     } catch (e) {
-      setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+      setSkillsStatus(e instanceof Error ? e.message : t("skills.failed_to_load"));
       return null;
     }
   }
@@ -1770,7 +1769,7 @@ export function createExtensionsStore(options: {
 
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
+      setSkillsStatus(t("skills.pick_workspace_first"));
       return;
     }
 
@@ -1799,7 +1798,7 @@ export function createExtensionsStore(options: {
         await refreshSkills({ force: true });
         setSkillsStatus("Saved.");
       } catch (e) {
-        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        const message = e instanceof Error ? e.message : t("skills.unknown_error");
         options.setError(addOpencodeCacheHint(message));
       } finally {
         options.setBusy(false);
@@ -1813,7 +1812,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isTauriRuntime()) {
-      setSkillsStatus(translate("skills.desktop_required"));
+      setSkillsStatus(t("skills.desktop_required"));
       return;
     }
 
@@ -1828,14 +1827,14 @@ export function createExtensionsStore(options: {
     try {
       const result = await writeLocalSkill(root, trimmed, input.content);
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || translate("skills.unknown_error"));
+        setSkillsStatus(result.stderr || result.stdout || t("skills.unknown_error"));
       } else {
         setSkillsStatus(result.stdout || "Saved.");
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
       }
       await refreshSkills({ force: true });
     } catch (e) {
-      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const message = e instanceof Error ? e.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);

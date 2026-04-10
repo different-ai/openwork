@@ -261,15 +261,15 @@ export function formatRelativeTime(timestampMs: number) {
   }
 
   if (delta < 60_000) {
-    return t("time.seconds_ago", undefined, { count: Math.max(1, Math.round(delta / 1000)) });
+    return t("time.seconds_ago", { count: Math.max(1, Math.round(delta / 1000)) });
   }
 
   if (delta < 60 * 60_000) {
-    return t("time.minutes_ago", undefined, { count: Math.max(1, Math.round(delta / 60_000)) });
+    return t("time.minutes_ago", { count: Math.max(1, Math.round(delta / 60_000)) });
   }
 
   if (delta < 24 * 60 * 60_000) {
-    return t("time.hours_ago", undefined, { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
+    return t("time.hours_ago", { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
   }
 
   return new Date(timestampMs).toLocaleDateString();

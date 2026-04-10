@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 
-import { t, currentLocale } from "../../i18n";
+import { t } from "../../i18n";
 import type { StartupPreference, WorkspaceDisplay } from "../types";
 import { isTauriRuntime } from "../utils";
 import {
@@ -470,7 +470,7 @@ export function createOpenworkServerStore(options: {
         if (!active) return;
         setOpenworkAuditEntries([]);
         setOpenworkAuditStatus("error");
-        setOpenworkAuditError(error instanceof Error ? error.message : t("app.error_audit_load", currentLocale()));
+        setOpenworkAuditError(error instanceof Error ? error.message : t("app.error_audit_load"));
       } finally {
         busy = false;
       }
@@ -620,7 +620,7 @@ export function createOpenworkServerStore(options: {
       if (isTauriRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local") {
         const restarted = await options.restartLocalServer();
         if (!restarted) {
-          throw new Error(t("app.error_restart_local_worker", currentLocale()));
+          throw new Error(t("app.error_restart_local_worker"));
         }
         await reconnectOpenworkServer();
       }
@@ -629,7 +629,7 @@ export function createOpenworkServerStore(options: {
       setShareRemoteAccessError(
         error instanceof Error
           ? error.message
-          : t("app.error_remote_access", currentLocale()),
+          : t("app.error_remote_access"),
       );
       return;
     } finally {

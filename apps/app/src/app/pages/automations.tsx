@@ -193,7 +193,7 @@ const humanizeCron = (cron: string) => {
   ) {
     const interval = Number.parseInt(hourRaw.slice(2), 10);
     if (Number.isFinite(interval) && interval > 0) {
-      return interval === 1 ? t("scheduled.every_hour") : t("scheduled.every_n_hours", undefined, { interval });
+      return interval === 1 ? t("scheduled.every_hour") : t("scheduled.every_n_hours", { interval });
     }
   }
 
@@ -205,7 +205,7 @@ const humanizeCron = (cron: string) => {
   const timeLabel = `${pad2(hour)}:${pad2(minute)}`;
 
   if (dowRaw === "*") {
-    return t("scheduled.every_day_at", undefined, { time: timeLabel });
+    return t("scheduled.every_day_at", { time: timeLabel });
   }
 
   const days = parseCronNumbers(dowRaw);
@@ -214,18 +214,18 @@ const humanizeCron = (cron: string) => {
   const weekdayDays = [1, 2, 3, 4, 5];
   const weekendDays = [0, 6];
 
-  if (allDays.every((d) => normalized.has(d))) return t("scheduled.every_day_at", undefined, { time: timeLabel });
+  if (allDays.every((d) => normalized.has(d))) return t("scheduled.every_day_at", { time: timeLabel });
   if (
     weekdayDays.every((d) => normalized.has(d)) &&
     !weekendDays.some((d) => normalized.has(d))
   ) {
-    return t("scheduled.weekdays_at", undefined, { time: timeLabel });
+    return t("scheduled.weekdays_at", { time: timeLabel });
   }
   if (
     weekendDays.every((d) => normalized.has(d)) &&
     !weekdayDays.some((d) => normalized.has(d))
   ) {
-    return t("scheduled.weekends_at", undefined, { time: timeLabel });
+    return t("scheduled.weekends_at", { time: timeLabel });
   }
 
   const labels: Record<number, string> = {
@@ -244,7 +244,7 @@ const humanizeCron = (cron: string) => {
     .map((d) => labels[d] ?? String(d))
     .join(", ");
 
-  return list ? t("scheduled.days_at", undefined, { days: list, time: timeLabel }) : t("scheduled.at_time", undefined, { time: timeLabel });
+  return list ? t("scheduled.days_at", { days: list, time: timeLabel }) : t("scheduled.at_time", { time: timeLabel });
 };
 
 const buildCronFromDaily = (timeValue: string, days: string[]) => {
@@ -290,7 +290,7 @@ const toRelative = (value?: string | null) => {
 const templateScheduleLabel = (template: AutomationTemplate) => {
   if (template.scheduleMode === "interval") {
     const interval = template.intervalHours ?? DEFAULT_INTERVAL_HOURS;
-    return interval === 1 ? t("scheduled.every_hour") : t("scheduled.every_n_hours", undefined, { interval });
+    return interval === 1 ? t("scheduled.every_hour") : t("scheduled.every_n_hours", { interval });
   }
   return humanizeCron(
     buildCronFromDaily(
@@ -610,7 +610,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
       return;
     }
     await Promise.resolve(props.createSessionAndOpen(plan.prompt));
-    showToast(t("scheduled.prepared_job_in_chat", undefined, { name: job.name }), "success");
+    showToast(t("scheduled.prepared_job_in_chat", { name: job.name }), "success");
   };
 
   const confirmDelete = async () => {
@@ -621,7 +621,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
     try {
       await automations.remove(target.slug);
       setDeleteTarget(null);
-      showToast(t("scheduled.removed_job", undefined, { name: target.name }), "success");
+      showToast(t("scheduled.removed_job", { name: target.name }), "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setDeleteError(message || t("scheduled.delete_error_fallback"));
@@ -648,7 +648,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
 
   const jobsEmptyMessage = createMemo(() => {
     const query = searchQuery().trim();
-    if (query) return t("scheduled.no_automations_match", undefined, { query });
+    if (query) return t("scheduled.no_automations_match", { query });
     if (schedulerGateActive()) return t("scheduled.install_scheduler_hint");
     return t("scheduled.empty_hint");
   });
@@ -829,7 +829,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
                 {t("scheduled.quick_start_templates_desc")}
               </p>
             </div>
-            <div class="text-[12px] text-dls-secondary">{t("scheduled.template_count", undefined, { count: filteredTemplates().length })}</div>
+            <div class="text-[12px] text-dls-secondary">{t("scheduled.template_count", { count: filteredTemplates().length })}</div>
           </div>
 
           <Show
@@ -864,7 +864,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
               <div>
                 <h3 class="text-lg font-semibold text-dls-text">{t("scheduled.delete_confirm_title")}</h3>
                 <p class="mt-1 text-sm text-dls-secondary">
-                  {t("scheduled.delete_confirm_desc", undefined, { source: sourceLabel().toLowerCase() })}
+                  {t("scheduled.delete_confirm_desc", { source: sourceLabel().toLowerCase() })}
                 </p>
               </div>
 

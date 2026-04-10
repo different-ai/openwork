@@ -627,7 +627,7 @@ export default function SessionView(props: SessionViewProps) {
     const size = hits.length;
     const raw = activeSearchHitIndex();
     const index = ((raw % size) + size) % size;
-    return t("session.search_position", undefined, { current: index + 1, total: size });
+    return t("session.search_position", { current: index + 1, total: size });
   });
 
   const searchActive = createMemo(
@@ -1057,7 +1057,7 @@ export default function SessionView(props: SessionViewProps) {
   const todoLabel = createMemo(() => {
     const total = todoCount();
     if (!total) return "";
-    return t("session.todo_progress", undefined, { completed: todoCompletedCount(), total });
+    return t("session.todo_progress", { completed: todoCompletedCount(), total });
   });
   const shareWorkspaceState = createShareWorkspaceState({
     workspaces: () => props.workspaces,
@@ -2509,7 +2509,7 @@ export default function SessionView(props: SessionViewProps) {
       files.length === 1 ? (files[0]?.name ?? "file") : `${files.length} files`;
     if (notify) {
       showComposerNotice({
-        title: t("session.uploading_to_shared_folder", undefined, { label }),
+        title: t("session.uploading_to_shared_folder", { label }),
         tone: "info",
       });
     }
@@ -2528,7 +2528,7 @@ export default function SessionView(props: SessionViewProps) {
           .join(", ");
         showComposerNotice({
           title: summary
-            ? t("session.uploaded_with_summary", undefined, { summary })
+            ? t("session.uploaded_with_summary", { summary })
             : t("session.uploaded_to_shared_folder"),
           tone: "success",
         });
@@ -2636,7 +2636,7 @@ export default function SessionView(props: SessionViewProps) {
       {
         id: "sessions",
         title: t("session.cmd_sessions_title"),
-        detail: t("session.cmd_sessions_detail", undefined, { count: totalSessionCount().toLocaleString() }),
+        detail: t("session.cmd_sessions_detail", { count: totalSessionCount().toLocaleString() }),
         meta: t("session.cmd_sessions_meta"),
         action: () => {
           setCommandPaletteMode("sessions");
@@ -2648,7 +2648,7 @@ export default function SessionView(props: SessionViewProps) {
       {
         id: "model",
         title: t("session.cmd_model_title"),
-        detail: t("session.cmd_model_detail", undefined, { model: modelControls.selectedSessionModelLabel() || t("session.cmd_model_fallback"), variant: modelControls.sessionModelVariantLabel() }),
+        detail: t("session.cmd_model_detail", { model: modelControls.selectedSessionModelLabel() || t("session.cmd_model_fallback"), variant: modelControls.sessionModelVariantLabel() }),
         meta: t("session.cmd_model_meta"),
         action: () => {
           closeCommandPalette();
@@ -2770,7 +2770,7 @@ export default function SessionView(props: SessionViewProps) {
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? t("session.downloading") : t("session.downloading_percent", undefined, { percent });
+      return percent == null ? t("session.downloading") : t("session.downloading_percent", { percent });
     }
     return t("session.update_available");
   });
@@ -2830,11 +2830,11 @@ export default function SessionView(props: SessionViewProps) {
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? t("session.update_ready_stop_runs_title", undefined, { version })
-        : t("session.restart_update_title", undefined, { version });
+        ? t("session.update_ready_stop_runs_title", { version })
+        : t("session.restart_update_title", { version });
     }
-    if (state === "downloading") return t("session.downloading_update_title", undefined, { version });
-    return t("session.update_available_title", undefined, { version });
+    if (state === "downloading") return t("session.downloading_update_title", { version });
+    return t("session.update_available_title", { version });
   });
 
   const handleUpdatePillClick = () => {
@@ -3400,7 +3400,7 @@ export default function SessionView(props: SessionViewProps) {
                             {props.loadingEarlierMessages
                               ? t("session.loading_earlier")
                               : hiddenMessageCount() > 0
-                                ? t("session.show_earlier", undefined, { count: nextRevealCount().toLocaleString(), plural: nextRevealCount() === 1 ? "" : "s" })
+                                ? t("session.show_earlier", { count: nextRevealCount().toLocaleString(), plural: nextRevealCount() === 1 ? "" : "s" })
                                 : t("session.load_earlier")}
                           </button>
                         </div>
@@ -3780,7 +3780,7 @@ export default function SessionView(props: SessionViewProps) {
         title={t("session.delete_session_title")}
         message={
           sessionTitleForId(deleteSessionId()).trim()
-            ? t("session.delete_named_session_message", undefined, { title: sessionTitleForId(deleteSessionId()).trim() })
+            ? t("session.delete_named_session_message", { title: sessionTitleForId(deleteSessionId()).trim() })
             : t("session.delete_session_generic")
         }
         confirmLabel={deleteSessionBusy() ? t("session.deleting") : t("session.delete")}

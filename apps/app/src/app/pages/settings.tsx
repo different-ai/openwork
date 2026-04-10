@@ -344,10 +344,10 @@ export default function SettingsView(props: SettingsViewProps) {
     const percent = updateDownloadPercent();
 
     if (total != null && percent != null) {
-      return t("settings.downloading_progress", undefined, { downloaded: formatBytes(downloaded), total: formatBytes(total), percent: String(percent) }) + (version ? ` · v${version}` : "");
+      return t("settings.downloading_progress", { downloaded: formatBytes(downloaded), total: formatBytes(total), percent: String(percent) }) + (version ? ` · v${version}` : "");
     }
 
-    return t("settings.downloading_bytes", undefined, { downloaded: formatBytes(downloaded) }) + (version ? ` · v${version}` : "");
+    return t("settings.downloading_bytes", { downloaded: formatBytes(downloaded) }) + (version ? ` · v${version}` : "");
   });
 
   const updateToolbarActionLabel = createMemo(() => {
@@ -439,7 +439,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const providerStatusLabel = createMemo(() => {
     if (!providerAvailableCount()) return t("config.unavailable");
     if (!providerConnectedCount()) return t("config.status_not_connected");
-    return t("settings.connected_count", undefined, { count: providerConnectedCount() });
+    return t("settings.connected_count", { count: providerConnectedCount() });
   });
   const providerStatusStyle = createMemo(() => {
     if (!providerAvailableCount())
@@ -453,8 +453,8 @@ export default function SettingsView(props: SettingsViewProps) {
       return t("settings.connect_opencode_hint");
     const connected = providerConnectedCount();
     const available = providerAvailableCount();
-    if (!connected) return t("settings.available_count", undefined, { count: available });
-    return `${t("settings.connected_count", undefined, { count: connected })} · ${t("settings.available_count", undefined, { count: available })}`;
+    if (!connected) return t("settings.available_count", { count: available });
+    return `${t("settings.connected_count", { count: connected })} · ${t("settings.available_count", { count: available })}`;
   });
 
   const handleOpenProviderAuth = async () => {
@@ -2284,13 +2284,13 @@ export default function SettingsView(props: SettingsViewProps) {
                                     {t("settings.update_checking")}
                                   </Match>
                                   <Match when={updateState() === "available"}>
-                                    {t("settings.update_available_version", undefined, { version: updateVersion() ?? "" })}
+                                    {t("settings.update_available_version", { version: updateVersion() ?? "" })}
                                   </Match>
                                   <Match when={updateState() === "downloading"}>
                                     {t("settings.update_downloading")}
                                   </Match>
                                   <Match when={updateState() === "ready"}>
-                                    {t("settings.update_ready_version", undefined, { version: updateVersion() ?? "" })}
+                                    {t("settings.update_ready_version", { version: updateVersion() ?? "" })}
                                   </Match>
                                   <Match when={updateState() === "error"}>
                                     {t("settings.update_check_failed")}
@@ -2305,7 +2305,7 @@ export default function SettingsView(props: SettingsViewProps) {
                                 }
                               >
                                 <div class="text-xs text-gray-7">
-                                  {t("settings.update_last_checked", undefined, { time: formatRelativeTime(updateLastCheckedAt() as number) })}
+                                  {t("settings.update_last_checked", { time: formatRelativeTime(updateLastCheckedAt() as number) })}
                                 </div>
                               </Show>
                               <Show
@@ -2314,7 +2314,7 @@ export default function SettingsView(props: SettingsViewProps) {
                                 }
                               >
                                 <div class="text-xs text-gray-7">
-                                  {t("settings.update_published", undefined, { date: updateDate() ?? "" })}
+                                  {t("settings.update_published", { date: updateDate() ?? "" })}
                                 </div>
                               </Show>
                               <Show when={updateState() === "downloading"}>
@@ -2563,12 +2563,12 @@ export default function SettingsView(props: SettingsViewProps) {
                     </div>
                   </div>
                   <div class="grid gap-2 md:grid-cols-2 text-xs text-gray-11">
-                    <div>{t("settings.debug_desktop_app", undefined, { version: appVersionLabel() })}</div>
-                    <div>{t("settings.debug_commit", undefined, { commit: appCommitLabel() })}</div>
-                    <div>{t("settings.debug_orchestrator_version", undefined, { version: orchestratorVersionLabel() })}</div>
-                    <div>{t("settings.debug_opencode_version", undefined, { version: opencodeVersionLabel() })}</div>
-                    <div>{t("settings.debug_openwork_server_version", undefined, { version: openworkServerVersionLabel() })}</div>
-                    <div>{t("settings.debug_opencode_router_version", undefined, { version: opencodeRouterVersionLabel() })}</div>
+                    <div>{t("settings.debug_desktop_app", { version: appVersionLabel() })}</div>
+                    <div>{t("settings.debug_commit", { commit: appCommitLabel() })}</div>
+                    <div>{t("settings.debug_orchestrator_version", { version: orchestratorVersionLabel() })}</div>
+                    <div>{t("settings.debug_opencode_version", { version: opencodeVersionLabel() })}</div>
+                    <div>{t("settings.debug_openwork_server_version", { version: openworkServerVersionLabel() })}</div>
+                    <div>{t("settings.debug_opencode_router_version", { version: opencodeRouterVersionLabel() })}</div>
                   </div>
                   <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1 border border-gray-6 rounded-lg p-3">
                     {runtimeDebugReportJson()}
@@ -2665,9 +2665,9 @@ export default function SettingsView(props: SettingsViewProps) {
                     {(result) => (
                       <div class="text-xs text-gray-11 space-y-1">
                         <div>
-                          {t("settings.sandbox_run_id", undefined, { id: result().runId ?? "—" })}
+                          {t("settings.sandbox_run_id", { id: result().runId ?? "—" })}
                         </div>
-                        <div>{t("settings.sandbox_result", undefined, { status: result().ready ? t("settings.sandbox_ready") : t("settings.sandbox_error") })}</div>
+                        <div>{t("settings.sandbox_result", { status: result().ready ? t("settings.sandbox_ready") : t("settings.sandbox_error") })}</div>
                         <Show when={result().error}>
                           {(err) => <div class="text-red-11">{err()}</div>}
                         </Show>
@@ -3066,22 +3066,22 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="space-y-1">
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.debug_desktop_app", undefined, { version: appVersionLabel() })}
+                          {t("settings.debug_desktop_app", { version: appVersionLabel() })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.debug_commit", undefined, { commit: appCommitLabel() })}
+                          {t("settings.debug_commit", { commit: appCommitLabel() })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.debug_orchestrator_version", undefined, { version: orchestratorVersionLabel() })}
+                          {t("settings.debug_orchestrator_version", { version: orchestratorVersionLabel() })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.debug_opencode_version", undefined, { version: opencodeVersionLabel() })}
+                          {t("settings.debug_opencode_version", { version: opencodeVersionLabel() })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.debug_openwork_server_version", undefined, { version: openworkServerVersionLabel() })}
+                          {t("settings.debug_openwork_server_version", { version: openworkServerVersionLabel() })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.debug_opencode_router_version", undefined, { version: opencodeRouterVersionLabel() })}
+                          {t("settings.debug_opencode_router_version", { version: opencodeRouterVersionLabel() })}
                         </div>
                       </div>
                     </div>
@@ -3111,7 +3111,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             t("settings.no_project_directory")}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_pid", undefined, { pid: String(props.engineInfo?.pid ?? "—") })}
+                          {t("settings.diag_pid", { pid: String(props.engineInfo?.pid ?? "—") })}
                         </div>
                       </div>
                       <div class="grid gap-2">
@@ -3156,25 +3156,25 @@ export default function SettingsView(props: SettingsViewProps) {
                             t("settings.data_dir_unavailable")}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_daemon_url", undefined, { url: props.orchestratorStatus?.daemon?.baseUrl ?? "—" })}
+                          {t("settings.diag_daemon_url", { url: props.orchestratorStatus?.daemon?.baseUrl ?? "—" })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_opencode_url", undefined, { url: props.orchestratorStatus?.opencode?.baseUrl ?? "—" })}
+                          {t("settings.diag_opencode_url", { url: props.orchestratorStatus?.opencode?.baseUrl ?? "—" })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_version", undefined, { version: props.orchestratorStatus?.cliVersion ?? "—" })}
+                          {t("settings.diag_version", { version: props.orchestratorStatus?.cliVersion ?? "—" })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_sidecar", undefined, { info: orchestratorSidecarSummary() })}
+                          {t("settings.diag_sidecar", { info: orchestratorSidecarSummary() })}
                         </div>
                         <div
                           class="text-[11px] text-gray-7 font-mono truncate"
                           title={orchestratorBinaryPath()}
                         >
-                          {t("settings.diag_opencode_binary", undefined, { binary: formatOrchestratorBinary(props.orchestratorStatus?.binaries?.opencode ?? null) })}
+                          {t("settings.diag_opencode_binary", { binary: formatOrchestratorBinary(props.orchestratorStatus?.binaries?.opencode ?? null) })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_runtime_workspace", undefined, { id: props.orchestratorStatus?.activeId ?? "—" })}
+                          {t("settings.diag_runtime_workspace", { id: props.orchestratorStatus?.activeId ?? "—" })}
                         </div>
                       </div>
                       <Show when={props.orchestratorStatus?.lastError}>
@@ -3215,11 +3215,11 @@ export default function SettingsView(props: SettingsViewProps) {
                             t("settings.no_worker_directory")}
                         </div>
                         <div class="text-[11px] text-gray-7">
-                          {t("settings.diag_last_attempt", undefined, { time: opencodeConnectTimestamp() ?? "—" })}
+                          {t("settings.diag_last_attempt", { time: opencodeConnectTimestamp() ?? "—" })}
                         </div>
                         <Show when={props.opencodeConnectStatus?.reason}>
                           <div class="text-[11px] text-gray-7">
-                            {t("settings.diag_reason", undefined, { reason: props.opencodeConnectStatus?.reason ?? "" })}
+                            {t("settings.diag_reason", { reason: props.opencodeConnectStatus?.reason ?? "" })}
                           </div>
                         </Show>
                         <Show when={props.opencodeConnectStatus?.metrics}>
@@ -3227,29 +3227,29 @@ export default function SettingsView(props: SettingsViewProps) {
                             <div class="pt-1 space-y-1 text-[11px] text-gray-7">
                               <Show when={metrics().healthyMs != null}>
                                 <div>
-                                  {t("settings.diag_healthy_ms", undefined, { ms: String(Math.round(metrics().healthyMs as number)) })}
+                                  {t("settings.diag_healthy_ms", { ms: String(Math.round(metrics().healthyMs as number)) })}
                                 </div>
                               </Show>
                               <Show when={metrics().loadSessionsMs != null}>
                                 <div>
-                                  {t("settings.diag_load_sessions_ms", undefined, { ms: String(Math.round(metrics().loadSessionsMs as number)) })}
+                                  {t("settings.diag_load_sessions_ms", { ms: String(Math.round(metrics().loadSessionsMs as number)) })}
                                 </div>
                               </Show>
                               <Show
                                 when={metrics().pendingPermissionsMs != null}
                               >
                                 <div>
-                                  {t("settings.diag_pending_permissions_ms", undefined, { ms: String(Math.round(metrics().pendingPermissionsMs as number)) })}
+                                  {t("settings.diag_pending_permissions_ms", { ms: String(Math.round(metrics().pendingPermissionsMs as number)) })}
                                 </div>
                               </Show>
                               <Show when={metrics().providersMs != null}>
                                 <div>
-                                  {t("settings.diag_providers_ms", undefined, { ms: String(Math.round(metrics().providersMs as number)) })}
+                                  {t("settings.diag_providers_ms", { ms: String(Math.round(metrics().providersMs as number)) })}
                                 </div>
                               </Show>
                               <Show when={metrics().totalMs != null}>
                                 <div>
-                                  {t("settings.diag_total_ms", undefined, { ms: String(Math.round(metrics().totalMs as number)) })}
+                                  {t("settings.diag_total_ms", { ms: String(Math.round(metrics().totalMs as number)) })}
                                 </div>
                               </Show>
                             </div>
@@ -3291,7 +3291,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             t("settings.base_url_unavailable")}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_pid", undefined, { pid: String(props.openworkServerHostInfo?.pid ?? "—") })}
+                          {t("settings.diag_pid", { pid: String(props.openworkServerHostInfo?.pid ?? "—") })}
                         </div>
                       </div>
                       <div class="grid gap-2">
@@ -3340,10 +3340,10 @@ export default function SettingsView(props: SettingsViewProps) {
                             t("settings.no_worker_directory")}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_health_port", undefined, { port: String(props.opencodeRouterInfo?.healthPort ?? "—") })}
+                          {t("settings.diag_health_port", { port: String(props.opencodeRouterInfo?.healthPort ?? "—") })}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {t("settings.diag_pid", undefined, { pid: String(props.opencodeRouterInfo?.pid ?? "—") })}
+                          {t("settings.diag_pid", { pid: String(props.opencodeRouterInfo?.pid ?? "—") })}
                         </div>
                       </div>
                       <div class="flex items-center gap-2">
@@ -3418,26 +3418,26 @@ export default function SettingsView(props: SettingsViewProps) {
                     >
                       {(diag) => (
                         <div class="grid md:grid-cols-2 gap-2 text-xs text-gray-11">
-                          <div>{t("settings.diag_started", undefined, { time: formatUptime(diag().uptimeMs) })}</div>
+                          <div>{t("settings.diag_started", { time: formatUptime(diag().uptimeMs) })}</div>
                           <div>
-                            {t("settings.diag_read_only", undefined, { value: diag().readOnly ? "true" : "false" })}
+                            {t("settings.diag_read_only", { value: diag().readOnly ? "true" : "false" })}
                           </div>
                           <div>
-                            {t("settings.diag_approval", undefined, { mode: diag().approval.mode, ms: String(diag().approval.timeoutMs) })}
+                            {t("settings.diag_approval", { mode: diag().approval.mode, ms: String(diag().approval.timeoutMs) })}
                           </div>
-                          <div>{t("settings.diag_workspaces", undefined, { count: String(diag().workspaceCount) })}</div>
+                          <div>{t("settings.diag_workspaces", { count: String(diag().workspaceCount) })}</div>
                           <div>
-                            {t("settings.diag_selected_workspace", undefined, { id: diag().selectedWorkspaceId ?? "—" })}
-                          </div>
-                          <div>
-                            {t("settings.diag_runtime_workspace", undefined, { id: diag().activeWorkspaceId ?? "—" })}
+                            {t("settings.diag_selected_workspace", { id: diag().selectedWorkspaceId ?? "—" })}
                           </div>
                           <div>
-                            {t("settings.diag_config_path", undefined, { path: diag().server.configPath ?? t("settings.diag_default") })}
+                            {t("settings.diag_runtime_workspace", { id: diag().activeWorkspaceId ?? "—" })}
                           </div>
-                          <div>{t("settings.diag_token_source", undefined, { source: diag().tokenSource.client })}</div>
                           <div>
-                            {t("settings.diag_host_token_source", undefined, { source: diag().tokenSource.host })}
+                            {t("settings.diag_config_path", { path: diag().server.configPath ?? t("settings.diag_default") })}
+                          </div>
+                          <div>{t("settings.diag_token_source", { source: diag().tokenSource.client })}</div>
+                          <div>
+                            {t("settings.diag_host_token_source", { source: diag().tokenSource.host })}
                           </div>
                         </div>
                       )}
@@ -3451,7 +3451,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
                         {props.runtimeWorkspaceId
-                          ? t("settings.worker_id_label", undefined, { id: props.runtimeWorkspaceId })
+                          ? t("settings.worker_id_label", { id: props.runtimeWorkspaceId })
                           : t("settings.worker_unresolved")}
                       </div>
                     </div>
@@ -3465,20 +3465,20 @@ export default function SettingsView(props: SettingsViewProps) {
                     >
                       {(caps) => (
                         <div class="grid md:grid-cols-2 gap-2 text-xs text-gray-11">
-                          <div>{t("settings.cap_skills", undefined, { value: formatCapability(caps().skills) })}</div>
-                          <div>{t("settings.cap_plugins", undefined, { value: formatCapability(caps().plugins) })}</div>
-                          <div>{t("settings.cap_mcp", undefined, { value: formatCapability(caps().mcp) })}</div>
-                          <div>{t("settings.cap_commands", undefined, { value: formatCapability(caps().commands) })}</div>
-                          <div>{t("settings.cap_config", undefined, { value: formatCapability(caps().config) })}</div>
+                          <div>{t("settings.cap_skills", { value: formatCapability(caps().skills) })}</div>
+                          <div>{t("settings.cap_plugins", { value: formatCapability(caps().plugins) })}</div>
+                          <div>{t("settings.cap_mcp", { value: formatCapability(caps().mcp) })}</div>
+                          <div>{t("settings.cap_commands", { value: formatCapability(caps().commands) })}</div>
+                          <div>{t("settings.cap_config", { value: formatCapability(caps().config) })}</div>
                           <div>
-                            {t("settings.cap_proxy", undefined, {
+                            {t("settings.cap_proxy", {
                               value: caps().proxy?.opencodeRouter
                                 ? t("settings.enabled")
                                 : t("settings.disabled")
                             })}
                           </div>
                           <div>
-                            {t("settings.cap_browser_tools", undefined, {
+                            {t("settings.cap_browser_tools", {
                               value: (() => {
                                 const browser = caps().toolProviders?.browser;
                                 if (!browser?.enabled) return t("settings.disabled");
@@ -3487,7 +3487,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             })}
                           </div>
                           <div>
-                            {t("settings.cap_file_tools", undefined, {
+                            {t("settings.cap_file_tools", {
                               value: (() => {
                                 const files = caps().toolProviders?.files;
                                 if (!files) return t("config.unavailable");
@@ -3500,7 +3500,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             })}
                           </div>
                           <div>
-                            {t("settings.cap_sandbox", undefined, {
+                            {t("settings.cap_sandbox", {
                               value: (() => {
                                 const sandbox = caps().sandbox;
                                 return sandbox

@@ -499,7 +499,7 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       });
 
       setShareWorkspaceProfileTeamSuccess(
-        t("session.share_saved_to_org", undefined, { name: created.name, org: orgName || t("session.share_team_fallback_name") }),
+        t("session.share_saved_to_org", { name: created.name, org: orgName || t("session.share_team_fallback_name") }),
       );
     } catch (error) {
       const warnings = readWorkspaceExportWarnings(error);

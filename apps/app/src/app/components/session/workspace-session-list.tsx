@@ -283,7 +283,7 @@ export default function WorkspaceSessionList(props: Props) {
   const showMoreLabel = (workspaceId: string, totalRoots: number) => {
     const remaining = Math.max(0, totalRoots - previewCount(workspaceId));
     const nextCount = Math.min(MAX_SESSIONS_PREVIEW, remaining);
-    return nextCount > 0 ? t("workspace_list.show_more", undefined, { count: nextCount }) : t("workspace_list.show_more_fallback");
+    return nextCount > 0 ? t("workspace_list.show_more", { count: nextCount }) : t("workspace_list.show_more_fallback");
   };
 
   createEffect(() => {

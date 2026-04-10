@@ -3,7 +3,7 @@ import { ArrowUpRight, Boxes, Brain, Cloud, KeyRound, LogOut, RefreshCcw, Server
 
 import Button from "./button";
 import TextInput from "./text-input";
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 import {
   buildDenAuthUrl,
   clearDenSession,
@@ -95,18 +95,18 @@ function workerStatusMeta(status: string, tr: (key: string) => string) {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "healthy":
-      return { label: tr("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
+      return { label: t("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
     case "provisioning":
-      return { label: tr("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
     case "failed":
-      return { label: tr("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
     case "stopped":
-      return { label: tr("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
     default:
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : tr("dashboard.worker_status_unknown"),
+          : t("dashboard.worker_status_unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
@@ -116,7 +116,6 @@ function workerStatusMeta(status: string, tr: (key: string) => string) {
 export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const platform = usePlatform();
   const extensions = useExtensions();
-  const tr = (key: string) => t(key, currentLocale());
   const initial = readDenSettings();
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
 
@@ -171,7 +170,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     createDenClient({ baseUrl: baseUrl(), token: authToken() }),
   );
   const isSignedIn = createMemo(() => Boolean(user() && authToken().trim()));
-  const activeOrgName = createMemo(() => activeOrg()?.name || tr("den.no_org_selected"));
+  const activeOrgName = createMemo(() => activeOrg()?.name || t("den.no_org_selected"));
   const templateCacheSnapshot = createMemo(() =>
     readDenTemplateCacheSnapshot({
       baseUrl: baseUrl(),
@@ -270,10 +269,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   });
 
   const summaryLabel = createMemo(() => {
-    if (authError()) return tr("den.needs_attention");
-    if (sessionBusy()) return tr("den.checking_session");
-    if (isSignedIn()) return t("dashboard.connected", currentLocale());
-    return tr("den.signed_out");
+    if (authError()) return t("den.needs_attention");
+    if (sessionBusy()) return t("den.checking_session");
+    if (isSignedIn()) return t("dashboard.connected");
+    return t("den.signed_out");
   });
 
   createEffect(() => {
@@ -294,8 +293,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     platform.openLink(buildDenAuthUrl(baseUrl(), mode));
     setStatusMessage(
       mode === "sign-up"
-        ? tr("den.status_browser_signup")
-        : tr("den.status_browser_signin"),
+        ? t("den.status_browser_signup")
+        : t("den.status_browser_signin"),
     );
     setAuthError(null);
   };
@@ -331,7 +330,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     const parsed = parseManualAuthInput(manualAuthInput());
     if (!parsed || authBusy()) {
       if (!parsed) {
-        setAuthError(tr("den.error_paste_valid_code"));
+        setAuthError(t("den.error_paste_valid_code"));
       }
       return;
     }
@@ -340,12 +339,12 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setAuthBusy(true);
     setAuthError(null);
-    setStatusMessage(tr("den.signing_in"));
+    setStatusMessage(t("den.signing_in"));
 
     try {
       const result = await createDenClient({ baseUrl: nextBaseUrl }).exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
-        throw new Error(tr("den.error_no_token"));
+        throw new Error(t("den.error_no_token"));
       }
 
       if (props.developerMode) {
@@ -376,7 +375,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         message:
           error instanceof Error
             ? error.message
-            : tr("den.error_signin_failed"),
+            : t("den.error_signin_failed"),
       });
     } finally {
       setAuthBusy(false);
@@ -420,7 +419,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const applyBaseUrl = () => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft());
     if (!normalized) {
-      setBaseUrlError(tr("den.error_base_url"));
+      setBaseUrlError(t("den.error_base_url"));
       return;
     }
 
@@ -433,7 +432,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState(tr("den.status_base_url_updated"));
+    clearSignedInState(t("den.status_base_url_updated"));
   };
 
   const refreshOrgs = async (quiet = false) => {
@@ -463,11 +462,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       });
       if (!quiet && response.orgs.length > 0) {
         setStatusMessage(
-          t("den.status_loaded_orgs", currentLocale(), { count: response.orgs.length, plural: response.orgs.length === 1 ? "" : "s" }),
+          t("den.status_loaded_orgs", { count: response.orgs.length, plural: response.orgs.length === 1 ? "" : "s" }),
         );
       }
     } catch (error) {
-      setOrgsError(error instanceof Error ? error.message : tr("den.error_load_orgs"));
+      setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
     } finally {
       setOrgsBusy(false);
     }
@@ -489,12 +488,12 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!quiet) {
         setStatusMessage(
           nextWorkers.length > 0
-            ? t("den.status_loaded_workers", currentLocale(), { count: nextWorkers.length, plural: nextWorkers.length === 1 ? "" : "s", name: activeOrg()?.name ?? tr("den.active_org_title") })
-            : t("den.status_no_workers", currentLocale(), { name: activeOrg()?.name ?? tr("den.active_org_title") }),
+            ? t("den.status_loaded_workers", { count: nextWorkers.length, plural: nextWorkers.length === 1 ? "" : "s", name: activeOrg()?.name ?? t("den.active_org_title") })
+            : t("den.status_no_workers", { name: activeOrg()?.name ?? t("den.active_org_title") }),
         );
       }
     } catch (error) {
-      setWorkersError(error instanceof Error ? error.message : tr("den.error_load_workers"));
+      setWorkersError(error instanceof Error ? error.message : t("den.error_load_workers"));
     } finally {
       setWorkersBusy(false);
     }
@@ -520,13 +519,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!quiet) {
         setStatusMessage(
           nextTemplates.length > 0
-            ? t("den.status_loaded_templates", currentLocale(), { count: nextTemplates.length, plural: nextTemplates.length === 1 ? "" : "s", name: activeOrg()?.name ?? tr("den.active_org_title") })
-            : t("den.status_no_templates", currentLocale(), { name: activeOrg()?.name ?? tr("den.active_org_title") }),
+            ? t("den.status_loaded_templates", { count: nextTemplates.length, plural: nextTemplates.length === 1 ? "" : "s", name: activeOrg()?.name ?? t("den.active_org_title") })
+            : t("den.status_no_templates", { name: activeOrg()?.name ?? t("den.active_org_title") }),
         );
       }
     } catch (error) {
       if (!quiet) {
-        setTemplateActionError(error instanceof Error ? error.message : tr("den.error_load_templates"));
+        setTemplateActionError(error instanceof Error ? error.message : t("den.error_load_templates"));
       }
     }
   };
@@ -546,8 +545,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         const count = extensions.cloudOrgSkillHubs().length;
         setStatusMessage(
           count > 0
-            ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg()?.name ?? tr("den.active_org_title")}.`
-            : `No cloud skill hubs are available for ${activeOrg()?.name ?? tr("den.active_org_title")}.`,
+            ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg()?.name ?? t("den.active_org_title")}.`
+            : `No cloud skill hubs are available for ${activeOrg()?.name ?? t("den.active_org_title")}.`,
         );
       }
     } catch (error) {
@@ -575,8 +574,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!quiet) {
         setStatusMessage(
           items.length > 0
-            ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg()?.name ?? tr("den.active_org_title")}.`
-            : `No cloud providers are available for ${activeOrg()?.name ?? tr("den.active_org_title")}.`,
+            ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg()?.name ?? t("den.active_org_title")}.`
+            : `No cloud providers are available for ${activeOrg()?.name ?? t("den.active_org_title")}.`,
         );
       }
     } catch (error) {
@@ -610,7 +609,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       .then((nextUser) => {
         if (cancelled) return;
         setUser(nextUser);
-        setStatusMessage(t("den.status_signed_in_as", currentLocale(), { email: nextUser.email }));
+        setStatusMessage(t("den.status_signed_in_as", { email: nextUser.email }));
       })
       .catch((error) => {
         if (cancelled) return;
@@ -620,7 +619,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           clearSessionState();
         }
         setAuthError(
-          error instanceof Error ? error.message : tr("den.error_no_session"),
+          error instanceof Error ? error.message : t("den.error_no_session"),
         );
       })
       .finally(() => {
@@ -682,13 +681,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSessionBusy(false);
         setStatusMessage(
           customEvent.detail.email?.trim()
-            ? t("den.status_cloud_signed_in_as", currentLocale(), { email: customEvent.detail.email.trim() })
-            : tr("den.status_cloud_signin_done"),
+            ? t("den.status_cloud_signed_in_as", { email: customEvent.detail.email.trim() })
+            : t("den.status_cloud_signin_done"),
         );
       } else if (customEvent.detail?.status === "error") {
         setAuthError(
           customEvent.detail.message?.trim() ||
-            tr("den.error_signin_failed"),
+            t("den.error_signin_failed"),
         );
       }
     };
@@ -718,13 +717,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       setAuthBusy(false);
     }
 
-    clearSignedInState(tr("den.status_signed_out"));
+    clearSignedInState(t("den.status_signed_out"));
   };
 
   const handleOpenWorker = async (workerId: string, workerName: string) => {
     const orgId = activeOrgId().trim();
     if (!orgId) {
-      setWorkersError(tr("den.error_choose_org"));
+      setWorkersError(t("den.error_choose_org"));
       return;
     }
 
@@ -737,7 +736,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const accessToken =
         tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
       if (!openworkUrl || !accessToken) {
-        throw new Error(tr("den.error_worker_not_ready"));
+        throw new Error(t("den.error_worker_not_ready"));
       }
 
       const ok = await props.connectRemoteWorkspace({
@@ -747,13 +746,13 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         displayName: workerName,
       });
       if (!ok) {
-        throw new Error(t("den.error_open_worker", currentLocale(), { name: workerName }));
+        throw new Error(t("den.error_open_worker", { name: workerName }));
       }
 
-      setStatusMessage(t("den.status_opened_worker", currentLocale(), { name: workerName }));
+      setStatusMessage(t("den.status_opened_worker", { name: workerName }));
     } catch (error) {
       setWorkersError(
-        error instanceof Error ? error.message : t("den.error_open_worker_fallback", currentLocale(), { name: workerName }),
+        error instanceof Error ? error.message : t("den.error_open_worker_fallback", { name: workerName }),
       );
     } finally {
       setOpeningWorkerId(null);
@@ -776,11 +775,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const orgName = activeOrg()?.name;
       setStatusMessage(
         orgName
-          ? t("den.status_opened_template", currentLocale(), { name: template.name, org: orgName })
-          : t("den.status_opened_template_fallback", currentLocale(), { name: template.name }),
+          ? t("den.status_opened_template", { name: template.name, org: orgName })
+          : t("den.status_opened_template_fallback", { name: template.name }),
       );
     } catch (error) {
-      setTemplateActionError(error instanceof Error ? error.message : t("den.error_open_template", currentLocale(), { name: template.name }));
+      setTemplateActionError(error instanceof Error ? error.message : t("den.error_open_template", { name: template.name }));
     } finally {
       setOpeningTemplateId(null);
     }
@@ -861,9 +860,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     try {
       const message = await props.connectCloudProvider(cloudProviderId);
-      setStatusMessage(`${message || t("den.imported_provider", undefined, { name: providerName })} ${t("den.reload_workspace")}`);
+      setStatusMessage(`${message || t("den.imported_provider", { name: providerName })} ${t("den.reload_workspace")}`);
     } catch (error) {
-      setProviderActionError(error instanceof Error ? error.message : t("den.import_provider_failed", undefined, { name: providerName }));
+      setProviderActionError(error instanceof Error ? error.message : t("den.import_provider_failed", { name: providerName }));
     } finally {
       setProviderActionId(null);
       setProviderActionKind(null);
@@ -879,9 +878,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     try {
       const message = await props.removeCloudProvider(cloudProviderId);
-      setStatusMessage(`${message || t("den.removed_provider", undefined, { name: providerName })} ${t("den.reload_workspace")}`);
+      setStatusMessage(`${message || t("den.removed_provider", { name: providerName })} ${t("den.reload_workspace")}`);
     } catch (error) {
-      setProviderActionError(error instanceof Error ? error.message : t("den.remove_provider_failed", undefined, { name: providerName }));
+      setProviderActionError(error instanceof Error ? error.message : t("den.remove_provider_failed", { name: providerName }));
     } finally {
       setProviderActionId(null);
       setProviderActionKind(null);
@@ -897,9 +896,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     try {
       await props.connectCloudProvider(cloudProviderId);
-      setStatusMessage(`${t("den.synced_provider", undefined, { name: providerName })} ${t("den.reload_workspace")}`);
+      setStatusMessage(`${t("den.synced_provider", { name: providerName })} ${t("den.reload_workspace")}`);
     } catch (error) {
-      setProviderActionError(error instanceof Error ? error.message : t("den.sync_provider_failed", undefined, { name: providerName }));
+      setProviderActionError(error instanceof Error ? error.message : t("den.sync_provider_failed", { name: providerName }));
     } finally {
       setProviderActionId(null);
       setProviderActionKind(null);
@@ -907,9 +906,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   };
 
   const formatTemplateTimestamp = (value: string | null) => {
-    if (!value) return tr("dashboard.recently_updated");
+    if (!value) return t("dashboard.recently_updated");
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return tr("dashboard.recently_updated");
+    if (Number.isNaN(date.getTime())) return t("dashboard.recently_updated");
     return new Intl.DateTimeFormat(undefined, {
       month: "short",
       day: "numeric",
@@ -919,8 +918,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   const templateCreatorLabel = (template: DenTemplate) => {
     const creator = template.creator;
-    if (!creator) return tr("dashboard.unknown_creator");
-    return creator.name?.trim() || creator.email?.trim() || tr("dashboard.unknown_creator");
+    if (!creator) return t("dashboard.unknown_creator");
+    return creator.name?.trim() || creator.email?.trim() || t("dashboard.unknown_creator");
   };
 
   const settingsPanelClass =
@@ -945,14 +944,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           <div class="space-y-2">
             <div class={headerBadgeClass}>
               <Cloud size={13} class="text-dls-secondary" />
-              {tr("den.cloud_section_title")}
+              {t("den.cloud_section_title")}
             </div>
             <div>
               <div class="text-sm font-medium text-dls-text">
-                {tr("den.cloud_section_desc")}
+                {t("den.cloud_section_desc")}
               </div>
               <div class="mt-1 max-w-[60ch] text-xs text-dls-secondary">
-                {tr("den.cloud_sleep_hint")}
+                {t("den.cloud_sleep_hint")}
               </div>
             </div>
           </div>
@@ -967,11 +966,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <Show when={props.developerMode}>
           <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <TextInput
-              label={tr("den.cloud_control_plane_url_label")}
+              label={t("den.cloud_control_plane_url_label")}
               value={baseUrlDraft()}
               onInput={(event) => setBaseUrlDraft(event.currentTarget.value)}
               placeholder={DEFAULT_DEN_BASE_URL}
-              hint={tr("den.cloud_control_plane_url_hint")}
+              hint={t("den.cloud_control_plane_url_hint")}
               disabled={authBusy() || sessionBusy()}
             />
             <div class="flex flex-wrap items-center gap-2">
@@ -981,7 +980,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                 onClick={() => setBaseUrlDraft(baseUrl())}
                 disabled={authBusy() || sessionBusy()}
               >
-                {tr("den.cloud_control_plane_reset")}
+                {t("den.cloud_control_plane_reset")}
               </Button>
               <Button
                 variant="secondary"
@@ -989,14 +988,14 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                 onClick={applyBaseUrl}
                 disabled={authBusy() || sessionBusy()}
               >
-                {tr("den.cloud_control_plane_save")}
+                {t("den.cloud_control_plane_save")}
               </Button>
               <Button
                 variant="outline"
                 class="h-9 px-3 text-xs"
                 onClick={openControlPlane}
               >
-                {tr("den.cloud_control_plane_open")}
+                {t("den.cloud_control_plane_open")}
                 <ArrowUpRight size={13} />
               </Button>
             </div>
@@ -1024,16 +1023,16 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <div class={`${settingsPanelClass} space-y-4`}>
             <div class="space-y-2">
               <div class="text-sm font-medium text-dls-text">
-                {tr("den.signin_title")}
+                {t("den.signin_title")}
               </div>
               <div class="max-w-[54ch] text-sm text-dls-secondary">
-                {tr("den.cloud_sleep_hint")}
+                {t("den.cloud_sleep_hint")}
               </div>
             </div>
 
           <div class="flex flex-wrap items-center gap-2">
             <Button variant="secondary" onClick={() => openBrowserAuth("sign-in")}>
-              {tr("den.signin_button")}
+              {t("den.signin_button")}
               <ArrowUpRight size={13} />
             </Button>
             <Button
@@ -1041,7 +1040,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               class="text-xs h-9 px-3"
               onClick={() => openBrowserAuth("sign-up")}
             >
-              {tr("den.create_account")}
+              {t("den.create_account")}
               <ArrowUpRight size={13} />
             </Button>
             <Button
@@ -1053,19 +1052,19 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               }}
               disabled={authBusy() || sessionBusy()}
             >
-              {manualAuthOpen() ? tr("den.hide_signin_code") : tr("den.paste_signin_code")}
+              {manualAuthOpen() ? t("den.hide_signin_code") : t("den.paste_signin_code")}
             </Button>
           </div>
 
           <Show when={manualAuthOpen()}>
             <div class={`${settingsPanelSoftClass} space-y-3`}>
               <TextInput
-                label={tr("den.signin_link_label")}
+                label={t("den.signin_link_label")}
                 value={manualAuthInput()}
                 onInput={(event) => setManualAuthInput(event.currentTarget.value)}
-                placeholder={tr("den.signin_link_placeholder")}
+                placeholder={t("den.signin_link_placeholder")}
                 disabled={authBusy() || sessionBusy()}
-                hint={tr("den.signin_link_hint")}
+                hint={t("den.signin_link_hint")}
               />
               <div class="flex flex-wrap items-center gap-2">
                 <Button
@@ -1074,10 +1073,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   onClick={() => void submitManualAuth()}
                   disabled={authBusy() || sessionBusy() || !manualAuthInput().trim()}
                 >
-                  {authBusy() ? tr("den.finishing") : tr("den.finish_signin")}
+                  {authBusy() ? t("den.finishing") : t("den.finish_signin")}
                 </Button>
                 <div class="text-[11px] text-dls-secondary">
-                  {tr("den.signin_code_note")}
+                  {t("den.signin_code_note")}
                 </div>
               </div>
             </div>
@@ -1092,7 +1091,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
           </Show>
 
           <div class={`${settingsPanelSoftClass} text-sm text-gray-10`}>
-            {tr("den.auto_reconnect_hint")}
+            {t("den.auto_reconnect_hint")}
           </div>
         </div>
       </Show>
@@ -1101,9 +1100,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         <div class="space-y-6">
           <div class={`${settingsPanelClass} space-y-4`}>
             <div>
-              <div class="text-sm font-medium text-dls-text">{tr("den.cloud_account_title")}</div>
+              <div class="text-sm font-medium text-dls-text">{t("den.cloud_account_title")}</div>
               <div class="mt-1 text-xs text-dls-secondary">
-                {tr("den.cloud_account_hint")}
+                {t("den.cloud_account_hint")}
               </div>
             </div>
 
@@ -1124,15 +1123,15 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={authBusy() || sessionBusy()}
                 >
                   <LogOut size={13} class="mr-1.5" />
-                  {authBusy() ? tr("den.signing_out") : tr("den.sign_out")}
+                  {authBusy() ? t("den.signing_out") : t("den.sign_out")}
                 </Button>
               </div>
 
               <div class="ow-soft-card-quiet flex flex-col gap-3 rounded-xl p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div class="min-w-0">
-                  <div class="text-sm font-medium text-dls-text">{tr("den.active_org_title")}</div>
+                  <div class="text-sm font-medium text-dls-text">{t("den.active_org_title")}</div>
                   <div class="truncate text-xs text-dls-secondary">
-                    {tr("den.active_org_hint")}
+                    {t("den.active_org_hint")}
                   </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
@@ -1151,7 +1150,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                         activeOrgName: nextOrg?.name ?? null,
                       });
                       setStatusMessage(
-                        t("den.org_switched", currentLocale(), { name: nextOrg?.name ?? tr("den.active_org_title") }),
+                        t("den.org_switched", { name: nextOrg?.name ?? t("den.active_org_title") }),
                       );
                     }}
                     disabled={orgsBusy() || orgs().length === 0}
@@ -1159,7 +1158,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                     <For each={orgs()}>
                       {(org) => (
                         <option value={org.id}>
-                          {org.name} {org.role === "owner" ? tr("den.org_owner_suffix") : tr("den.org_member_suffix")}
+                          {org.name} {org.role === "owner" ? t("den.org_owner_suffix") : t("den.org_member_suffix")}
                         </option>
                       )}
                     </For>
@@ -1190,10 +1189,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Server size={15} class="text-dls-secondary" />
-                  {tr("den.cloud_workers_title")}
+                  {t("den.cloud_workers_title")}
                 </div>
                 <div class="mt-1 text-xs text-dls-secondary">
-                  {tr("den.cloud_workers_hint")}
+                  {t("den.cloud_workers_hint")}
                 </div>
               </div>
               <div class="flex flex-wrap items-center gap-2">
@@ -1208,7 +1207,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={workersBusy() || !activeOrgId().trim()}
                 >
                   <RefreshCcw size={13} class={workersBusy() ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1223,7 +1222,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             <Show when={!workersBusy() && workers().length === 0}>
               <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {tr("den.no_cloud_workers")}
+                {t("den.no_cloud_workers")}
               </div>
             </Show>
 
@@ -1245,12 +1244,12 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                           </span>
                           <Show when={worker.isMine}>
                             <span class={sectionPillClass}>
-                              {tr("den.worker_mine_badge")}
+                              {t("den.worker_mine_badge")}
                             </span>
                           </Show>
                         </div>
                         <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
-                          {worker.provider ? t("den.worker_provider_label", currentLocale(), { provider: worker.provider }) : tr("den.worker_secondary_cloud")}
+                          {worker.provider ? t("den.worker_provider_label", { provider: worker.provider }) : t("den.worker_secondary_cloud")}
                           <Show when={worker.instanceUrl}>
                             {(value) => <span> · {value()}</span>}
                           </Show>
@@ -1263,9 +1262,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                           void handleOpenWorker(worker.workerId, worker.workerName)
                         }
                         disabled={openingWorkerId() !== null || !status().canOpen}
-                        title={!status().canOpen ? tr("den.worker_not_ready_title") : undefined}
+                        title={!status().canOpen ? t("den.worker_not_ready_title") : undefined}
                       >
-                        {openingWorkerId() === worker.workerId ? tr("den.opening") : tr("den.open")}
+                        {openingWorkerId() === worker.workerId ? t("den.opening") : t("den.open")}
                       </Button>
                     </div>
                   );
@@ -1279,10 +1278,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Boxes size={15} class="text-dls-secondary" />
-                  {tr("den.team_templates_title")}
+                  {t("den.team_templates_title")}
                 </div>
                 <div class="mt-1 text-xs text-dls-secondary">
-                  {tr("den.team_templates_hint")}
+                  {t("den.team_templates_hint")}
                 </div>
               </div>
               <div class="flex flex-wrap items-center gap-2">
@@ -1297,7 +1296,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={templatesBusy() || !activeOrg()?.slug?.trim()}
                 >
                   <RefreshCcw size={13} class={templatesBusy() ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1314,9 +1313,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
                 <Show
                   when={activeOrg()?.slug?.trim()}
-                  fallback={tr("den.choose_org_for_templates")}
+                  fallback={t("den.choose_org_for_templates")}
                 >
-                  {tr("den.no_team_templates")}
+                  {t("den.no_team_templates")}
                 </Show>
               </div>
             </Show>
@@ -1334,11 +1333,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                             {template.name}
                           </span>
                           <span class={sectionPillClass}>
-                            {tr("den.team_template_badge")}
+                            {t("den.team_template_badge")}
                           </span>
                           <Show when={isMine()}>
                             <span class={sectionPillClass}>
-                              {tr("den.worker_mine_badge")}
+                              {t("den.worker_mine_badge")}
                             </span>
                           </Show>
                         </div>
@@ -1352,7 +1351,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                         onClick={() => void handleOpenTemplate(template)}
                         disabled={openingTemplateId() !== null}
                       >
-                        {opening() ? tr("den.opening") : tr("den.open")}
+                        {opening() ? t("den.opening") : t("den.open")}
                       </Button>
                     </div>
                   );
@@ -1366,10 +1365,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Boxes size={15} class="text-dls-secondary" />
-                  {tr("den.skill_hubs_title")}
+                  {t("den.skill_hubs_title")}
                 </div>
                 <div class="mt-1 text-xs text-dls-secondary">
-                  {tr("den.skill_hubs_hint")}
+                  {t("den.skill_hubs_hint")}
                 </div>
               </div>
               <div class="flex flex-wrap items-center gap-2">
@@ -1384,7 +1383,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={skillHubsBusy() || !activeOrgId().trim()}
                 >
                   <RefreshCcw size={13} class={skillHubsBusy() ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1399,8 +1398,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             <Show when={!skillHubsBusy() && skillHubRows().length === 0}>
               <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                <Show when={activeOrgId().trim()} fallback={tr("den.choose_org_for_skill_hubs")}>
-                  {tr("den.no_skill_hubs")}
+                <Show when={activeOrgId().trim()} fallback={t("den.choose_org_for_skill_hubs")}>
+                  {t("den.no_skill_hubs")}
                 </Show>
               </div>
             </Show>
@@ -1413,11 +1412,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                     if (!actionBusy()) return null;
                     switch (skillHubActionKind()) {
                       case "import":
-                        return tr("den.importing");
+                        return t("den.importing");
                       case "sync":
-                        return tr("den.syncing");
+                        return t("den.syncing");
                       default:
-                        return tr("den.removing");
+                        return t("den.removing");
                     }
                   });
                   return (
@@ -1426,33 +1425,33 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                         <div class="flex flex-wrap items-center gap-2">
                           <span class="truncate font-medium text-dls-text">{row.name}</span>
                           <span class={sectionPillClass}>
-                            {t("den.skill_hub_skills_badge", currentLocale(), {
+                            {t("den.skill_hub_skills_badge", {
                               count: row.hub?.skills.length ?? row.importedSkillCount,
                             })}
                           </span>
                           <Show when={row.status !== "available"}>
                             <span class={sectionPillClass}>
                               {row.status === "imported"
-                                ? tr("den.imported_badge")
+                                ? t("den.imported_badge")
                                 : row.status === "out_of_sync"
-                                  ? tr("den.out_of_sync_badge")
-                                  : tr("den.removed_from_cloud_badge")}
+                                  ? t("den.out_of_sync_badge")
+                                  : t("den.removed_from_cloud_badge")}
                             </span>
                           </Show>
                         </div>
                         <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
                           {row.status === "available"
-                            ? t("den.skill_hub_detail", currentLocale(), { count: row.liveSkillCount })
+                            ? t("den.skill_hub_detail", { count: row.liveSkillCount })
                             : row.status === "imported"
-                              ? t("den.skill_hub_imported_detail", currentLocale(), {
+                              ? t("den.skill_hub_imported_detail", {
                                   count: row.importedSkillCount,
                                 })
                               : row.status === "out_of_sync"
-                                ? t("den.skill_hub_sync_detail", currentLocale(), {
+                                ? t("den.skill_hub_sync_detail", {
                                     liveCount: row.liveSkillCount,
                                     importedCount: row.importedSkillCount,
                                   })
-                                : t("den.skill_hub_removed_detail", currentLocale(), {
+                                : t("den.skill_hub_removed_detail", {
                                     importedCount: row.importedSkillCount,
                                   })}
                         </div>
@@ -1465,7 +1464,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                             onClick={() => void handleSyncSkillHub(row.hubId)}
                             disabled={skillHubActionId() !== null}
                           >
-                            {actionBusy() && skillHubActionKind() === "sync" ? tr("den.syncing") : tr("den.sync")}
+                            {actionBusy() && skillHubActionKind() === "sync" ? t("den.syncing") : t("den.sync")}
                           </Button>
                         </Show>
                         <Button
@@ -1480,10 +1479,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                           {actionBusy()
                             ? actionLabel()
                             : row.status === "available"
-                              ? tr("den.import_all")
+                              ? t("den.import_all")
                               : row.status === "removed_from_cloud"
-                                ? tr("den.uninstall")
-                                : t("common.remove", currentLocale())}
+                                ? t("den.uninstall")
+                                : t("common.remove")}
                         </Button>
                       </div>
                     </div>
@@ -1498,10 +1497,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Brain size={15} class="text-dls-secondary" />
-                  {tr("den.cloud_providers_title")}
+                  {t("den.cloud_providers_title")}
                 </div>
                 <div class="mt-1 text-xs text-dls-secondary">
-                  {tr("den.cloud_providers_hint")}
+                  {t("den.cloud_providers_hint")}
                 </div>
               </div>
               <div class="flex flex-wrap items-center gap-2">
@@ -1516,7 +1515,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={providersBusy() || !activeOrgId().trim()}
                 >
                   <RefreshCcw size={13} class={providersBusy() ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1531,8 +1530,8 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             <Show when={!providersBusy() && providerRows().length === 0}>
               <div class={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                <Show when={activeOrgId().trim()} fallback={tr("den.choose_org_for_providers")}>
-                  {tr("den.no_cloud_providers")}
+                <Show when={activeOrgId().trim()} fallback={t("den.choose_org_for_providers")}>
+                  {t("den.no_cloud_providers")}
                 </Show>
               </div>
             </Show>
@@ -1545,11 +1544,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                     if (!actionBusy()) return null;
                     switch (providerActionKind()) {
                       case "import":
-                        return tr("den.importing");
+                        return t("den.importing");
                       case "sync":
-                        return tr("den.syncing");
+                        return t("den.syncing");
                       default:
-                        return tr("den.removing");
+                        return t("den.removing");
                     }
                   });
                   return (
@@ -1562,29 +1561,29 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                             {row.provider?.providerId ?? row.imported?.providerId}
                           </span>
                           <Show when={row.provider?.hasApiKey}>
-                            <span class={sectionPillClass}>{tr("den.credentials_ready_badge")}</span>
+                            <span class={sectionPillClass}>{t("den.credentials_ready_badge")}</span>
                           </Show>
                           <Show when={row.status !== "available"}>
                             <span class={sectionPillClass}>
                               {row.status === "imported"
-                                ? tr("den.imported_badge")
+                                ? t("den.imported_badge")
                                 : row.status === "out_of_sync"
-                                  ? tr("den.out_of_sync_badge")
-                                  : tr("den.removed_from_cloud_badge")}
+                                  ? t("den.out_of_sync_badge")
+                                  : t("den.removed_from_cloud_badge")}
                             </span>
                           </Show>
                         </div>
                         <div class="mt-0.5 truncate text-[11px] text-dls-secondary">
                           {row.status === "removed_from_cloud"
-                            ? t("den.cloud_provider_removed_detail", currentLocale(), {
+                            ? t("den.cloud_provider_removed_detail", {
                                 providerId: row.imported?.providerId ?? row.name,
                               })
                             : row.status === "out_of_sync"
-                              ? t("den.cloud_provider_sync_detail", currentLocale(), {
+                              ? t("den.cloud_provider_sync_detail", {
                                   count: row.provider?.models.length ?? 0,
                                   source: row.provider?.source === "custom" ? "custom" : "managed",
                                 })
-                              : t("den.cloud_provider_detail", currentLocale(), {
+                              : t("den.cloud_provider_detail", {
                                   count: row.provider?.models.length ?? 0,
                                   source: row.provider?.source === "custom" ? "custom" : "managed",
                                 })}
@@ -1598,7 +1597,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                             onClick={() => void handleSyncProvider(row.cloudProviderId, row.name)}
                             disabled={providerActionId() !== null}
                           >
-                            {actionBusy() && providerActionKind() === "sync" ? tr("den.syncing") : tr("den.sync")}
+                            {actionBusy() && providerActionKind() === "sync" ? t("den.syncing") : t("den.sync")}
                           </Button>
                         </Show>
                         <Button
@@ -1615,10 +1614,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                           {actionBusy()
                             ? actionLabel()
                             : row.status === "available"
-                              ? tr("den.import_provider")
+                              ? t("den.import_provider")
                               : row.status === "removed_from_cloud"
-                                ? tr("den.uninstall")
-                                : t("common.remove", currentLocale())}
+                                ? t("den.uninstall")
+                                : t("common.remove")}
                         </Button>
                       </div>
                     </div>

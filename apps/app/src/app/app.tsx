@@ -1985,16 +1985,16 @@ export default function App() {
   });
 
   const headerStatus = createMemo(() => {
-    if (!client() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
-    const bits = [`${t("status.connected", currentLocale())} · ${headerConnectedVersion()}`];
-    if (sseConnected()) bits.push(t("status.live", currentLocale()));
+    if (!client() || !headerConnectedVersion()) return t("status.disconnected");
+    const bits = [`${t("status.connected")} · ${headerConnectedVersion()}`];
+    if (sseConnected()) bits.push(t("status.live"));
     return bits.join(" · ");
   });
 
   const busyHint = createMemo(() => {
     if (!busy() || !busyLabel()) return null;
     const seconds = busySeconds();
-    const label = t(busyLabel()!, currentLocale());
+    const label = t(busyLabel()!);
     return seconds > 0 ? `${label} · ${seconds}s` : label;
   });
 
@@ -2572,17 +2572,17 @@ export default function App() {
           return !doctor?.ready;
         })()}
         workerDisabledReason={(() => {
-          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
+          if (!isTauriRuntime()) return t("app.error.tauri_required");
           if (workspaceStore.sandboxDoctorBusy?.()) {
-            return t("dashboard.sandbox_checking_docker", currentLocale());
+            return t("dashboard.sandbox_checking_docker");
           }
           const doctor = workspaceStore.sandboxDoctorResult?.();
           if (!doctor || doctor.ready) return null;
           const message = doctor?.error?.trim();
-          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
+          return message || t("dashboard.sandbox_get_ready_desc");
         })()}
-        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
-        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
+        workerCtaLabel={t("dashboard.sandbox_get_ready_action")}
+        workerCtaDescription={t("dashboard.sandbox_get_ready_desc")}
         onWorkerCta={async () => {
           const url = "https://www.docker.com/products/docker-desktop/";
           if (isTauriRuntime()) {
@@ -2592,7 +2592,7 @@ export default function App() {
             window.open(url, "_blank", "noopener,noreferrer");
           }
         }}
-        workerRetryLabel={t("common.retry", currentLocale())}
+        workerRetryLabel={t("common.retry")}
         workerDebugLines={(() => {
           const doctor = workspaceStore.sandboxDoctorResult?.();
           const lines: string[] = [];
@@ -2718,9 +2718,9 @@ export default function App() {
         initialValues={workspaceStore.editRemoteWorkspaceDefaults() ?? undefined}
         submitting={busy() && busyLabel() === "status.connecting"}
         error={workspaceStore.editRemoteWorkspaceError()}
-        title={t("dashboard.edit_remote_workspace_title", currentLocale())}
-        subtitle={t("dashboard.edit_remote_workspace_subtitle", currentLocale())}
-        confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
+        title={t("dashboard.edit_remote_workspace_title")}
+        subtitle={t("dashboard.edit_remote_workspace_subtitle")}
+        confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
       />
                 </StatusToastsProvider>
               </AutomationsProvider>
