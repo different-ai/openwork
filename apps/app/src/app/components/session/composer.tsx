@@ -260,8 +260,6 @@ const clamp = (value: number, min: number, max: number) =>
     Math.min(max, Math.max(min, value));
 
 const normalizeText = (value: string) => value.replace(/\u00a0/g, " ");
-const readEditorText = (editor: HTMLElement | undefined) =>
-    normalizeText(editor?.textContent ?? "");
 const RECENT_EMIT_TTL_MS = 30_000;
 const MAX_RECENT_EMITS = 400;
 const DRAFT_FLUSH_DEBOUNCE_MS = 140;
@@ -403,10 +401,10 @@ const textToFragment = (text: string) => {
     return frag;
 };
 
-const buildPartsFromEditor = (
+function buildPartsFromEditor(
     root: HTMLElement,
     pasteTextById?: Map<string, string>,
-): ComposerPart[] => {
+): ComposerPart[] {
     const parts: ComposerPart[] = [];
     const pushText = (text: string) => {
         if (!text) return;
@@ -468,7 +466,15 @@ const buildPartsFromEditor = (
 
     root.childNodes.forEach(walk);
     return parts;
-};
+}
+
+function readEditorText(
+    editor: HTMLElement | undefined,
+    pasteTextById?: Map<string, string>,
+) {
+    if (!editor) return "";
+    return normalizeText(partsToText(buildPartsFromEditor(editor, pasteTextById)));
+}
 
 const getSelectionOffsets = (root: HTMLElement) => {
     const selection = window.getSelection();
@@ -851,7 +857,7 @@ export default function Composer(props: ComposerProps) {
     createEffect(() => {
         if (!editorRef) return;
         const value = props.prompt;
-        const current = readEditorText(editorRef);
+        const current = readEditorText(editorRef, pasteTextById);
 
         // Robust Echo Cancellation:
         // If the incoming value matches ANY recently emitted text, it's a stale echo or confirmation.
@@ -981,7 +987,7 @@ export default function Composer(props: ComposerProps) {
 
     const handleEditorInput = () => {
         const startedAt = perfNow();
-        const currentText = readEditorText(editorRef);
+        const currentText = readEditorText(editorRef, pasteTextById);
         const mentionStartedAt = perfNow();
         if (mentionOpen() || currentText.includes("@")) {
             updateMentionQuery(currentText);
@@ -1073,7 +1079,7 @@ export default function Composer(props: ComposerProps) {
             setMentionQuery("");
             return;
         }
-        const text = currentText ?? readEditorText(editorRef);
+        const text = currentText ?? readEditorText(editorRef, pasteTextById);
         const before = text.slice(0, offsets.start);
         const match = before.match(/@(\S*)$/);
         if (!match) {
@@ -1092,7 +1098,7 @@ export default function Composer(props: ComposerProps) {
             setSlashQuery("");
             return;
         }
-        const text = currentText ?? readEditorText(editorRef);
+        const text = currentText ?? readEditorText(editorRef, pasteTextById);
         // Only trigger when the entire input matches /command (no spaces, starts with /)
         const slashMatch = text.match(/^\/(\S*)$/);
         if (!slashMatch) {
