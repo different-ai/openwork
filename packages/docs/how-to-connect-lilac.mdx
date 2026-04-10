@@ -7,9 +7,23 @@ description: "Connect Lilac's OpenAI-compatible API and use models like GLM 5.1 
 
 You can get an API key from the [Lilac console](https://console.getlilac.com). See [Lilac's API key guide](https://docs.getlilac.com/inference/api-keys) for details.
 
-## Desktop setup
+## Quick setup (built-in provider)
 
-Add the following to your workspace `.opencode.json` (or `~/.config/opencode/opencode.json` for a global setup):
+Lilac is available as a built-in provider in OpenWork. To connect:
+
+1. Set your API key as an environment variable:
+
+```bash
+export LILAC_API_KEY="your-api-key"
+```
+
+2. Open the model picker in a session and select a Lilac model (e.g. `Lilac · GLM 5.1` or `Lilac · Kimi K2.5`).
+
+That's it — no manual configuration needed. If you don't see Lilac in the model picker, see the manual setup below.
+
+## Manual setup (desktop)
+
+If Lilac doesn't appear as a built-in provider yet, add it manually to your workspace `.opencode.json` (or `~/.config/opencode/opencode.json` for a global setup):
 
 ```json
 {
@@ -69,8 +83,8 @@ Use this when you want your OpenWork org to manage the Lilac credential and mode
       "tool_call": true,
       "structured_output": true,
       "temperature": true,
-      "release_date": "2025-01-01",
-      "last_updated": "2025-01-01",
+      "release_date": "2026-04-07",
+      "last_updated": "2026-04-07",
       "open_weights": true,
       "limit": {
         "context": 202800,
@@ -94,13 +108,13 @@ Use this when you want your OpenWork org to manage the Lilac credential and mode
       "tool_call": true,
       "structured_output": true,
       "temperature": true,
-      "release_date": "2025-01-01",
-      "last_updated": "2025-01-01",
-      "open_weights": false,
+      "release_date": "2026-01-27",
+      "last_updated": "2026-01-27",
+      "open_weights": true,
       "limit": {
         "context": 262144,
         "input": 262144,
-        "output": 8192
+        "output": 32768
       },
       "modalities": {
         "input": [
