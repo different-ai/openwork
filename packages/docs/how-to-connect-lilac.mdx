@@ -3,7 +3,9 @@ title: "How to connect Lilac to OpenWork"
 description: "Connect Lilac's OpenAI-compatible API and use models like GLM 5.1 and Kimi K2.5"
 ---
 
-[Lilac](https://getlilac.com) provides an OpenAI-compatible API at `api.getlilac.com`. You can connect it to OpenWork as a custom provider and use any model available on the [Lilac console](https://console.getlilac.com).
+[Lilac](https://getlilac.com) provides affordable GPU inference through an OpenAI-compatible API at `api.getlilac.com/v1`. It supports chat completions, streaming, vision, tool/function calling, reasoning, and structured output — everything OpenWork needs. See [Lilac's OpenAI compatibility docs](https://docs.getlilac.com/inference/openai-compatibility) for the full feature matrix.
+
+You can get an API key from the [Lilac console](https://console.getlilac.com). See [Lilac's API key guide](https://docs.getlilac.com/inference/api-keys) for details.
 
 ## Desktop setup
 
@@ -37,8 +39,6 @@ Set your API key as an environment variable:
 export LILAC_API_KEY="your-api-key"
 ```
 
-You can get an API key from the [Lilac console](https://console.getlilac.com).
-
 Reload the workspace when OpenWork asks, then select a Lilac model from the model picker.
 
 ## Cloud setup (for teams)
@@ -58,38 +58,13 @@ Use this when you want the org to manage the Lilac credential and model list cen
   "env": [
     "LILAC_API_KEY"
   ],
-  "doc": "https://getlilac.com",
+  "doc": "https://docs.getlilac.com/inference/openai-compatibility",
   "api": "https://api.getlilac.com/v1",
   "models": [
     {
       "id": "zai-org/glm-5.1",
       "name": "GLM 5.1",
-      "attachment": false,
-      "reasoning": false,
-      "tool_call": true,
-      "structured_output": true,
-      "temperature": true,
-      "release_date": "2025-01-01",
-      "last_updated": "2025-01-01",
-      "open_weights": false,
-      "limit": {
-        "context": 128000,
-        "input": 128000,
-        "output": 8192
-      },
-      "modalities": {
-        "input": [
-          "text"
-        ],
-        "output": [
-          "text"
-        ]
-      }
-    },
-    {
-      "id": "moonshotai/kimi-k2.5",
-      "name": "Kimi K2.5",
-      "attachment": false,
+      "attachment": true,
       "reasoning": true,
       "tool_call": true,
       "structured_output": true,
@@ -104,7 +79,34 @@ Use this when you want the org to manage the Lilac credential and model list cen
       },
       "modalities": {
         "input": [
+          "text",
+          "image"
+        ],
+        "output": [
           "text"
+        ]
+      }
+    },
+    {
+      "id": "moonshotai/kimi-k2.5",
+      "name": "Kimi K2.5",
+      "attachment": true,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2025-01-01",
+      "last_updated": "2025-01-01",
+      "open_weights": false,
+      "limit": {
+        "context": 128000,
+        "input": 128000,
+        "output": 8192
+      },
+      "modalities": {
+        "input": [
+          "text",
+          "image"
         ],
         "output": [
           "text"
@@ -145,3 +147,10 @@ curl https://api.getlilac.com/v1/chat/completions \
     ]
   }'
 ```
+
+## More Lilac resources
+
+- [Available models](https://docs.getlilac.com/inference/models) — full model catalog with pricing
+- [OpenAI compatibility](https://docs.getlilac.com/inference/openai-compatibility) — supported endpoints and features
+- [Connect to local coding tools](https://docs.getlilac.com/inference/local-tools) — Lilac's own guide for connecting to local dev tools
+- [Pricing](https://docs.getlilac.com/inference/pricing) — per-token pricing details
