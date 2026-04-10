@@ -1,0 +1,147 @@
+---
+title: "How to connect Lilac to OpenWork"
+description: "Connect Lilac's OpenAI-compatible API and use models like GLM 5.1 and Kimi K2.5"
+---
+
+[Lilac](https://getlilac.com) provides an OpenAI-compatible API at `api.getlilac.com`. You can connect it to OpenWork as a custom provider and use any model available on the [Lilac console](https://console.getlilac.com).
+
+## Desktop setup
+
+Add the following to your workspace `.opencode.json` (or `~/.config/opencode/opencode.json` for a global setup):
+
+```json
+{
+  "provider": {
+    "lilac": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Lilac",
+      "options": {
+        "baseURL": "https://api.getlilac.com/v1"
+      },
+      "models": {
+        "zai-org/glm-5.1": {
+          "name": "GLM 5.1"
+        },
+        "moonshotai/kimi-k2.5": {
+          "name": "Kimi K2.5"
+        }
+      }
+    }
+  }
+}
+```
+
+Set your API key as an environment variable:
+
+```bash
+export LILAC_API_KEY="your-api-key"
+```
+
+You can get an API key from the [Lilac console](https://console.getlilac.com).
+
+Reload the workspace when OpenWork asks, then select a Lilac model from the model picker.
+
+## Cloud setup (for teams)
+
+Use this when you want the org to manage the Lilac credential and model list centrally.
+
+1. Open `LLM Providers` in OpenWork Cloud.
+2. Click `Add Provider`.
+3. Switch to `Custom provider`.
+4. Paste the following JSON:
+
+```json
+{
+  "id": "lilac",
+  "name": "Lilac",
+  "npm": "@ai-sdk/openai-compatible",
+  "env": [
+    "LILAC_API_KEY"
+  ],
+  "doc": "https://getlilac.com",
+  "api": "https://api.getlilac.com/v1",
+  "models": [
+    {
+      "id": "zai-org/glm-5.1",
+      "name": "GLM 5.1",
+      "attachment": false,
+      "reasoning": false,
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2025-01-01",
+      "last_updated": "2025-01-01",
+      "open_weights": false,
+      "limit": {
+        "context": 128000,
+        "input": 128000,
+        "output": 8192
+      },
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      }
+    },
+    {
+      "id": "moonshotai/kimi-k2.5",
+      "name": "Kimi K2.5",
+      "attachment": false,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2025-01-01",
+      "last_updated": "2025-01-01",
+      "open_weights": false,
+      "limit": {
+        "context": 128000,
+        "input": 128000,
+        "output": 8192
+      },
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      }
+    }
+  ]
+}
+```
+
+5. Paste your shared `LILAC_API_KEY` credential.
+6. Choose `People access` and/or `Team access`.
+7. Click `Create Provider`.
+
+Then import it into the desktop app:
+
+1. Open `Settings -> Cloud`.
+2. Choose the correct `Active org`.
+3. Under `Cloud providers`, click `Import`.
+4. Reload the workspace when OpenWork asks.
+
+For more detail on the Cloud provider flow, see [Adding a custom LLM provider](/cloud-custom-llm-providers).
+
+## Verifying the connection
+
+After setup, open the model picker in a session. You should see `Lilac · GLM 5.1` and `Lilac · Kimi K2.5` (or whichever models you configured). Select one and send a message to confirm the connection is working.
+
+You can also verify the API directly:
+
+```bash
+curl https://api.getlilac.com/v1/chat/completions \
+  -H "Authorization: Bearer $LILAC_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "zai-org/glm-5.1",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
+```

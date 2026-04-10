@@ -35,6 +35,7 @@ const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   google: "Google",
   openrouter: "OpenRouter",
+  lilac: "Lilac",
 };
 
 const humanizeModelLabel = (value: string) => {

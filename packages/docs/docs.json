@@ -35,6 +35,7 @@
             "pages": [
               "how-to-get-an-anthropic-api-key",
               "how-to-connect-a-custom-provider",
+              "how-to-connect-lilac",
               "importing-a-skill"
             ]
           },
