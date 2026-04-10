@@ -29,4 +29,31 @@ We've also built a [custom skill](https://share.openworklabs.com/b/01KNBQDQAK41V
 
 The following tutorial covers how to [import a custom provider using the skill](https://x.com/getopenwork/status/2034129039317995908?s=20).
 
+### Functional example: Ollama (Qwen3 8B)
+
+This setup a local [Ollama](https://docs.ollama.com/api/openai-compatibility) instance running `qwen3:8b`. 
+
+```
+{
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3:8b": {
+          "name": "Qwen3 8B"
+        }
+      }
+    }
+  }
+}
+```
+
+Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama server is reachable at `http://localhost:11434` with `ollama serve`
+
+Open your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
+
 For teams, you can manage the provider in OpenWork Cloud under [LLM Providers](/cloud-llm-providers), then import it into each workspace from `Settings -> Cloud`.
