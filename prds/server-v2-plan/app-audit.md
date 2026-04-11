@@ -11,6 +11,12 @@ The goal is to document:
 
 The focus is on the client-owned lifecycle: local state, browser APIs, local persistence, parsing, transformations, clipboard, dialogs, routing, rendering, Tauri-bridged local actions, and mixed local-then-server flows.
 
+## Disposition Labels
+
+- `Stay`: should remain in the app because it is transient UI state, presentation logic, or other true client behavior.
+- `Move`: should move behind the server because it is real workspace behavior.
+- `Split`: some UI orchestration or local preprocessing should stay, but the underlying capability should move behind the server.
+
 ## High-Level Lifecycle
 
 1. The frontend boots and restores local shell state.
@@ -20,6 +26,12 @@ The focus is on the client-owned lifecycle: local state, browser APIs, local per
 5. Large parts of the UI remain purely local: layout, drafts, rendering, search, diagnostics, and clipboard/open-file helpers.
 
 ## Shell And Persistent UI State
+
+Disposition guidance:
+
+- all items in this section -> `Stay`
+
+Reasoning: theme, zoom, layout, local preferences, and shell restoration are legitimate client-owned concerns.
 
 ### `theme`
 
@@ -59,6 +71,16 @@ The focus is on the client-owned lifecycle: local state, browser APIs, local per
 
 ## Deep Links And Cloud Session State
 
+Disposition guidance:
+
+- deep-link bridge -> `Stay`
+- deep-link parsing and controller logic -> `Split`
+- Den settings persistence -> `Stay`
+- manual cloud sign-in flow -> `Split`
+- Den template cache -> `Stay`
+
+Reasoning: parsing, routing, and cached cloud session state stay in the UI, but connection/exchange side effects still end up on server or cloud surfaces.
+
 ### deep-link bridge
 
 - What it does: queues native/browser deep links before the app is fully ready and replays them into the running UI.
@@ -90,6 +112,16 @@ The focus is on the client-owned lifecycle: local state, browser APIs, local per
 - Ends up calling: in-memory cache and signals first; initial loads eventually fetch from Den.
 
 ## Workspace Creation And Connection
+
+Disposition guidance:
+
+- `CreateWorkspaceModal` -> `Stay`
+- `createWorkspaceFlow` -> `Split`
+- sandbox creation flow -> `Split`
+- `createRemoteWorkspaceFlow` -> `Split`
+- onboarding/bootstrap branching -> `Stay`
+
+Reasoning: modal state and startup branching stay in the UI, but actual workspace creation/connection/runtime behavior should move behind the server.
 
 ### `CreateWorkspaceModal`
 
@@ -123,6 +155,16 @@ The focus is on the client-owned lifecycle: local state, browser APIs, local per
 
 ## Bundle Import, Share, And Publish
 
+Disposition guidance:
+
+- bundle URL parsing and fetch fallback -> `Stay`
+- bundle schema parsing -> `Stay`
+- bundle workflow store -> `Split`
+- workspace share/export state -> `Split`
+- bundle publishing helpers -> `Split`
+
+Reasoning: parsing and UI state stay client-side, but import/export/share of real workspace capabilities should ultimately be server-owned.
+
 ### bundle URL parsing and fetch fallback
 
 - What it does: parses bundle deep links, cleans bundle-specific query params, rewrites bundle URLs, and chooses fetch strategies.
@@ -154,6 +196,19 @@ The focus is on the client-owned lifecycle: local state, browser APIs, local per
 - Ends up calling: local payload construction first, then OpenWork/Den publish APIs.
 
 ## Session Composer And Session View
+
+Disposition guidance:
+
+- session draft persistence -> `Stay`
+- attachment preprocessing in the composer -> `Stay`
+- prompt and command file-part shaping -> `Split`
+- optimistic session creation and navigation -> `Split`
+- undo, redo, and compact helpers -> `Split`
+- local message search and command palette -> `Stay`
+- message-windowing and render throttling -> `Stay`
+- local file and folder affordances -> `Stay`
+
+Reasoning: drafts, rendering, local search, and client-side attachment prep stay in the UI; real session operations and workspace-aware file semantics should move behind the server.
 
 ### session draft persistence
 
@@ -205,6 +260,16 @@ The focus is on the client-owned lifecycle: local state, browser APIs, local per
 
 ## Skills, Plugins, MCP, And Local Config Editing
 
+Disposition guidance:
+
+- cloud import metadata normalization -> `Split`
+- skills and cloud-sync local prep -> `Split`
+- plugin config editing -> `Move`
+- MCP connection and config flow -> `Split`
+- cloud provider list memoization -> `Stay`
+
+Reasoning: UI-owned shaping and memoization stay local, but config mutation, skills/plugins/MCP capability changes, and other workspace mutations should move behind the server.
+
 ### cloud import metadata normalization
 
 - What it does: parses and rewrites `cloudImports` metadata in workspace config.
@@ -236,6 +301,15 @@ The focus is on the client-owned lifecycle: local state, browser APIs, local per
 - Ends up calling: in-memory cache and local state first; refreshes eventually contact Den or OpenCode.
 
 ## Diagnostics, Reset, And Desktop Utilities
+
+Disposition guidance:
+
+- OpenWork server settings persistence -> `Stay`
+- reset and reload state management -> `Stay`
+- settings diagnostics and export helpers -> `Split`
+- incidental clipboard/open-link helpers -> `Stay`
+
+Reasoning: client preferences, reload state, clipboard, and pure diagnostics remain UI concerns, while diagnostics that package real workspace/runtime state may still rely on server-owned capabilities.
 
 ### OpenWork server settings persistence
 

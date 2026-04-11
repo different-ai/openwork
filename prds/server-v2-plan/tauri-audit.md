@@ -6,6 +6,12 @@ This audit covers the desktop-native layer under `apps/desktop`, especially `app
 
 The goal is to document the desktop app lifecycle and every meaningful place where the desktop shell touches the local system, native runtime, sidecars, files, or OS services.
 
+## Disposition Labels
+
+- `Stay`: should remain in the desktop shell because it is truly native-shell, OS, packaging, windowing, or local UI-hosting behavior.
+- `Move`: should move behind the server because it is real workspace behavior or runtime coordination.
+- `Split`: the trigger or presentation may stay in the desktop shell, but the actual workspace/runtime capability should move behind the server.
+
 ## High-Level Lifecycle
 
 1. Tauri boots the desktop shell.
@@ -20,6 +26,14 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 6. Native file watchers, dialogs, updater checks, and process management continue during the session.
 
 ## App Shell Bootstrap
+
+Disposition guidance:
+
+- `run()` -> `Stay`
+- `stop_managed_services()` -> `Stay`
+- deep-link forwarding helpers -> `Stay`
+- window visibility helpers -> `Stay`
+- `set_dev_app_name()` -> `Stay`
 
 ### `run()`
 
@@ -52,6 +66,15 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 - Ends up calling: macOS process metadata APIs.
 
 ## Dev And Build Pipeline
+
+Disposition guidance:
+
+- `tauri-before-dev.mjs` -> `Stay`
+- `tauri-before-build.mjs` -> `Stay`
+- `prepare-sidecar.mjs` -> `Stay`
+- `dev-windows.mjs` -> `Stay`
+- `chrome-devtools-mcp-shim.ts` -> `Stay`
+- `build.rs` -> `Stay`
 
 ### `tauri-before-dev.mjs`
 
@@ -90,6 +113,20 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 - Ends up calling: compile-time file generation/copy behavior and build metadata injection.
 
 ## OpenCode Engine Lifecycle
+
+Disposition guidance:
+
+- `engine_start()` -> `Move`
+- `spawn_engine()` -> `Move`
+- `find_free_port()` / `build_engine_args()` -> `Move`
+- `engine_stop()` / `engine_restart()` -> `Move`
+- `engine_info()` -> `Split`
+- `engine_doctor()` and related helpers -> `Split`
+- `engine_install()` -> `Split`
+- `EngineManager` -> `Move`
+- `bun_env_overrides()` -> `Move`
+
+Reasoning: the desktop app should keep the ability to launch the OpenWork server, but OpenCode runtime ownership and coordination should move behind the server boundary over time.
 
 ### `engine_start()`
 
@@ -147,6 +184,12 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 
 ## Orchestrator Lifecycle
 
+Disposition guidance:
+
+- all orchestrator lifecycle and sandbox functions in this section -> `Move`
+
+Reasoning: these are runtime and workspace orchestration concerns, not UI concerns.
+
 ### `spawn_orchestrator_daemon()`
 
 - What it does: launches the OpenWork orchestrator daemon sidecar.
@@ -203,6 +246,18 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 
 ## Hosted OpenWork Server Lifecycle
 
+Disposition guidance:
+
+- `start_openwork_server()` -> `Stay`
+- `spawn_openwork_server()` -> `Stay`
+- `resolve_openwork_port()` -> `Stay`
+- token and state helpers in `openwork_server/mod.rs` -> `Stay`
+- `build_urls()` -> `Stay`
+- `openwork_server_info()` / `openwork_server_restart()` -> `Stay`
+- `OpenworkServerManager` -> `Stay`
+
+Reasoning: this is the desktop shell doing the one thing it should keep doing in the target model: launching and supervising the local OpenWork server process.
+
 ### `start_openwork_server()`
 
 - What it does: starts the local desktop-hosted OpenWork server and tracks its tokens, URLs, and health.
@@ -247,6 +302,12 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 
 ## OpenCodeRouter Lifecycle
 
+Disposition guidance:
+
+- all router lifecycle and router config functions in this section -> `Move`
+
+Reasoning: router ownership is runtime coordination and should become part of server-owned workspace behavior.
+
 ### `opencodeRouter_start()`
 
 - What it does: starts the router sidecar and captures its startup state.
@@ -278,6 +339,20 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 - Ends up calling: router CLI config writes.
 
 ## Workspace State, Files, And Watchers
+
+Disposition guidance:
+
+- `workspace_bootstrap()` -> `Split`
+- workspace state load/save/repair helpers -> `Stay`
+- `workspace_create()` -> `Move`
+- `ensure_workspace_files()` -> `Move`
+- enterprise creator skills seeding helpers -> `Move`
+- remote workspace create/update/forget/set-selected/set-runtime-active helpers -> `Split`
+- authorized-root and `openwork.json` read/write helpers -> `Move`
+- workspace import/export config helpers -> `Move`
+- workspace watch/update helpers -> `Move`
+
+Reasoning: the app should keep only the local registry of servers/workspaces and selection state. Real workspace mutation, file writes, config writes, import/export, and reload watching should move behind the server.
 
 ### `workspace_bootstrap()`
 
@@ -335,6 +410,15 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 
 ## Local Config, Commands, And Skills
 
+Disposition guidance:
+
+- `read_opencode_config()` / `write_opencode_config()` -> `Move`
+- command-file functions -> `Move`
+- skill functions -> `Move`
+- `copy_dir_recursive()` -> `Move`
+
+Reasoning: these are explicit workspace/config mutation capabilities and belong to the server.
+
 ### `read_opencode_config()` / `write_opencode_config()`
 
 - What they do: read and write local or global `opencode.json[c]` files.
@@ -361,6 +445,15 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 
 ## Dialogs, Windowing, Deep Links, Updater
 
+Disposition guidance:
+
+- dialog wrappers -> `Stay`
+- `set_window_decorations()` -> `Stay`
+- deep-link scheme config and bridge -> `Stay`
+- `updater_environment()` -> `Stay`
+
+Reasoning: these are true desktop-shell concerns.
+
 ### dialog wrappers used by the frontend
 
 - What they do: open native file/folder/save dialogs.
@@ -386,6 +479,17 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 - Ends up calling: executable/app-bundle path inspection.
 
 ## Scheduler, Reset, Cache, Auth
+
+Disposition guidance:
+
+- scheduler commands -> `Move`
+- `reset_opencode_cache()` -> `Split`
+- `reset_openwork_state()` -> `Split`
+- `nuke_openwork_and_opencode_config_and_exit()` -> `Split`
+- `opencode_mcp_auth()` -> `Move`
+- `app_build_info()` -> `Stay`
+
+Reasoning: job/MCP/runtime behavior should move to the server, while destructive app reset and app metadata remain partly shell-owned.
 
 ### scheduler commands
 
@@ -424,6 +528,14 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 - Ends up calling: compile-time metadata reads only.
 
 ## Supporting Native Path And Platform Helpers
+
+Disposition guidance:
+
+- PATH helpers -> `Stay`
+- platform process-launch helpers -> `Stay`
+- Tauri capability manifest -> `Stay`
+
+Reasoning: these are implementation details of the native desktop shell itself.
 
 ### `prepended_path_env()` / `sidecar_path_candidates()`
 
