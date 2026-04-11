@@ -34,8 +34,38 @@ This means:
 - The V2 API contract is explicit and typed.
 - Clients depend on generated contracts and a small app-side SDK adapter, not server internals.
 - Multi-server routing is explicit at the client boundary.
+- The desktop app is a thin interface layer, not a second workspace runtime.
+- Workspace behavior belongs to the server, even when the server is hosted locally by the desktop app.
 - Migration happens by vertical slice, not by broad framework churn.
 - Legacy code should be deleted as soon as each migrated slice is complete.
+
+## Ownership Boundary
+
+The architecture should enforce a simple rule:
+
+- the app presents and collects intent
+- the server performs workspace work
+
+### Desktop app owns
+
+- local UI state
+- navigation and presentation state
+- drafts, filters, and transient client-side interaction state
+- the list of known servers
+- the list of known workspaces that belong to each server
+- starting or connecting to server processes
+
+### Server owns
+
+- workspace reads
+- workspace writes
+- AI/session/task behavior
+- project/runtime inspection
+- skill, plugin, MCP, and config mutation
+- OpenCode integration and sidecar/runtime coordination
+- any other workspace-scoped capability that is more than transient UI state
+
+This boundary applies even in desktop-hosted mode. Running on the same machine does not make the UI the right owner of workspace behavior.
 
 ## Server Layout
 
@@ -124,6 +154,7 @@ Hono route + schema definitions
 - The SDK stays in sync through generation.
 - App code gets strong typing without importing server implementation.
 - A tiny app-side adapter remains free to handle runtime-specific decisions without replacing the generated SDK.
+- The app can stay thin because the contract surface represents real workspace capabilities, not just transport helpers.
 
 ## OpenAPI and SDK Generation
 
@@ -147,6 +178,7 @@ packages/openwork-server-sdk/src/index.ts
 - The app-facing entrypoint should look like `createSdk({ serverId })`.
 - `createSdk({ serverId })` should resolve `serverId` into base URL, token, and capabilities locally, then prepare the generated client.
 - `createSdk({ serverId })` should stay lightweight enough that it can be called per use without meaningful overhead.
+- The SDK surface should grow until app-owned workspace behavior shrinks to near zero.
 
 `hono-openapi` should be treated as the spec-generation layer only:
 
@@ -232,6 +264,7 @@ generated SDK
 - typed request and response shapes
 - typed route methods
 - low-level transport helpers
+- representing server-owned workspace capabilities in a reusable client surface
 
 ### Thin adapter responsibilities
 
@@ -242,6 +275,8 @@ generated SDK
 - add capability checks when needed
 
 The adapter should not rebuild a second large API model on top of the generated SDK unless there is a strong reason.
+
+It also should not become a place where workspace behavior is reimplemented in the app.
 
 ## Multi-Server Target Model
 
@@ -255,6 +290,14 @@ The important distinction is:
 Those are related, but they are not the same thing.
 
 The app should maintain a list of workspaces. Each workspace record should know which configured server it belongs to, and what that workspace's ID is on that server.
+
+That model is intentionally minimal. The app needs enough local state to know:
+
+- which servers exist
+- which workspaces belong to which server
+- which workspace is selected in the UI
+
+It should not need to locally own the underlying workspace behavior itself.
 
 That allows:
 
@@ -337,6 +380,8 @@ feature resolves workspace -> server target
 
 This keeps migration logic out of the UI.
 
+The more of the product surface we move behind the server, the less special-case behavior the app needs to keep locally.
+
 ## Streaming Strategy
 
 The app should consume OpenCode-related streaming only through the OpenWork server.
@@ -388,7 +433,16 @@ Rules:
 
 - migrate one slice fully enough to validate the pattern
 - switch that slice's adapter routing to V2
+- remove app-owned workspace logic for that slice when the server version is ready
 - remove legacy code when the slice no longer needs V1
+
+Example categories to move behind the server over time:
+
+1. workspace file reads and writes
+2. workspace config mutation
+3. skill/plugin/MCP mutation
+4. project/runtime inspection
+5. session/task execution behavior
 
 ## Error and Compatibility Model
 
@@ -436,6 +490,12 @@ We can remove the legacy server code when:
 - the current server entrypoint only exists as the V2 entrypoint, or is replaced entirely
 
 At that point, V2 stops being a migration concept and becomes the server.
+
+The same spirit applies to the client boundary:
+
+- the app still owns local UI state
+- but workspace capabilities should no longer be split between app and server
+- the server should be the clear owner of workspace behavior
 
 ## Open Decisions
 

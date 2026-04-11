@@ -15,6 +15,7 @@ The new server surface will be a Hono app. In the short term, the current server
 - Run Server V2 inside the current `apps/server` process at first so we can migrate incrementally.
 - Mount the new Hono app on a separate subpath so V1 and V2 can coexist.
 - Keep full TypeScript type safety across server routes, generated clients, and the app-side SDK adapter.
+- Make the desktop app a thin client that starts the server, maintains local UI state, and sends all workspace behavior through the server.
 - Give the desktop app a clean migration layer so it can switch to new server paths bit by bit.
 - End with all active server behavior living in the new code, after which the old server code can be deleted.
 
@@ -24,6 +25,7 @@ The new server surface will be a Hono app. In the short term, the current server
 - Repointing all desktop traffic in one release.
 - Keeping both architectures around indefinitely.
 - Rewriting storage or domain behavior unless it is required for the new server path.
+- Preserving Tauri-only or app-only workspace capabilities as a permanent parallel system.
 
 ## Working Approach
 
@@ -68,7 +70,28 @@ Rule: new server functionality goes into `v2/` files, not into legacy handlers, 
 
 ### 3. Migrate the desktop app through an explicit API layer
 
-The desktop app should not scatter raw server paths throughout the UI. To move incrementally, it needs a small client-side API layer that can decide whether a feature calls V1 or V2.
+The desktop app should not scatter raw server paths throughout the UI. More importantly, it should stop owning workspace behavior directly.
+
+The target model is:
+
+- the desktop app spins up or connects to servers
+- the desktop app maintains local UI state and a list of connected servers
+- the desktop app maintains a list of workspaces that belong to those servers
+- all real workspace operations go through the server
+
+That means the desktop app should not be the long-term owner of:
+
+- file reads
+- file writes
+- workspace mutation
+- AI/session/task operations
+- project/runtime inspection
+- skill/plugin/config mutation
+- other workspace-scoped business logic
+
+Those should become server responsibilities, even in desktop-hosted mode.
+
+To move incrementally, the app needs a small client-side API layer that can decide whether a feature calls V1 or V2.
 
 That layer should:
 
@@ -86,6 +109,34 @@ desktop feature
 ```
 
 This lets the backend and frontend migrate independently but in a coordinated way.
+
+## Ownership Boundary
+
+The long-term ownership boundary should be explicit.
+
+### Desktop app responsibilities
+
+- launch or connect to one or more servers
+- maintain local UI state
+- maintain presentation state, navigation state, drafts, and preferences
+- maintain a list of known servers and a list of workspaces that belong to those servers
+- render server-backed data and send user intent to the server
+
+### Server responsibilities
+
+- own all workspace-scoped behavior
+- own all file reads and writes
+- own all AI, session, and task execution behavior
+- own project discovery and runtime inspection
+- own skill, plugin, MCP, and config mutation
+- own local-runtime integration with OpenCode and related sidecars
+- expose all of that through a stable API surface for the app
+
+### Rule of thumb
+
+If something is a real workspace capability rather than transient UI state, it should live behind the server.
+
+The app is the interface. The server does the work.
 
 ## Route Strategy
 
@@ -137,6 +188,7 @@ packages/openwork-server-sdk/
 - App features should call a single app-side entrypoint such as `createSdk({ serverId })`.
 - `createSdk({ serverId })` should resolve server config locally and prepare a typed client with the correct base URL and token.
 - The app should not pass raw `baseUrl` and `token` around feature code.
+- The app should not implement parallel workspace behavior when that behavior can be expressed as a server capability.
 - For standard JSON endpoints, the generated SDK should be the primary client surface.
 - For the one or two SSE endpoints, we may need small handwritten streaming helpers exposed from the same SDK package.
 - `hono-openapi` covers contract generation, not the full client story; SDK generation and SSE helpers remain separate concerns.
@@ -211,6 +263,7 @@ That makes contract drift visible immediately and keeps the generated client tru
 - Add OpenAPI generation for the V2 app, likely via `hono-openapi`.
 - Add a generated TypeScript SDK package for V2.
 - Add an app-side `createSdk({ serverId })` adapter before migrating individual features.
+- Document which desktop-owned capabilities must move behind the server over time.
 
 Success criteria:
 
@@ -271,6 +324,10 @@ Success criteria:
 
 To migrate safely, the desktop app should introduce a server-facing boundary before moving features.
 
+The desired end state is not just route migration. It is responsibility migration.
+
+The desktop app should become a thin client.
+
 Requirements:
 
 - one module owns server resolution from `serverId`
@@ -278,6 +335,9 @@ Requirements:
 - route selection can happen per endpoint or per feature area
 - the target server is selected explicitly by `serverId`, not hidden global state
 - it is easy to see which calls are still on V1 versus V2
+- the app only owns transient UI state, not durable workspace behavior
+- the app can list known servers and the workspaces available within each server
+- workspace reads, writes, AI actions, and config mutations should route through the server
 
 Nice-to-have follow-ups:
 
@@ -334,6 +394,8 @@ The generated SDK should stay transport-level and typed. The thin handwritten ad
 - lightweight client preparation
 - capability checks and fallbacks
 
+It should not grow into a second workspace engine inside the app.
+
 ### SSE endpoint strategy
 
 Most V2 endpoints should be standard request/response endpoints covered directly by the generated SDK.
@@ -356,11 +418,14 @@ Goal:
 - **Compatibility first**: mount V2 inside the current server before attempting any infrastructure split.
 - **One slice at a time**: move vertical feature slices instead of mixing many partial migrations.
 - **Explicit routing**: desktop traffic should choose V1 or V2 intentionally, not accidentally.
+- **Server-owned workspace behavior**: file access, AI/runtime behavior, project/config mutation, and other workspace capabilities belong to the server, not the UI.
+- **Thin desktop app**: the app should mainly launch/connect servers, hold local presentation state, and render server-backed workflows.
 - **Delete as you go**: once a feature is fully on V2, remove the corresponding legacy code instead of letting both versions linger.
 
 ## Risks
 
 - The desktop app may have too many direct server path references, making migration noisy until a client boundary exists.
+- The desktop app currently owns native and local behavior that should eventually move behind the server boundary.
 - Shared auth/session/runtime behavior may be entangled with the legacy server boot path.
 - V1 and V2 payloads may drift if both are maintained for too long.
 - If the V2 prefix is treated as temporary, migration may stall and leave two permanent APIs.
@@ -381,5 +446,6 @@ Goal:
 4. Create a TypeScript SDK package generated from the V2 OpenAPI spec.
 5. Add `createSdk({ serverId })` so the app resolves server config without passing raw URLs and tokens around.
 6. Define the one or two SSE endpoints and their typed event payloads.
-7. Identify the first low-risk endpoint group to migrate.
-8. Port the first feature slice end to end and use it as the template for the rest.
+7. Inventory desktop-owned workspace capabilities and prioritize which ones move behind the server first.
+8. Identify the first low-risk endpoint group to migrate.
+9. Port the first feature slice end to end and use it as the template for the rest.
