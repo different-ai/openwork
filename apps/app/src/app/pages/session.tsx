@@ -3266,7 +3266,7 @@ export default function SessionView(props: SessionViewProps) {
                 }}
               >
                 <div
-                  class="mx-auto h-full w-full max-w-[800px]"
+                  class="mx-auto w-full max-w-[800px]"
                   ref={(el) => {
                     chatContentEl = el;
                   }}
