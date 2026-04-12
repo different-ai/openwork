@@ -165,6 +165,10 @@ export type SettingsViewProps = {
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   appVersion: string | null;
+  showClickyExperimentSetting: boolean;
+  clickyExperimentEnabled: boolean;
+  clickyExperimentForcedByEnv: boolean;
+  toggleClickyExperiment: () => void;
   checkForUpdates: () => void;
   downloadUpdate: () => void;
   installUpdateAndRestart: () => void;
@@ -2039,6 +2043,40 @@ export default function SettingsView(props: SettingsViewProps) {
                     : t("settings.developer_panel_disabled")}
                 </div>
               </div>
+              <Show when={props.showClickyExperimentSetting}>
+                <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">
+                        {t("settings.clicky_experiment_title")}
+                      </div>
+                      <div class="text-xs text-gray-9">
+                        {t("settings.clicky_experiment_desc")}
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 py-0 px-3 shrink-0"
+                      onClick={props.toggleClickyExperiment}
+                      disabled={props.clickyExperimentForcedByEnv}
+                    >
+                      {props.clickyExperimentEnabled
+                        ? t("settings.disable_clicky_experiment")
+                        : t("settings.enable_clicky_experiment")}
+                    </Button>
+                  </div>
+                  <div class="text-xs text-gray-10">
+                    {props.clickyExperimentEnabled
+                      ? t("settings.clicky_experiment_enabled")
+                      : t("settings.clicky_experiment_disabled")}
+                  </div>
+                  <Show when={props.clickyExperimentForcedByEnv}>
+                    <div class="text-[11px] text-blue-11">
+                      {t("settings.clicky_experiment_forced")}
+                    </div>
+                  </Show>
+                </div>
+              </Show>
               <Show when={isTauriRuntime() && opencodeDevModeEnabled() && props.developerMode}>
                 <div class={`${settingsPanelSoftClass} p-4 space-y-3`}>
                   <div class="flex items-start justify-between gap-3">

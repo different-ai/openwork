@@ -221,6 +221,10 @@ export type SettingsShellProps = {
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   appVersion: string | null;
+  showClickyExperimentSetting: boolean;
+  clickyExperimentEnabled: boolean;
+  clickyExperimentForcedByEnv: boolean;
+  toggleClickyExperiment: () => void;
   checkForUpdates: () => void;
   downloadUpdate: () => void;
   installUpdateAndRestart: () => void;
@@ -1210,6 +1214,10 @@ export default function SettingsShell(props: SettingsShellProps) {
                   updateStatus={props.updateStatus}
                   updateEnv={props.updateEnv}
                   appVersion={props.appVersion}
+                  showClickyExperimentSetting={props.showClickyExperimentSetting}
+                  clickyExperimentEnabled={props.clickyExperimentEnabled}
+                  clickyExperimentForcedByEnv={props.clickyExperimentForcedByEnv}
+                  toggleClickyExperiment={props.toggleClickyExperiment}
                   checkForUpdates={props.checkForUpdates}
                   downloadUpdate={props.downloadUpdate}
                   installUpdateAndRestart={props.installUpdateAndRestart}

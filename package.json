@@ -4,9 +4,11 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
+    "dev:clicky": "OPENWORK_DEV_MODE=1 VITE_OPENWORK_EXPERIMENT_CLICKY=1 pnpm --filter @openwork/desktop dev",
     "dev:windows": ".\\scripts\\dev-windows.cmd",
     "dev:windows:x64": ".\\scripts\\dev-windows.cmd x64",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
+    "dev:ui:clicky": "OPENWORK_DEV_MODE=1 VITE_OPENWORK_EXPERIMENT_CLICKY=1 pnpm --filter @openwork/app dev",
     "dev:ui-demo": "pnpm --filter @openwork/ui-demo dev",
     "dev:story": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/story-book dev",
     "dev:web": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork-ee/den-web dev",

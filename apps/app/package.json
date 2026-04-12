@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 vite",
+    "dev:clicky": "OPENWORK_DEV_MODE=1 VITE_OPENWORK_EXPERIMENT_CLICKY=1 vite",
     "dev:windows": "vite",
     "prebuild": "pnpm --dir ../../packages/ui build",
     "build": "vite build",

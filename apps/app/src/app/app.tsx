@@ -33,6 +33,12 @@ import { createDeepLinksController } from "./shell/deep-links";
 import SettingsShell from "./shell/settings-shell";
 import TopRightNotifications from "./shell/top-right-notifications";
 import { createStatusToastsStore, StatusToastsProvider } from "./shell/status-toasts";
+import ClickyCompanion from "./shell/clicky/companion";
+import {
+  clickyExperimentForcedByEnv,
+  readClickyExperimentPreference,
+  writeClickyExperimentPreference,
+} from "./shell/clicky/feature-flag";
 import {
   CreateRemoteWorkspaceModal,
   CreateWorkspaceModal,
@@ -764,6 +770,13 @@ export default function App() {
   const { refreshMcpServers } = connectionsStore;
 
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
+  const [clickyExperimentPreference, setClickyExperimentPreference] = createSignal(
+    readClickyExperimentPreference(),
+  );
+  const clickyExperimentForced = clickyExperimentForcedByEnv();
+  const clickyExperimentEnabled = createMemo(
+    () => clickyExperimentForced || clickyExperimentPreference(),
+  );
   const {
     defaultModel,
     selectedSessionModel,
@@ -774,6 +787,7 @@ export default function App() {
     modelVariant,
     sessionModelVariantLabel,
     sessionModelBehaviorOptions,
+    setPendingSessionModel,
     setSessionModelVariant,
     sanitizeModelVariantForRef,
     resolveCodexReasoningEffort,
@@ -792,6 +806,7 @@ export default function App() {
     autoCompactContext,
     toggleAutoCompactContext,
     autoCompactContextSaving,
+    clearPendingSessionChoice,
   } = modelConfig;
 
   workspaceStore = createWorkspaceStore({
@@ -1626,6 +1641,31 @@ export default function App() {
     setView("settings");
   }
 
+  function openSettingsTab(tab: SettingsTab) {
+    setSettingsTab(tab);
+    setView("settings");
+  }
+
+  const resolveClickyModel = () => {
+    const preferred = selectedSessionModel();
+    const preferredConnected = modelOptions().some(
+      (option) =>
+        option.isConnected &&
+        option.providerID === preferred.providerID &&
+        option.modelID === preferred.modelID,
+    );
+    if (preferredConnected) {
+      return preferred;
+    }
+
+    const fallback = modelOptions().find((option) => option.isConnected);
+    if (!fallback) return null;
+    return {
+      providerID: fallback.providerID,
+      modelID: fallback.modelID,
+    };
+  };
+
 
   onMount(async () => {
     const startupPref = readStartupPreference();
@@ -1715,7 +1755,6 @@ export default function App() {
             // ignore
           }
         }
-
         const storedUpdateAutoCheck = window.localStorage.getItem(
           "openwork.updateAutoCheck"
         );
@@ -1905,6 +1944,11 @@ export default function App() {
         // ignore errors (e.g., window not ready)
       });
     }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    writeClickyExperimentPreference(clickyExperimentPreference());
   });
 
   createEffect(() => {
@@ -2160,6 +2204,11 @@ export default function App() {
       updateStatus: updateStatus(),
       updateEnv: updateEnv(),
       appVersion: appVersion(),
+      showClickyExperimentSetting:
+        developerMode() || clickyExperimentEnabled() || clickyExperimentForced,
+      clickyExperimentEnabled: clickyExperimentEnabled(),
+      clickyExperimentForcedByEnv: clickyExperimentForced,
+      toggleClickyExperiment: () => setClickyExperimentPreference((value) => !value),
       checkForUpdates: () => checkForUpdates(),
       downloadUpdate: () => downloadUpdate(),
       installUpdateAndRestart,
@@ -2445,6 +2494,37 @@ export default function App() {
                 <SettingsShell {...settingsShellProps()} />
               </Match>
             </Switch>
+
+      <ClickyCompanion
+        appVersion={appVersion()}
+        currentView={currentView()}
+        developerMode={developerMode()}
+        enabled={clickyExperimentEnabled()}
+        forcedByEnv={clickyExperimentForced}
+        openworkServerStatus={openworkServerStatus()}
+        providerConnectedCount={providerConnectedIds().length}
+        selectedWorkspace={selectedWorkspaceDisplay()}
+        settingsTab={settingsTab()}
+        onAsk={async (_question, prompt) => {
+          const clickyModel = resolveClickyModel();
+          if (!clickyModel) {
+            throw new Error("Clicky needs a connected model before it can start a guided session.");
+          }
+          setPendingSessionModel(clickyModel);
+          const sessionId = await createSessionAndOpen();
+          if (!sessionId) {
+            clearPendingSessionChoice();
+            throw new Error("Couldn't start a Clicky session.");
+          }
+          await sendPrompt({
+            mode: "prompt",
+            text: prompt,
+            parts: [{ type: "text", text: prompt }],
+            attachments: [],
+          });
+        }}
+        onOpenSettings={openSettingsTab}
+      />
 
       <ModelPickerModal
         open={modelPickerOpen()}
