@@ -8,12 +8,13 @@ pub fn now_ms() -> u64 {
 }
 
 pub fn truncate_output(input: &str, max_chars: usize) -> String {
-    if input.len() <= max_chars {
+    let char_count = input.chars().count();
+    if char_count <= max_chars {
         return input.to_string();
     }
 
     input
         .chars()
-        .skip(input.chars().count() - max_chars)
+        .skip(char_count - max_chars)
         .collect()
 }
