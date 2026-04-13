@@ -214,8 +214,8 @@ export async function POST(request: Request) {
       transactionalId,
       email: internalEmail,
       dataVariables: {
-        name,
-        email,
+        senderName: name,
+        senderEmail: email,
         message: formattedMessage,
         source: context.source || "openwork-app",
         entrypoint: context.entrypoint || "unknown",

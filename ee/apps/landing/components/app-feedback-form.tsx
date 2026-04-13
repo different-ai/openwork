@@ -166,7 +166,6 @@ export function AppFeedbackForm(props: Props) {
     return data.attachment;
   };
 
-  const isBusy = state === "loading";
   const submitLabel =
     state === "loading"
       ? selectedImage && !uploadedAttachment
@@ -303,7 +302,7 @@ export function AppFeedbackForm(props: Props) {
                     onChange={(event) => setName(event.target.value)}
                     placeholder="Jane Doe"
                     className="w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-[15px] text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
-                    disabled={isBusy}
+                    disabled={state === "loading"}
                     autoComplete="name"
                     required
                   />
@@ -318,7 +317,7 @@ export function AppFeedbackForm(props: Props) {
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="jane@company.com"
                     className="w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-[15px] text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
-                    disabled={isBusy}
+                    disabled={state === "loading"}
                     autoComplete="email"
                     required
                   />
@@ -334,7 +333,7 @@ export function AppFeedbackForm(props: Props) {
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder="What were you trying to do? What did you expect? What actually happened?"
                   className="min-h-[220px] w-full rounded-[1.5rem] border border-slate-200 bg-white px-4 py-4 text-[15px] leading-relaxed text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
-                  disabled={isBusy}
+                  disabled={state === "loading"}
                   required
                 />
               </div>
@@ -348,7 +347,7 @@ export function AppFeedbackForm(props: Props) {
 
               <button
                 type="submit"
-                disabled={isBusy}
+                disabled={state === "loading"}
                 className="doc-button inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {state === "loading" ? (
@@ -397,14 +396,14 @@ export function AppFeedbackForm(props: Props) {
               accept={ACCEPTED_IMAGE_TYPES.join(",")}
               className="hidden"
               onChange={(event) => selectImage(event.target.files?.[0] ?? null)}
-              disabled={isBusy}
+              disabled={state === "loading"}
             />
             <div
               role="button"
               tabIndex={0}
-              onClick={() => !isBusy && inputRef.current?.click()}
+              onClick={() => !state === "loading" && inputRef.current?.click()}
               onKeyDown={(event) => {
-                if (isBusy) return;
+                if (state === "loading") return;
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   inputRef.current?.click();
@@ -412,7 +411,7 @@ export function AppFeedbackForm(props: Props) {
               }}
               onDragOver={(event) => {
                 event.preventDefault();
-                if (!isBusy) setDragActive(true);
+                if (!state === "loading") setDragActive(true);
               }}
               onDragLeave={(event) => {
                 event.preventDefault();
@@ -421,10 +420,10 @@ export function AppFeedbackForm(props: Props) {
               onDrop={(event) => {
                 event.preventDefault();
                 setDragActive(false);
-                if (isBusy) return;
+                if (state === "loading") return;
                 selectImage(event.dataTransfer.files?.[0] ?? null);
               }}
-              className={`mt-3 rounded-[1rem] border border-dashed px-3 py-2.5 transition ${dragActive ? "border-sky-300 bg-sky-400/10" : "border-white/15 bg-white/[0.04] hover:border-white/30 hover:bg-white/[0.06]"} ${isBusy ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+              className={`mt-3 rounded-[1rem] border border-dashed px-3 py-2.5 transition ${dragActive ? "border-sky-300 bg-sky-400/10" : "border-white/15 bg-white/[0.04] hover:border-white/30 hover:bg-white/[0.06]"} ${state === "loading" ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
               aria-label="Add a screenshot"
             >
               {selectedImage ? (
@@ -453,7 +452,7 @@ export function AppFeedbackForm(props: Props) {
                       event.stopPropagation();
                       clearImage();
                     }}
-                    disabled={isBusy}
+                    disabled={state === "loading"}
                     className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2.5 py-1.5 text-[12px] font-medium text-slate-200 transition hover:border-white/30 hover:bg-white/10 hover:text-white"
                   >
                     <X size={13} />
