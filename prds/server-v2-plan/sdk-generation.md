@@ -7,14 +7,15 @@
 
 This document defines the preferred toolchain for generating the Server V2 TypeScript SDK and how that generation should fit into local development and CI.
 
-## Chosen Direction
+## Current Recommendation
 
 Preferred stack:
 
 - OpenAPI spec generation: `hono-openapi`
 - TypeScript SDK generation: `@hey-api/openapi-ts`
-- App entrypoint: `createSdk({ serverId })`
-- SSE support: small handwritten helpers exposed from the same SDK package
+- Reusable client package: `packages/openwork-server-sdk`
+- App entrypoint: app-owned `createSdk({ serverId })`
+- SSE support: small handwritten helpers exposed from the SDK package, then wrapped by the app adapter
 
 ## Why `@hey-api/openapi-ts`
 
@@ -28,7 +29,7 @@ It is the leading SDK generator candidate because it fits the current plan well:
 Compared with `openapi-typescript` + `openapi-fetch`:
 
 - `openapi-fetch` is lightweight and good, but it encourages a path-shaped client surface
-- `@hey-api/openapi-ts` is a better fit for the method-based SDK style we want under `createSdk({ serverId })`
+- `@hey-api/openapi-ts` is a better fit for the method-based SDK style we want underneath the app-side adapter
 
 ## Important Caveat
 
@@ -60,22 +61,32 @@ Role:
 
 Output:
 
-- `packages/openwork-server-sdk/src/generated/**`
+- `packages/openwork-server-sdk/generated/**`
 
-### 3. Handwritten package files
+### 3. Handwritten SDK package files
+
+Role:
+
+- expose server-agnostic helpers over the generated client
+- expose small typed SSE helpers
+
+Files:
+
+- `packages/openwork-server-sdk/src/index.ts`
+- `packages/openwork-server-sdk/src/streams/**`
+
+### 4. App-side adapter
 
 Role:
 
 - export the app-facing `createSdk({ serverId })`
 - resolve `serverId` to current runtime config
 - inject base URL and auth/token
-- expose small typed SSE helpers
+- select between legacy and V2 behavior during migration
 
 Files:
 
-- `packages/openwork-server-sdk/src/index.ts`
-- `packages/openwork-server-sdk/src/create-sdk.ts`
-- `packages/openwork-server-sdk/src/streams/**`
+- `apps/app/.../createSdk.ts`
 
 ## Proposed Package Layout
 
@@ -88,18 +99,20 @@ apps/server/
 packages/openwork-server-sdk/
 ├── package.json
 ├── openapi-ts.config.ts
+├── generated/**
 ├── src/
-│   ├── generated/**
-│   ├── create-sdk.ts
 │   ├── streams/
 │   └── index.ts
 └── scripts/
     └── watch.mjs
+
+apps/app/
+└── ... app-side `createSdk({ serverId })` adapter
 ```
 
 ## App-Facing Shape
 
-The package should expose a single app-facing entrypoint:
+The overall app-facing shape should be:
 
 ```ts
 await createSdk({ serverId }).sessions.listMessages({ workspaceId, sessionId })
@@ -108,8 +121,9 @@ await createSdk({ serverId }).sessions.listMessages({ workspaceId, sessionId })
 That means:
 
 - generated methods remain the main surface for normal endpoints
-- `createSdk({ serverId })` is the thin runtime adapter
-- SSE helpers live behind the same package boundary
+- `createSdk({ serverId })` is an app-owned thin runtime adapter
+- the reusable SDK package stays server-agnostic
+- SSE helpers live in the SDK package and are wrapped by the app adapter as needed
 
 ## Generation Flow
 
@@ -120,7 +134,7 @@ apps/server/src/v2/**
 -> hono-openapi
 -> apps/server/openapi/v2.json
 -> @hey-api/openapi-ts
--> packages/openwork-server-sdk/src/generated/**
+-> packages/openwork-server-sdk/generated/**
 ```
 
 ## Scripts Shape
@@ -160,7 +174,7 @@ Notes:
 
 - `generate` should run `@hey-api/openapi-ts` against `apps/server/openapi/v2.json`
 - `watch` can be a small file watcher that reruns `generate` when `v2.json` changes
-- `typecheck` ensures the generated output and handwritten adapter still compile together
+- `typecheck` ensures the generated output and handwritten SDK helpers still compile together
 
 ### Root `package.json`
 
@@ -197,7 +211,7 @@ Examples:
   - run backend dev watch
   - run OpenAPI watch
   - run SDK watch
-  - optionally run app dev
+  - run app dev, which includes the app-side adapter
 
 This gives us full control over debounce behavior, ignores, and restart-loop prevention.
 
@@ -238,7 +252,7 @@ Recommended split:
 
 - normal request/response endpoints: generated with `@hey-api/openapi-ts`
 - SSE helpers: handwritten in `packages/openwork-server-sdk/src/streams/**`
-- typed event payloads: shared from server-owned schema definitions or generated types where practical
+- typed event payloads: generated or shared contract types only, never imported directly from server source
 
 This keeps the custom surface small.
 
@@ -248,7 +262,7 @@ We should plan around:
 
 - `hono-openapi` for OpenAPI generation
 - `@hey-api/openapi-ts` for SDK generation
-- `createSdk({ serverId })` as the app-facing entrypoint
+- app-owned `createSdk({ serverId })` as the app-facing entrypoint
 - small handwritten SSE helpers for the limited streaming surface
 
 This is the most balanced path between strong typing, monorepo ergonomics, explicit contracts, and low ongoing maintenance.

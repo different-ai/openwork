@@ -38,7 +38,7 @@ Each loop watches its own inputs and reacts only to the changes it actually care
 apps/server/src/v2/**
 -> server watch reloads server runtime
 -> OpenAPI watch regenerates apps/server/openapi/v2.json
--> SDK watch regenerates packages/openwork-server-sdk/src/generated/**
+-> SDK watch regenerates packages/openwork-server-sdk/generated/**
 -> app dev server sees workspace package changes
 -> app recompiles with updated types and methods
 ```
@@ -96,7 +96,7 @@ Input:
 
 Output:
 
-- `packages/openwork-server-sdk/src/generated/**`
+- `packages/openwork-server-sdk/generated/**`
 
 Notes:
 
@@ -113,20 +113,22 @@ Purpose:
 Inputs:
 
 - `apps/app/**`
-- `packages/openwork-server-sdk/src/**`
+- `packages/openwork-server-sdk/**`
 
 Notes:
 
 - the app should consume the SDK package through a workspace dependency
+- the app should own the thin `createSdk({ serverId })` adapter that resolves local server config
 - in dev, the SDK package should preferably expose TypeScript source directly rather than requiring a full `dist/` build on every change
 
 ## Preferred SDK Package Dev Shape
 
 To keep iteration fast, `packages/openwork-server-sdk` should ideally work like this in development:
 
-- generated files land in `src/generated/**`
-- handwritten files like `src/index.ts` and SSE helpers live beside them
+- generated files land in `generated/**`
+- handwritten SDK files like `src/index.ts` and SSE helpers live beside them
 - the app imports the package source through the workspace
+- the app keeps `createSdk({ serverId })` in app code rather than in the reusable SDK package
 - Vite and TypeScript pick up changes automatically
 
 That avoids a slow extra cycle like:
@@ -153,12 +155,12 @@ or directly:
 await createSdk({ serverId }).sessions.listMessages({ workspaceId, sessionId })
 ```
 
-`createSdk({ serverId })` should remain lightweight.
+`createSdk({ serverId })` should remain lightweight and app-owned.
 
 It should only:
 
 - resolve `serverId` to the latest known `baseUrl`, `token`, and capability info
-- prepare a fetch client or generated SDK instance
+- prepare a generated SDK instance plus any app-local migration routing
 - return the typed SDK object
 
 It should not:
@@ -203,7 +205,7 @@ There will likely be only one or two SSE endpoints.
 Recommended approach:
 
 - document the SSE endpoints in the V2 contract
-- keep event payloads typed from server-owned schemas
+- keep event payloads typed from generated or shared contract types
 - expose small handwritten SSE helpers from `packages/openwork-server-sdk`
 - let the app consume those helpers through the same `createSdk({ serverId })` entrypoint
 

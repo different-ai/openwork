@@ -138,6 +138,47 @@ If something is a real workspace capability rather than transient UI state, it s
 
 The app is the interface. The server does the work.
 
+## Orchestrator Collapse Target
+
+The target architecture is not just "move app behavior behind the server".
+
+It is also:
+
+- stop treating the orchestrator as a separate long-term control plane
+- fold orchestrator-owned product/runtime capabilities into the main server
+- fold bootstrap and supervision responsibilities into the main server itself wherever possible
+
+Desired end state:
+
+```text
+desktop app or CLI
+-> starts or connects to one OpenWork server process
+-> OpenWork server owns workspace/runtime/product behavior
+-> OpenWork server supervises the local runtime pieces it needs
+```
+
+Not the desired end state:
+
+```text
+desktop app
+-> orchestrator control plane
+-> separate server control plane
+```
+
+What should move into the main server:
+
+- workspace activation and runtime control APIs
+- runtime status and health product surfaces
+- upgrade/control semantics exposed to clients
+- config/skill/plugin/MCP mutation flows
+- OpenCode integration behavior that is really a workspace capability
+- other orchestrator control-plane logic that clients should not need to understand separately
+- process supervision for OpenCode/router/runtime pieces where practical
+- sidecar/binary/runtime resolution where practical
+- local bootstrap logic that only exists to support the OpenWork runtime
+
+The desktop app should ideally only launch the main server process, not assemble and supervise a second runtime graph itself.
+
 ## Route Strategy
 
 Start with a dedicated path prefix for the Hono app.
@@ -174,9 +215,12 @@ apps/server/
     └── v2.json                  # generated
 
 packages/openwork-server-sdk/
-├── src/generated/              # generated from OpenAPI
-├── src/index.ts                # stable exports
+├── generated/                  # generated from OpenAPI
+├── src/index.ts                # stable server-agnostic exports
 └── package.json
+
+apps/app/
+└── ... app-side `createSdk({ serverId })` adapter
 ```
 
 ### Rules
@@ -185,8 +229,9 @@ packages/openwork-server-sdk/
 - The OpenAPI spec is a generated artifact.
 - `hono-openapi` is the leading candidate for spec generation because it is built for Hono and aligns with the V2 stack.
 - The SDK is generated from the spec and stays TypeScript-native.
+- The generated SDK package should stay server-agnostic and reusable.
 - App features should call a single app-side entrypoint such as `createSdk({ serverId })`.
-- `createSdk({ serverId })` should resolve server config locally and prepare a typed client with the correct base URL and token.
+- `createSdk({ serverId })` should live in app code, resolve server config locally, and prepare a typed client with the correct base URL and token.
 - The app should not pass raw `baseUrl` and `token` around feature code.
 - The app should not implement parallel workspace behavior when that behavior can be expressed as a server capability.
 - For standard JSON endpoints, the generated SDK should be the primary client surface.
@@ -215,6 +260,7 @@ This gives us:
 - explicit server selection through `serverId`
 - explicit resource selection through `workspaceId`, `sessionId`, and similar params
 - no need for a large handwritten fluent wrapper layer
+- no coupling between app code and server source files
 
 ## Local Dev Contract Workflow
 
@@ -232,8 +278,9 @@ Desired loop:
 Recommended local setup:
 
 - `apps/server` watches `src/v2/**` and regenerates `openapi/v2.json`
-- `packages/openwork-server-sdk` watches `openapi/v2.json` and regenerates `src/generated/**`
-- `packages/openwork-server-sdk` exports a stable `createSdk({ serverId })` entrypoint over the generated client
+- `packages/openwork-server-sdk` watches `openapi/v2.json` and regenerates the reusable generated client package
+- `packages/openwork-server-sdk` regenerates the reusable server-agnostic client package
+- the app watches its own `createSdk({ serverId })` adapter alongside normal app code
 - the app depends on `openwork-server-sdk` through the workspace so type updates are visible immediately
 - if the SDK needs a build step, run that build in watch mode too
 
@@ -298,7 +345,22 @@ Success criteria:
 - End-to-end feature flows work through V2 for selected areas.
 - Legacy endpoints remain available only for unmigrated consumers.
 
-### Phase 3: Make V2 the default path
+### Phase 3: Collapse orchestrator control-plane responsibilities into the server
+
+Once the server surface is credible, start moving orchestrator-owned product capabilities into the main server.
+
+- move workspace/runtime control APIs into the server
+- move orchestrator daemon API semantics into server-owned routes
+- move config/skill/plugin/MCP mutation ownership into the server
+- move bootstrap and supervision logic into the server so clients do not depend on a separate host runtime manager
+
+Success criteria:
+
+- clients do not need a separate orchestrator API model
+- server routes become the canonical runtime/workspace control surface
+- orchestrator disappears as a meaningful product layer
+
+### Phase 4: Make V2 the default path
 
 - Switch desktop API clients to prefer V2 by default.
 - Keep a temporary fallback or kill switch while rollout completes.
@@ -309,16 +371,18 @@ Success criteria:
 - New desktop traffic uses V2 by default.
 - V1 is only serving straggler routes.
 
-### Phase 4: Remove V1
+### Phase 5: Remove V1 and leftover orchestrator control-plane code
 
 - Delete the remaining legacy handlers once all consumers are moved.
 - Promote V2 structure to be the only server implementation.
 - Remove temporary compatibility bridges.
+- delete or absorb orchestrator code that only existed to provide a separate control plane or bootstrap layer
 
 Success criteria:
 
 - No active desktop or external path depends on legacy server code.
 - All server behavior lives in the new files.
+- orchestrator is no longer needed as a separate product/runtime layer.
 
 ## Desktop App Requirements
 
@@ -404,7 +468,7 @@ For the likely one or two SSE endpoints:
 
 - the OpenWork server should still be the only streaming surface the app talks to
 - the SSE routes should still be documented in the V2 contract
-- event payloads should still be typed in TypeScript from server-owned schemas
+- event payloads should still be typed from generated or shared contract types, not imported directly from server source
 - we may need a small handwritten streaming helper because most OpenAPI generators do not produce an ergonomic typed SSE client automatically
 
 Goal:
@@ -427,6 +491,7 @@ Goal:
 - The desktop app may have too many direct server path references, making migration noisy until a client boundary exists.
 - The desktop app currently owns native and local behavior that should eventually move behind the server boundary.
 - Shared auth/session/runtime behavior may be entangled with the legacy server boot path.
+- Orchestrator responsibilities may be tightly coupled to host bootstrapping, making it harder to separate true bootstrap concerns from product control-plane concerns.
 - V1 and V2 payloads may drift if both are maintained for too long.
 - If the V2 prefix is treated as temporary, migration may stall and leave two permanent APIs.
 
@@ -437,6 +502,7 @@ Goal:
 - Which server surface is the best first slice to migrate as a proof point?
 - Are there any external consumers besides the desktop app that must keep using V1 paths during the transition?
 - At what point should the current server stop owning anything other than bootstrapping?
+- What bootstrap responsibilities truly must remain outside the server process, if any, once orchestration is folded inward?
 
 ## Immediate Next Steps
 
@@ -447,5 +513,6 @@ Goal:
 5. Add `createSdk({ serverId })` so the app resolves server config without passing raw URLs and tokens around.
 6. Define the one or two SSE endpoints and their typed event payloads.
 7. Inventory desktop-owned workspace capabilities and prioritize which ones move behind the server first.
-8. Identify the first low-risk endpoint group to migrate.
-9. Port the first feature slice end to end and use it as the template for the rest.
+8. Identify the first orchestrator-owned control-plane capability to fold into the main server.
+9. Identify the first low-risk endpoint group to migrate.
+10. Port the first feature slice end to end and use it as the template for the rest.

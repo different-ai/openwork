@@ -6,6 +6,8 @@ This audit covers the desktop-native layer under `apps/desktop`, especially `app
 
 The goal is to document the desktop app lifecycle and every meaningful place where the desktop shell touches the local system, native runtime, sidecars, files, or OS services.
 
+This document now assumes the target architecture is a single main server API surface, with bootstrap and supervision responsibilities also collapsing into the server over time.
+
 ## Disposition Labels
 
 - `Stay`: should remain in the desktop shell because it is truly native-shell, OS, packaging, windowing, or local UI-hosting behavior.
@@ -17,13 +19,10 @@ The goal is to document the desktop app lifecycle and every meaningful place whe
 1. Tauri boots the desktop shell.
 2. The shell registers native plugins, commands, deep-link handling, and exit behavior.
 3. Dev/build scripts prepare sidecars and frontend assets.
-4. The desktop layer starts or reconnects to managed runtimes:
-   - OpenCode
-   - OpenWork server
-   - OpenCodeRouter
-   - optionally OpenWork orchestrator
-5. Workspace state is loaded and persisted.
-6. Native file watchers, dialogs, updater checks, and process management continue during the session.
+4. The desktop layer starts or reconnects to the local OpenWork server host path.
+5. Any deeper runtime ownership of OpenCode, router, or orchestrator behavior is migration debt that should collapse inward behind the server over time.
+6. Workspace state is loaded and persisted.
+7. Native file watchers, dialogs, updater checks, and process management continue during the session.
 
 ## App Shell Bootstrap
 
@@ -248,21 +247,21 @@ Reasoning: these are runtime and workspace orchestration concerns, not UI concer
 
 Disposition guidance:
 
-- `start_openwork_server()` -> `Stay`
+- `start_openwork_server()` -> `Split`
 - `spawn_openwork_server()` -> `Stay`
 - `resolve_openwork_port()` -> `Stay`
-- token and state helpers in `openwork_server/mod.rs` -> `Stay`
+- token and state helpers in `openwork_server/mod.rs` -> `Split`
 - `build_urls()` -> `Stay`
-- `openwork_server_info()` / `openwork_server_restart()` -> `Stay`
-- `OpenworkServerManager` -> `Stay`
+- `openwork_server_info()` / `openwork_server_restart()` -> `Split`
+- `OpenworkServerManager` -> `Split`
 
-Reasoning: this is the desktop shell doing the one thing it should keep doing in the target model: launching and supervising the local OpenWork server process.
+Reasoning: the desktop shell should keep launch/supervision of the local OpenWork server process, but token semantics, runtime info, and restart/control behavior should keep shrinking into the server over time.
 
 ### `start_openwork_server()`
 
 - What it does: starts the local desktop-hosted OpenWork server and tracks its tokens, URLs, and health.
 - Called from and when: called by engine startup and explicit OpenWork server restart flows.
-- Ends up calling: port selection, token generation/load, server spawn, health checks, optional owner-token issuance, and persistence of port/token state.
+- Ends up calling: port selection, token generation/load, server spawn, health checks, optional owner-token issuance, and persistence of port/token state; the launch path should stay, while token/control semantics should move inward.
 
 ### `spawn_openwork_server()`
 
@@ -280,7 +279,7 @@ Reasoning: this is the desktop shell doing the one thing it should keep doing in
 
 - What they do: load/create workspace client/host/owner tokens and persist preferred ports and state.
 - Called from and when: called on every hosted-server start and reconnect.
-- Ends up calling: filesystem reads and writes in app data.
+- Ends up calling: filesystem reads and writes in app data; the minimum host bootstrap state may stay, but owner/control semantics should move behind the server.
 
 ### `build_urls()`
 
@@ -292,21 +291,22 @@ Reasoning: this is the desktop shell doing the one thing it should keep doing in
 
 - What they do: expose OpenWork server runtime info and restart it with the current engine credentials/workspaces.
 - Called from and when: called from settings, remote-access, and recovery UI.
-- Ends up calling: manager state reads or a full restart path.
+- Ends up calling: manager state reads or a full restart path; these are transitional control-plane responsibilities that should simplify as the server absorbs more runtime ownership.
 
 ### `OpenworkServerManager`
 
 - What it does: stores hosted-server child state, URLs, tokens, and captured logs.
 - Called from and when: used throughout hosted-server lifecycle management.
-- Ends up calling: in-memory child-process/runtime state management.
+- Ends up calling: in-memory child-process/runtime state management, including some control-plane state that should shrink over time.
 
 ## OpenCodeRouter Lifecycle
 
 Disposition guidance:
 
-- all router lifecycle and router config functions in this section -> `Move`
+- router child launch and stop helpers -> `Split`
+- router status/config/product API functions -> `Move`
 
-Reasoning: router ownership is runtime coordination and should become part of server-owned workspace behavior.
+Reasoning: router config, status, and product-facing control should become part of server-owned workspace behavior, and even router child launch should ideally end up under server-owned supervision.
 
 ### `opencodeRouter_start()`
 

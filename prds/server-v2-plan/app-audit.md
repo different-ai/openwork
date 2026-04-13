@@ -9,6 +9,8 @@ The goal is to document:
 - every meaningful feature that does not explicitly contact the OpenWork server
 - every feature that does substantial local/client-side work before it eventually sends data to the server
 
+This document now assumes the target architecture is a single main server API surface, not a permanent split between app, orchestrator control plane, and server control plane.
+
 The focus is on the client-owned lifecycle: local state, browser APIs, local persistence, parsing, transformations, clipboard, dialogs, routing, rendering, Tauri-bridged local actions, and mixed local-then-server flows.
 
 ## Disposition Labels
@@ -145,7 +147,7 @@ Reasoning: modal state and startup branching stay in the UI, but actual workspac
 
 - What it does: normalizes the remote host URL/token, resolves remote workspace identity, updates local server settings, and persists a remote workspace record.
 - Called from and when: called from deep links, onboarding connect flows, worker open actions, and remote workspace modals.
-- Ends up calling: local validation, local settings persistence, routing, selected-workspace state, and then remote OpenWork/OpenCode requests.
+- Ends up calling: local validation, local settings persistence, routing, selected-workspace state, and then remote server requests; any remaining direct OpenCode path here should be treated as migration debt.
 
 ### onboarding/bootstrap branching
 
@@ -274,31 +276,31 @@ Reasoning: UI-owned shaping and memoization stay local, but config mutation, ski
 
 - What it does: parses and rewrites `cloudImports` metadata in workspace config.
 - Called from and when: used when syncing skills, providers, and hubs with cloud-backed metadata.
-- Ends up calling: local config-shaping logic first; final writes may go through server or Tauri-backed config paths.
+- Ends up calling: local config-shaping logic first; final writes should route through the server, with any Tauri-backed config path treated as temporary fallback-only debt.
 
 ### skills and cloud-sync local prep
 
 - What it does: slugifies names, extracts markdown bodies, builds frontmatter, tracks imported cloud-skill maps, and stores hub preferences locally.
 - Called from and when: used in skills import/edit/remove flows.
-- Ends up calling: local markdown/config shaping, local state, `localStorage`, and in some cases direct local skill-file mutation; many successful paths later call OpenWork or Den.
+- Ends up calling: local markdown/config shaping, local state, `localStorage`, and in some cases direct local skill-file mutation; those direct local mutation paths are temporary fallback-only debt, and successful flows should ultimately go through the server or cloud APIs.
 
 ### plugin config editing
 
 - What it does: parses and rewrites plugin arrays inside `opencode.json` using local JSONC edits.
 - Called from and when: called from plugin/settings UI.
-- Ends up calling: local config parsing and file-update shaping first; writes may happen locally or through server-backed config APIs.
+- Ends up calling: local config parsing and file-update shaping first; writes should move behind server-backed config APIs, and local writes should be treated as temporary fallback-only debt.
 
 ### MCP connection and config flow
 
 - What it does: builds MCP config objects locally, infers names, injects special Chrome DevTools env values, and edits/removes config.
 - Called from and when: called from MCP connect, remove, and auth/logout UI.
-- Ends up calling: local config editing, local MCP modal state, and then optionally server-backed MCP writes/logout or external auth flows.
+- Ends up calling: local config editing, local MCP modal state, and then server-backed MCP writes/logout or external auth flows; direct local config edits here should be treated as temporary fallback-only debt.
 
 ### cloud provider list memoization
 
 - What it does: caches and merges provider lists using local cloud session/org state.
 - Called from and when: used while provider settings or provider-auth UI is open.
-- Ends up calling: in-memory cache and local state first; refreshes eventually contact Den or OpenCode.
+- Ends up calling: in-memory cache and local state first; refreshes eventually contact Den or the main server, and any direct OpenCode access should be treated as migration debt.
 
 ## Diagnostics, Reset, And Desktop Utilities
 

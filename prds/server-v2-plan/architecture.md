@@ -28,6 +28,25 @@ This means:
 - two route families during migration
 - new logic isolated in new files
 
+## Target End State
+
+The long-term target is a single main server API surface.
+
+Desired shape:
+
+```text
+desktop app or CLI
+-> starts or connects to one OpenWork server process
+-> OpenWork server owns workspace/runtime/product behavior
+-> OpenWork server supervises the local runtime pieces it needs
+```
+
+This means:
+
+- the orchestrator should stop being a separate product control plane
+- orchestrator runtime/workspace APIs should be folded into the main server
+- bootstrap and supervision behavior should move into the main server wherever practical
+
 ## Design Principles
 
 - V2 code lives in new files only.
@@ -66,6 +85,12 @@ The architecture should enforce a simple rule:
 - any other workspace-scoped capability that is more than transient UI state
 
 This boundary applies even in desktop-hosted mode. Running on the same machine does not make the UI the right owner of workspace behavior.
+
+The same principle applies to the orchestrator boundary:
+
+- product/runtime control surfaces should move into the server
+- bootstrap and supervision should also move into the server wherever practical
+- the desktop shell should ideally launch one server process, not a separate runtime manager
 
 ## Server Layout
 
@@ -135,6 +160,7 @@ Rules:
 - V1 and V2 must be callable side by side.
 - New features should prefer V2 once the route exists.
 - Legacy handlers should only be touched to wire mount points or temporary bridges.
+- Orchestrator control-plane routes should eventually be replaced by main-server routes rather than preserved as a second permanent API model.
 
 ## Typed Contract Flow
 
@@ -164,8 +190,9 @@ Proposed structure:
 
 ```text
 apps/server/openapi/v2.json
-packages/openwork-server-sdk/src/generated/**
+packages/openwork-server-sdk/generated/**
 packages/openwork-server-sdk/src/index.ts
+apps/app/.../createSdk({ serverId }) adapter
 ```
 
 ### Contract rules
@@ -175,8 +202,9 @@ packages/openwork-server-sdk/src/index.ts
 - The generated SDK is TypeScript-first.
 - The SDK should expose stable exports from `src/index.ts`.
 - The app should avoid importing raw generated files directly.
+- The generated SDK package should stay server-agnostic and reusable.
 - The app-facing entrypoint should look like `createSdk({ serverId })`.
-- `createSdk({ serverId })` should resolve `serverId` into base URL, token, and capabilities locally, then prepare the generated client.
+- `createSdk({ serverId })` should live in app code, resolve `serverId` into base URL, token, and capabilities locally, then prepare the generated client.
 - `createSdk({ serverId })` should stay lightweight enough that it can be called per use without meaningful overhead.
 - The SDK surface should grow until app-owned workspace behavior shrinks to near zero.
 
@@ -209,7 +237,7 @@ Because of that:
 - normal JSON endpoints should come directly from the generated SDK
 - the likely one or two SSE endpoints may need small handwritten stream helpers
 - those helpers should still be exported from the same SDK package
-- event payload types should still come from server-owned TypeScript schemas
+- event payload types should come from generated or shared contract output, not from server source files
 
 ### CI rules
 
@@ -240,8 +268,8 @@ edit V2 route or schema
 Recommended watch pipeline:
 
 - `apps/server`: watch `src/v2/**`, regenerate `openapi/v2.json` through `hono-openapi`
-- `packages/openwork-server-sdk`: watch `openapi/v2.json`, regenerate `src/generated/**`
-- `packages/openwork-server-sdk`: export a stable `createSdk({ serverId })` entrypoint over the generated client
+- `packages/openwork-server-sdk`: watch `openapi/v2.json`, regenerate the reusable generated client package
+- `apps/app`: watch the app-side `createSdk({ serverId })` adapter alongside normal app code
 - `packages/openwork-server-sdk`: optional watch build if the package publishes built output
 - `apps/app`: consumes the workspace package directly
 
@@ -397,7 +425,7 @@ Because there will likely be only one or two SSE endpoints, we do not need a lar
 Recommended shape:
 
 - document the SSE routes in the V2 contract
-- keep event payloads typed from server-owned TypeScript schemas
+- keep event payloads typed from generated or shared contract types
 - expose small handwritten streaming helpers from `packages/openwork-server-sdk`
 - keep those helpers under the same `createSdk({ serverId })` entrypoint
 
@@ -443,6 +471,46 @@ Example categories to move behind the server over time:
 3. skill/plugin/MCP mutation
 4. project/runtime inspection
 5. session/task execution behavior
+6. orchestrator workspace/runtime control APIs
+7. orchestrator-managed tool/config mutation behavior
+
+## Orchestrator Integration Path
+
+The recommended path is to collapse orchestrator responsibilities inward rather than preserve a separate orchestrator control plane forever.
+
+### What should stay outside the server
+
+- child process launch and supervision
+- sidecar and binary resolution
+- local env/port/bootstrap setup
+- Docker and Apple container startup
+- detach/log multiplexing/TUI shell concerns
+
+### What should move into the server
+
+- workspace activation and disposal semantics
+- runtime control/status/upgrade product APIs
+- daemon-style workspace/runtime control surfaces
+- config/skill/plugin/MCP mutation product capabilities
+- managed OpenCode integration behavior that clients should consume through one API
+- child process launch and supervision where practical
+- sidecar and binary resolution where practical
+- local env/port/bootstrap setup where practical
+- sandbox/container startup orchestration where practical
+
+### Recommended migration shape
+
+```text
+today:
+desktop -> orchestrator API -> server API
+
+target:
+desktop -> server API
+desktop -> launches one server process
+server -> starts and supervises local children when needed
+```
+
+This removes the separate orchestrator boundary rather than preserving it as a second permanent host layer.
 
 ## Error and Compatibility Model
 
@@ -497,10 +565,14 @@ The same spirit applies to the client boundary:
 - but workspace capabilities should no longer be split between app and server
 - the server should be the clear owner of workspace behavior
 
+The same spirit also applies to the orchestrator boundary:
+
+- runtime/workspace product capability should no longer be split between orchestrator and server
+- bootstrap and supervision should also collapse into the server wherever possible
+- the main server should be the canonical and primary runtime control surface
+
 ## Open Decisions
 
 - final V2 prefix: `/v2`, `/api/v2`, or another stable path
-- exact OpenAPI generation toolchain
-- exact SDK generation toolchain
 - whether capability detection is static, dynamic, or both
 - which endpoint group becomes the first proof-of-path migration
