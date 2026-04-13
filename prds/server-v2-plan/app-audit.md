@@ -4,6 +4,12 @@
 
 This audit covers `apps/app/**` only.
 
+## Alignment Note
+
+This audit documents the current client-side footprint, not the final target-state ownership boundary.
+
+To fully match `prds/server-v2-plan/ideal-flow.md`, cloud settings, workspace/server relationship state, config mutation, and session/runtime behavior should become server-owned, while app-local storage shrinks to transient UI state and minimal reconnect data.
+
 The goal is to document:
 
 - every meaningful feature that does not explicitly contact the OpenWork server

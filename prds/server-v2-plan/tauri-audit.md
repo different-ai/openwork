@@ -4,6 +4,12 @@
 
 This audit covers the desktop-native layer under `apps/desktop`, especially `apps/desktop/src-tauri/**` and the desktop scripts that are directly part of dev/build/runtime.
 
+## Alignment Note
+
+This audit documents the current desktop-native footprint, not the final target-state boundary.
+
+To fully match `prds/server-v2-plan/ideal-flow.md`, durable workspace registry state, workspace watchers, config and file mutation, remote workspace persistence, and runtime/workspace control should move behind the main server, leaving the desktop shell with only native bootstrap, reconnect state, and UI-hosting duties.
+
 The goal is to document the desktop app lifecycle and every meaningful place where the desktop shell touches the local system, native runtime, sidecars, files, or OS services.
 
 This document now assumes the target architecture is a single main server API surface, with bootstrap and supervision responsibilities also collapsing into the server over time.

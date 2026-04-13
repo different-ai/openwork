@@ -3,6 +3,12 @@
 ## Status: Draft
 ## Date: 2026-04-09
 
+## Alignment Note
+
+This document is directionally aligned with `prds/server-v2-plan/ideal-flow.md`, but it still describes some workspace/server mapping concerns as if they may remain app-owned.
+
+To fully match the ideal model, the server should be the canonical owner of workspace records, server/workspace relationships, and OpenCode or remote-backend mappings in sqlite, while the app operates only on server-issued workspace IDs through workspace-first APIs.
+
 ## Purpose
 
 This document expands `prds/server-v2-plan/plan.md` with a more concrete technical design for Server V2.

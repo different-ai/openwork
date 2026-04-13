@@ -3,6 +3,12 @@
 ## Status: Draft
 ## Date: 2026-04-09
 
+## Alignment Note
+
+This document is directionally aligned with `prds/server-v2-plan/ideal-flow.md`, but it still contains transitional language from the incremental migration phase.
+
+To fully match the ideal model, the server should become the durable owner of the workspace registry, backend mappings, and workspace/runtime state, while the app keeps only transient UI state plus minimal server reconnect info and performs all operations through workspace-first server APIs.
+
 ## Problem
 
 `apps/server` needs a full rewrite, but we cannot do a stop-the-world replacement. We need a path that lets a new server grow inside the current server, ship safely in stages, and eventually replace all existing server code with new files.
