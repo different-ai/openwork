@@ -214,8 +214,7 @@ export function LandingEnterprise(props: Props) {
                 <p className="text-[14px] leading-relaxed text-slate-600">
                   Deploy inside your own environment or work with us on a
                   managed rollout, with your gateway, MCP servers, skills, and
-                  internal data sources connected. Windows support is included in
-                  enterprise licensing.
+                  internal data sources connected.
                 </p>
               </div>
             </div>

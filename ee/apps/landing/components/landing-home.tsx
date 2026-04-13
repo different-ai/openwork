@@ -11,7 +11,6 @@ import {
   landingDemoFlows,
   landingDemoFlowTimes
 } from "./landing-demo-flows";
-import { PricingGrid } from "./pricing-grid";
 import { LandingSharePackageCard } from "./landing-share-package-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
@@ -21,7 +20,6 @@ type Props = {
   stars: string;
   downloadHref: string;
   callHref: string;
-  windowsCheckoutUrl: string;
   isMobileVisitor: boolean;
 };
 
@@ -44,6 +42,7 @@ export function LandingHome(props: Props) {
     [activeDemoId]
   );
 
+  const callLinkProps = externalLinkProps(props.callHref);
   const primaryCtaHref = props.isMobileVisitor
     ? "https://app.openworklabs.com"
     : "/download";
@@ -90,10 +89,11 @@ export function LandingHome(props: Props) {
                   {primaryCtaLabel} <Download size={18} />
                 </a>
                 <a
-                  href="/pricing"
+                  href={props.callHref}
                   className="secondary-button"
+                  {...callLinkProps}
                 >
-                  See pricing
+                  Contact sales
                 </a>
               </div>
 
@@ -208,14 +208,6 @@ export function LandingHome(props: Props) {
                 </div>
               </div>
             </div>
-          </section>
-
-          <section className="landing-shell rounded-[2.5rem] p-8 md:p-12">
-            <PricingGrid
-              windowsCheckoutUrl={props.windowsCheckoutUrl}
-              callUrl={props.callHref}
-              showHeader={true}
-            />
           </section>
 
           <section

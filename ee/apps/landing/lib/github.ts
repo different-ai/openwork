@@ -72,7 +72,7 @@ export const getGithubData = async () => {
   const [repo, releases] = await Promise.all([
     fetchJson<Repo>("https://api.github.com/repos/different-ai/openwork"),
     fetchJson<Release[]>(
-      "https://api.github.com/repos/different-ai/openwork/releases?per_page=10"
+      "https://api.github.com/repos/different-ai/openwork/releases?per_page=50"
     )
   ]);
 
@@ -82,6 +82,17 @@ export const getGithubData = async () => {
       : "—";
 
   const releaseList = Array.isArray(releases) ? releases : [];
+  const hasDownloadAsset = (release: Release) => {
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    return assets.some((asset) => asset?.browser_download_url);
+  };
+  const hasWindowsDesktopAsset = (release: Release) => {
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    return assets.some((asset) => {
+      const name = String(asset?.name || "").toLowerCase();
+      return name.startsWith("openwork-desktop-windows-") && (name.endsWith(".msi") || name.endsWith(".exe"));
+    });
+  };
 
   const isStableDesktopRelease = (release: Release) => {
     if (!release || release.draft || release.prerelease) return false;
@@ -96,19 +107,24 @@ export const getGithubData = async () => {
 
   const pick =
     releaseList.find((release) => isStableDesktopRelease(release)) ||
-    releaseList.find((release) => {
-      if (!release || release.draft) return false;
-      const assets = Array.isArray(release.assets) ? release.assets : [];
-      return assets.some((asset) => asset?.browser_download_url);
-    });
+    releaseList.find((release) => !release?.draft && hasDownloadAsset(release));
+
+  const windowsPick =
+    releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release)) ||
+    releaseList.find((release) => !release?.draft && hasWindowsDesktopAsset(release));
 
   const assets = Array.isArray(pick?.assets) ? pick.assets : [];
   const releaseUrl = pick?.html_url || FALLBACK_RELEASE;
+  const windowsAssets = Array.isArray(windowsPick?.assets) ? windowsPick.assets : assets;
+  const windowsReleaseUrl = windowsPick?.html_url || releaseUrl;
   const dmg = selectAsset(assets, [".dmg"]);
+  const exe = selectAsset(windowsAssets, [".exe", ".msi"], ["win", "windows"]);
   const appImage = selectAsset(assets, [".appimage"], ["linux"]);
 
   const macosApple = selectAsset(assets, [".dmg"], ["darwin-aarch64"]);
   const macosIntel = selectAsset(assets, [".dmg"], ["darwin-x64"]);
+  const windowsX64 =
+    selectAsset(windowsAssets, [".msi", ".exe"], ["windows-x64"]) || exe;
 
   const linuxDebX64 = selectAsset(assets, [".deb"], ["linux-amd64", "linux-x64"]);
   const linuxDebArm64 = selectAsset(assets, [".deb"], ["linux-arm64", "linux-aarch64"]);
@@ -121,6 +137,7 @@ export const getGithubData = async () => {
     releaseTag: pick?.tag_name || "",
     downloads: {
       macos: dmg?.browser_download_url || FALLBACK_RELEASE,
+      windows: exe?.browser_download_url || FALLBACK_RELEASE,
       linux:
         appImage?.browser_download_url ||
         linuxDebX64?.browser_download_url ||
@@ -131,6 +148,9 @@ export const getGithubData = async () => {
       macos: {
         appleSilicon: macosApple?.browser_download_url || dmg?.browser_download_url || releaseUrl,
         intel: macosIntel?.browser_download_url || dmg?.browser_download_url || releaseUrl
+      },
+      windows: {
+        x64: windowsX64?.browser_download_url || windowsReleaseUrl
       },
       linux: {
         aur: "https://aur.archlinux.org/packages/openwork",

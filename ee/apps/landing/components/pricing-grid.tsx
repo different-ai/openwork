@@ -4,7 +4,6 @@ import { ArrowUpRight, Cloud, Download, Shield } from "lucide-react";
 import { ResponsiveGrain } from "./responsive-grain";
 
 type PricingGridProps = {
-  windowsCheckoutUrl: string;
   callUrl: string;
   showHeader?: boolean;
 };
@@ -150,7 +149,7 @@ export function PricingGrid(props: PricingGridProps) {
       href: props.callUrl,
       external: /^https?:\/\//.test(props.callUrl),
       features: [
-        { text: "Includes Windows support", icon: Shield },
+        { text: "Enterprise rollout support", icon: Shield },
         { text: "Deployment guidance", icon: Shield },
         { text: "Custom commercial terms", icon: Shield },
       ],
