@@ -401,7 +401,7 @@ export function AppFeedbackForm(props: Props) {
             <div
               role="button"
               tabIndex={0}
-              onClick={() => !state === "loading" && inputRef.current?.click()}
+              onClick={() => state !== "loading" && inputRef.current?.click()}
               onKeyDown={(event) => {
                 if (state === "loading") return;
                 if (event.key === "Enter" || event.key === " ") {
