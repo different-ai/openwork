@@ -25,7 +25,7 @@ const REPO_ROOT = resolve(__dirname, "..");
 const LOCALES_DIR = join(REPO_ROOT, "apps/app/src/i18n/locales");
 const APP_SRC = join(REPO_ROOT, "apps/app/src");
 
-const LOCALES = ["ja", "zh", "vi", "pt-BR", "th"];
+const LOCALES = ["ja", "zh", "vi", "pt-BR", "th", "fr"];
 const EN_FILE = join(LOCALES_DIR, "en.ts");
 
 const mode = process.argv[2] ?? "--all";
