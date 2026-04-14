@@ -1,0 +1,238 @@
+{
+  "phase": 3,
+  "title": "Runtime Supervision And Local Process Ownership",
+  "objective": "Move OpenCode and router lifecycle ownership into Server V2 so the server, not the app or orchestrator, becomes the runtime supervisor and source of operational truth.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase3-learnings.md",
+    "prds/server-v2-plan/architecture.md",
+    "prds/server-v2-plan/spawning-opencode.md",
+    "prds/server-v2-plan/distribution.md",
+    "prds/server-v2-plan/ideal-flow.md",
+    "prds/server-v2-plan/orchestrator-audit.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P3-001",
+      "name": "Define the runtime asset service boundary",
+      "description": "Create an abstraction that resolves runtime assets for local development and for extracted release assets so later runtime code does not care where binaries came from.",
+      "successFactors": [
+        "The server can ask one service for runtime binaries and manifests.",
+        "Dev and release paths share one ownership model with different asset sources.",
+        "The abstraction is explicit enough to support caching, extraction, and diagnostics later."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-002",
+      "name": "Read the pinned OpenCode version from `constants.json`",
+      "description": "Implement the version source-of-truth rule from the planning docs so local dev and release packaging both resolve the same OpenCode version.",
+      "successFactors": [
+        "The pinned version comes from `constants.json`, not from `PATH` or ad hoc env vars.",
+        "Version normalization for upstream download naming is handled in one place.",
+        "Later packaging steps can reuse the same version resolution code."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-003",
+      "name": "Implement local runtime-assets directory conventions",
+      "description": "Create the gitignored runtime-assets layout used in development for staged `opencode` and locally built `opencode-router` binaries.",
+      "successFactors": [
+        "Runtime assets are versioned and platform-specific.",
+        "The server can resolve absolute paths without `PATH` lookup.",
+        "Repeated dev restarts reuse cached assets instead of re-downloading everything."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-004",
+      "name": "Add OpenCode download and cache logic for dev",
+      "description": "Implement the dev-only acquisition path that downloads the pinned OpenCode release artifact when the local cache is missing.",
+      "successFactors": [
+        "Developers do not need a global `opencode` install to run Server V2.",
+        "The downloaded artifact is cached locally and reused.",
+        "Failures are clear when the artifact cannot be fetched or validated."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-005",
+      "name": "Add local router build and staging logic",
+      "description": "Build `apps/opencode-router` for local development and stage the resulting binary into the runtime-assets directory so the server can launch it deterministically.",
+      "successFactors": [
+        "The dev server does not depend on a system router install.",
+        "The staged router binary lives in a predictable gitignored location.",
+        "The build step can be reused by the dev command graph in Phase 10."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-006",
+      "name": "Define the runtime manifest model",
+      "description": "Add a manifest structure that tracks server version, OpenCode version, router version, target platform, and checksums so runtime assets can be validated consistently.",
+      "successFactors": [
+        "The runtime manifest matches the direction in `distribution.md`.",
+        "The server can compare expected versus actual runtime assets.",
+        "Manifest data can be reused for both dev diagnostics and release extraction."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-007",
+      "name": "Implement `createLocalOpencode(...)`",
+      "description": "Add the Bun-based helper described in `spawning-opencode.md` that launches OpenCode by explicit binary path, injects config through `OPENCODE_CONFIG_CONTENT`, and returns an SDK HTTP client plus process handle.",
+      "successFactors": [
+        "OpenCode startup does not rely on `PATH`.",
+        "The helper accepts explicit binary path, hostname, port, timeout, signal, and config options.",
+        "The helper returns both a client and process handle suitable for supervision."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-008",
+      "name": "Implement readiness detection and startup timeout handling",
+      "description": "Watch OpenCode stdout/stderr for readiness lines, enforce timeout behavior, and reject with useful diagnostic output on early exit or missing binary failures.",
+      "successFactors": [
+        "Missing binary, timeout, and early-exit cases each produce clear errors.",
+        "The parsed readiness URL becomes the canonical base URL.",
+        "Startup cleanup is deterministic on failure or abort."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-009",
+      "name": "Capture runtime diagnostics buffers",
+      "description": "Store recent stdout/stderr output for OpenCode and router processes so post-start crashes and startup failures can be surfaced through status endpoints and logs.",
+      "successFactors": [
+        "The supervisor keeps bounded recent logs for diagnostics.",
+        "Crash reports can include recent child output.",
+        "Buffers are managed safely and do not grow unbounded."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-010",
+      "name": "Persist OpenCode runtime state",
+      "description": "Write server-owned runtime state for OpenCode into the DB or equivalent service so clients can ask whether it is running, what version is active, and when it last failed.",
+      "successFactors": [
+        "OpenCode status has a durable representation.",
+        "Last start and last exit details are recorded.",
+        "The runtime state model matches the health endpoint shape from the plan docs."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-011",
+      "name": "Bootstrap OpenCode from the server",
+      "description": "Move local OpenCode startup into Server V2 bootstrap so the server can start it, supervise it, and expose its health instead of depending on app- or orchestrator-owned startup for the same behavior.",
+      "successFactors": [
+        "Server V2 can start OpenCode on boot or on-demand according to the chosen policy.",
+        "The startup path uses the new helper and runtime asset service.",
+        "Ownership is clearly inside server bootstrap rather than UI code."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-012",
+      "name": "Implement router enablement decisions",
+      "description": "Add server-owned logic that decides whether `opencode-router` should run based on configured identities, bindings, and router-backed features.",
+      "successFactors": [
+        "Router startup is decided by server state, not the desktop app.",
+        "The decision model matches `architecture.md` and `ideal-flow.md`.",
+        "The code can explain why router is enabled or disabled."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-013",
+      "name": "Implement router binary resolution and materialization",
+      "description": "Resolve the router binary path through the runtime asset service and prepare the effective router config source the runtime supervisor will use.",
+      "successFactors": [
+        "Router binary resolution uses absolute managed paths.",
+        "Config materialization has a clear server-owned input path.",
+        "The supervisor can start router without desktop-owned config mutation."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-014",
+      "name": "Start and supervise `opencode-router`",
+      "description": "Launch router as a server-owned child process, perform health checks, and track restart or failure status under the same runtime supervisor.",
+      "successFactors": [
+        "Server V2 can bring router up and down without app-side process management.",
+        "Router health checks and startup waits are explicit.",
+        "Unexpected router exit is visible in runtime state and logs."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-015",
+      "name": "Persist router runtime state",
+      "description": "Store router version, health, last start, and crash information in server-owned runtime state so the UI can inspect router status through the main server API.",
+      "successFactors": [
+        "Router health and version are available as server data.",
+        "Crash or restart history is not hidden in transient process state only.",
+        "The persisted state supports future router status routes."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-016",
+      "name": "Implement restart policy behavior",
+      "description": "Add bounded restart or manual restart policy support for runtime children so runtime failure becomes a first-class operational behavior instead of a silent process problem.",
+      "successFactors": [
+        "Restart behavior is configurable or explicit in code.",
+        "Repeated crash loops are bounded and visible.",
+        "Manual restart can be added without redesigning supervision later."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-017",
+      "name": "Expose `/system/opencode/health` and router health routes",
+      "description": "Add the initial server-owned runtime health endpoints that report whether OpenCode and router are running, their versions, URLs, and last exit data.",
+      "successFactors": [
+        "Runtime state is available through server APIs, not inferred indirectly from failures.",
+        "Response shapes match the direction in `spawning-opencode.md`.",
+        "The endpoints are typed and documented in the contract."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-018",
+      "name": "Expose initial `/system/runtime/*` status routes",
+      "description": "Add early runtime status and version routes under the new namespace so later runtime control work has the correct server-owned home.",
+      "successFactors": [
+        "Server-wide runtime routes live under `/system/runtime/*` instead of legacy names.",
+        "The route namespace matches the migration direction in the docs.",
+        "These routes are ready to absorb more runtime control behavior in later phases."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-019",
+      "name": "Add integration tests for child startup and crash handling",
+      "description": "Write integration tests or harnesses that cover startup success, missing binary failure, timeout failure, post-ready crash handling, and router supervision behavior.",
+      "successFactors": [
+        "Runtime supervision behavior is validated automatically.",
+        "Crash and timeout cases are not only manual-test scenarios.",
+        "Diagnostics and persisted runtime state are asserted in tests."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P3-020",
+      "name": "Record runtime ownership gaps and best guesses",
+      "description": "If any remaining runtime responsibility between server, host shell, and orchestrator is ambiguous, log it in `open-questions.md` with the best guess and continue so later phases see the decision trail.",
+      "successFactors": [
+        "Ownership ambiguity is visible instead of implicit.",
+        "Later phases can see why runtime behavior was implemented a certain way.",
+        "Phase 3 ends with the server clearly owning OpenCode and router lifecycle."
+      ],
+      "completed": false
+    }
+  ]
+}

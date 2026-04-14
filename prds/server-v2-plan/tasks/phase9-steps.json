@@ -1,0 +1,238 @@
+{
+  "phase": 9,
+  "title": "Remote Connectivity, Host Modes, And Orchestrator Collapse",
+  "objective": "Absorb orchestrator control-plane behavior into Server V2, route remote workspace behavior through the local server registry, and reduce any remaining host shell responsibilities to the thinnest possible layer.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase9-learnings.md",
+    "prds/server-v2-plan/architecture.md",
+    "prds/server-v2-plan/orchestrator-audit.md",
+    "prds/server-v2-plan/ideal-flow.md",
+    "prds/server-v2-plan/distribution.md",
+    "prds/server-v2-plan/tauri-audit.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P9-001",
+      "name": "Inventory the remaining orchestrator control surfaces",
+      "description": "Turn the orchestrator audit into a concrete checklist of daemon APIs, runtime control routes, status surfaces, and CLI wrappers that still need to move behind Server V2.",
+      "successFactors": [
+        "There is a concrete migration list for remaining orchestrator-owned product behavior.",
+        "The list distinguishes true host-shell needs from product control-plane debt.",
+        "Open questions are recorded if ownership is still ambiguous."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-002",
+      "name": "Implement server-owned workspace activation routes",
+      "description": "Add Server V2 replacements for daemon workspace activation behavior so workspace lifecycle moves onto the main server API surface.",
+      "successFactors": [
+        "Workspace activation is available through Server V2.",
+        "The server updates its own registry and runtime state when activation occurs.",
+        "Clients no longer need a separate daemon API for this capability."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-003",
+      "name": "Implement server-owned workspace disposal routes",
+      "description": "Add Server V2 replacements for instance disposal or workspace shutdown behavior so runtime cleanup is also part of the main server API.",
+      "successFactors": [
+        "Workspace disposal runs through the server.",
+        "The route updates runtime and registry state consistently.",
+        "The app and CLI can stop calling daemon disposal endpoints."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-004",
+      "name": "Move runtime control semantics under `/system/runtime/*`",
+      "description": "Absorb legacy runtime versions, upgrade, and related control semantics into Server V2 under the normalized system namespace.",
+      "successFactors": [
+        "Runtime control lives under the main server API.",
+        "Legacy route names are replaced or shimmed intentionally.",
+        "The route family aligns with the architecture plan."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-005",
+      "name": "Implement runtime upgrade behavior in Server V2",
+      "description": "Move upgrade-related logic or the main product-facing upgrade route behind Server V2 so runtime inspection and upgrade are not orchestrator-owned product APIs anymore.",
+      "successFactors": [
+        "Upgrade flows are server-owned or clearly proxied through the server.",
+        "The server can report upgrade status and errors consistently.",
+        "Later cutover can remove the legacy runtime control server."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-006",
+      "name": "Implement remote server connection services",
+      "description": "Add the server-owned services and routes that register remote OpenWork servers, store connection metadata, and validate connectivity for remote workspaces.",
+      "successFactors": [
+        "Remote server connections are stored in the server DB.",
+        "Connection validation happens through the local server, not the app alone.",
+        "The model supports remote and cloud-hosted OpenWork servers."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-007",
+      "name": "Implement remote workspace discovery and sync",
+      "description": "Teach the local server to discover or refresh remote workspace metadata from configured remote servers and maintain the local canonical mapping in its registry.",
+      "successFactors": [
+        "Remote workspace discovery is server-owned.",
+        "The local server stores remote workspace mappings durably.",
+        "The app can remain workspace-first even for remote content."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-008",
+      "name": "Route remote workspace operations through the local server",
+      "description": "Ensure session, file, and other workspace-scoped operations for remote workspaces route through the local server as the canonical adapter instead of bypassing it from the app.",
+      "successFactors": [
+        "The UI talks to the local server even for remote workspaces in normal product flows.",
+        "Remote backend IDs stay server-owned.",
+        "The local server remains the canonical registry and policy layer."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-009",
+      "name": "Update CLI wrappers to target Server V2",
+      "description": "Move any thin orchestrator CLI wrappers for status, files, approvals, or runtime operations onto the main server API surface so the CLI does not preserve a separate control plane by accident.",
+      "successFactors": [
+        "CLI wrappers call Server V2 routes.",
+        "The CLI no longer depends on daemon-only APIs for product behavior.",
+        "Any remaining host-shell CLI concerns are clearly separated."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-010",
+      "name": "Shrink orchestrator startup to a thin host shell",
+      "description": "Refactor startup paths so orchestrator, if still needed, mainly launches or hosts Server V2 instead of reproducing runtime and product behavior in parallel.",
+      "successFactors": [
+        "Orchestrator no longer acts as a second product control plane.",
+        "Remaining startup logic is thin and explicit.",
+        "The desktop app or CLI can launch one main server process in the target path."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-011",
+      "name": "Move managed tool and config injection under Server V2",
+      "description": "Absorb orchestrator-owned managed OpenCode tool/config mutation behavior into Server V2 so these workspace capabilities are owned by the main server.",
+      "successFactors": [
+        "Managed tool injection is not orchestrator-only anymore.",
+        "The server owns product-facing config mutation for these capabilities.",
+        "The migration reduces duplicate config-writing logic."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-012",
+      "name": "Move router enablement policy fully into the server",
+      "description": "Remove any remaining orchestrator-first or app-first router enablement decisions so the server runtime model is the single authority for when router should run.",
+      "successFactors": [
+        "Router enablement is server-owned.",
+        "Host shells do not make separate product decisions about messaging capabilities.",
+        "The behavior matches the server-owned router state model."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-013",
+      "name": "Integrate host and sandbox launch triggers with Server V2",
+      "description": "For any remaining Docker, Apple container, or detached host flows, make the launched runtime graph center on Server V2 so those modes do not preserve the old orchestration architecture.",
+      "successFactors": [
+        "Host and sandbox modes still converge on one main server API surface.",
+        "Container launch code is separated from product behavior ownership.",
+        "Any residual shell-only setup is explicit and small."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-014",
+      "name": "Migrate desktop reconnect and status flows away from orchestrator snapshots",
+      "description": "Point desktop reconnect, status, and runtime-info flows at Server V2 and its DB-backed registry instead of relying on orchestrator auth or state snapshot files.",
+      "successFactors": [
+        "Desktop reconnect relies on server-owned state where appropriate.",
+        "Status surfaces read from the main server.",
+        "Orchestrator state files stop being the canonical runtime source for migrated flows."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-015",
+      "name": "Deprecate or remove duplicate daemon routes",
+      "description": "As Server V2 replacements land, remove or clearly deprecate the parallel daemon or control-plane routes so they do not linger as a second API model.",
+      "successFactors": [
+        "Duplicate route families are not left active without reason.",
+        "Deprecation or removal is explicit and traceable.",
+        "Clients have a clear canonical control surface."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-016",
+      "name": "Add local host-mode integration tests",
+      "description": "Write integration coverage for the local host-mode path where the app or CLI launches Server V2 and exercises the absorbed runtime control behavior.",
+      "successFactors": [
+        "Local host mode is tested end to end.",
+        "Absorbed orchestrator control routes are covered.",
+        "The tests catch regressions in startup and runtime control."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-017",
+      "name": "Add remote-connect integration tests",
+      "description": "Write tests for configuring a remote server, discovering remote workspaces, and routing operations through the local canonical server model.",
+      "successFactors": [
+        "Remote connectivity is validated through the new architecture.",
+        "Workspace/server mapping behavior is asserted.",
+        "The tests prove the app can stay workspace-first even with remote backends."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-018",
+      "name": "Add degraded-runtime handling tests",
+      "description": "Cover failure and degraded cases where local runtime pieces are unavailable or remote connections fail so the new control surface handles non-happy paths predictably.",
+      "successFactors": [
+        "Failure states are represented through Server V2.",
+        "The app and CLI receive clear typed errors or degraded status responses.",
+        "Residual orchestrator-only recovery behavior is visible if it still exists."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-019",
+      "name": "Document any residual host-shell responsibilities",
+      "description": "If some host-only concerns still cannot collapse into Server V2 yet, record them explicitly in the learnings or open questions files so Phase 10 can make an intentional cleanup decision.",
+      "successFactors": [
+        "Remaining host-only responsibilities are named explicitly.",
+        "Future cleanup work does not have to rediscover why something stayed outside the server.",
+        "The list is small enough to evaluate for final cutover."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P9-020",
+      "name": "Confirm the canonical runtime graph",
+      "description": "End the phase by verifying that the practical runtime model is app or CLI -> one main server -> supervised local dependencies, with any exceptions explicitly documented.",
+      "successFactors": [
+        "The canonical runtime graph matches the target architecture.",
+        "No hidden second product control plane remains for the migrated flows.",
+        "Phase 9 leaves Phase 10 with a clear cutover target."
+      ],
+      "completed": false
+    }
+  ]
+}

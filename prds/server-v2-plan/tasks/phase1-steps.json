@@ -1,0 +1,215 @@
+{
+  "phase": 1,
+  "title": "Foundations, Package Skeleton, And Contract Loop",
+  "objective": "Create the standalone Server V2 package, boot a minimal Hono server, and establish the generated contract loop that later phases will build on.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase1-learnings.md",
+    "prds/server-v2-plan/plan.md",
+    "prds/server-v2-plan/architecture.md",
+    "prds/server-v2-plan/sdk-generation.md",
+    "prds/server-v2-plan/local-dev.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P1-001",
+      "name": "Create the new server package",
+      "description": "Add `apps/server-v2/` as a real workspace package with its own `package.json`, source tree, and clear ownership boundary so new server work does not land in legacy server files.",
+      "successFactors": [
+        "`apps/server-v2/` is part of the workspace and can be installed and typechecked independently.",
+        "The package structure matches the planned `app.ts`, `cli.ts`, `routes/`, `services/`, `schemas/`, `middleware/`, `context/`, `adapters/`, `bootstrap/`, and `database/` shape.",
+        "No new Server V2 runtime code is added under `apps/server/src/**`."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-002",
+      "name": "Register root scripts and workspace wiring",
+      "description": "Add root and package-level scripts for starting Server V2, generating OpenAPI, generating the SDK, and running contract checks so later phases can rely on one standard command graph.",
+      "successFactors": [
+        "There is a one-shot contract generation path and a clearly named dev path.",
+        "Workspace filtering or package naming is stable enough for later agents to reuse without renaming scripts again.",
+        "Script names line up with `prds/server-v2-plan/sdk-generation.md` and `prds/server-v2-plan/local-dev.md`."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-003",
+      "name": "Boot a minimal Hono app",
+      "description": "Create `src/app.ts` and `src/cli.ts` so the new server can start as its own process, listen on a port, and serve requests without being mounted under the old server.",
+      "successFactors": [
+        "Running the Server V2 dev command starts a standalone process.",
+        "The server is not mounted under a legacy `/v2` path inside the current server.",
+        "Startup logs identify Server V2 clearly enough for debugging."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-004",
+      "name": "Define the request context model",
+      "description": "Add typed request context and dependency wiring so handlers do not reach directly into global state and later phases can inject DB, auth, runtime, and service dependencies consistently.",
+      "successFactors": [
+        "Handlers receive typed context instead of ad hoc globals.",
+        "The context model can grow without forcing route rewrites in later phases.",
+        "There is a clear place to attach auth actor, request ID, and shared services."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-005",
+      "name": "Add baseline middleware",
+      "description": "Implement first-pass middleware for request IDs, structured request logging, error translation, and response finalization so the server starts with consistent HTTP behavior.",
+      "successFactors": [
+        "Every request can be traced with a stable request ID.",
+        "Errors are returned in one consistent envelope instead of ad hoc text or mixed JSON shapes.",
+        "Middleware ordering is explicit and documented in code."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-006",
+      "name": "Lock route namespace conventions",
+      "description": "Define the base route organization for workspace-first resources and `/system/*` server-level surfaces so later agents do not invent competing naming patterns.",
+      "successFactors": [
+        "Workspace-first resource patterns are explicit and reusable.",
+        "Server-level operational routes live under `/system/*`.",
+        "The chosen route layout matches `prds/server-v2-plan/plan.md` and `prds/server-v2-plan/ideal-flow.md`."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-007",
+      "name": "Add initial system routes",
+      "description": "Implement minimal boot routes like root info, `/system/health`, and metadata routes so the package can prove that it starts and serves typed responses.",
+      "successFactors": [
+        "A health route works end to end from the standalone process.",
+        "The route responses already use the shared schema and error conventions.",
+        "Tests or smoke checks prove the server boots independently."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-008",
+      "name": "Create shared schema helpers",
+      "description": "Add shared schema utilities for params, query, error bodies, standard success wrappers, timestamps, and IDs so route definitions stay uniform as the API grows.",
+      "successFactors": [
+        "Common schema pieces are reusable instead of copy-pasted per route.",
+        "Error and success payloads can be documented once and reused.",
+        "Later phases can add route schemas without redefining primitives."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-009",
+      "name": "Annotate routes for OpenAPI generation",
+      "description": "Integrate Hono route definitions with typed schemas and the chosen OpenAPI tooling so the running app is also the contract source of truth.",
+      "successFactors": [
+        "The OpenAPI spec is generated from Hono route definitions rather than handwritten.",
+        "Operation IDs and schema names are stable and readable.",
+        "There is no parallel manual contract file to keep in sync."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-010",
+      "name": "Generate `openapi/openapi.json`",
+      "description": "Add a script that loads the Server V2 app and emits `apps/server-v2/openapi/openapi.json` exactly as described in the plan docs.",
+      "successFactors": [
+        "The generated spec lands at `apps/server-v2/openapi/openapi.json`.",
+        "Regeneration is deterministic when the contract does not change.",
+        "The generation command succeeds locally without manual patching."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-011",
+      "name": "Create the reusable SDK package scaffold",
+      "description": "Add `packages/openwork-server-sdk/` with package metadata, config, and source layout so the generated client has a stable home and later handwritten helpers can live beside it.",
+      "successFactors": [
+        "The SDK package is a workspace package with stable exports.",
+        "The package layout matches the planned `generated/` plus `src/index.ts` and `src/streams/**` split.",
+        "The app can depend on the workspace package directly."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-012",
+      "name": "Configure SDK generation with `@hey-api/openapi-ts`",
+      "description": "Add the generator config and package scripts that turn `apps/server-v2/openapi/openapi.json` into the reusable TypeScript client package.",
+      "successFactors": [
+        "SDK generation succeeds from the generated OpenAPI file.",
+        "The generator version is pinned exactly as recommended in the plan.",
+        "The generated output is committed in a predictable layout."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-013",
+      "name": "Expose stable SDK entrypoints",
+      "description": "Add handwritten exports in `packages/openwork-server-sdk/src/index.ts` so app code imports stable package entrypoints instead of raw generator internals.",
+      "successFactors": [
+        "App code does not need to import from `generated/**` directly.",
+        "There is an obvious future home for SSE helpers and transport utilities.",
+        "Generated and handwritten code compile together cleanly."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-014",
+      "name": "Add placeholder SSE helper structure",
+      "description": "Create the initial `src/streams/**` layout in the SDK package and define the pattern future streaming helpers will use, even if the first real SSE endpoint lands in a later phase.",
+      "successFactors": [
+        "There is a reserved place for handwritten streaming helpers.",
+        "The package layout matches the assumptions in `sdk-generation.md`.",
+        "Later phases can add typed SSE helpers without reorganizing the package."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-015",
+      "name": "Create watcher scripts for contract regeneration",
+      "description": "Add repo-local watch scripts for OpenAPI and SDK generation so local development does not depend on fragile third-party watch behavior.",
+      "successFactors": [
+        "There is a watcher for `apps/server-v2/src/**` -> OpenAPI regeneration.",
+        "There is a watcher for `openapi/openapi.json` -> SDK regeneration.",
+        "The scripts are shaped so later phases can extend them instead of replacing them."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-016",
+      "name": "Add one-shot contract drift checks",
+      "description": "Create a CI-safe command that regenerates the spec and SDK and fails if a git diff appears, matching the contract discipline described in the planning docs.",
+      "successFactors": [
+        "There is one canonical command for local and CI contract checks.",
+        "Generated artifacts do not drift silently.",
+        "The command can be reused in future CI or pre-merge automation."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-017",
+      "name": "Add foundation tests",
+      "description": "Write the first tests for standalone server boot, health response shape, OpenAPI generation, and SDK generation so the new package is not validated only by manual smoke checks.",
+      "successFactors": [
+        "A failing boot or broken spec generation is caught by automated tests.",
+        "The tests cover both runtime start and contract artifact generation.",
+        "The tests are fast enough to run regularly during future phases."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P1-018",
+      "name": "Capture unresolved foundation assumptions",
+      "description": "If package naming, route naming, generator output, or startup conventions still have unresolved ambiguity, record them in `open-questions.md` and proceed with the best guess rather than leaving silent assumptions in code.",
+      "successFactors": [
+        "Important assumptions are written down instead of hidden in implementation choices.",
+        "Any foundation-level uncertainty is visible to later phases.",
+        "Phase 1 ends with a stable enough platform for Phase 2 and Phase 4 to begin."
+      ],
+      "completed": false
+    }
+  ]
+}

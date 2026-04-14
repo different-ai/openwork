@@ -1,0 +1,238 @@
+{
+  "phase": 7,
+  "title": "Files, Config Projection, And Reload",
+  "objective": "Move filesystem and config behavior behind Server V2 by implementing server-owned file APIs, config projection into OpenCode, reload events, and reconciliation of managed config state.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase7-learnings.md",
+    "prds/server-v2-plan/current-server-audit.md",
+    "prds/server-v2-plan/schema.md",
+    "prds/server-v2-plan/ideal-flow.md",
+    "prds/server-v2-plan/app-audit.md",
+    "prds/server-v2-plan/tauri-audit.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P7-001",
+      "name": "Define the config materialization service",
+      "description": "Create the service boundary that computes effective OpenWork and OpenCode config for a workspace from server-owned DB state and linking tables.",
+      "successFactors": [
+        "Config projection is computed in one place.",
+        "Later routes can ask for effective workspace config without duplicating logic.",
+        "The service reflects the ownership model in `ideal-flow.md` and `schema.md`."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-002",
+      "name": "Implement workspace config directory creation",
+      "description": "Ensure each local workspace gets a server-owned config directory separate from the user-selected data directory so OpenWork and OpenCode state can be managed cleanly.",
+      "successFactors": [
+        "Local workspaces have separate `data_dir` and `config_dir` semantics.",
+        "The path shape aligns with `workspaces/<workspaceId>/config` or the chosen equivalent.",
+        "Later config projection can write into a predictable location."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-003",
+      "name": "Implement local workspace creation on Server V2",
+      "description": "Move local workspace creation into Server V2 so directory creation, config directory setup, ID assignment, and initial registry updates are server-owned.",
+      "successFactors": [
+        "The server can create a local workspace end to end.",
+        "Workspace creation updates the registry and filesystem consistently.",
+        "The app or Tauri layer no longer needs to own the durable creation logic."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-004",
+      "name": "Materialize authorized roots and workspace paths",
+      "description": "Implement the rules that add the user data directory as an authorized path and project any other OpenWork-managed root or workspace path settings into effective config.",
+      "successFactors": [
+        "Authorized roots are generated from server-owned state.",
+        "Workspace data and config paths are reflected correctly in materialized config.",
+        "The rules do not require direct Tauri file editing to stay consistent."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-005",
+      "name": "Implement config read routes",
+      "description": "Add Server V2 routes for reading effective or raw OpenWork/OpenCode config so settings UIs can stop reading config directly from local files.",
+      "successFactors": [
+        "Config reads are routed through Server V2.",
+        "The server can return effective config and raw/editable config where needed.",
+        "Response shapes make it clear what is materialized versus stored."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-006",
+      "name": "Implement config patch and write routes",
+      "description": "Add the server-owned mutation routes for config changes, including audit logging and any reload or projection follow-up that should happen after a write.",
+      "successFactors": [
+        "Config mutation no longer relies on direct app or Tauri writes for migrated flows.",
+        "Writes go through one audit-aware server path.",
+        "Resulting config state is reflected in the DB and materialized files consistently."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-007",
+      "name": "Implement OpenCode config projection",
+      "description": "Project server-owned config items and workspace settings into the OpenCode config object or file shape needed by the runtime, without making those files the source of truth.",
+      "successFactors": [
+        "OpenCode receives the effective config it needs.",
+        "The server DB remains the source of truth for managed concepts.",
+        "Projection logic supports later managed-item phases without redesign."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-008",
+      "name": "Implement the file-session store or equivalent",
+      "description": "Port or redesign the file-session model so the server can manage scoped file editing sessions, catalogs, cursors, and conflict detection inside Server V2.",
+      "successFactors": [
+        "The server owns file editing session state.",
+        "The model supports conflict detection and incremental events.",
+        "The implementation is isolated from legacy server globals."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-009",
+      "name": "Implement file-session create and catalog routes",
+      "description": "Add the routes that create a file session and return the workspace file catalog snapshot needed by editors or remote file-management tooling.",
+      "successFactors": [
+        "Clients can start a file session through Server V2.",
+        "Catalog responses include the data needed by migrated editors.",
+        "The routes follow the shared auth and error model."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-010",
+      "name": "Implement file read and write routes",
+      "description": "Add the scoped file read and write routes with conflict detection and audit/reload behavior so workspace file editing is clearly server-owned.",
+      "successFactors": [
+        "The server can read and write workspace files through the file-session model.",
+        "Writes detect stale revisions or conflicting edits where required.",
+        "The resulting mutations trigger the correct audit and reload flows."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-011",
+      "name": "Implement mkdir, rename, and delete routes",
+      "description": "Add the remaining file operation routes needed for practical workspace file management through Server V2.",
+      "successFactors": [
+        "Create, rename, and delete operations exist under the server boundary.",
+        "Operation failures use consistent typed errors.",
+        "The file-event or reload model sees these changes too."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-012",
+      "name": "Implement simple content routes",
+      "description": "Add the lighter markdown or simple-content read/write routes used by simpler document flows so those paths do not remain on legacy file mutation APIs.",
+      "successFactors": [
+        "Simple document editing can use Server V2.",
+        "The routes are consistent with the rest of the server-owned file model.",
+        "The app can migrate lighter file flows without needing the full file-session API."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-013",
+      "name": "Implement inbox and outbox routes",
+      "description": "Add uploadable inbox and downloadable artifact routes under Server V2 for file ingest and artifact retrieval workflows.",
+      "successFactors": [
+        "The server can accept uploaded files into the managed workspace area.",
+        "Artifact download flows are served by Server V2.",
+        "The routes respect workspace scoping and auth rules."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-014",
+      "name": "Implement the reload event store",
+      "description": "Port or redesign the reload event queue so Server V2 can publish workspace-scoped reload signals after config or file mutations and after watched filesystem changes.",
+      "successFactors": [
+        "Workspace-scoped reload events are stored and queryable.",
+        "Server-caused mutations emit explicit reload signals.",
+        "The behavior matches the queueing and workspace isolation principles in the broader docs."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-015",
+      "name": "Implement managed file watching",
+      "description": "Add file watching over managed config directories and any required workspace paths so the server can detect out-of-band changes and queue reload or reconciliation work.",
+      "successFactors": [
+        "The server watches the intended directories only.",
+        "Watcher output feeds reload or reconciliation logic cleanly.",
+        "Watch behavior does not recreate the old app-owned watcher model."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-016",
+      "name": "Implement startup reconciliation and periodic repair",
+      "description": "Add the repair path that reconciles DB state with managed files on startup or periodic checks so missed watcher events do not leave the system inconsistent.",
+      "successFactors": [
+        "The server can recover from missed file events.",
+        "Startup repair is idempotent and observable.",
+        "Disk and DB state can be brought back into alignment safely."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-017",
+      "name": "Implement config absorption for recognized items",
+      "description": "Detect recognized unmanaged files in the workspace config directory and absorb them into managed DB records while leaving unknown files in place.",
+      "successFactors": [
+        "Recognized MCP, skill, plugin, or provider shapes can be imported automatically.",
+        "Unknown manual files are left alone.",
+        "Absorption behavior is explicit and testable."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-018",
+      "name": "Implement explicit engine reload if still required",
+      "description": "If the product still needs a manual engine reload route during migration, add it under the new namespace and make it call the new runtime supervisor instead of legacy proxy code.",
+      "successFactors": [
+        "Manual reload, if kept, is owned by Server V2.",
+        "The route is not a thin proxy to legacy server internals.",
+        "Reload semantics are consistent with the runtime supervisor."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-019",
+      "name": "Migrate config and file UI surfaces",
+      "description": "Move the app and any remaining Tauri-backed config or file flows onto Server V2 for the migrated areas so direct local mutation becomes fallback-only debt instead of a primary path.",
+      "successFactors": [
+        "Migrated settings and file flows go through Server V2.",
+        "Direct Tauri or app-local file mutation is reduced for covered slices.",
+        "Legacy fallbacks remain quarantined and deletable."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P7-020",
+      "name": "Add file and config tests",
+      "description": "Write tests for file session behavior, conflict handling, reload events, config projection, absorption, and reconciliation so these ownership-heavy flows are guarded before later cleanup phases.",
+      "successFactors": [
+        "Critical file and config behaviors are covered by automated tests.",
+        "Conflict and reload edge cases are asserted explicitly.",
+        "The tests prove the server, not the UI, owns the migrated workspace mutation paths."
+      ],
+      "completed": false
+    }
+  ]
+}
