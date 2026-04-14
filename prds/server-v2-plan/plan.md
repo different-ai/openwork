@@ -305,6 +305,8 @@ That makes contract drift visible immediately and keeps the generated client tru
 
 ## Migration Strategy
 
+Detailed UI and desktop rollout strategy lives in `prds/server-v2-plan/ui-migration.md`.
+
 ### Phase 0: Create the new server package and contract loop
 
 - Create the new server package under `apps/server-v2/`.
