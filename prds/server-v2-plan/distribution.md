@@ -274,6 +274,18 @@ So the key shift is:
 - from component distribution
 - to runtime-bundle distribution
 
+## Current Workflow Reality
+
+Based on the current repo workflows in this branch:
+
+- macOS notarization is explicitly configured
+- Windows signing is not explicitly configured in the GitHub workflows we inspected
+
+That means:
+
+- we should not assume we already have a working Windows signing pipeline
+- the new server distribution plan will need an explicit Windows signing step for both desktop and standalone runtime artifacts
+
 ## Important Caveats
 
 This Bun-based single-file approach looks promising, but it still needs validation.
@@ -335,6 +347,137 @@ Questions to validate on Windows:
 - do we need to prefer a stable per-version runtime directory to avoid repeated AV scans and trust churn?
 
 This means Windows should also get an early prototype, especially for first-run startup latency and user-facing trust prompts.
+
+## Windows Signing Plan
+
+We should plan to sign Windows artifacts explicitly.
+
+That includes:
+
+- desktop app executable/installer
+- standalone `openwork-server-v2.exe`
+- extracted Windows sidecars when they are shipped as separate signed executables inside the embedded runtime bundle
+
+Recommended signing model:
+
+- use Authenticode signing at minimum
+- consider EV signing if SmartScreen reputation becomes a serious UX issue
+- timestamp signatures so they remain valid after certificate rotation or expiry
+
+Rule of thumb:
+
+- every Windows executable we intentionally ship to users should be signed
+
+That includes:
+
+- the desktop app executable and/or installer
+- `openwork-server-v2.exe`
+- `opencode.exe`
+- `opencode-router.exe`
+
+Important practical point:
+
+- signing only the main desktop executable is not enough for the server runtime model we want
+- if `openwork-server-v2.exe` extracts `opencode.exe` and `opencode-router.exe`, those sidecars should ideally also be signed before embedding
+
+## Suggested Windows Release Flow
+
+### Desktop release flow
+
+1. Build the Windows desktop artifact.
+2. Sign the desktop executable or installer.
+3. Verify the signature.
+4. Publish the signed asset.
+
+### Standalone server release flow
+
+1. Build `openwork-server-v2.exe` for Windows.
+2. Build or collect signed Windows `opencode.exe` and `opencode-router.exe` payloads.
+3. Embed those signed sidecar payloads into the server executable.
+4. Sign the final `openwork-server-v2.exe`.
+5. Verify the signature.
+6. Publish the signed asset.
+
+This means Windows signing happens at two layers:
+
+- sidecar payload signing
+- final runtime signing
+
+## GitHub Actions Sketch
+
+The repo does not currently show an explicit Windows signing step, so we should plan one.
+
+Illustrative shape:
+
+```yaml
+jobs:
+  build-windows-server-v2:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build server runtime
+        run: pnpm --filter openwork-server-v2 build:bin:windows
+
+      - name: Build or fetch Windows sidecars
+        run: pnpm --filter openwork-server-v2 build:sidecars:windows
+
+      - name: Import signing certificate
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String("${{ secrets.WINDOWS_CERT_PFX_BASE64 }}")
+          [IO.File]::WriteAllBytes("codesign.pfx", $bytes)
+
+      - name: Sign sidecars
+        shell: pwsh
+        run: |
+          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f codesign.pfx /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" dist\\sidecars\\opencode.exe
+          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f codesign.pfx /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" dist\\sidecars\\opencode-router.exe
+
+      - name: Build embedded runtime
+        run: pnpm --filter openwork-server-v2 package:windows
+
+      - name: Sign final server runtime
+        shell: pwsh
+        run: |
+          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f codesign.pfx /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" dist\\openwork-server-v2.exe
+
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          signtool verify /pa /v dist\\openwork-server-v2.exe
+```
+
+The desktop Windows job would follow the same pattern, but sign the desktop executable/installer artifact.
+
+## Secrets And Infrastructure Needed
+
+To support Windows signing in CI, we will likely need:
+
+- a Windows code signing certificate in PFX form
+- a password for that PFX
+- a timestamp server URL
+- possibly a separate EV signing process if we choose that route later
+
+Likely GitHub secrets:
+
+- `WINDOWS_CERT_PFX_BASE64`
+- `WINDOWS_CERT_PASSWORD`
+- `WINDOWS_TIMESTAMP_URL`
+
+## Recommendation
+
+For now, the important planning takeaway is:
+
+- Windows signing is not already clearly implemented in the repo workflows
+- we should treat it as a required new release capability for Server V2 distribution
+- both desktop and standalone server runtimes will need explicit Windows signing support
 
 ### 4. Upgrade and extraction locking
 

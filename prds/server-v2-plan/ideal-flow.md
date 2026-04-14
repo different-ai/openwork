@@ -254,6 +254,69 @@ Ideal startup flow:
 7. The server queries the relevant backend live for those sessions.
 8. The desktop app renders only the data returned by the server.
 
+## OpenCode Router Startup Flow
+
+`opencode-router` should be started by the new OpenWork server, not by the desktop app.
+
+Current baseline being replaced:
+
+- today, the orchestrator decides whether router support is needed
+- today, the orchestrator resolves the router binary
+- today, the orchestrator spawns and supervises the router child process
+
+Target flow:
+
+1. Desktop app launches the local OpenWork server.
+2. The server boots its sqlite state and runtime registry.
+3. The server evaluates whether router support is needed.
+4. If router support is needed, the server:
+   - resolves the `opencode-router` binary
+   - materializes the effective router config from server-owned state
+   - launches the router child process
+   - waits for router health
+   - tracks router status in memory and optionally in runtime state tables
+5. The server exposes router status and router-backed capabilities through its own API.
+
+The desktop app should not:
+
+- launch `opencode-router` directly
+- supervise `opencode-router` directly
+- talk to `opencode-router` directly
+
+The server should own the full lifecycle.
+
+### Recommended shape
+
+- one router process per local OpenWork server
+- server-level identities and bindings
+- workspace-aware routing enforced by the server when needed
+
+This is simpler than one router process per workspace and fits the server-first ownership model better.
+
+### Startup decision model
+
+The server should decide whether router startup is needed based on:
+
+- whether any router identities or bindings are configured
+- whether any server-owned features require router-backed behavior
+- whether messaging-related capabilities are enabled
+
+Recommended behavior:
+
+- if no router-backed capability is configured, router can stay off
+- once messaging/bindings are configured, router should be started and supervised by the server
+
+### Runtime behavior
+
+The server should also own:
+
+- router restart
+- router health checks
+- router config apply/reload behavior
+- router status reporting to the UI
+
+That makes `opencode-router` just another runtime dependency of the OpenWork server, not a separate app-owned or orchestrator-owned control surface.
+
 ## Session Ownership Model
 
 The state of a session should be managed by OpenCode.

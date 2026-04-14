@@ -120,6 +120,46 @@ apps/server-v2/src/
 - `middleware/` owns cross-cutting HTTP concerns.
 - `context/` owns per-request wiring and shared typed context.
 
+## Runtime Supervision Inside The New Server
+
+The new server should not just proxy product logic. It should also supervise the local runtime pieces it depends on.
+
+That includes:
+
+- OpenCode
+- `opencode-router`
+- any other local child runtime needed for the product surface
+
+### Router supervision model
+
+Current baseline being replaced:
+
+- orchestrator decides whether router is enabled
+- orchestrator resolves the router binary
+- orchestrator spawns and supervises the router
+
+Target model:
+
+- server bootstrap decides whether router is enabled
+- server bootstrap resolves the router binary
+- server bootstrap spawns and supervises the router
+- server API exposes router status/control behavior to the UI
+
+Recommended shape:
+
+- one `opencode-router` child per local OpenWork server
+- server-owned router config materialization from sqlite or server-managed config state
+- server-owned health checks, restart behavior, and status reporting
+
+This keeps router lifecycle under the same ownership boundary as the rest of the runtime.
+
+### Why one router per server
+
+- identities and bindings are naturally server-level
+- supervision is simpler
+- workspace scoping can still be enforced by server logic
+- the UI does not need to understand a second runtime graph
+
 ## Startup Strategy
 
 The desktop app should eventually launch the new server directly.
