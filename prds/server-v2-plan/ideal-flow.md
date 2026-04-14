@@ -364,6 +364,8 @@ When that happens:
 3. The server materializes the effective OpenCode config for each affected workspace.
 4. The server updates the OpenCode config file(s) needed for that workspace only.
 
+When the server starts OpenCode, it should also be able to generate the effective OpenCode config object from its own database state and pass that config into the OpenCode runtime directly.
+
 This lets OpenWork own the config model while still projecting it into the OpenCode format OpenCode needs.
 
 When a user creates a new workspace, the product should also offer a list of existing config items that can be applied to that new workspace.
