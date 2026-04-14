@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, ImagePlus, LoaderCircle, MessageSquareText, Send, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, ImagePlus, MessageSquareText, Send, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 export type AppFeedbackPrefill = {
@@ -350,11 +350,7 @@ export function AppFeedbackForm(props: Props) {
                 disabled={state === "loading"}
                 className="doc-button inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {state === "loading" ? (
-                  <LoaderCircle size={16} className="animate-spin" />
-                ) : (
-                  <Send size={16} />
-                )}
+                <Send size={16} />
                 {submitLabel}
               </button>
             </form>
@@ -411,7 +407,7 @@ export function AppFeedbackForm(props: Props) {
               }}
               onDragOver={(event) => {
                 event.preventDefault();
-                if (!state === "loading") setDragActive(true);
+                if (state !== "loading") setDragActive(true);
               }}
               onDragLeave={(event) => {
                 event.preventDefault();
