@@ -32,7 +32,48 @@ We should treat local development as three separate but connected loops:
 - contract generation loop
 - app dev loop
 
+There is also one runtime-asset loop that matters specifically for Server V2:
+
+- local sidecar acquisition loop
+
 Each loop watches its own inputs and reacts only to the changes it actually cares about.
+
+## Runtime Asset Loop
+
+For Server V2 local development, runtime ownership should match production, but asset sourcing can be lighter-weight.
+
+Recommended model:
+
+- `apps/server-v2` runs directly with Bun in dev/watch mode
+- `opencode-router` is built from the local workspace source in `apps/opencode-router`
+- `opencode` is downloaded from a pinned release artifact, not committed into the repo and not resolved from `PATH`
+- both binaries are staged into a gitignored local runtime-assets directory
+- Server V2 launches those staged binaries by absolute path
+
+### Pinned version source
+
+The pinned OpenCode version for local dev should come from the root `constants.json` file.
+
+That means the local-dev flow should:
+
+- read `opencodeVersion` from `constants.json`
+- normalize the version for the upstream release download if needed
+- fetch exactly that version when the local cache is missing
+
+### Recommended local-dev behavior
+
+1. On first local Server V2 run, check the local runtime-assets cache for the pinned `opencode` binary.
+2. If the pinned binary is missing, download the matching release artifact for the current platform.
+3. Build `apps/opencode-router` locally and stage the resulting binary in the same gitignored runtime-assets area.
+4. Start Server V2 in Bun watch mode.
+5. Have Server V2 spawn the staged binaries by absolute path.
+
+### Important rules
+
+- do not require developers to install `opencode` globally for Server V2 dev
+- do not use `PATH` lookup as the default dev mechanism
+- do not check the `opencode` binary into git
+- prefer caching the downloaded pinned artifact locally so repeated dev restarts are fast
 
 ## Watch Graph
 

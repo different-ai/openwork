@@ -252,6 +252,94 @@ Recommended runtime manifest shape:
 
 This gives us one runtime with two install channels.
 
+## Local Dev Asset Model
+
+Local development should preserve the same ownership model as production without requiring the final compiled single-file bundle on every edit.
+
+Recommended dev behavior:
+
+- run `apps/server-v2` directly with Bun in watch mode
+- keep `opencode-router` as a locally built workspace binary from `apps/opencode-router`
+- acquire `opencode` as a pinned release artifact rather than committing the binary into git
+- stage both binaries into a gitignored local runtime-assets directory
+- have Server V2 launch those staged binaries by absolute path
+
+The important rule is that development should still be deterministic:
+
+- no reliance on `PATH`
+- no silent use of whichever `opencode` binary happens to be installed globally
+- no checked-in release binaries under source control
+
+### Why `opencode` should not be committed into the repo
+
+We do not need the `opencode` binary checked into git.
+
+What we need is a reproducible acquisition path:
+
+- read the pinned version from `constants.json`
+- download the matching OpenCode release artifact for the current platform
+- store it in a gitignored local runtime-assets/cache location
+- use that exact file for local dev and for release embedding
+
+This keeps local dev aligned with the pinned product version while avoiding binary churn in the repo.
+
+### Source of truth for the pinned version
+
+The OpenCode version should come from the existing root `constants.json` file.
+
+For Server V2 planning, that means:
+
+- `constants.json` remains the version pin source of truth for `opencode`
+- local dev setup should read `opencodeVersion` from `constants.json`
+- release packaging should read the same value when embedding the final binary
+
+### Recommended local path shape
+
+Illustrative shape:
+
+```text
+<repo>/.local/runtime-assets/
+  opencode/
+    darwin-arm64/
+      v1.2.27/
+        opencode
+  opencode-router/
+    darwin-arm64/
+      dev/
+        opencode-router
+```
+
+Notes:
+
+- this directory should be gitignored
+- exact path names can change, but the shape should be versioned and platform-specific
+- `opencode-router` can use a `dev` slot because it is built from the local workspace during development
+- `opencode` should use the pinned version from `constants.json`
+
+### Recommended dev acquisition flow
+
+1. Read `opencodeVersion` from `constants.json`.
+2. Resolve the current platform/arch target.
+3. Check whether the pinned `opencode` binary already exists in the local runtime-assets cache.
+4. If not, download the matching OpenCode release artifact.
+5. Verify checksum if the release metadata supports it.
+6. Mark executable bits where needed.
+7. Build `apps/opencode-router` locally and place its binary in the staged dev runtime location.
+8. Start Server V2 and pass those absolute binary paths into runtime startup.
+
+### Dev vs release relationship
+
+The difference between dev and release should be only where the sidecar payloads come from:
+
+- release: sidecars are embedded into `openwork-server-v2` and extracted on first run
+- local dev: sidecars are staged into a gitignored local runtime-assets directory first
+
+The runtime ownership model should stay the same in both cases:
+
+- Server V2 resolves the binaries
+- Server V2 launches them
+- Server V2 supervises them
+
 ## How This Differs From The Current System
 
 Today, runtime distribution is more fragmented.
