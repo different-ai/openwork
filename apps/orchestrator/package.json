@@ -47,8 +47,8 @@
     "@opencode-ai/sdk": "^1.1.31",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
-    "opencode-router": "0.11.200",
-    "openwork-server": "0.11.200",
+    "opencode-router": "0.11.207",
+    "openwork-server": "0.11.207",
     "solid-js": "1.9.9"
   },
   "devDependencies": {

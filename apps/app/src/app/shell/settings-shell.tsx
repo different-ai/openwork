@@ -302,6 +302,7 @@ export default function SettingsShell(props: SettingsShellProps) {
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
       ? workspace.sandboxBackend === "docker" ||
+        workspace.sandboxBackend === "microsandbox" ||
         Boolean(workspace.sandboxRunId?.trim()) ||
         Boolean(workspace.sandboxContainerName?.trim())
         ? t("workspace.sandbox_badge")

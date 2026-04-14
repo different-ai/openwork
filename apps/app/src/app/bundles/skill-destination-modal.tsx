@@ -52,6 +52,7 @@ export default function SkillDestinationModal(props: {
     if (
       workspace.workspaceType === "remote" &&
       (workspace.sandboxBackend === "docker" ||
+        workspace.sandboxBackend === "microsandbox" ||
         Boolean(workspace.sandboxRunId?.trim()) ||
         Boolean(workspace.sandboxContainerName?.trim()))
     ) {
@@ -81,6 +82,7 @@ export default function SkillDestinationModal(props: {
   const isSandboxWorkspace = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote" &&
     (workspace.sandboxBackend === "docker" ||
+      workspace.sandboxBackend === "microsandbox" ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim()));
 

@@ -663,6 +663,7 @@ export function createBundlesStore(options: {
       const badge =
         workspace.workspaceType === "remote"
           ? workspace.sandboxBackend === "docker" ||
+            workspace.sandboxBackend === "microsandbox" ||
             Boolean(workspace.sandboxRunId?.trim()) ||
             Boolean(workspace.sandboxContainerName?.trim())
             ? t("workspace.sandbox_badge")

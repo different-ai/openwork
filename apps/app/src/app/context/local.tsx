@@ -14,6 +14,9 @@ type LocalPreferences = {
   showThinking: boolean;
   modelVariant: string | null;
   defaultModel: ModelRef | null;
+  featureFlags: {
+    microsandboxCreateSandbox: boolean;
+  };
 };
 
 type LocalContextValue = {
@@ -41,6 +44,9 @@ export function LocalProvider(props: ParentProps) {
       showThinking: false,
       modelVariant: null,
       defaultModel: null,
+      featureFlags: {
+        microsandboxCreateSandbox: false,
+      },
     }),
   );
 

@@ -293,6 +293,7 @@ export default function SessionSidebar(props: SidebarProps) {
                   const isSandboxWorkspace = () =>
                     group.workspace.workspaceType === "remote" &&
                     (group.workspace.sandboxBackend === "docker" ||
+                      group.workspace.sandboxBackend === "microsandbox" ||
                       Boolean(group.workspace.sandboxRunId?.trim()) ||
                       Boolean(group.workspace.sandboxContainerName?.trim()));
                   const sessions = () => group.sessions;
