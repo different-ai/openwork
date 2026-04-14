@@ -454,7 +454,7 @@ This is meant to help break down the current server into clear migration targets
 ### `/runtime/versions` and `/runtime/upgrade`
 
 - What they are: runtime-control proxy endpoints.
-- What they do: proxy runtime version and upgrade behavior.
+- What they do: proxy runtime version and upgrade behavior. These are the legacy current-server route names; the Server V2 plan normalizes equivalent server-wide runtime endpoints under `/system/runtime/*`.
 - Called from and when: called by upgrade/admin flows.
 - What they call: `fetchRuntimeControl` and the configured runtime control base URL.
 

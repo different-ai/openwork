@@ -117,7 +117,7 @@ Reasoning: native child supervision exists today in the orchestrator, but even t
 
 ### runtime control server in `runStart()`
 
-- What it does: exposes host-local `/runtime/versions` and `/runtime/upgrade` endpoints.
+- What it does: exposes host-local legacy `/runtime/versions` and `/runtime/upgrade` endpoints; in the Server V2 target these capabilities should land under `/system/runtime/*` on the main server.
 - Called from and when: started during host startup.
 - Ends up calling: runtime inspection and rolling restart/upgrade behavior.
 
@@ -131,9 +131,9 @@ Reasoning: native child supervision exists today in the orchestrator, but even t
 
 Disposition guidance:
 
-- all major functions in this section -> `Stay`
+- all major functions in this section -> `Split`
 
-Reasoning: deciding what binary to run, where to find it, and how to download it is host/bootstrap behavior, not main-server behavior.
+Reasoning: in the current orchestrator these are host/bootstrap concerns, but the Server V2 target changes the default distribution model. When the canonical runtime is `openwork-server-v2` bundling and extracting its own sidecars, the equivalent resolution logic should move into the server for that path. A thinner host shell may still need fallback or external-runtime resolution in some modes, so this boundary is better treated as `Split` than `Stay`.
 
 ### `resolveOpenworkServerBin()`
 
@@ -266,9 +266,9 @@ Reasoning: local secret and filesystem layout for host relaunches is still host-
 
 Disposition guidance:
 
-- all major sandbox/container functions in this section -> `Stay`
+- all major sandbox/container functions in this section -> `Split`
 
-Reasoning: container lifecycle, mount validation, and staged runtime bootstrapping are classic host-shell responsibilities.
+Reasoning: the container substrate itself is still host-shell territory, but the runtime graph and product behavior being started inside that substrate should converge on the same Server V2 ownership model. In practice that means some container launch hooks may stay outside the server, while runtime boot config, child supervision policy, and product-facing control semantics should collapse inward.
 
 ### `resolveSandboxMode()`
 
@@ -324,7 +324,7 @@ Reasoning: these are useful product capabilities, but they should ideally be own
 
 ### runtime control API
 
-- What it does: local `/runtime/versions` and `/runtime/upgrade` surface.
+- What it does: local legacy `/runtime/versions` and `/runtime/upgrade` surface; the target normalized namespace is `/system/runtime/*` once this moves into the main server.
 - Called from and when: started in host mode and later accessed through server proxy routes or clients.
 - Ends up calling: runtime inspection and controlled restart/upgrade behavior.
 

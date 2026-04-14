@@ -9,6 +9,8 @@ The current server architecture is not the one we want to keep.
 
 We want to build a whole new server as its own server package and process, make that server the real owner of product/runtime/workspace behavior, and then switch the desktop app to start and consume that new server directly.
 
+For planning purposes in this doc set, `openwork-server-v2` is the working name for that new package, binary, and runtime bundle. We can rename it later without changing the architecture direction.
+
 ## Goals
 
 - Build a new server implementation in new files without extending the lifetime of the legacy architecture.
@@ -37,6 +39,7 @@ Example shape:
 ```text
 apps/server-v2/
 ├── src/
+│   └── cli.ts
 ├── openapi/
 └── package.json
 ```
@@ -58,6 +61,7 @@ Proposed shape:
 apps/server-v2/
 ├── src/
 │   ├── app.ts
+│   ├── cli.ts
 │   ├── routes/
 │   ├── middleware/
 │   ├── services/
@@ -186,6 +190,7 @@ The new server should expose OpenWork-shaped routes directly.
 Recommendation:
 
 - use workspace-first OpenWork routes as the real public API shape
+- use `/system/*` for server-level operational and runtime endpoints that are not scoped to a workspace
 - do not design the route system around mounting under a legacy subpath
 - treat versioning as a deployment or compatibility concern, not as the primary organizing principle of the new server
 
@@ -309,12 +314,29 @@ That makes contract drift visible immediately and keeps the generated client tru
 - Add a generated TypeScript SDK package for the new server.
 - Add an app-side `createSdk({ serverId })` adapter before migrating individual features.
 - Document which desktop-owned capabilities must move behind the server over time.
+- Define the first-run import path for existing app/orchestrator state that should move into the new server DB.
 
 Success criteria:
 
 - The new server boots independently.
 - OpenAPI generation and SDK generation succeed locally.
 - The app can target the new server through one adapter layer.
+
+### Phase 0.5: Absorb existing local product state into the server DB
+
+Before feature slices can fully move, the new server needs a clear story for taking over the durable state the app and orchestrator own today.
+
+- import or normalize workspace records from current desktop state such as `openwork-workspaces.json`
+- import remote workspace mappings and selected connection metadata into the server registry
+- import or reconstruct cloud auth/session metadata into the server-owned sqlite model
+- import or normalize orchestrator state snapshots that still matter for reconnect or migration
+- make the migration idempotent so the server can retry safely on startup
+
+Success criteria:
+
+- the server can reconstruct its canonical sqlite state from current local product state without manual hand edits
+- post-migration app startup reads server-owned workspace and connection state instead of rebuilding it locally
+- migration failures are visible and recoverable instead of silently leaving split ownership behind
 
 ### Phase 1: Move low-risk read endpoints first
 

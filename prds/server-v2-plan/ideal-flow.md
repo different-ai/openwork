@@ -256,6 +256,11 @@ Ideal startup flow:
 
 The server should also expose explicit runtime health endpoints for its local dependencies, including OpenCode.
 
+Recommended namespace:
+
+- use `/system/*` for server-wide runtime and operational surfaces
+- for example: `/system/opencode/health`, `/system/runtime/versions`, `/system/runtime/upgrade`
+
 At minimum, the UI should be able to ask whether OpenCode is running and which version is active.
 
 ## OpenCode Router Startup Flow

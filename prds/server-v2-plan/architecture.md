@@ -92,20 +92,23 @@ The same principle applies to the orchestrator boundary:
 
 ## Server Layout
 
-Proposed layout inside `apps/server-v2/src`:
+Proposed package layout inside `apps/server-v2`:
 
 ```text
-apps/server-v2/src/
-├── app.ts
-├── bootstrap/
-├── database/
-├── context/
-├── middleware/
-├── routes/
-├── services/
-├── schemas/
-├── adapters/
-└── openapi/
+apps/server-v2/
+├── src/
+│   ├── app.ts
+│   ├── cli.ts
+│   ├── bootstrap/
+│   ├── database/
+│   ├── context/
+│   ├── middleware/
+│   ├── routes/
+│   ├── services/
+│   ├── schemas/
+│   └── adapters/
+├── openapi/
+└── scripts/
 ```
 
 ### Ownership
@@ -587,4 +590,4 @@ The same spirit also applies to the orchestrator boundary:
 
 - whether capability detection is static, dynamic, or both
 - which endpoint group becomes the first proof-of-path migration
-- what exact package name and launch path the new server should use in the repo and desktop app
+- whether the working name `openwork-server-v2` survives to ship time or is renamed before release

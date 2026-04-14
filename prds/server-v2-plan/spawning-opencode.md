@@ -62,7 +62,7 @@ That config blob should come from the OpenWork server's own database-backed conf
 Suggested local helper location:
 
 ```text
-apps/server-v2/src/lib/opencode.ts
+apps/server-v2/src/adapters/opencode/local.ts
 ```
 
 This should remain app-local/server-local code, not a patch to `node_modules`.
@@ -91,7 +91,7 @@ type CreateLocalOpencodeOptions = {
 
 Suggested defaults:
 
-- `binary`: required extracted bundled runtime binary path
+- `binary`: omitted only if the helper can resolve the extracted bundled runtime binary path from server-managed runtime state; otherwise startup should fail
 - `hostname`: `"127.0.0.1"`
 - `port`: `4096`
 - `timeout`: `5000`
@@ -308,7 +308,7 @@ type LocalOpencodeHandle = {
   server: {
     url: string
     close: () => void
-    proc: ChildProcess
+    proc: Bun.Subprocess
   }
 }
 ```
@@ -318,7 +318,7 @@ Notes:
 - `client` is the upstream SDK HTTP client
 - `server.url` is the parsed listening URL
 - `server.close()` should terminate the spawned process
-- `server.proc` is useful for diagnostics and advanced lifecycle management
+- `server.proc` is the Bun subprocess handle for diagnostics and advanced lifecycle management
 
 The process handle should also make it possible for the server's runtime supervisor to observe post-start exit/crash behavior.
 
@@ -354,7 +354,7 @@ Implementation guidance:
 - avoid `any`
 - collect output safely with bounded buffers if needed
 - make timeout cleanup and process cleanup deterministic
-- remove all event listeners after resolve/reject
+- remove abort hooks, timers, and background readers after resolve/reject
 - only resolve once
 - continue observing the process after readiness so unexpected exit/crash can be surfaced to the runtime supervisor
 
@@ -376,7 +376,7 @@ opencode.server.close()
 ## Tiny Usage Example
 
 ```ts
-import { createLocalOpencode } from "./lib/opencode"
+import { createLocalOpencode } from "./adapters/opencode/local"
 
 const opencode = await createLocalOpencode({
   binary: "/runtime/opencode",

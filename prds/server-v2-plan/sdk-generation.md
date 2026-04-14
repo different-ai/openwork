@@ -139,6 +139,25 @@ apps/server-v2/src/**
 -> packages/openwork-server-sdk/generated/**
 ```
 
+## Mixed Old/New Routing During Migration
+
+The generated SDK package should represent the new server contract only.
+
+During migration, typed fallback behavior for legacy server routes should live in app-owned adapter code rather than in the generated SDK package itself.
+
+Recommended split:
+
+- `packages/openwork-server-sdk`: generated Server V2 client plus small handwritten SSE helpers for Server V2
+- `apps/app/.../createSdk.ts`: rollout checks, capability gating, and per-operation routing
+- `apps/app/.../legacy/`: small handwritten compatibility shims for old-server calls that have not been ported yet
+
+Rules:
+
+- do not try to generate one SDK that merges old and new server contracts together
+- keep legacy compatibility shims thin and delete them as soon as a feature slice is fully on the new server
+- if a legacy route must be used temporarily, normalize its result in the app adapter before returning it to the rest of the UI
+- the app-facing call site should still look like `createSdk({ serverId })...` so migration logic stays out of feature code
+
 ## Scripts Shape
 
 The exact implementation can vary, but the command model should look like this.

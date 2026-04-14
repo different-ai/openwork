@@ -97,6 +97,31 @@ Rules:
 - control/help workspaces are real workspaces with `is_hidden = true`
 - the local OpenWork server is still the canonical routing layer that the app talks to, even when a workspace belongs to a remote server
 
+### `server_runtime_state`
+
+Purpose:
+
+- store server-wide supervision and health state for bundled runtime dependencies
+
+Suggested columns:
+
+- `server_id`
+- `runtime_version`
+- `opencode_status`
+- `opencode_version`
+- `opencode_base_url` nullable
+- `router_status`
+- `router_version` nullable
+- `restart_policy_json` nullable
+- `last_started_at` nullable
+- `last_exit_json` nullable
+- `updated_at`
+
+Notes:
+
+- this is the server-owned place for runtime health, crash history, and extracted-runtime metadata
+- this is distinct from workspace-level diagnostic state because OpenCode and router are supervised at the server level
+
 ### `workspace_runtime_state`
 
 Purpose:
@@ -206,6 +231,74 @@ Notes:
 - cloud sign-in should stop being purely app-owned preference state
 - the server should be able to own and apply this state directly
 
+### `workspace_shares`
+
+Purpose:
+
+- store share/access state for local workspaces that are exposed remotely
+
+Suggested columns:
+
+- `id`
+- `workspace_id`
+- `access_key_ref` or encrypted key material
+- `status` (`active`, `revoked`, `disabled`)
+- `last_used_at` nullable
+- `audit_json` nullable
+- `created_at`
+- `updated_at`
+- `revoked_at` nullable
+
+Notes:
+
+- access should be scoped to one workspace, not granted server-wide by default
+- the initial product shape can assume zero or one active share record per local workspace, while leaving room for later expansion
+
+### `router_identities`
+
+Purpose:
+
+- store server-owned router identities and their persisted config/auth metadata
+
+Suggested columns:
+
+- `id`
+- `server_id`
+- `kind`
+- `display_name`
+- `config_json`
+- `auth_json`
+- `is_enabled`
+- `created_at`
+- `updated_at`
+
+Notes:
+
+- router identity state should be server-level, not app-local
+- the server can still project this into router config files or runtime config as needed
+
+### `router_bindings`
+
+Purpose:
+
+- store server-owned router bindings and delivery targets
+
+Suggested columns:
+
+- `id`
+- `server_id`
+- `router_identity_id`
+- `binding_key`
+- `config_json`
+- `is_enabled`
+- `created_at`
+- `updated_at`
+
+Notes:
+
+- bindings are what determine whether router startup is needed at all
+- later models can add workspace scoping or policy tables without changing the basic server-owned direction
+
 ## Linking Tables
 
 These tables are what let OpenWork own config items once and apply them to one or many workspaces.
@@ -285,6 +378,7 @@ Should move into the server DB:
 Reason:
 
 - remote exposure of local workspaces is a server capability
+- this should land in `workspace_shares` or an equivalent server-owned table
 
 ### Server/workspace relationship state
 
