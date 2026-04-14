@@ -1,29 +1,22 @@
-# PRD: Server V2 Incremental Adoption Plan
+# PRD: Server V2 New Server Plan
 
 ## Status: Draft
 ## Date: 2026-04-09
 
-## Alignment Note
-
-This document is directionally aligned with `prds/server-v2-plan/ideal-flow.md`, but it still contains transitional language from the incremental migration phase.
-
-To fully match the ideal model, the server should become the durable owner of the workspace registry, backend mappings, and workspace/runtime state, while the app keeps only transient UI state plus minimal server reconnect info and performs all operations through workspace-first server APIs.
-
 ## Problem
 
-`apps/server` needs a full rewrite, but we cannot do a stop-the-world replacement. We need a path that lets a new server grow inside the current server, ship safely in stages, and eventually replace all existing server code with new files.
+The current server architecture is not the one we want to keep.
 
-The new server surface will be a Hono app. In the short term, the current server can keep owning process boot, top-level wiring, and existing routes, while mounting the Hono app under a separate subpath. The desktop app then needs a controlled way to move from legacy paths to new paths one area at a time.
+We want to build a whole new server as its own server package and process, make that server the real owner of product/runtime/workspace behavior, and then switch the desktop app to start and consume that new server directly.
 
 ## Goals
 
 - Build a new server implementation in new files without extending the lifetime of the legacy architecture.
-- Run Server V2 inside the current `apps/server` process at first so we can migrate incrementally.
-- Mount the new Hono app on a separate subpath so V1 and V2 can coexist.
+- Build the new server as a separate server, not as a mounted sub-application inside the old server.
 - Keep full TypeScript type safety across server routes, generated clients, and the app-side SDK adapter.
 - Make the desktop app a thin client that starts the server, maintains local UI state, and sends all workspace behavior through the server.
-- Give the desktop app a clean migration layer so it can switch to new server paths bit by bit.
-- End with all active server behavior living in the new code, after which the old server code can be deleted.
+- Give the desktop app a clean migration layer so UI features can move to the new server bit by bit.
+- End with the desktop app starting only the new server, with the old server removed.
 
 ## Non-Goals
 
@@ -35,44 +28,45 @@ The new server surface will be a Hono app. In the short term, the current server
 
 ## Working Approach
 
-### 1. Keep one running server process at first
+### 1. Build a whole new server package
 
-The current server remains the entrypoint initially. It continues to own startup, existing integrations, and current production behavior while mounting a new Hono app under a dedicated prefix.
+The new server should exist as its own package and process.
 
 Example shape:
 
 ```text
-current server process
-├── legacy routes
-└── /v2/* -> Hono app
+apps/server-v2/
+├── src/
+├── openapi/
+└── package.json
 ```
 
 This gives us:
 
-- one deployable server binary/process
-- no immediate infrastructure split
-- low-risk incremental routing changes
-- a clean place for new code to grow without mixing it into legacy handlers
+- a clean architecture from day one
+- no need to preserve old server structure while designing the new one
+- a direct path to making the desktop app launch the new server when ready
+- a clear ownership boundary for new work
 
-### 2. Put all new server work in a dedicated V2 tree
+### 2. Put all new server work in the new server package
 
-Create a clearly isolated area for the replacement server so the migration is obvious and deletion is easy later.
+Create a clearly isolated package for the replacement server so the migration is obvious and deletion is easy later.
 
 Proposed shape:
 
 ```text
-apps/server/src/
-├── server.ts              # existing boot path, temporary mount point
-└── v2/
-    ├── app.ts             # Hono app creation
-    ├── routes/
-    ├── middleware/
-    ├── services/
-    ├── schemas/
-    └── adapters/
+apps/server-v2/
+├── src/
+│   ├── app.ts
+│   ├── routes/
+│   ├── middleware/
+│   ├── services/
+│   ├── schemas/
+│   └── adapters/
+└── openapi/
 ```
 
-Rule: new server functionality goes into `v2/` files, not into legacy handlers, unless a tiny bridge is needed to mount or route traffic.
+Rule: new server functionality goes into the new server package, not into legacy server files.
 
 ### 3. Migrate the desktop app through an explicit API layer
 
@@ -97,14 +91,14 @@ That means the desktop app should not be the long-term owner of:
 
 Those should become server responsibilities, even in desktop-hosted mode.
 
-To move incrementally, the app needs a small client-side API layer that can decide whether a feature calls V1 or V2.
+To move incrementally, the app needs a small client-side API layer that can move features onto the new server without changing the rest of the UI shape all at once.
 
 That layer should:
 
 - centralize server route construction
 - expose named operations instead of raw URL strings
 - allow per-feature or per-endpoint migration
-- make fallback possible while V2 is incomplete
+- make fallback possible while the new server is incomplete
 
 Example migration shape:
 
@@ -187,25 +181,23 @@ The desktop app should ideally only launch the main server process, not assemble
 
 ## Route Strategy
 
-Start with a dedicated path prefix for the Hono app.
+The new server should expose OpenWork-shaped routes directly.
 
-Candidate prefixes:
+Recommendation:
 
-- `/v2`
-- `/api/v2`
-- `/server/v2`
-
-Recommendation: choose one explicit prefix and keep it stable for the entire migration. The exact prefix is still an open decision, but the important part is that V2 is clearly namespaced and can be targeted intentionally by the desktop app.
+- use workspace-first OpenWork routes as the real public API shape
+- do not design the route system around mounting under a legacy subpath
+- treat versioning as a deployment or compatibility concern, not as the primary organizing principle of the new server
 
 ## Contract and SDK Strategy
 
-Server V2 should be the source of truth for its API contract.
+The new server should be the source of truth for its API contract.
 
 Detailed generator and script choices live in `prds/server-v2-plan/sdk-generation.md`.
 
 Planned approach:
 
-- define V2 routes in TypeScript with Hono and typed schemas
+- define new-server routes in TypeScript with Hono and typed schemas
 - generate an OpenAPI spec from the Hono app, likely with `hono-openapi`
 - generate a TypeScript SDK from that OpenAPI spec
 - consume that SDK from a small app-side `createSdk({ serverId })` adapter instead of calling raw paths directly
@@ -215,10 +207,10 @@ This keeps the server contract synchronized through code generation instead of m
 ### Recommended package shape
 
 ```text
-apps/server/
-├── src/v2/...
+apps/server-v2/
+├── src/...
 └── openapi/
-    └── v2.json                  # generated
+    └── openapi.json             # generated
 
 packages/openwork-server-sdk/
 ├── generated/                  # generated from OpenAPI
@@ -276,15 +268,15 @@ Detailed watch-mode workflow lives in `prds/server-v2-plan/local-dev.md`.
 
 Desired loop:
 
-1. change a V2 Hono endpoint or schema
+1. change a new-server Hono endpoint or schema
 2. regenerate the OpenAPI spec locally
 3. regenerate the TypeScript SDK locally
 4. app code sees the updated types and client methods immediately
 
 Recommended local setup:
 
-- `apps/server` watches `src/v2/**` and regenerates `openapi/v2.json`
-- `packages/openwork-server-sdk` watches `openapi/v2.json` and regenerates the reusable generated client package
+- `apps/server-v2` watches `src/**` and regenerates `openapi/openapi.json`
+- `packages/openwork-server-sdk` watches `openapi/openapi.json` and regenerates the reusable generated client package
 - `packages/openwork-server-sdk` regenerates the reusable server-agnostic client package
 - the app watches its own `createSdk({ serverId })` adapter alongside normal app code
 - the app depends on `openwork-server-sdk` through the workspace so type updates are visible immediately
@@ -308,39 +300,38 @@ That makes contract drift visible immediately and keeps the generated client tru
 
 ## Migration Strategy
 
-### Phase 0: Prepare the seam
+### Phase 0: Create the new server package and contract loop
 
-- Add a Hono app entrypoint under `apps/server/src/v2/`.
-- Mount it under a dedicated subpath from the current server.
-- Add a minimal health or test route to prove the mount works.
-- Add OpenAPI generation for the V2 app, likely via `hono-openapi`.
-- Add a generated TypeScript SDK package for V2.
+- Create the new server package under `apps/server-v2/`.
+- Add a minimal Hono app entrypoint.
+- Add a minimal health or test route to prove the server boots and serves requests.
+- Add OpenAPI generation for the new server, likely via `hono-openapi`.
+- Add a generated TypeScript SDK package for the new server.
 - Add an app-side `createSdk({ serverId })` adapter before migrating individual features.
 - Document which desktop-owned capabilities must move behind the server over time.
 
 Success criteria:
 
-- V1 server behavior is unchanged.
-- V2 routes respond successfully under the new prefix.
+- The new server boots independently.
 - OpenAPI generation and SDK generation succeed locally.
-- The desktop app has one place to resolve `serverId` into runtime config and call generated endpoints.
+- The app can target the new server through one adapter layer.
 
 ### Phase 1: Move low-risk read endpoints first
 
 Start with read-only or low-risk endpoints so the migration path is proven before touching write flows.
 
 - Implement new endpoints in Hono.
-- Point a small, isolated desktop surface at the V2 path.
+- Point a small, isolated desktop surface at the new server.
 - Compare behavior against the existing implementation.
 
 Success criteria:
 
-- The desktop app can use at least one V2 endpoint in production-like flows.
-- Fallback to V1 remains possible if needed.
+- The desktop app can use at least one new-server endpoint in production-like flows.
+- The app-side adapter can route that surface to the new server cleanly.
 
 ### Phase 2: Move mutations and workflow endpoints
 
-Once the structure is stable, move write paths and workflow endpoints in slices.
+Once the structure is stable, move write paths and workflow endpoints into the new server in slices.
 
 - Port one capability area at a time.
 - Keep domain behavior consistent while the transport layer changes.
@@ -348,8 +339,8 @@ Once the structure is stable, move write paths and workflow endpoints in slices.
 
 Success criteria:
 
-- End-to-end feature flows work through V2 for selected areas.
-- Legacy endpoints remain available only for unmigrated consumers.
+- End-to-end feature flows work through the new server for selected areas.
+- The new server becomes credible as the real future server.
 
 ### Phase 3: Collapse orchestrator control-plane responsibilities into the server
 
@@ -366,28 +357,27 @@ Success criteria:
 - server routes become the canonical runtime/workspace control surface
 - orchestrator disappears as a meaningful product layer
 
-### Phase 4: Make V2 the default path
+### Phase 4: Make the new server the default desktop runtime
 
-- Switch desktop API clients to prefer V2 by default.
-- Keep a temporary fallback or kill switch while rollout completes.
+- Switch desktop startup to launch the new server.
+- Switch desktop API clients to use the new server by default.
 - Monitor for gaps in auth, payload shape, and error handling.
 
 Success criteria:
 
-- New desktop traffic uses V2 by default.
-- V1 is only serving straggler routes.
+- New desktop traffic uses the new server by default.
+- The old server is no longer on the critical path for normal desktop usage.
 
-### Phase 5: Remove V1 and leftover orchestrator control-plane code
+### Phase 5: Remove the old server and leftover orchestrator code
 
-- Delete the remaining legacy handlers once all consumers are moved.
-- Promote V2 structure to be the only server implementation.
-- Remove temporary compatibility bridges.
+- Delete the old server implementation once all consumers are moved.
+- Promote the new server package to be the only server implementation that matters.
 - delete or absorb orchestrator code that only existed to provide a separate control plane or bootstrap layer
 
 Success criteria:
 
-- No active desktop or external path depends on legacy server code.
-- All server behavior lives in the new files.
+- No active desktop path depends on the old server.
+- All server behavior lives in the new server package.
 - orchestrator is no longer needed as a separate product/runtime layer.
 
 ## Desktop App Requirements
@@ -402,9 +392,9 @@ Requirements:
 
 - one module owns server resolution from `serverId`
 - features call typed operations, not literal URL paths
-- route selection can happen per endpoint or per feature area
+- route selection can happen per endpoint or per feature area while migration lasts
 - the target server is selected explicitly by `serverId`, not hidden global state
-- it is easy to see which calls are still on V1 versus V2
+- it is easy to see which calls have been moved to the new server
 - the app only owns transient UI state, not durable workspace behavior
 - the app can list known servers and the workspaces available within each server
 - workspace reads, writes, AI actions, and config mutations should route through the server
@@ -412,8 +402,8 @@ Requirements:
 Nice-to-have follow-ups:
 
 - a feature flag or config switch for targeted rollout
-- a capability probe so the app can detect V2 support from the server
-- simple request logging that shows whether traffic used V1 or V2
+- a capability probe so the app can detect new-server support from the server
+- simple request logging that shows whether traffic used the current or new server during migration
 
 ### Client SDK model
 
@@ -460,7 +450,7 @@ The generated SDK should stay transport-level and typed. The thin handwritten ad
 
 - server target selection
 - auth headers and tokens
-- V1 versus V2 decision-making during migration
+- temporary old-server versus new-server decision-making during migration
 - lightweight client preparation
 - capability checks and fallbacks
 
@@ -468,12 +458,12 @@ It should not grow into a second workspace engine inside the app.
 
 ### SSE endpoint strategy
 
-Most V2 endpoints should be standard request/response endpoints covered directly by the generated SDK.
+Most new-server endpoints should be standard request/response endpoints covered directly by the generated SDK.
 
 For the likely one or two SSE endpoints:
 
 - the OpenWork server should still be the only streaming surface the app talks to
-- the SSE routes should still be documented in the V2 contract
+- the SSE routes should still be documented in the new server contract
 - event payloads should still be typed from generated or shared contract types, not imported directly from server source
 - we may need a small handwritten streaming helper because most OpenAPI generators do not produce an ergonomic typed SSE client automatically
 
@@ -484,38 +474,35 @@ Goal:
 
 ## Architectural Principles
 
-- **New code in new files**: treat `v2/` as the replacement tree, not an extension of legacy code.
-- **Compatibility first**: mount V2 inside the current server before attempting any infrastructure split.
+- **New code in new files**: treat the new server package as the replacement tree, not as an extension of legacy code.
+- **New server first**: design the replacement as its own server, not as a mounted extension of the old one.
 - **One slice at a time**: move vertical feature slices instead of mixing many partial migrations.
-- **Explicit routing**: desktop traffic should choose V1 or V2 intentionally, not accidentally.
+- **Explicit routing**: desktop traffic should move to the new server intentionally, not accidentally.
 - **Server-owned workspace behavior**: file access, AI/runtime behavior, project/config mutation, and other workspace capabilities belong to the server, not the UI.
 - **Thin desktop app**: the app should mainly launch/connect servers, hold local presentation state, and render server-backed workflows.
-- **Delete as you go**: once a feature is fully on V2, remove the corresponding legacy code instead of letting both versions linger.
+- **Delete as you go**: once a feature is fully on the new server, remove the corresponding legacy code instead of letting both versions linger.
 
 ## Risks
 
 - The desktop app may have too many direct server path references, making migration noisy until a client boundary exists.
 - The desktop app currently owns native and local behavior that should eventually move behind the server boundary.
-- Shared auth/session/runtime behavior may be entangled with the legacy server boot path.
+- Shared auth/session/runtime behavior may be entangled with the old server boot path.
 - Orchestrator responsibilities may be tightly coupled to host bootstrapping, making it harder to separate true bootstrap concerns from product control-plane concerns.
-- V1 and V2 payloads may drift if both are maintained for too long.
-- If the V2 prefix is treated as temporary, migration may stall and leave two permanent APIs.
+- Old-server and new-server payloads may drift if both are maintained for too long.
 
 ## Open Questions
 
-- Which path prefix should V2 use permanently during migration?
-- Should the desktop app choose V1 vs V2 by feature flag, capability detection, hardcoded route map, or a mix?
 - Which server surface is the best first slice to migrate as a proof point?
-- Are there any external consumers besides the desktop app that must keep using V1 paths during the transition?
-- At what point should the current server stop owning anything other than bootstrapping?
+- Are there any external consumers besides the desktop app that must keep using the old server during the transition?
+- At what point should desktop startup switch to the new server by default?
 - What bootstrap responsibilities truly must remain outside the server process, if any, once orchestration is folded inward?
 
 ## Immediate Next Steps
 
-1. Create `apps/server/src/v2/` with a minimal Hono app and mount point.
-2. Choose the V2 route prefix.
-3. Add OpenAPI generation for the V2 Hono app.
-4. Create a TypeScript SDK package generated from the V2 OpenAPI spec.
+1. Create `apps/server-v2/` as the new server package.
+2. Add OpenAPI generation for the new Hono app.
+3. Create a TypeScript SDK package generated from the new server OpenAPI spec.
+4. Define the new server startup path the desktop app will eventually launch.
 5. Add `createSdk({ serverId })` so the app resolves server config without passing raw URLs and tokens around.
 6. Define the one or two SSE endpoints and their typed event payloads.
 7. Inventory desktop-owned workspace capabilities and prioritize which ones move behind the server first.

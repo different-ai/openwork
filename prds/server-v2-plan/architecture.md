@@ -3,36 +3,29 @@
 ## Status: Draft
 ## Date: 2026-04-09
 
-## Alignment Note
-
-This document is directionally aligned with `prds/server-v2-plan/ideal-flow.md`, but it still describes some workspace/server mapping concerns as if they may remain app-owned.
-
-To fully match the ideal model, the server should be the canonical owner of workspace records, server/workspace relationships, and OpenCode or remote-backend mappings in sqlite, while the app operates only on server-issued workspace IDs through workspace-first APIs.
-
 ## Purpose
 
 This document expands `prds/server-v2-plan/plan.md` with a more concrete technical design for Server V2.
 
-The goal is to let a new Hono-based server grow inside the current `apps/server` implementation, expose a typed contract, and support incremental client migration across multiple server targets.
+The goal is to define a whole new Hono-based server package, expose a typed contract, and support incremental client migration onto that server.
 
 ## Core Model
 
-Server V2 starts as a new application mounted inside the current server process.
+Server V2 starts as a separate new server package and process.
 
 ```text
-current server process
-├── legacy boot and legacy routes
-├── shared auth/runtime bridges
-└── mounted Hono app for V2
-    └── /v2/*
+apps/server-v2/
+├── server process
+├── OpenAPI contract
+└── server-owned runtime/workspace behavior
 ```
 
 This means:
 
-- one process at first
-- one deployable unit at first
-- two route families during migration
+- a clean replacement server boundary
+- a separate deployable/process during the transition
 - new logic isolated in new files
+- no need to preserve legacy server structure while designing the new architecture
 
 ## Target End State
 
@@ -55,8 +48,8 @@ This means:
 
 ## Design Principles
 
-- V2 code lives in new files only.
-- The V2 API contract is explicit and typed.
+- Server V2 code lives in new files only.
+- The new server API contract is explicit and typed.
 - Clients depend on generated contracts and a small app-side SDK adapter, not server internals.
 - Multi-server routing is explicit at the client boundary.
 - The desktop app is a thin interface layer, not a second workspace runtime.
@@ -100,77 +93,55 @@ The same principle applies to the orchestrator boundary:
 
 ## Server Layout
 
-Proposed layout inside `apps/server/src`:
+Proposed layout inside `apps/server-v2/src`:
 
 ```text
-apps/server/src/
-├── server.ts
-├── legacy/
-│   └── ...
-└── v2/
-    ├── app.ts
-    ├── context/
-    │   ├── env.ts
-    │   ├── auth.ts
-    │   └── runtime.ts
-    ├── middleware/
-    │   ├── request-id.ts
-    │   ├── auth.ts
-    │   ├── errors.ts
-    │   └── logging.ts
-    ├── routes/
-    │   ├── health.ts
-    │   ├── sessions.ts
-    │   ├── workspaces.ts
-    │   └── ...
-    ├── services/
-    │   ├── sessions-service.ts
-    │   ├── workspaces-service.ts
-    │   └── ...
-    ├── schemas/
-    │   ├── sessions.ts
-    │   ├── workspaces.ts
-    │   └── ...
-    ├── adapters/
-    │   ├── opencode.ts
-    │   ├── database.ts
-    │   └── ...
-    └── openapi/
-        └── register.ts
+apps/server-v2/src/
+├── app.ts
+├── bootstrap/
+├── database/
+├── context/
+├── middleware/
+├── routes/
+├── services/
+├── schemas/
+├── adapters/
+└── openapi/
 ```
 
 ### Ownership
 
 - `app.ts` builds the Hono app and mounts route groups.
+- `bootstrap/` owns server startup plus any runtime supervision that gets folded into the server.
+- `database/` owns sqlite state, migrations, and persistence boundaries.
 - `routes/` owns HTTP concerns: method, path, validation, response shape.
 - `services/` owns domain workflows.
 - `schemas/` owns request/response definitions.
-- `adapters/` owns integration with OpenCode, storage, and existing runtime pieces.
+- `adapters/` owns integration with OpenCode, storage, and runtime pieces.
 - `middleware/` owns cross-cutting HTTP concerns.
 - `context/` owns per-request wiring and shared typed context.
 
-## Mounting Strategy
+## Startup Strategy
 
-The legacy entrypoint mounts Server V2 at a dedicated prefix.
+The desktop app should eventually launch the new server directly.
 
-Temporary shape:
+Target shape:
 
-```ts
-// illustrative only
-legacyServer.mount("/v2", createV2App())
+```text
+desktop app
+-> launches apps/server-v2
+-> talks only to the new server process
 ```
 
 Rules:
 
-- V2 paths must stay under a stable namespace during migration.
-- V1 and V2 must be callable side by side.
-- New features should prefer V2 once the route exists.
-- Legacy handlers should only be touched to wire mount points or temporary bridges.
-- Orchestrator control-plane routes should eventually be replaced by main-server routes rather than preserved as a second permanent API model.
+- the new server should not be designed as a mounted sub-application of the old server
+- startup/bootstrap should move into the new server package over time
+- orchestrator control-plane routes should be replaced by main-server routes rather than preserved as a second API model
 
 ## Typed Contract Flow
 
-Server V2 is the source of truth for its contract.
+The new server is the source of truth for its contract.
 
 ```text
 Hono route + schema definitions
@@ -195,7 +166,7 @@ Detailed generator and script choices live in `prds/server-v2-plan/sdk-generatio
 Proposed structure:
 
 ```text
-apps/server/openapi/v2.json
+apps/server-v2/openapi/openapi.json
 packages/openwork-server-sdk/generated/**
 packages/openwork-server-sdk/src/index.ts
 apps/app/.../createSdk({ serverId }) adapter
@@ -204,7 +175,7 @@ apps/app/.../createSdk({ serverId }) adapter
 ### Contract rules
 
 - The OpenAPI spec is generated, not handwritten.
-- `hono-openapi` is the leading candidate for generating the V2 OpenAPI spec because it is Hono-native and fits the route-first model we want.
+- `hono-openapi` is the leading candidate for generating the new server OpenAPI spec because it is Hono-native and fits the route-first model we want.
 - The generated SDK is TypeScript-first.
 - The SDK should expose stable exports from `src/index.ts`.
 - The app should avoid importing raw generated files directly.
@@ -264,8 +235,8 @@ Detailed local watch and rebuild behavior lives in `prds/server-v2-plan/local-de
 Desired loop:
 
 ```text
-edit V2 route or schema
--> regenerate openapi/v2.json
+edit new-server route or schema
+-> regenerate openapi/openapi.json
 -> regenerate TypeScript SDK
 -> app sees updated types and methods
 -> continue coding without manual sync work
@@ -273,8 +244,8 @@ edit V2 route or schema
 
 Recommended watch pipeline:
 
-- `apps/server`: watch `src/v2/**`, regenerate `openapi/v2.json` through `hono-openapi`
-- `packages/openwork-server-sdk`: watch `openapi/v2.json`, regenerate the reusable generated client package
+- `apps/server-v2`: watch `src/**`, regenerate `openapi/openapi.json` through `hono-openapi`
+- `packages/openwork-server-sdk`: watch `openapi/openapi.json`, regenerate the reusable generated client package
 - `apps/app`: watch the app-side `createSdk({ serverId })` adapter alongside normal app code
 - `packages/openwork-server-sdk`: optional watch build if the package publishes built output
 - `apps/app`: consumes the workspace package directly
@@ -304,7 +275,7 @@ generated SDK
 
 - resolve `serverId` into current server config
 - inject auth/token headers
-- choose V1 or V2 during migration
+- during migration, route features to the current or new server when needed
 - prepare a lightweight client instance
 - add capability checks when needed
 
@@ -393,12 +364,12 @@ This avoids hidden globals and makes mixed-target flows possible while keeping s
 
 ## Migration Routing Model
 
-During migration, the adapter may choose between V1 and V2 per operation.
+During migration, the adapter may choose between the current and new server per operation.
 
 Example decision inputs:
 
-- does the target advertise V2 capability?
-- is the feature enabled for V2?
+- does the target advertise new-server capability?
+- is the feature enabled for the new server?
 - has this specific endpoint been ported?
 - do we need a temporary fallback?
 
@@ -408,7 +379,7 @@ Illustrative flow:
 feature resolves workspace -> server target
 -> feature calls createSdk({ serverId }).sessions.list({ workspaceId })
 -> adapter inspects target + capability + rollout settings
--> adapter calls V1 or V2 implementation
+-> adapter calls the current or new server implementation
 -> feature receives typed result
 ```
 
@@ -423,14 +394,14 @@ The app should consume OpenCode-related streaming only through the OpenWork serv
 That means:
 
 - the desktop app never connects directly to underlying OpenCode SSE endpoints
-- Server V2 exposes its own SSE endpoints where needed
-- Server V2 can proxy, translate, or normalize underlying OpenCode stream events
+- the new server exposes its own SSE endpoints where needed
+- the new server can proxy, translate, or normalize underlying OpenCode stream events
 
 Because there will likely be only one or two SSE endpoints, we do not need a large custom streaming framework.
 
 Recommended shape:
 
-- document the SSE routes in the V2 contract
+- document the SSE routes in the new server contract
 - keep event payloads typed from generated or shared contract types
 - expose small handwritten streaming helpers from `packages/openwork-server-sdk`
 - keep those helpers under the same `createSdk({ serverId })` entrypoint
@@ -466,9 +437,9 @@ Example order:
 Rules:
 
 - migrate one slice fully enough to validate the pattern
-- switch that slice's adapter routing to V2
-- remove app-owned workspace logic for that slice when the server version is ready
-- remove legacy code when the slice no longer needs V1
+- switch that slice's adapter routing to the new server
+- remove app-owned workspace logic for that slice when the new server version is ready
+- remove old-server code when the slice no longer needs it
 
 Example categories to move behind the server over time:
 
@@ -483,14 +454,6 @@ Example categories to move behind the server over time:
 ## Orchestrator Integration Path
 
 The recommended path is to collapse orchestrator responsibilities inward rather than preserve a separate orchestrator control plane forever.
-
-### What should stay outside the server
-
-- child process launch and supervision
-- sidecar and binary resolution
-- local env/port/bootstrap setup
-- Docker and Apple container startup
-- detach/log multiplexing/TUI shell concerns
 
 ### What should move into the server
 
@@ -520,7 +483,7 @@ This removes the separate orchestrator boundary rather than preserving it as a s
 
 ## Error and Compatibility Model
 
-V2 should improve consistency instead of repeating legacy inconsistencies.
+The new server should improve consistency instead of repeating legacy inconsistencies.
 
 Targets:
 
@@ -530,7 +493,7 @@ Targets:
 - request IDs for tracing
 - typed success and error bodies where practical
 
-During migration, the adapter may need to normalize V1 and V2 responses into one app-facing shape.
+During migration, the adapter may need to normalize old-server and new-server responses into one app-facing shape.
 
 ## Testing Strategy
 
@@ -544,26 +507,26 @@ We need confidence at three levels.
 
 ### 2. Server integration tests
 
-- V2 routes hit real service/adapters
+- new-server routes hit real service/adapters
 - auth and runtime context behave correctly
-- legacy and V2 can coexist in one process
+- the new server works correctly as its own process and API surface
 
 ### 3. App integration tests
 
 - the SDK adapter calls the correct target
-- V1/V2 switching works
+- adapter-based old-server/new-server switching works during migration
 - desktop flows continue to work while slices are migrated
 
 ## Exit Criteria for the Old Server
 
-We can remove the legacy server code when:
+We can remove the old server when:
 
-- all app consumers use V2-backed SDK calls
-- no routes still require V1 handlers
+- all app consumers use new-server-backed SDK calls
+- no routes still require the old server
 - compatibility shims are no longer needed
-- the current server entrypoint only exists as the V2 entrypoint, or is replaced entirely
+- desktop startup launches only the new server
 
-At that point, V2 stops being a migration concept and becomes the server.
+At that point, Server V2 stops being a migration concept and becomes the server.
 
 The same spirit applies to the client boundary:
 
@@ -579,6 +542,6 @@ The same spirit also applies to the orchestrator boundary:
 
 ## Open Decisions
 
-- final V2 prefix: `/v2`, `/api/v2`, or another stable path
 - whether capability detection is static, dynamic, or both
 - which endpoint group becomes the first proof-of-path migration
+- what exact package name and launch path the new server should use in the repo and desktop app

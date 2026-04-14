@@ -7,6 +7,8 @@
 
 This document defines how Server V2, the generated SDK, and the app should stay in sync during local development without manual rebuilds or process restarts after every change.
 
+This doc assumes Server V2 is a separate new server package, not a mounted sub-application inside the old server.
+
 Detailed generator selection and script shape live in `prds/server-v2-plan/sdk-generation.md`.
 
 ## Goal
@@ -14,7 +16,7 @@ Detailed generator selection and script shape live in `prds/server-v2-plan/sdk-g
 The ideal local loop is:
 
 ```text
-edit a V2 route or schema
+edit a new-server route or schema
 -> server reloads
 -> OpenAPI spec regenerates
 -> SDK regenerates
@@ -35,9 +37,9 @@ Each loop watches its own inputs and reacts only to the changes it actually care
 ## Watch Graph
 
 ```text
-apps/server/src/v2/**
+apps/server-v2/src/**
 -> server watch reloads server runtime
--> OpenAPI watch regenerates apps/server/openapi/v2.json
+-> OpenAPI watch regenerates apps/server-v2/openapi/openapi.json
 -> SDK watch regenerates packages/openwork-server-sdk/generated/**
 -> app dev server sees workspace package changes
 -> app recompiles with updated types and methods
@@ -53,11 +55,11 @@ Purpose:
 
 Inputs:
 
-- `apps/server/src/**`
+- `apps/server-v2/src/**`
 
 Should ignore:
 
-- `apps/server/openapi/**`
+- `apps/server-v2/openapi/**`
 - `packages/openwork-server-sdk/**`
 
 Reason:
@@ -68,20 +70,20 @@ Reason:
 
 Purpose:
 
-- regenerate the V2 contract when routes or schemas change
+- regenerate the new-server contract when routes or schemas change
 
 Inputs:
 
-- `apps/server/src/v2/**`
+- `apps/server-v2/src/**`
 
 Output:
 
-- `apps/server/openapi/v2.json`
+- `apps/server-v2/openapi/openapi.json`
 
 Notes:
 
 - this should use `hono-openapi`
-- it should be narrowly scoped to V2 sources
+- it should be narrowly scoped to new-server sources
 - it should debounce rapid file changes to avoid overlapping runs
 
 ### 3. SDK watcher
@@ -92,7 +94,7 @@ Purpose:
 
 Input:
 
-- `apps/server/openapi/v2.json`
+- `apps/server-v2/openapi/openapi.json`
 
 Output:
 
@@ -173,7 +175,7 @@ This keeps per-call SDK creation cheap enough that we do not need to cache or re
 
 ## What Changes Trigger What
 
-### Change: V2 route handler or schema
+### Change: new-server route handler or schema
 
 - server reloads
 - OpenAPI spec regenerates
@@ -204,7 +206,7 @@ There will likely be only one or two SSE endpoints.
 
 Recommended approach:
 
-- document the SSE endpoints in the V2 contract
+- document the SSE endpoints in the new server contract
 - keep event payloads typed from generated or shared contract types
 - expose small handwritten SSE helpers from `packages/openwork-server-sdk`
 - let the app consume those helpers through the same `createSdk({ serverId })` entrypoint
@@ -221,7 +223,7 @@ The main risk in this setup is watchers causing each other to loop.
 We should prevent that by keeping responsibilities clean:
 
 - server watcher ignores generated spec and SDK files
-- OpenAPI watcher only watches V2 source
+- OpenAPI watcher only watches new-server source
 - SDK watcher only watches the spec file
 - app watcher only consumes the SDK package output, not the server source tree directly
 
@@ -246,10 +248,10 @@ That ensures local convenience never replaces contract discipline.
 Exact tooling is still open, but the shape should look like this:
 
 ```text
-apps/server
+apps/server-v2
 - dev                 # backend watch mode
 - openapi:generate    # one-shot spec generation
-- openapi:watch       # watch V2 sources and regenerate spec
+- openapi:watch       # watch new-server sources and regenerate spec
 
 packages/openwork-server-sdk
 - generate            # one-shot SDK generation
@@ -264,7 +266,7 @@ repo root
 From a developer's point of view, the happy path should be:
 
 1. run one dev command
-2. edit V2 routes, schemas, or app code freely
+2. edit new-server routes, schemas, or app code freely
 3. let watchers keep server runtime, spec, SDK, and app types synchronized
 4. avoid manual kill/restart/build loops except when tooling itself changes
 

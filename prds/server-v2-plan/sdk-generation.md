@@ -7,6 +7,8 @@
 
 This document defines the preferred toolchain for generating the Server V2 TypeScript SDK and how that generation should fit into local development and CI.
 
+This doc assumes Server V2 is a separate new server package, not a sub-application mounted inside the old server.
+
 ## Current Recommendation
 
 Preferred stack:
@@ -47,17 +49,17 @@ We should treat that as a requirement:
 
 Role:
 
-- derive the OpenAPI spec from the Hono V2 app and its schemas
+- derive the OpenAPI spec from the new server Hono app and its schemas
 
 Output:
 
-- `apps/server/openapi/v2.json`
+- `apps/server-v2/openapi/openapi.json`
 
 ### 2. `@hey-api/openapi-ts`
 
 Role:
 
-- generate the TypeScript SDK package from `apps/server/openapi/v2.json`
+- generate the TypeScript SDK package from `apps/server-v2/openapi/openapi.json`
 
 Output:
 
@@ -82,7 +84,7 @@ Role:
 - export the app-facing `createSdk({ serverId })`
 - resolve `serverId` to current runtime config
 - inject base URL and auth/token
-- select between legacy and V2 behavior during migration
+- select between the current and new server behavior during migration
 
 Files:
 
@@ -91,10 +93,10 @@ Files:
 ## Proposed Package Layout
 
 ```text
-apps/server/
-├── src/v2/**
+apps/server-v2/
+├── src/**
 └── openapi/
-    └── v2.json
+    └── openapi.json
 
 packages/openwork-server-sdk/
 ├── package.json
@@ -130,9 +132,9 @@ That means:
 One-shot flow:
 
 ```text
-apps/server/src/v2/**
+apps/server-v2/src/**
 -> hono-openapi
--> apps/server/openapi/v2.json
+-> apps/server-v2/openapi/openapi.json
 -> @hey-api/openapi-ts
 -> packages/openwork-server-sdk/generated/**
 ```
@@ -141,22 +143,22 @@ apps/server/src/v2/**
 
 The exact implementation can vary, but the command model should look like this.
 
-### `apps/server/package.json`
+### `apps/server-v2/package.json`
 
 ```json
 {
   "scripts": {
-    "openapi:generate": "node ./script/generate-openapi-v2.mjs",
-    "openapi:watch": "node ./script/watch-openapi-v2.mjs"
+    "openapi:generate": "node ./script/generate-openapi.mjs",
+    "openapi:watch": "node ./script/watch-openapi.mjs"
   }
 }
 ```
 
 Notes:
 
-- these scripts should load the V2 Hono app and emit `openapi/v2.json`
+- these scripts should load the new server Hono app and emit `openapi/openapi.json`
 - they should use `hono-openapi`
-- `openapi:watch` should only watch `src/v2/**`
+- `openapi:watch` should only watch `src/**`
 
 ### `packages/openwork-server-sdk/package.json`
 
@@ -172,7 +174,7 @@ Notes:
 
 Notes:
 
-- `generate` should run `@hey-api/openapi-ts` against `apps/server/openapi/v2.json`
+- `generate` should run `@hey-api/openapi-ts` against `apps/server-v2/openapi/openapi.json`
 - `watch` can be a small file watcher that reruns `generate` when `v2.json` changes
 - `typecheck` ensures the generated output and handwritten SDK helpers still compile together
 
@@ -201,11 +203,11 @@ Instead, prefer small repo-local watcher scripts where needed.
 
 Examples:
 
-- `apps/server/script/watch-openapi-v2.mjs`
-  - watch `src/v2/**`
+- `apps/server-v2/script/watch-openapi.mjs`
+  - watch `src/**`
   - rerun OpenAPI generation
 - `packages/openwork-server-sdk/scripts/watch.mjs`
-  - watch `../../apps/server/openapi/v2.json`
+  - watch `../../apps/server-v2/openapi/openapi.json`
   - rerun `openapi-ts`
 - `scripts/dev-server-v2.mjs`
   - run backend dev watch
@@ -223,7 +225,7 @@ The code generation toolchain does not need to match the runtime exactly.
 
 That means:
 
-- `apps/server` can continue running with Bun in dev and production
+- `apps/server-v2` can continue running with Bun in dev and production
 - code generation can run via `pnpm` and Node-based tooling where needed
 
 This is acceptable because code generation is a build-time/dev-time concern, not a runtime server concern.
@@ -235,7 +237,7 @@ The CI contract check should reduce to one command or one short chain.
 Preferred shape:
 
 ```bash
-pnpm --filter openwork-server openapi:generate && pnpm --filter @openwork/server-sdk generate && git diff --exit-code
+pnpm --filter openwork-server-v2 openapi:generate && pnpm --filter @openwork/server-sdk generate && git diff --exit-code
 ```
 
 That gives us:
@@ -246,7 +248,7 @@ That gives us:
 
 ## SSE and Generation Boundary
 
-The one or two SSE endpoints should still appear in the V2 contract, but they should not block the rest of the SDK generation plan.
+The one or two SSE endpoints should still appear in the new server contract, but they should not block the rest of the SDK generation plan.
 
 Recommended split:
 
