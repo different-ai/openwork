@@ -254,6 +254,10 @@ Ideal startup flow:
 7. The server queries the relevant backend live for those sessions.
 8. The desktop app renders only the data returned by the server.
 
+The server should also expose explicit runtime health endpoints for its local dependencies, including OpenCode.
+
+At minimum, the UI should be able to ask whether OpenCode is running and which version is active.
+
 ## OpenCode Router Startup Flow
 
 `opencode-router` should be started by the new OpenWork server, not by the desktop app.
