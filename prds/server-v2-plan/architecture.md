@@ -69,8 +69,7 @@ The architecture should enforce a simple rule:
 - local UI state
 - navigation and presentation state
 - drafts, filters, and transient client-side interaction state
-- the list of known servers
-- the list of known workspaces that belong to each server
+- cached/derived visible server and workspace state returned by the server
 - starting or connecting to server processes
 
 ### Server owns
@@ -285,7 +284,7 @@ It also should not become a place where workspace behavior is reimplemented in t
 
 ## Multi-Server Target Model
 
-The app may talk to different server destinations at the same time, so target selection must be explicit.
+The system may know about different server destinations at the same time, so target selection must be explicit.
 
 The important distinction is:
 
@@ -294,9 +293,9 @@ The important distinction is:
 
 Those are related, but they are not the same thing.
 
-The app should maintain a list of workspaces. Each workspace record should know which configured server it belongs to, and what that workspace's ID is on that server.
+The local OpenWork server should maintain the durable registry of servers and workspaces. The app should render or cache what the server returns.
 
-That model is intentionally minimal. The app needs enough local state to know:
+That model is intentionally minimal. The app only needs enough local state to know:
 
 - which servers exist
 - which workspaces belong to which server
@@ -308,7 +307,7 @@ That allows:
 
 - multiple workspaces on one server
 - multiple configured servers in one app session
-- one SDK creation point per server target, with workspace IDs passed into individual operations
+- one SDK creation point per server target, with workspace IDs passed into individual operations when direct server targeting is needed
 
 Examples:
 
@@ -319,10 +318,13 @@ Examples:
 Proposed shared shape:
 
 ```ts
-export type ServerTargetKind = "local" | "remote" | "cloud"
+export type ServerTargetKind = "local" | "remote"
+
+export type ServerHostingKind = "desktop" | "self_hosted" | "cloud"
 
 export type ServerTarget = {
   kind: ServerTargetKind
+  hostingKind: ServerHostingKind
   baseUrl: string
   token?: string
   capabilities?: {
@@ -331,7 +333,7 @@ export type ServerTarget = {
 }
 ```
 
-Preferred app-facing creation:
+Preferred app-facing creation during migration or server-management flows:
 
 ```ts
 const sdk = createSdk({ serverId })
@@ -351,16 +353,17 @@ Illustrative app-side model:
 type WorkspaceRecord = {
   id: string
   serverTargetId: string
-  remoteWorkspaceId: string
 }
 ```
 
 In that model:
 
 - `serverTargetId` tells the app which server configuration to use
-- `remoteWorkspaceId` is the workspace identifier to send to that server
+- `id` is the stable OpenWork workspace identifier the UI uses
 
 This avoids hidden globals and makes mixed-target flows possible while keeping server selection separate from workspace identity.
+
+In the ideal steady state, normal app traffic should still flow through the local OpenWork server using stable OpenWork workspace IDs, with remote OpenWork workspace IDs and OpenCode project IDs remaining server-owned mappings.
 
 ## Migration Routing Model
 

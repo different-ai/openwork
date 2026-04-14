@@ -119,7 +119,7 @@ The long-term ownership boundary should be explicit.
 - launch or connect to one or more servers
 - maintain local UI state
 - maintain presentation state, navigation state, drafts, and preferences
-- maintain a list of known servers and a list of workspaces that belong to those servers
+- cache and render the visible list of servers and workspaces returned by the server
 - render server-backed data and send user intent to the server
 
 ### Server responsibilities
@@ -415,14 +415,14 @@ Examples:
 - remote worker-backed server
 - hosted OpenWork Cloud server
 
-Because of that, SDK creation should take an explicit `serverId`.
+Because of that, SDK creation may still take an explicit `serverId` during migration and server-management flows.
 
 The key separation is:
 
-- the SDK resolves which server to call from `serverId`
+- the SDK resolves which server to call from `serverId` when needed
 - each operation receives the workspace ID to use on that server
 
-That matters because one server can host many workspaces, and the app can be configured with many servers at once.
+That matters because one server can host many workspaces, and the system can know about many servers at once.
 
 Example shape:
 
@@ -434,17 +434,23 @@ await sdk.sessions.get({ workspaceId, sessionId })
 await sdk.sessions.listMessages({ workspaceId, sessionId })
 ```
 
-Illustrative app-side record:
+Illustrative app-side record while migration is in progress:
 
 ```ts
 type WorkspaceRecord = {
   id: string
   serverTargetId: string
-  remoteWorkspaceId: string
 }
 ```
 
-This keeps target selection explicit and makes it possible to route one part of the app to one server while another part uses a different destination, while still supporting multiple workspaces on the same server.
+In the ideal model, the local OpenWork server owns the durable mapping between:
+
+- OpenWork workspace ID
+- remote OpenWork workspace ID
+- OpenCode project ID
+- backend server identity
+
+The app should usually operate on stable OpenWork workspace IDs returned by the local server, not on remote backend IDs directly.
 
 The generated SDK should stay transport-level and typed. The thin handwritten adapter should own:
 
@@ -455,6 +461,8 @@ The generated SDK should stay transport-level and typed. The thin handwritten ad
 - capability checks and fallbacks
 
 It should not grow into a second workspace engine inside the app.
+
+In the ideal steady state, normal product traffic should target the local OpenWork server as the canonical adapter and registry, while direct alternate `serverId` targeting is reserved for explicit server-management or migration/testing scenarios.
 
 ### SSE endpoint strategy
 

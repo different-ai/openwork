@@ -43,10 +43,13 @@ OpenWork server
 
 ## Server And Workspace Registry Model
 
-The UI will maintain a list of servers:
+The local OpenWork server should maintain the canonical registry of servers and workspaces.
+
+That registry includes:
 
 - one local server
 - zero or more remote servers
+- all local, remote, control, and help workspaces
 
 Each workspace points at one server.
 
@@ -60,7 +63,7 @@ The user should mainly experience:
 - workspaces
 - sessions inside workspaces
 
-while the app and server keep track of which server each workspace belongs to.
+while the server keeps the canonical mapping and the app only renders or caches what the server returns.
 
 ## Desktop App Responsibilities
 
@@ -323,7 +326,7 @@ This gives a cleaner split between:
 Initial config path direction:
 
 ```text
-<server working dir>/workspaces/<workspaceId>/config
+<server-working-dir>/workspaces/<workspaceId>/config
 ```
 
 ## Config Absorption Model
@@ -378,7 +381,7 @@ The server should maintain the mapping between:
 
 To make this work, the OpenWork server will need to expose the OpenCode primitives it depends on.
 
-The initial minimum set should include at least:
+The initial minimum set of upstream OpenCode capabilities that the server must wrap should include at least:
 
 ### Session list and lifecycle
 
@@ -440,9 +443,22 @@ The initial minimum set should include at least:
 - `POST /session/{sessionID}/unrevert`
   - restore reverted messages
 
-The OpenWork server becomes the adapter and policy layer over those primitives.
+The OpenWork server becomes the adapter and policy layer over those upstream primitives.
 
-All of these should be exposed as workspace-first OpenWork routes.
+The public API exposed to clients should not use those raw session-first routes directly.
+
+Instead, the public API should be normalized around workspace-first OpenWork routes, for example:
+
+- `GET /workspaces/{workspaceId}/sessions`
+- `POST /workspaces/{workspaceId}/sessions`
+- `GET /workspaces/{workspaceId}/sessions/status`
+- `GET /workspaces/{workspaceId}/sessions/{sessionId}`
+- `PATCH /workspaces/{workspaceId}/sessions/{sessionId}`
+- `DELETE /workspaces/{workspaceId}/sessions/{sessionId}`
+- `GET /workspaces/{workspaceId}/sessions/{sessionId}/messages`
+- `POST /workspaces/{workspaceId}/sessions/{sessionId}/messages`
+- `POST /workspaces/{workspaceId}/sessions/{sessionId}/fork`
+- `POST /workspaces/{workspaceId}/sessions/{sessionId}/abort`
 
 That means the public API shape should be normalized around:
 

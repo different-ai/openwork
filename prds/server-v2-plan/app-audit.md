@@ -83,11 +83,11 @@ Disposition guidance:
 
 - deep-link bridge -> `Stay`
 - deep-link parsing and controller logic -> `Split`
-- Den settings persistence -> `Stay`
+- OpenWork Cloud settings persistence -> `Split`
 - manual cloud sign-in flow -> `Split`
-- Den template cache -> `Stay`
+- OpenWork Cloud template cache -> `Stay`
 
-Reasoning: parsing, routing, and cached cloud session state stay in the UI, but connection/exchange side effects still end up on server or cloud surfaces.
+Reasoning: parsing, routing, and lightweight cached cloud session state stay in the UI, but durable cloud settings and auth/session state should move behind the server.
 
 ### deep-link bridge
 
@@ -101,23 +101,23 @@ Reasoning: parsing, routing, and cached cloud session state stay in the UI, but 
 - Called from and when: runs on app boot and when deep-link events arrive.
 - Ends up calling: local routing, modal state, query-param cleanup, and cloud/session settings updates; some branches eventually contact OpenWork or Den after local parsing is complete.
 
-### Den settings persistence
+### OpenWork Cloud settings persistence
 
 - What it does: stores cloud base URL, auth token, and active org for Den/OpenWork cloud features.
 - Called from and when: used by cloud settings, workspace creation, and sharing flows.
-- Ends up calling: `localStorage` and local cloud-session state; later cloud features use these values to make server requests.
+- Ends up calling: `localStorage` and local cloud-session state; in the ideal model durable cloud auth/settings move to the server DB and this becomes transient reconnect/UI state.
 
 ### manual cloud sign-in flow
 
 - What it does: accepts a pasted deep link or handoff code, parses it locally, validates it, and exchanges it for a cloud token.
 - Called from and when: called from the Cloud settings panel when the user signs in manually.
-- Ends up calling: local parsing and status state first, then Den auth endpoints.
+- Ends up calling: local parsing and status state first, then cloud auth endpoints.
 
-### Den template cache
+### OpenWork Cloud template cache
 
 - What it does: memoizes cloud template lists by cloud identity and org.
 - Called from and when: used when template-driven workspace creation or cloud settings panels open.
-- Ends up calling: in-memory cache and signals first; initial loads eventually fetch from Den.
+- Ends up calling: in-memory cache and signals first; initial loads eventually fetch from cloud/server surfaces.
 
 ## Workspace Creation And Connection
 
@@ -153,7 +153,7 @@ Reasoning: modal state and startup branching stay in the UI, but actual workspac
 
 - What it does: normalizes the remote host URL/token, resolves remote workspace identity, updates local server settings, and persists a remote workspace record.
 - Called from and when: called from deep links, onboarding connect flows, worker open actions, and remote workspace modals.
-- Ends up calling: local validation, local settings persistence, routing, selected-workspace state, and then remote server requests; any remaining direct OpenCode path here should be treated as migration debt.
+- Ends up calling: local validation, local settings persistence, routing, selected-workspace state, and then remote server requests; in the ideal model the durable remote workspace record belongs in the local server DB, not the app.
 
 ### onboarding/bootstrap branching
 
@@ -312,18 +312,18 @@ Reasoning: UI-owned shaping and memoization stay local, but config mutation, ski
 
 Disposition guidance:
 
-- OpenWork server settings persistence -> `Stay`
+- OpenWork server settings persistence -> `Split`
 - reset and reload state management -> `Stay`
 - settings diagnostics and export helpers -> `Split`
 - incidental clipboard/open-link helpers -> `Stay`
 
-Reasoning: client preferences, reload state, clipboard, and pure diagnostics remain UI concerns, while diagnostics that package real workspace/runtime state may still rely on server-owned capabilities.
+Reasoning: client preferences, reload state, clipboard, and pure diagnostics remain UI concerns, while durable connection/auth/product state should move behind the server.
 
 ### OpenWork server settings persistence
 
 - What it does: normalizes and persists host URL, token, remote-access preference, and derived base URL/client settings.
 - Called from and when: used on app boot and when connection settings change.
-- Ends up calling: `localStorage` and local connection state; those values later drive OpenWork server calls.
+- Ends up calling: `localStorage` and local connection state; in the ideal model this shrinks to minimal reconnect/bootstrap hints while durable connection registry and cloud auth/session metadata move behind the server.
 
 ### reset and reload state management
 

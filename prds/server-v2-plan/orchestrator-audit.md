@@ -58,7 +58,7 @@ Disposition guidance:
 - `runStart()` -> `Split`
 - `shutdown()` inside `runStart()` -> `Split`
 
-Reasoning: a host launch boundary can remain in the orchestrator, but a large amount of runtime capability assembled by `runStart()` should ultimately be server-owned.
+Reasoning: this is current-state bootstrap logic, but the large amount of runtime capability assembled by `runStart()` should ultimately be server-owned and folded into the main server.
 
 ### `main()`
 
@@ -82,14 +82,14 @@ Reasoning: a host launch boundary can remain in the orchestrator, but a large am
 
 Disposition guidance:
 
-- `startOpencode()` -> `Stay`
-- `startOpenworkServer()` -> `Stay`
+- `startOpencode()` -> `Split`
+- `startOpenworkServer()` -> `Split`
 - `startOpenCodeRouter()` -> `Split`
-- child exit/spawn error handlers -> `Stay`
+- child exit/spawn error handlers -> `Split`
 - runtime control server in `runStart()` -> `Move`
 - `performRuntimeUpgrade()` -> `Split`
 
-Reasoning: native child supervision is host-shell behavior, but the runtime control API it exposes should not remain a separate orchestrator-owned product surface forever.
+Reasoning: native child supervision exists today in the orchestrator, but even that should be treated as transition-state behavior if the main server is going to absorb bootstrap and runtime supervision over time.
 
 ### `startOpencode()`
 

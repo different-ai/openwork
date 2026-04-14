@@ -48,7 +48,8 @@ Rows should represent:
 Suggested columns:
 
 - `id`
-- `kind` (`local`, `remote`, `cloud`)
+- `kind` (`local`, `remote`)
+- `hosting_kind` (`desktop`, `self_hosted`, `cloud`)
 - `label`
 - `base_url`
 - `token_ref` or encrypted token material
@@ -63,6 +64,7 @@ Notes:
 
 - `server` is a real model in the product, even if it is not yet exposed directly in the UI.
 - The app can still render a workspace-first experience while the server keeps the canonical registry.
+- Remote and cloud servers should both be modeled as remote OpenWork servers at the product level; `hosting_kind` captures whether a remote server is cloud-hosted or not.
 
 ### `workspaces`
 
@@ -93,6 +95,7 @@ Rules:
 - local workspaces keep a stable OpenWork workspace ID that is separate from the OpenCode project ID
 - remote workspaces map to exactly one workspace on a remote OpenWork server
 - control/help workspaces are real workspaces with `is_hidden = true`
+- the local OpenWork server is still the canonical routing layer that the app talks to, even when a workspace belongs to a remote server
 
 ### `workspace_runtime_state`
 

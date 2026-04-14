@@ -349,7 +349,7 @@ Reasoning: router config, status, and product-facing control should become part 
 Disposition guidance:
 
 - `workspace_bootstrap()` -> `Split`
-- workspace state load/save/repair helpers -> `Stay`
+- workspace state load/save/repair helpers -> `Split`
 - `workspace_create()` -> `Move`
 - `ensure_workspace_files()` -> `Move`
 - enterprise creator skills seeding helpers -> `Move`
@@ -358,7 +358,7 @@ Disposition guidance:
 - workspace import/export config helpers -> `Move`
 - workspace watch/update helpers -> `Move`
 
-Reasoning: the app should keep only the local registry of servers/workspaces and selection state. Real workspace mutation, file writes, config writes, import/export, and reload watching should move behind the server.
+Reasoning: the app should keep only transient selection and reconnect state. The durable registry of servers/workspaces, plus mutation, file writes, config writes, import/export, and reload watching, should move behind the server.
 
 ### `workspace_bootstrap()`
 
@@ -368,9 +368,9 @@ Reasoning: the app should keep only the local registry of servers/workspaces and
 
 ### `load_workspace_state()`, `load_workspace_state_fast()`, `save_workspace_state()`, `repair_workspace_state()`
 
-- What they do: persist and normalize the desktop app’s workspace registry.
+- What they do: persist and normalize the desktop app’s current workspace registry.
 - Called from and when: used throughout startup, workspace mutation, and selection flows.
-- Ends up calling: `openwork-workspaces.json` reads/writes and path canonicalization.
+- Ends up calling: `openwork-workspaces.json` reads/writes and path canonicalization; in the ideal model this becomes transitional reconnect/cache state rather than the canonical registry.
 
 ### `workspace_create()`
 
@@ -392,15 +392,15 @@ Reasoning: the app should keep only the local registry of servers/workspaces and
 
 ### `workspace_create_remote()`, `workspace_update_remote()`, `workspace_forget()`, `workspace_set_selected()`, `workspace_set_runtime_active()`
 
-- What they do: manage the app-side list of local and remote workspaces.
+- What they do: manage the app-side list of local and remote workspaces in the current implementation.
 - Called from and when: called from workspace selection, remote connect, and remote disconnect flows.
-- Ends up calling: workspace-state mutation and watcher target changes.
+- Ends up calling: workspace-state mutation and watcher target changes; durable remote workspace persistence should move behind the server.
 
 ### `workspace_add_authorized_root()`, `workspace_openwork_read()`, `workspace_openwork_write()`
 
 - What they do: manage `.opencode/openwork.json` data for authorized roots and related settings.
 - Called from and when: called from settings/permissions UI.
-- Ends up calling: workspace-local config file reads and writes.
+- Ends up calling: workspace-local config file reads and writes; in the ideal model this is server-side materialization into the OpenWork-managed workspace config directory.
 
 ### `workspace_export_config()` / `workspace_import_config()`
 

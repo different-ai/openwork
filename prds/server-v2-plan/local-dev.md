@@ -159,9 +159,11 @@ await createSdk({ serverId }).sessions.listMessages({ workspaceId, sessionId })
 
 `createSdk({ serverId })` should remain lightweight and app-owned.
 
+In the ideal product model, most user-facing app traffic should still target the local OpenWork server as the canonical adapter and registry. Direct alternate `serverId` targeting is mainly for migration, testing, and explicit server-management flows.
+
 It should only:
 
-- resolve `serverId` to the latest known `baseUrl`, `token`, and capability info
+- resolve `serverId` to the latest known `baseUrl`, `token`, and capability info when direct target selection is needed
 - prepare a generated SDK instance plus any app-local migration routing
 - return the typed SDK object
 

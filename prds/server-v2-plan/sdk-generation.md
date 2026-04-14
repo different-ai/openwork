@@ -148,8 +148,8 @@ The exact implementation can vary, but the command model should look like this.
 ```json
 {
   "scripts": {
-    "openapi:generate": "node ./script/generate-openapi.mjs",
-    "openapi:watch": "node ./script/watch-openapi.mjs"
+    "openapi:generate": "node ./scripts/generate-openapi.mjs",
+    "openapi:watch": "node ./scripts/watch-openapi.mjs"
   }
 }
 ```
@@ -175,7 +175,7 @@ Notes:
 Notes:
 
 - `generate` should run `@hey-api/openapi-ts` against `apps/server-v2/openapi/openapi.json`
-- `watch` can be a small file watcher that reruns `generate` when `v2.json` changes
+- `watch` can be a small file watcher that reruns `generate` when `openapi/openapi.json` changes
 - `typecheck` ensures the generated output and handwritten SDK helpers still compile together
 
 ### Root `package.json`
@@ -185,7 +185,7 @@ Notes:
   "scripts": {
     "dev:server-v2": "pnpm run dev:server-v2:watchers",
     "dev:server-v2:watchers": "node ./scripts/dev-server-v2.mjs",
-    "sdk:generate": "pnpm --filter openwork-server openapi:generate && pnpm --filter @openwork/server-sdk generate"
+    "sdk:generate": "pnpm --filter openwork-server-v2 openapi:generate && pnpm --filter @openwork/server-sdk generate"
   }
 }
 ```
@@ -203,7 +203,7 @@ Instead, prefer small repo-local watcher scripts where needed.
 
 Examples:
 
-- `apps/server-v2/script/watch-openapi.mjs`
+- `apps/server-v2/scripts/watch-openapi.mjs`
   - watch `src/**`
   - rerun OpenAPI generation
 - `packages/openwork-server-sdk/scripts/watch.mjs`
