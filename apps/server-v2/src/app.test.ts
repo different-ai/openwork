@@ -6,6 +6,7 @@ function createTestApp() {
   return createApp({
     dependencies: createAppDependencies({
       environment: "test",
+      inMemory: true,
       startedAt: new Date("2026-04-14T00:00:00.000Z"),
       version: "0.0.0-test",
     }),
@@ -44,7 +45,19 @@ test("system health returns a consistent envelope", async () => {
   expect(response.status).toBe(200);
   expect(body.ok).toBe(true);
   expect(body.data.status).toBe("ok");
-  expect(body.data.database.status).toBe("pending");
+  expect(body.data.database.kind).toBe("sqlite");
+  expect(["ready", "warning"]).toContain(body.data.database.status);
+});
+
+test("system metadata includes phase 2 startup diagnostics", async () => {
+  const app = createTestApp();
+  const response = await app.request("http://openwork.local/system/meta");
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(body.data.foundation.phase).toBe(2);
+  expect(body.data.foundation.startup.registry.localServerId).toBe("srv_local");
+  expect(body.data.foundation.startup.registry.hiddenWorkspaceIds).toHaveLength(2);
 });
 
 test("openapi route is generated from the live Hono app", async () => {

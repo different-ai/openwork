@@ -24,7 +24,7 @@ async function writeIfChanged(filePath: string, contents: string) {
 }
 
 async function main() {
-  const dependencies = createAppDependencies({ version: "0.0.0" });
+  const dependencies = createAppDependencies({ inMemory: true, version: "0.0.0" });
   const app = createApp({ dependencies });
   const response = await app.request("http://openwork.local/openapi.json");
 

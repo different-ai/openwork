@@ -65,7 +65,10 @@ test("cli boots as a standalone process and serves system health", async () => {
   const port = await getFreePort();
   const child = Bun.spawn(["bun", "src/cli.ts", "--port", String(port)], {
     cwd: packageDir,
-    env: process.env,
+    env: {
+      ...process.env,
+      OPENWORK_SERVER_V2_IN_MEMORY: "1",
+    },
     stderr: "pipe",
     stdout: "pipe",
   });

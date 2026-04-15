@@ -13,13 +13,13 @@ function createOpenApiDocumentation(version: string) {
   return {
     openapi: "3.1.0",
     info: {
-      title: "OpenWork Server V2",
-      version,
-      description: [
-        "OpenAPI contract for the standalone OpenWork Server V2 foundation.",
-        "",
-        "Phase 1 establishes the contract loop and the initial /system/* operational surface.",
-      ].join("\n"),
+        title: "OpenWork Server V2",
+        version,
+        description: [
+          "OpenAPI contract for the standalone OpenWork Server V2 foundation and durable registry state.",
+          "",
+          "Phase 2 adds sqlite bootstrap, canonical registry tables, startup diagnostics, and legacy state import.",
+        ].join("\n"),
     },
     servers: [{ url: "/" }],
     tags: [
@@ -73,7 +73,7 @@ export function registerSystemRoutes(app: ServerV2App, dependencies: AppDependen
     describeRoute({
       tags: ["System"],
       summary: "Get foundation metadata",
-      description: "Returns middleware ordering, route namespace conventions, and current foundation-level runtime metadata.",
+      description: "Returns middleware ordering, route namespace conventions, sqlite bootstrap status, and startup import diagnostics.",
       responses: withCommonErrorResponses({
         200: jsonResponse("Server metadata returned successfully.", metadataResponseSchema),
       }),

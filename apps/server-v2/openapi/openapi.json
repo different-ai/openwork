@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenWork Server V2",
-    "description": "OpenAPI contract for the standalone OpenWork Server V2 foundation.\n\nPhase 1 establishes the contract loop and the initial /system/* operational surface.",
+    "description": "OpenAPI contract for the standalone OpenWork Server V2 foundation and durable registry state.\n\nPhase 2 adds sqlite bootstrap, canonical registry tables, startup diagnostics, and legacy state import.",
     "version": "0.0.0"
   },
   "servers": [
@@ -92,7 +92,7 @@
           "System"
         ],
         "summary": "Get foundation metadata",
-        "description": "Returns middleware ordering, route namespace conventions, and current foundation-level runtime metadata.",
+        "description": "Returns middleware ordering, route namespace conventions, sqlite bootstrap status, and startup import diagnostics.",
         "responses": {
           "200": {
             "description": "Server metadata returned successfully.",
@@ -314,16 +314,58 @@
           "error"
         ]
       },
+      "OpenWorkServerV2MigrationStatus": {
+        "type": "object",
+        "properties": {
+          "appliedThisRun": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "currentVersion": {
+            "type": "string"
+          },
+          "totalApplied": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "appliedThisRun",
+          "currentVersion",
+          "totalApplied"
+        ]
+      },
       "OpenWorkServerV2DatabaseStatus": {
         "type": "object",
         "properties": {
+          "bootstrapMode": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "existing"
+            ]
+          },
           "configured": {
             "type": "boolean",
-            "const": false
+            "const": true
+          },
+          "importWarnings": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           },
           "kind": {
             "type": "string",
-            "const": "none"
+            "const": "sqlite"
+          },
+          "migrations": {
+            "$ref": "#/components/schemas/OpenWorkServerV2MigrationStatus"
+          },
+          "path": {
+            "type": "string"
           },
           "phaseOwner": {
             "type": "number",
@@ -331,18 +373,29 @@
           },
           "status": {
             "type": "string",
-            "const": "pending"
+            "enum": [
+              "ready",
+              "warning"
+            ]
           },
           "summary": {
+            "type": "string"
+          },
+          "workingDirectory": {
             "type": "string"
           }
         },
         "required": [
+          "bootstrapMode",
           "configured",
+          "importWarnings",
           "kind",
+          "migrations",
+          "path",
           "phaseOwner",
           "status",
-          "summary"
+          "summary",
+          "workingDirectory"
         ]
       },
       "OpenWorkServerV2HealthData": {
@@ -401,12 +454,197 @@
         "minLength": 1,
         "maxLength": 200
       },
+      "OpenWorkServerV2ImportSourceReport": {
+        "type": "object",
+        "properties": {
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "sourcePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "error",
+              "imported",
+              "skipped",
+              "unavailable"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "details",
+          "sourcePath",
+          "status",
+          "warnings"
+        ]
+      },
+      "OpenWorkServerV2ImportReports": {
+        "type": "object",
+        "properties": {
+          "cloudSignin": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ImportSourceReport"
+          },
+          "desktopWorkspaceState": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ImportSourceReport"
+          },
+          "orchestratorAuth": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ImportSourceReport"
+          },
+          "orchestratorState": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ImportSourceReport"
+          }
+        },
+        "required": [
+          "cloudSignin",
+          "desktopWorkspaceState",
+          "orchestratorAuth",
+          "orchestratorState"
+        ]
+      },
+      "OpenWorkServerV2StartupMigrationSummary": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "currentVersion": {
+            "type": "string"
+          },
+          "totalApplied": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "applied",
+          "currentVersion",
+          "totalApplied"
+        ]
+      },
+      "OpenWorkServerV2StartupRegistrySummary": {
+        "type": "object",
+        "properties": {
+          "hiddenWorkspaceIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+            }
+          },
+          "localServerCreated": {
+            "type": "boolean"
+          },
+          "localServerId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "totalServers": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "totalVisibleWorkspaces": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "hiddenWorkspaceIds",
+          "localServerCreated",
+          "localServerId",
+          "totalServers",
+          "totalVisibleWorkspaces"
+        ]
+      },
+      "OpenWorkServerV2WorkingDirectory": {
+        "type": "object",
+        "properties": {
+          "databasePath": {
+            "type": "string"
+          },
+          "rootDir": {
+            "type": "string"
+          },
+          "workspacesDir": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "databasePath",
+          "rootDir",
+          "workspacesDir"
+        ]
+      },
+      "OpenWorkServerV2StartupDiagnostics": {
+        "type": "object",
+        "properties": {
+          "completedAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "importReports": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ImportReports"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "existing"
+            ]
+          },
+          "migrations": {
+            "$ref": "#/components/schemas/OpenWorkServerV2StartupMigrationSummary"
+          },
+          "registry": {
+            "$ref": "#/components/schemas/OpenWorkServerV2StartupRegistrySummary"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "workingDirectory": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkingDirectory"
+          }
+        },
+        "required": [
+          "completedAt",
+          "importReports",
+          "mode",
+          "migrations",
+          "registry",
+          "warnings",
+          "workingDirectory"
+        ]
+      },
       "OpenWorkServerV2FoundationInfo": {
         "type": "object",
         "properties": {
           "phase": {
             "type": "number",
-            "const": 1
+            "const": 2
           },
           "middlewareOrder": {
             "minItems": 1,
@@ -420,13 +658,17 @@
           },
           "database": {
             "$ref": "#/components/schemas/OpenWorkServerV2DatabaseStatus"
+          },
+          "startup": {
+            "$ref": "#/components/schemas/OpenWorkServerV2StartupDiagnostics"
           }
         },
         "required": [
           "phase",
           "middlewareOrder",
           "routeNamespaces",
-          "database"
+          "database",
+          "startup"
         ]
       },
       "OpenWorkServerV2RequestContextInfo": {

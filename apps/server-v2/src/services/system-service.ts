@@ -46,7 +46,7 @@ export function createSystemService(input: {
     getMetadata() {
       return {
         foundation: {
-          phase: 1 as const,
+          phase: 2 as const,
           middlewareOrder: [
             "request-id",
             "request-context",
@@ -59,6 +59,7 @@ export function createSystemService(input: {
             workspaceResource: workspaceResourcePattern,
           },
           database: input.database.getStatus(),
+          startup: input.database.getStartupDiagnostics(),
         },
         requestContext: {
           actorKind: "anonymous" as const,

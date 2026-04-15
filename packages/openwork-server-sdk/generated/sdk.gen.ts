@@ -35,6 +35,6 @@ export const getSystemHealth = <ThrowOnError extends boolean = false>(options?: 
 /**
  * Get foundation metadata
  *
- * Returns middleware ordering, route namespace conventions, and current foundation-level runtime metadata.
+ * Returns middleware ordering, route namespace conventions, sqlite bootstrap status, and startup import diagnostics.
  */
 export const getSystemMeta = <ThrowOnError extends boolean = false>(options?: Options<GetSystemMetaData, ThrowOnError>) => (options?.client ?? client).get<GetSystemMetaResponses, GetSystemMetaErrors, ThrowOnError>({ url: '/system/meta', ...options });

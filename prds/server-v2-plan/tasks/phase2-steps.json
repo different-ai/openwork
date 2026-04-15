@@ -24,7 +24,7 @@
         "Code can compute the working directory reliably in desktop-hosted and standalone modes.",
         "The layout separates server-managed config from user data directories."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-002",
@@ -35,7 +35,7 @@
         "Connection lifetime and cleanup are explicit.",
         "The DB path lives under server-owned storage, not app-local ad hoc files."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-003",
@@ -46,7 +46,7 @@
         "Fresh boot and upgrade boot both work.",
         "Migration state is tracked and reproducible."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-004",
@@ -57,7 +57,7 @@
         "A local server record can be represented without hacks.",
         "Remote and cloud-hosted servers can share one model with hosting metadata."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-005",
@@ -68,7 +68,7 @@
         "Local workspaces keep a stable OpenWork ID separate from OpenCode project IDs.",
         "Remote workspace rows can store remote server mapping cleanly."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-006",
@@ -79,7 +79,7 @@
         "Workspace-level diagnostics do not duplicate session source-of-truth data.",
         "The schema can support OpenCode and router health in later phases."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-007",
@@ -90,7 +90,7 @@
         "The schema preserves `source` or ownership metadata for imported versus managed items.",
         "Later config projection work can read from these tables without schema changes."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-008",
@@ -101,7 +101,7 @@
         "The schema supports attaching existing items during workspace creation.",
         "Later phases can materialize effective workspace config from links plus items."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-009",
@@ -112,7 +112,7 @@
         "Workspace share data can be stored as workspace-scoped access, not server-wide grants.",
         "Router identities and bindings are modeled at the server level."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-010",
@@ -123,7 +123,7 @@
         "SQL access is encapsulated behind intention-revealing methods.",
         "The service layer is testable without HTTP wiring."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-011",
@@ -134,7 +134,7 @@
         "Repeated boots do not create duplicate local server rows.",
         "The local server row includes the correct hosting metadata and capability placeholders."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-012",
@@ -145,7 +145,7 @@
         "They do not appear in normal workspace lists by default.",
         "They can still be addressed by dedicated future routes or UI flows."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-013",
@@ -156,7 +156,7 @@
         "Slug generation handles collisions predictably.",
         "The chosen rules are reusable during import and new workspace creation."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-014",
@@ -167,7 +167,7 @@
         "Imported records preserve enough metadata for reconnect and migration.",
         "The importer can be rerun without duplicating rows."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-015",
@@ -178,7 +178,7 @@
         "Selection or reconnect hints move toward server ownership where appropriate.",
         "The importer can safely skip purely transient UI state."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-016",
@@ -189,7 +189,7 @@
         "Sensitive auth material has a defined storage model.",
         "The server can use imported cloud metadata directly in later phases."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-017",
@@ -200,7 +200,7 @@
         "Ephemeral orchestrator-only state is not copied blindly into the new server model.",
         "The import path leaves a visible record of what was imported versus ignored."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-018",
@@ -211,7 +211,7 @@
         "Migration failures are visible in logs or status output.",
         "Recovery or retry behavior is possible without manual DB surgery."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-019",
@@ -222,7 +222,7 @@
         "Developers can tell whether they are on a fresh boot or a migrated boot.",
         "Diagnostics do not require manually querying the DB to understand basic state."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P2-020",
@@ -233,7 +233,7 @@
         "Idempotency is enforced by automated checks.",
         "Corrupt legacy inputs fail visibly instead of leaving silent split ownership."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

@@ -57,12 +57,23 @@ export type OpenWorkServerV2InternalError = {
     };
 };
 
+export type OpenWorkServerV2MigrationStatus = {
+    appliedThisRun: Array<string>;
+    currentVersion: string;
+    totalApplied: number;
+};
+
 export type OpenWorkServerV2DatabaseStatus = {
-    configured: false;
-    kind: 'none';
+    bootstrapMode: 'fresh' | 'existing';
+    configured: true;
+    importWarnings: number;
+    kind: 'sqlite';
+    migrations: OpenWorkServerV2MigrationStatus;
+    path: string;
     phaseOwner: 2;
-    status: 'pending';
+    status: 'ready' | 'warning';
     summary: string;
+    workingDirectory: string;
 };
 
 export type OpenWorkServerV2HealthData = {
@@ -81,11 +92,58 @@ export type OpenWorkServerV2HealthResponse = {
 
 export type OpenWorkServerV2Identifier = string;
 
+export type OpenWorkServerV2ImportSourceReport = {
+    details: {
+        [key: string]: unknown;
+    };
+    sourcePath: string | null;
+    status: 'error' | 'imported' | 'skipped' | 'unavailable';
+    warnings: Array<string>;
+};
+
+export type OpenWorkServerV2ImportReports = {
+    cloudSignin: OpenWorkServerV2ImportSourceReport;
+    desktopWorkspaceState: OpenWorkServerV2ImportSourceReport;
+    orchestratorAuth: OpenWorkServerV2ImportSourceReport;
+    orchestratorState: OpenWorkServerV2ImportSourceReport;
+};
+
+export type OpenWorkServerV2StartupMigrationSummary = {
+    applied: Array<string>;
+    currentVersion: string;
+    totalApplied: number;
+};
+
+export type OpenWorkServerV2StartupRegistrySummary = {
+    hiddenWorkspaceIds: Array<OpenWorkServerV2Identifier>;
+    localServerCreated: boolean;
+    localServerId: OpenWorkServerV2Identifier;
+    totalServers: number;
+    totalVisibleWorkspaces: number;
+};
+
+export type OpenWorkServerV2WorkingDirectory = {
+    databasePath: string;
+    rootDir: string;
+    workspacesDir: string;
+};
+
+export type OpenWorkServerV2StartupDiagnostics = {
+    completedAt: OpenWorkServerV2IsoTimestamp;
+    importReports: OpenWorkServerV2ImportReports;
+    mode: 'fresh' | 'existing';
+    migrations: OpenWorkServerV2StartupMigrationSummary;
+    registry: OpenWorkServerV2StartupRegistrySummary;
+    warnings: Array<string>;
+    workingDirectory: OpenWorkServerV2WorkingDirectory;
+};
+
 export type OpenWorkServerV2FoundationInfo = {
-    phase: 1;
+    phase: 2;
     middlewareOrder: Array<OpenWorkServerV2Identifier>;
     routeNamespaces: OpenWorkServerV2RouteNamespaces;
     database: OpenWorkServerV2DatabaseStatus;
+    startup: OpenWorkServerV2StartupDiagnostics;
 };
 
 export type OpenWorkServerV2RequestContextInfo = {

@@ -31,9 +31,15 @@ function resolvePort(value: number | undefined) {
 }
 
 export function startServer(options: StartServerOptions = {}): StartedServer {
-  const dependencies = options.dependencies ?? createAppDependencies();
   const host = options.host ?? process.env.OPENWORK_SERVER_V2_HOST ?? "127.0.0.1";
   const port = resolvePort(options.port ?? Number.parseInt(process.env.OPENWORK_SERVER_V2_PORT ?? "3100", 10));
+  const dependencies = options.dependencies ?? createAppDependencies({
+    localServer: {
+      baseUrl: port === 0 ? null : `http://${host}:${port}`,
+      hostingKind: process.env.OPENWORK_SERVER_V2_HOSTING_KIND === "desktop" ? "desktop" : "self_hosted",
+      label: "Local OpenWork Server",
+    },
+  });
   const app = createApp({ dependencies });
   const server = Bun.serve({
     fetch: app.fetch,
@@ -42,10 +48,12 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   });
   const url = server.url.toString();
   const resolvedPort = new URL(url).port;
+  dependencies.services.registry.attachLocalServerBaseUrl(url);
 
   if (!options.silent) {
     console.info(
       JSON.stringify({
+        bootstrap: dependencies.database.getStartupDiagnostics(),
         host,
         port: Number(resolvedPort || port),
         scope: "openwork-server-v2.start",
@@ -62,6 +70,7 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
     server,
     async stop() {
       server.stop(true);
+      dependencies.close();
     },
     url,
   };

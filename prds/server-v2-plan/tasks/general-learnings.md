@@ -19,6 +19,11 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-14 - Phase 2 - Keep imported workspace IDs aligned with legacy desktop hashes
+- Context: Server V2 now imports the desktop workspace registry and orchestrator snapshots into its canonical sqlite tables.
+- Learning: Preserving the legacy `ws_<hash>` rules for imported local and remote workspaces keeps selected/watched workspace references stable, makes imports idempotent, and avoids migration drift while the app still carries old workspace IDs.
+- Action for later phases: Reuse the current workspace ID derivation rules for imports and any compatibility adapters until a later phase performs an explicit whole-system ID migration.
+
 ### 2026-04-14 - Phase 1 - `openapi-ts` config files must use `-f`
 - Context: The Server V2 SDK generator is pinned to `@hey-api/openapi-ts@0.95.0` and now runs from `packages/openwork-server-sdk/openapi-ts.config.ts`.
 - Learning: `openapi-ts -f openapi-ts.config.ts` loads the config file, while `-c` selects an HTTP client and can silently break generation expectations.
