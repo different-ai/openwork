@@ -32,6 +32,24 @@ export type OpenworkServerCapabilities = {
       maxBytes: number;
     };
   };
+  serverV2?: {
+    auth: {
+      actorKind: "anonymous" | "client" | "host";
+      hostTokenConfigured: boolean;
+      required: boolean;
+    };
+    registry: {
+      backendResolution: boolean;
+      hiddenWorkspaceFiltering: boolean;
+      serverInventory: boolean;
+      workspaceDetail: boolean;
+      workspaceList: boolean;
+    };
+    transport: {
+      rootMounted: boolean;
+      v2: boolean;
+    };
+  };
 };
 
 export type OpenworkServerStatus = "connected" | "disconnected" | "limited";

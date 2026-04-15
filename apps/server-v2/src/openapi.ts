@@ -1,6 +1,12 @@
 import { resolver } from "hono-openapi";
 import type { z } from "zod";
-import { internalErrorSchema, invalidRequestErrorSchema, notFoundErrorSchema } from "./schemas/errors.js";
+import {
+  forbiddenErrorSchema,
+  internalErrorSchema,
+  invalidRequestErrorSchema,
+  notFoundErrorSchema,
+  unauthorizedErrorSchema,
+} from "./schemas/errors.js";
 
 function toPascalCase(value: string) {
   return value
@@ -52,8 +58,10 @@ export function jsonResponse(description: string, schema: z.ZodTypeAny) {
 export function withCommonErrorResponses<TResponses extends Record<number, unknown>>(
   responses: TResponses,
   options: {
+    includeForbidden?: boolean;
     includeNotFound?: boolean;
     includeInvalidRequest?: boolean;
+    includeUnauthorized?: boolean;
   } = {},
 ) {
   return {
@@ -61,6 +69,16 @@ export function withCommonErrorResponses<TResponses extends Record<number, unkno
     ...(options.includeInvalidRequest
       ? {
           400: jsonResponse("Request validation failed.", invalidRequestErrorSchema),
+        }
+      : {}),
+    ...(options.includeUnauthorized
+      ? {
+          401: jsonResponse("Authentication is required for this route.", unauthorizedErrorSchema),
+        }
+      : {}),
+    ...(options.includeForbidden
+      ? {
+          403: jsonResponse("The authenticated actor does not have access to this route.", forbiddenErrorSchema),
         }
       : {}),
     ...(options.includeNotFound

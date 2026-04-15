@@ -32,4 +32,11 @@ test("routing prefers Server V2 only when rollout is enabled", () => {
     rolloutEnabled: true,
     targetKind: "local",
   })).toMatchObject({ primary: "server-v2", fallback: "legacy" });
+
+  expect(resolveServerVersionRoute({
+    contractHint: "server-v2",
+    feature: "workspace-read",
+    rolloutEnabled: true,
+    targetKind: "local",
+  })).toMatchObject({ primary: "server-v2", fallback: "legacy" });
 });

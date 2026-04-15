@@ -23,7 +23,7 @@
         "The service exposes enough metadata for routing and capability checks.",
         "No feature code needs raw DB access to inspect server targets."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-002",
@@ -34,7 +34,7 @@
         "The service can return hidden and visible workspaces intentionally.",
         "The code clearly separates local, remote, control, and help workspace handling."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-003",
@@ -45,7 +45,7 @@
         "The model can grow as new slices land.",
         "The response is available through a typed route and reusable service."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-004",
@@ -56,7 +56,7 @@
         "The route is usable by app startup and settings surfaces.",
         "Legacy-only fields are either mapped intentionally or omitted deliberately."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-005",
@@ -67,7 +67,7 @@
         "Normal user-facing listing excludes hidden control/help workspaces by default.",
         "The route is fully typed and documented."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-006",
@@ -78,7 +78,7 @@
         "The route handles local and remote workspaces cleanly.",
         "Errors for missing or inaccessible workspaces use the shared error model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-007",
@@ -89,7 +89,7 @@
         "Admin or internal readers can still fetch hidden workspaces when needed.",
         "The listing behavior is covered by tests."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-008",
@@ -100,7 +100,7 @@
         "Routing data is derived from canonical registry state.",
         "The resolution service can be reused by session and file phases."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-009",
@@ -111,7 +111,7 @@
         "The serialization shape is consistent across list and detail routes.",
         "Sensitive internal fields remain server-owned."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-010",
@@ -122,7 +122,7 @@
         "Remote backend IDs are kept behind the server boundary.",
         "The route shape supports later remote session routing work."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-011",
@@ -133,7 +133,7 @@
         "Server inventory remains a system concern rather than a UI-side reconstructed graph.",
         "The route surface stays minimal and intentional."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-012",
@@ -144,7 +144,7 @@
         "Unauthorized clients receive consistent typed failures.",
         "The rules are simple enough to extend later without breaking payloads."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-013",
@@ -155,7 +155,7 @@
         "Legacy fallback remains available while rollout is incomplete.",
         "The UI can render the first real server-backed workspace list."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-014",
@@ -166,7 +166,7 @@
         "The UI does not need local registry rebuild logic for the migrated surface.",
         "Any payload differences are normalized at the boundary."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-015",
@@ -177,7 +177,7 @@
         "Normalization stays near the transport boundary.",
         "The normalized model is documented in code or tests."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-016",
@@ -188,7 +188,7 @@
         "Hidden workspaces and backend resolution are asserted explicitly.",
         "The tests prove the registry is server-owned and stable."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-017",
@@ -199,7 +199,7 @@
         "Legacy mode still remains available as a comparison path.",
         "Developers can tell if the first proof slice regresses."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P5-018",
@@ -210,7 +210,7 @@
         "Any best-guess payload choices are recorded.",
         "Phase 5 leaves later session and file phases with a stable workspace resolution model."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

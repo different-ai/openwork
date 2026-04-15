@@ -19,6 +19,20 @@ export const invalidRequestErrorSchema = z.object({
   }),
 }).meta({ ref: "OpenWorkServerV2InvalidRequestError" });
 
+export const unauthorizedErrorSchema = z.object({
+  ok: z.literal(false),
+  error: baseErrorSchema.extend({
+    code: z.literal("unauthorized"),
+  }),
+}).meta({ ref: "OpenWorkServerV2UnauthorizedError" });
+
+export const forbiddenErrorSchema = z.object({
+  ok: z.literal(false),
+  error: baseErrorSchema.extend({
+    code: z.literal("forbidden"),
+  }),
+}).meta({ ref: "OpenWorkServerV2ForbiddenError" });
+
 export const notFoundErrorSchema = z.object({
   ok: z.literal(false),
   error: baseErrorSchema.extend({

@@ -18,10 +18,13 @@ export const routePaths = {
   openapiDocument: routeNamespaces.openapi,
   system: {
     base: routeNamespaces.system,
+    capabilities: `${routeNamespaces.system}/capabilities`,
     health: `${routeNamespaces.system}/health`,
     meta: `${routeNamespaces.system}/meta`,
     opencodeHealth: `${routeNamespaces.system}/opencode/health`,
     routerHealth: `${routeNamespaces.system}/router/health`,
+    servers: `${routeNamespaces.system}/servers`,
+    status: `${routeNamespaces.system}/status`,
     runtime: {
       summary: `${routeNamespaces.system}/runtime/summary`,
       versions: `${routeNamespaces.system}/runtime/versions`,

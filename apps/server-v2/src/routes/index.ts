@@ -3,8 +3,10 @@ import type { AppDependencies } from "../context/app-dependencies.js";
 import type { AppBindings } from "../context/request-context.js";
 import { registerRuntimeRoutes } from "./runtime.js";
 import { registerSystemRoutes } from "./system.js";
+import { registerWorkspaceRoutes } from "./workspaces.js";
 
 export function registerRoutes(app: Hono<AppBindings>, dependencies: AppDependencies) {
   registerSystemRoutes(app, dependencies);
   registerRuntimeRoutes(app);
+  registerWorkspaceRoutes(app);
 }

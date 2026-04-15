@@ -31,6 +31,8 @@ test("openapi generation writes the committed server-v2 contract", async () => {
   const openApiContents = await Bun.file(path.join(packageDir, "openapi/openapi.json")).text();
   expect(openApiContents).toContain('"/system/health"');
   expect(openApiContents).toContain('"getSystemHealth"');
+  expect(openApiContents).toContain('"/system/status"');
+  expect(openApiContents).toContain('"/workspaces"');
   expect(openApiContents).toContain('"/system/opencode/health"');
   expect(openApiContents).toContain('"/system/runtime/versions"');
 });
@@ -42,6 +44,8 @@ test("sdk generation succeeds from the server-v2 openapi document", async () => 
 
   const sdkIndex = await Bun.file(path.join(repoDir, "packages/openwork-server-sdk/generated/index.ts")).text();
   expect(sdkIndex).toContain("getSystemHealth");
+  expect(sdkIndex).toContain("getSystemStatus");
+  expect(sdkIndex).toContain("getWorkspaces");
   expect(sdkIndex).toContain("GetSystemHealthResponse");
   expect(sdkIndex).toContain("getSystemOpencodeHealth");
   expect(sdkIndex).toContain("getSystemRuntimeVersions");

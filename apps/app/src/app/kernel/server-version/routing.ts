@@ -1,6 +1,6 @@
 import type { ServerContractHint } from "./types";
 
-export type ServerVersionFeature = "system-health" | "system-status";
+export type ServerVersionFeature = "system-health" | "system-status" | "workspace-read";
 
 export type ServerVersionRouteDecision = {
   fallback: "legacy" | "none";

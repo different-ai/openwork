@@ -99,14 +99,14 @@ export const runtimeInfoSchema = z.object({
 
 export const metadataDataSchema = z.object({
   foundation: z.object({
-    phase: z.literal(3),
+    phase: z.literal(5),
     middlewareOrder: z.array(identifierSchema).min(1),
     routeNamespaces: routeNamespacesSchema,
     database: databaseStatusSchema,
     startup: startupDiagnosticsSchema,
   }).meta({ ref: "OpenWorkServerV2FoundationInfo" }),
   requestContext: z.object({
-    actorKind: z.literal("anonymous"),
+    actorKind: z.enum(["anonymous", "client", "host"]),
     requestIdHeader: z.literal("X-Request-Id"),
   }).meta({ ref: "OpenWorkServerV2RequestContextInfo" }),
   runtime: runtimeInfoSchema,

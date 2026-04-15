@@ -20,10 +20,11 @@ export function registerRuntimeRoutes(app: Hono<AppBindings>) {
       description: "Returns the server-owned OpenCode runtime health, version, URL, and recent diagnostics.",
       responses: withCommonErrorResponses({
         200: jsonResponse("OpenCode runtime health returned successfully.", opencodeHealthResponseSchema),
-      }),
+      }, { includeUnauthorized: true }),
     }),
     (c) => {
       const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
       return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.runtime.getOpencodeHealth()));
     },
   );
@@ -36,10 +37,11 @@ export function registerRuntimeRoutes(app: Hono<AppBindings>) {
       description: "Returns the server-owned opencode-router health, enablement decision, and recent diagnostics.",
       responses: withCommonErrorResponses({
         200: jsonResponse("Router runtime health returned successfully.", routerHealthResponseSchema),
-      }),
+      }, { includeUnauthorized: true }),
     }),
     (c) => {
       const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
       return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.runtime.getRouterHealth()));
     },
   );
@@ -52,10 +54,11 @@ export function registerRuntimeRoutes(app: Hono<AppBindings>) {
       description: "Returns the current runtime supervision summary, manifest, restart policy, and child process state.",
       responses: withCommonErrorResponses({
         200: jsonResponse("Runtime summary returned successfully.", runtimeSummaryResponseSchema),
-      }),
+      }, { includeUnauthorized: true }),
     }),
     (c) => {
       const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
       return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.runtime.getRuntimeSummary()));
     },
   );
@@ -68,10 +71,11 @@ export function registerRuntimeRoutes(app: Hono<AppBindings>) {
       description: "Returns the active and pinned runtime versions that Server V2 resolved for OpenCode and opencode-router.",
       responses: withCommonErrorResponses({
         200: jsonResponse("Runtime versions returned successfully.", runtimeVersionsResponseSchema),
-      }),
+      }, { includeUnauthorized: true }),
     }),
     (c) => {
       const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
       return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.runtime.getRuntimeVersions()));
     },
   );

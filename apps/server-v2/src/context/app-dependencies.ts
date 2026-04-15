@@ -1,10 +1,14 @@
+import { createAuthService, type AuthService } from "../services/auth-service.js";
+import { createCapabilitiesService, type CapabilitiesService } from "../services/capabilities-service.js";
 import { createProcessInfoAdapter, type ProcessInfoAdapter } from "../adapters/process-info.js";
 import { createServerPersistence, type ServerPersistence } from "../database/persistence.js";
 import { createSqliteDatabaseStatusProvider, type DatabaseStatusProvider } from "../database/status-provider.js";
 import type { RuntimeAssetService } from "../runtime/assets.js";
 import type { RegistryService } from "../services/registry-service.js";
+import { createServerRegistryService, type ServerRegistryService } from "../services/server-registry-service.js";
 import { createRuntimeService, type RuntimeService } from "../services/runtime-service.js";
 import { createSystemService, type SystemService } from "../services/system-service.js";
+import { createWorkspaceRegistryService, type WorkspaceRegistryService } from "../services/workspace-registry-service.js";
 
 export type AppDependencies = {
   database: DatabaseStatusProvider;
@@ -12,9 +16,13 @@ export type AppDependencies = {
   persistence: ServerPersistence;
   processInfo: ProcessInfoAdapter;
   services: {
+    auth: AuthService;
+    capabilities: CapabilitiesService;
     registry: RegistryService;
     runtime: RuntimeService;
+    serverRegistry: ServerRegistryService;
     system: SystemService;
+    workspaceRegistry: WorkspaceRegistryService;
   };
   startedAt: Date;
   version: string;
@@ -90,6 +98,15 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     workingDirectory: overrides.workingDirectory,
   });
   const database = createSqliteDatabaseStatusProvider({ diagnostics: persistence.diagnostics });
+  const auth = createAuthService();
+  const serverRegistry = createServerRegistryService({
+    localServerId: persistence.registry.localServerId,
+    repositories: persistence.repositories,
+  });
+  const workspaceRegistry = createWorkspaceRegistryService({
+    repositories: persistence.repositories,
+    servers: serverRegistry,
+  });
   const runtime = createRuntimeService({
     assetService: overrides.runtime?.assetService,
     bootstrapPolicy: overrides.runtime?.bootstrapPolicy,
@@ -100,6 +117,10 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     serverVersion: version,
     workingDirectory: persistence.workingDirectory,
   });
+  const capabilities = createCapabilitiesService({
+    auth,
+    runtime,
+  });
 
   return {
     database,
@@ -107,16 +128,24 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     persistence,
     processInfo,
     services: {
+      auth,
+      capabilities,
       registry: persistence.registry,
       runtime,
+      serverRegistry,
       system: createSystemService({
+        auth,
+        capabilities,
         database,
         environment,
         processInfo,
+        serverRegistry,
         runtime,
         startedAt,
         version,
+        workspaceRegistry,
       }),
+      workspaceRegistry,
     },
     startedAt,
     version,

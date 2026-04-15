@@ -1,29 +1,28 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import {
   createOpenWorkServerClient,
-  getIndex,
   getSystemHealth,
-  getSystemOpencodeHealth,
-  getSystemRouterHealth,
-  getSystemRuntimeSummary,
-  getSystemRuntimeVersions,
+  getSystemStatus,
+  getWorkspaces,
+  getWorkspacesByWorkspaceId,
   type OpenWorkServerV2HealthResponse,
-  type OpenWorkServerV2OpencodeHealthResponse,
-  type OpenWorkServerV2RootInfoResponse,
-  type OpenWorkServerV2RouterHealthResponse,
-  type OpenWorkServerV2RuntimeSummaryResponse,
-  type OpenWorkServerV2RuntimeVersionsResponse,
+  type OpenWorkServerV2SystemStatusResponse,
+  type OpenWorkServerV2WorkspaceDetailResponse,
+  type OpenWorkServerV2WorkspaceListResponse,
 } from "@openwork/server-sdk";
 import { normalizeOpenworkServerUrl } from "../../lib/openwork-server";
 import type { OpenworkServerCapabilities } from "../../lib/openwork-server";
-import type { OpenworkServerInfo } from "../../lib/tauri";
+import type { OpenworkServerInfo, WorkspaceInfo, WorkspaceList } from "../../lib/tauri";
 import { isTauriRuntime } from "../../utils";
 import { isServerV2Enabled } from "./flag";
 import { createRemoteServerId, LOCAL_SERVER_ID } from "./ids";
 import {
   buildSyntheticDiagnostics,
   normalizeLegacyDiagnostics,
+  normalizeServerV2Capabilities,
   normalizeServerV2Diagnostics,
+  normalizeServerV2WorkspaceDetail,
+  normalizeServerV2WorkspaceList,
 } from "./normalize";
 import { recordServerVersionDecision } from "./observability";
 import { resolveServerVersionRoute, shouldFallbackToLegacy } from "./routing";
@@ -88,30 +87,45 @@ async function fetchServerV2Status(target: ServerTarget) {
     throwOnError: true,
   });
 
-  const [
-    rootResult,
-    healthResult,
-    opencodeResult,
-    routerResult,
-    runtimeSummaryResult,
-    runtimeVersionsResult,
-  ] = await Promise.all([
-    getIndex({ client, throwOnError: true }),
+  const [healthResult, statusResult] = await Promise.all([
     getSystemHealth({ client, throwOnError: true }),
-    getSystemOpencodeHealth({ client, throwOnError: true }),
-    getSystemRouterHealth({ client, throwOnError: true }),
-    getSystemRuntimeSummary({ client, throwOnError: true }),
-    getSystemRuntimeVersions({ client, throwOnError: true }),
+    getSystemStatus({ client, throwOnError: true }),
   ]);
 
   return {
-    root: rootResult.data as OpenWorkServerV2RootInfoResponse,
     health: healthResult.data as OpenWorkServerV2HealthResponse,
-    opencode: opencodeResult.data as OpenWorkServerV2OpencodeHealthResponse,
-    router: routerResult.data as OpenWorkServerV2RouterHealthResponse,
-    runtimeSummary: runtimeSummaryResult.data as OpenWorkServerV2RuntimeSummaryResponse,
-    runtimeVersions: runtimeVersionsResult.data as OpenWorkServerV2RuntimeVersionsResponse,
+    status: statusResult.data as OpenWorkServerV2SystemStatusResponse,
   };
+}
+
+async function fetchServerV2WorkspaceList(target: ServerTarget) {
+  const client = createOpenWorkServerClient({
+    baseUrl: target.baseUrl,
+    fetch: isTauriRuntime() ? tauriFetch : globalThis.fetch,
+    headers: buildHeaders(target),
+    responseStyle: "data",
+    throwOnError: true,
+  });
+
+  const result = await getWorkspaces({ client, throwOnError: true });
+  return result.data as OpenWorkServerV2WorkspaceListResponse;
+}
+
+async function fetchServerV2WorkspaceDetail(target: ServerTarget, workspaceId: string) {
+  const client = createOpenWorkServerClient({
+    baseUrl: target.baseUrl,
+    fetch: isTauriRuntime() ? tauriFetch : globalThis.fetch,
+    headers: buildHeaders(target),
+    responseStyle: "data",
+    throwOnError: true,
+  });
+
+  const result = await getWorkspacesByWorkspaceId({
+    client,
+    path: { workspaceId },
+    throwOnError: true,
+  });
+  return result.data as OpenWorkServerV2WorkspaceDetailResponse;
 }
 
 export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
@@ -287,9 +301,9 @@ export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
         serverId: target.serverId,
       });
       return {
-        capabilities: null,
+        capabilities: normalizeServerV2Capabilities(status.status),
         contract: "server-v2" as const,
-        diagnostics: normalizeServerV2Diagnostics({ ...status, target }),
+        diagnostics: normalizeServerV2Diagnostics({ status: status.status, target }),
         status: "limited" as const,
       } satisfies ServerStatusProbe;
     };
@@ -371,6 +385,78 @@ export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
     system: {
       health: () => probeHealth(input),
       status: () => probeStatus(input),
+    },
+    workspaces: {
+      detail: async (workspaceId: string, options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+        const target = resolveTarget(input.serverId, input.explicitTarget);
+        const route = resolveServerVersionRoute({
+          contractHint: target.contractHint,
+          feature: "workspace-read",
+          rolloutEnabled: rolloutEnabled(),
+          targetKind: target.kind,
+        });
+
+        const runLegacy = () => {
+          const item = (options?.legacyWorkspaceList?.workspaces ?? []).find((workspace) => workspace.id === workspaceId);
+          if (!item) {
+            throw new Error(`Workspace not found in legacy cache: ${workspaceId}`);
+          }
+          return item;
+        };
+
+        const runServerV2 = async () => {
+          const response = await fetchServerV2WorkspaceDetail(target, workspaceId);
+          return normalizeServerV2WorkspaceDetail({
+            legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+            response,
+          });
+        };
+
+        if (route.primary === "legacy") {
+          return runLegacy();
+        }
+
+        try {
+          return await runServerV2();
+        } catch (error) {
+          if (route.fallback !== "legacy" || !shouldFallbackToLegacy(error)) {
+            throw error;
+          }
+          return runLegacy();
+        }
+      },
+      list: async (options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+        const target = resolveTarget(input.serverId, input.explicitTarget);
+        const route = resolveServerVersionRoute({
+          contractHint: target.contractHint,
+          feature: "workspace-read",
+          rolloutEnabled: rolloutEnabled(),
+          targetKind: target.kind,
+        });
+
+        const runLegacy = () => options?.legacyWorkspaceList ?? { selectedId: "", watchedId: null, workspaces: [] };
+
+        const runServerV2 = async () => {
+          const response = await fetchServerV2WorkspaceList(target);
+          return normalizeServerV2WorkspaceList({
+            legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+            response,
+          });
+        };
+
+        if (route.primary === "legacy") {
+          return runLegacy();
+        }
+
+        try {
+          return await runServerV2();
+        } catch (error) {
+          if (route.fallback !== "legacy" || !shouldFallbackToLegacy(error)) {
+            throw error;
+          }
+          return runLegacy();
+        }
+      },
     },
     target: () => resolveTarget(input.serverId, input.explicitTarget),
   });

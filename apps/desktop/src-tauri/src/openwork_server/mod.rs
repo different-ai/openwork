@@ -477,6 +477,9 @@ pub fn start_openwork_server_v2(
     let reserved_ports = reserved_openwork_ports(app, active_workspace)?;
     let port = resolve_openwork_port(&host, preferred_port, &reserved_ports)?;
     let base_url = format!("http://127.0.0.1:{port}");
+    let workspace_tokens = load_or_create_workspace_tokens(app, active_workspace)?;
+    let client_token = workspace_tokens.client_token.clone();
+    let host_token = workspace_tokens.host_token.clone();
     let sidecar_dir = resolve_sidecar_dir(app)
         .ok_or_else(|| "Unable to resolve the desktop sidecar directory for Server V2 runtime assets.".to_string())?;
     let runtime_manifest_path = sidecar_dir.join("manifest.json");
@@ -495,6 +498,8 @@ pub fn start_openwork_server_v2(
         .args(["--host", host.as_str(), "--port", port_text.as_str()])
         .current_dir(cwd)
         .env("OPENWORK_DESKTOP_HOSTED", "1")
+        .env("OPENWORK_HOST_TOKEN", host_token.clone())
+        .env("OPENWORK_TOKEN", client_token.clone())
         .env("OPENWORK_SERVER_V2_HOSTING_KIND", "desktop")
         .env("OPENWORK_SERVER_V2_RUNTIME_BOOTSTRAP", "eager")
         .env("OPENWORK_SERVER_V2_RUNTIME_RELEASE_DIR", sidecar_dir.to_string_lossy().to_string())
@@ -530,9 +535,9 @@ pub fn start_openwork_server_v2(
     state.connect_url = connect_url;
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
-    state.client_token = None;
+    state.client_token = Some(client_token);
     state.owner_token = None;
-    state.host_token = None;
+    state.host_token = Some(host_token);
     state.server_version = None;
     state.opencode_base_url = None;
     state.opencode_status = None;

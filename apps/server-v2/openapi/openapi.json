@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenWork Server V2",
-    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 3 adds runtime asset resolution, OpenCode and router supervision, persisted runtime health, and server-owned /system/runtime/* status routes.",
+    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 5 adds server-owned capabilities, normalized /system/status, workspace registry reads, and canonical workspace serialization.",
     "version": "0.0.0"
   },
   "servers": [
@@ -108,6 +108,152 @@
               }
             }
           },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/capabilities": {
+      "get": {
+        "operationId": "getSystemCapabilities",
+        "tags": [
+          "System"
+        ],
+        "summary": "Get server capabilities",
+        "description": "Returns the typed Server V2 capability model, including auth requirements and migrated registry/runtime read slices.",
+        "responses": {
+          "200": {
+            "description": "Server capabilities returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2CapabilitiesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/status": {
+      "get": {
+        "operationId": "getSystemStatus",
+        "tags": [
+          "System"
+        ],
+        "summary": "Get normalized system status",
+        "description": "Returns normalized status, registry summary, auth requirements, runtime summary, and capabilities for app startup and settings surfaces.",
+        "responses": {
+          "200": {
+            "description": "System status returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SystemStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/servers": {
+      "get": {
+        "operationId": "getSystemServers",
+        "tags": [
+          "System"
+        ],
+        "summary": "List known server targets",
+        "description": "Returns the local server registry inventory. This is host-scoped because it can reveal internal server connection metadata.",
+        "responses": {
+          "200": {
+            "description": "Server inventory returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ServerInventoryListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated actor does not have access to this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ForbiddenError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The server failed to complete the request.",
             "content": {
@@ -136,6 +282,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenWorkServerV2OpencodeHealthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
                 }
               }
             }
@@ -172,6 +328,16 @@
               }
             }
           },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The server failed to complete the request.",
             "content": {
@@ -200,6 +366,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenWorkServerV2RuntimeSummaryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
                 }
               }
             }
@@ -236,6 +412,16 @@
               }
             }
           },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The server failed to complete the request.",
             "content": {
@@ -247,6 +433,120 @@
             }
           }
         }
+      }
+    },
+    "/workspaces": {
+      "get": {
+        "operationId": "getWorkspaces",
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "List workspaces",
+        "description": "Returns the canonical workspace inventory from the server-owned registry. Hidden control/help workspaces are excluded unless the caller asks for them with host scope.",
+        "responses": {
+          "200": {
+            "description": "Workspace inventory returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated actor does not have access to this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ForbiddenError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceId",
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Get workspace detail",
+        "description": "Returns the canonical workspace detail shape for a single workspace, including backend resolution and runtime summary fields.",
+        "responses": {
+          "200": {
+            "description": "Workspace detail returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
       }
     }
   },
@@ -776,7 +1076,7 @@
         "properties": {
           "phase": {
             "type": "number",
-            "const": 3
+            "const": 5
           },
           "middlewareOrder": {
             "minItems": 1,
@@ -808,7 +1108,11 @@
         "properties": {
           "actorKind": {
             "type": "string",
-            "const": "anonymous"
+            "enum": [
+              "anonymous",
+              "client",
+              "host"
+            ]
           },
           "requestIdHeader": {
             "type": "string",
@@ -1555,6 +1859,714 @@
           "meta"
         ]
       },
+      "OpenWorkServerV2UnauthorizedError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ErrorDetail"
+                }
+              },
+              "code": {
+                "type": "string",
+                "const": "unauthorized"
+              }
+            },
+            "required": [
+              "message",
+              "requestId",
+              "code"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      },
+      "OpenWorkServerV2AuthSummary": {
+        "type": "object",
+        "properties": {
+          "actorKind": {
+            "type": "string",
+            "enum": [
+              "anonymous",
+              "client",
+              "host"
+            ]
+          },
+          "configured": {
+            "type": "object",
+            "properties": {
+              "clientToken": {
+                "type": "boolean"
+              },
+              "hostToken": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "clientToken",
+              "hostToken"
+            ]
+          },
+          "headers": {
+            "type": "object",
+            "properties": {
+              "authorization": {
+                "type": "string",
+                "const": "Authorization"
+              },
+              "hostToken": {
+                "type": "string",
+                "const": "X-OpenWork-Host-Token"
+              }
+            },
+            "required": [
+              "authorization",
+              "hostToken"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "scopes": {
+            "type": "object",
+            "properties": {
+              "hiddenWorkspaceReads": {
+                "type": "string",
+                "const": "host"
+              },
+              "serverInventory": {
+                "type": "string",
+                "const": "host"
+              },
+              "visibleRead": {
+                "type": "string",
+                "const": "client_or_host"
+              }
+            },
+            "required": [
+              "hiddenWorkspaceReads",
+              "serverInventory",
+              "visibleRead"
+            ]
+          }
+        },
+        "required": [
+          "actorKind",
+          "configured",
+          "headers",
+          "required",
+          "scopes"
+        ]
+      },
+      "OpenWorkServerV2CapabilitiesData": {
+        "type": "object",
+        "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/OpenWorkServerV2AuthSummary"
+          },
+          "registry": {
+            "type": "object",
+            "properties": {
+              "backendResolution": {
+                "type": "boolean",
+                "const": true
+              },
+              "hiddenWorkspaceFiltering": {
+                "type": "boolean",
+                "const": true
+              },
+              "serverInventory": {
+                "type": "boolean",
+                "const": true
+              },
+              "workspaceDetail": {
+                "type": "boolean",
+                "const": true
+              },
+              "workspaceList": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "backendResolution",
+              "hiddenWorkspaceFiltering",
+              "serverInventory",
+              "workspaceDetail",
+              "workspaceList"
+            ]
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "opencodeHealth": {
+                "type": "boolean",
+                "const": true
+              },
+              "routerHealth": {
+                "type": "boolean",
+                "const": true
+              },
+              "runtimeSummary": {
+                "type": "boolean",
+                "const": true
+              },
+              "runtimeVersions": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "opencodeHealth",
+              "routerHealth",
+              "runtimeSummary",
+              "runtimeVersions"
+            ]
+          },
+          "transport": {
+            "type": "object",
+            "properties": {
+              "rootMounted": {
+                "type": "boolean",
+                "const": true
+              },
+              "sdkPackage": {
+                "type": "string",
+                "const": "@openwork/server-sdk"
+              },
+              "v2": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "rootMounted",
+              "sdkPackage",
+              "v2"
+            ]
+          }
+        },
+        "required": [
+          "auth",
+          "registry",
+          "runtime",
+          "transport"
+        ]
+      },
+      "OpenWorkServerV2CapabilitiesResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2CapabilitiesData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2RegistrySummary": {
+        "type": "object",
+        "properties": {
+          "hiddenWorkspaceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "localServerId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "remoteServerCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "totalServers": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "visibleWorkspaceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "hiddenWorkspaceCount",
+          "localServerId",
+          "remoteServerCount",
+          "totalServers",
+          "visibleWorkspaceCount"
+        ]
+      },
+      "OpenWorkServerV2SystemStatusData": {
+        "type": "object",
+        "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/OpenWorkServerV2AuthSummary"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/OpenWorkServerV2CapabilitiesData"
+          },
+          "database": {
+            "type": "object",
+            "properties": {
+              "bootstrapMode": {
+                "type": "string",
+                "enum": [
+                  "fresh",
+                  "existing"
+                ]
+              },
+              "configured": {
+                "type": "boolean",
+                "const": true
+              },
+              "importWarnings": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "kind": {
+                "type": "string",
+                "const": "sqlite"
+              },
+              "migrations": {
+                "type": "object",
+                "properties": {
+                  "appliedThisRun": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "currentVersion": {
+                    "type": "string"
+                  },
+                  "totalApplied": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "appliedThisRun",
+                  "currentVersion",
+                  "totalApplied"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "phaseOwner": {
+                "type": "number",
+                "const": 2
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "warning"
+                ]
+              },
+              "summary": {
+                "type": "string"
+              },
+              "workingDirectory": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "bootstrapMode",
+              "configured",
+              "importWarnings",
+              "kind",
+              "migrations",
+              "path",
+              "phaseOwner",
+              "status",
+              "summary",
+              "workingDirectory"
+            ]
+          },
+          "environment": {
+            "type": "string"
+          },
+          "registry": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RegistrySummary"
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "opencode": {
+                "type": "object",
+                "properties": {
+                  "baseUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "running": {
+                    "type": "boolean"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "crashed",
+                      "disabled",
+                      "error",
+                      "restart_scheduled",
+                      "running",
+                      "starting",
+                      "stopped"
+                    ]
+                  },
+                  "version": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "baseUrl",
+                  "running",
+                  "status",
+                  "version"
+                ]
+              },
+              "router": {
+                "type": "object",
+                "properties": {
+                  "baseUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "running": {
+                    "type": "boolean"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "crashed",
+                      "disabled",
+                      "error",
+                      "restart_scheduled",
+                      "running",
+                      "starting",
+                      "stopped"
+                    ]
+                  },
+                  "version": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "baseUrl",
+                  "running",
+                  "status",
+                  "version"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "development",
+                  "release"
+                ]
+              },
+              "target": {
+                "type": "string",
+                "enum": [
+                  "darwin-arm64",
+                  "darwin-x64",
+                  "linux-arm64",
+                  "linux-x64",
+                  "windows-arm64",
+                  "windows-x64"
+                ]
+              }
+            },
+            "required": [
+              "opencode",
+              "router",
+              "source",
+              "target"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "const": "openwork-server-v2"
+          },
+          "startedAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "uptimeMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "auth",
+          "capabilities",
+          "database",
+          "environment",
+          "registry",
+          "runtime",
+          "service",
+          "startedAt",
+          "status",
+          "uptimeMs",
+          "version"
+        ]
+      },
+      "OpenWorkServerV2SystemStatusResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SystemStatusData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2ServerInventoryItem": {
+        "type": "object",
+        "properties": {
+          "auth": {
+            "type": "object",
+            "properties": {
+              "configured": {
+                "type": "boolean"
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "bearer",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "configured",
+              "scheme"
+            ]
+          },
+          "baseUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "hostingKind": {
+            "type": "string",
+            "enum": [
+              "desktop",
+              "self_hosted",
+              "cloud"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "isEnabled": {
+            "type": "boolean"
+          },
+          "isLocal": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          }
+        },
+        "required": [
+          "auth",
+          "baseUrl",
+          "capabilities",
+          "hostingKind",
+          "id",
+          "isEnabled",
+          "isLocal",
+          "kind",
+          "label",
+          "lastSeenAt",
+          "source",
+          "updatedAt"
+        ]
+      },
+      "OpenWorkServerV2ServerInventoryListData": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2ServerInventoryItem"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "OpenWorkServerV2ServerInventoryListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ServerInventoryListData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2ForbiddenError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ErrorDetail"
+                }
+              },
+              "code": {
+                "type": "string",
+                "const": "forbidden"
+              }
+            },
+            "required": [
+              "message",
+              "requestId",
+              "code"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      },
       "OpenWorkServerV2OpenApiDocument": {
         "type": "object",
         "properties": {
@@ -1765,6 +2777,468 @@
           "ok",
           "data",
           "meta"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceBackend": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local_opencode",
+              "remote_openwork"
+            ]
+          },
+          "local": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "configDir": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "dataDir": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "opencodeProjectId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "configDir",
+                  "dataDir",
+                  "opencodeProjectId"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remote": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "hostUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "remoteType": {
+                    "type": "string",
+                    "enum": [
+                      "openwork",
+                      "opencode"
+                    ]
+                  },
+                  "remoteWorkspaceId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "workspaceName": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "directory",
+                  "hostUrl",
+                  "remoteType",
+                  "remoteWorkspaceId",
+                  "workspaceName"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serverId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          }
+        },
+        "required": [
+          "kind",
+          "local",
+          "remote",
+          "serverId"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceRuntimeSummary": {
+        "type": "object",
+        "properties": {
+          "backendKind": {
+            "type": "string",
+            "enum": [
+              "local_opencode",
+              "remote_openwork"
+            ]
+          },
+          "health": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastError": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastSessionRefreshAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastSyncAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "backendKind",
+          "health",
+          "lastError",
+          "lastSessionRefreshAt",
+          "lastSyncAt",
+          "updatedAt"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceSummaryData": {
+        "type": "object",
+        "properties": {
+          "backend": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceBackend"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote",
+              "control",
+              "help"
+            ]
+          },
+          "preset": {
+            "type": "string",
+            "enum": [
+              "minimal",
+              "remote",
+              "starter"
+            ]
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceRuntimeSummary"
+          },
+          "server": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ServerInventoryItem"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "imported",
+              "attention"
+            ]
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          }
+        },
+        "required": [
+          "backend",
+          "createdAt",
+          "displayName",
+          "hidden",
+          "id",
+          "kind",
+          "preset",
+          "runtime",
+          "server",
+          "slug",
+          "status",
+          "updatedAt"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceListData": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceSummaryData"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceListData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceDetailData": {
+        "type": "object",
+        "properties": {
+          "backend": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceBackend"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote",
+              "control",
+              "help"
+            ]
+          },
+          "preset": {
+            "type": "string",
+            "enum": [
+              "minimal",
+              "remote",
+              "starter"
+            ]
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceRuntimeSummary"
+          },
+          "server": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ServerInventoryItem"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "imported",
+              "attention"
+            ]
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "backend",
+          "createdAt",
+          "displayName",
+          "hidden",
+          "id",
+          "kind",
+          "preset",
+          "runtime",
+          "server",
+          "slug",
+          "status",
+          "updatedAt",
+          "notes"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceDetailResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceDetailData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2NotFoundError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ErrorDetail"
+                }
+              },
+              "code": {
+                "type": "string",
+                "const": "not_found"
+              }
+            },
+            "required": [
+              "message",
+              "requestId",
+              "code"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error"
         ]
       }
     }

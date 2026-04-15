@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses, GetSystemOpencodeHealthData, GetSystemOpencodeHealthErrors, GetSystemOpencodeHealthResponses, GetSystemRouterHealthData, GetSystemRouterHealthErrors, GetSystemRouterHealthResponses, GetSystemRuntimeSummaryData, GetSystemRuntimeSummaryErrors, GetSystemRuntimeSummaryResponses, GetSystemRuntimeVersionsData, GetSystemRuntimeVersionsErrors, GetSystemRuntimeVersionsResponses } from './types.gen';
+import type { GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemCapabilitiesData, GetSystemCapabilitiesErrors, GetSystemCapabilitiesResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses, GetSystemOpencodeHealthData, GetSystemOpencodeHealthErrors, GetSystemOpencodeHealthResponses, GetSystemRouterHealthData, GetSystemRouterHealthErrors, GetSystemRouterHealthResponses, GetSystemRuntimeSummaryData, GetSystemRuntimeSummaryErrors, GetSystemRuntimeSummaryResponses, GetSystemRuntimeVersionsData, GetSystemRuntimeVersionsErrors, GetSystemRuntimeVersionsResponses, GetSystemServersData, GetSystemServersErrors, GetSystemServersResponses, GetSystemStatusData, GetSystemStatusErrors, GetSystemStatusResponses, GetWorkspacesByWorkspaceIdData, GetWorkspacesByWorkspaceIdErrors, GetWorkspacesByWorkspaceIdResponses, GetWorkspacesData, GetWorkspacesErrors, GetWorkspacesResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -40,6 +40,27 @@ export const getSystemHealth = <ThrowOnError extends boolean = false>(options?: 
 export const getSystemMeta = <ThrowOnError extends boolean = false>(options?: Options<GetSystemMetaData, ThrowOnError>) => (options?.client ?? client).get<GetSystemMetaResponses, GetSystemMetaErrors, ThrowOnError>({ url: '/system/meta', ...options });
 
 /**
+ * Get server capabilities
+ *
+ * Returns the typed Server V2 capability model, including auth requirements and migrated registry/runtime read slices.
+ */
+export const getSystemCapabilities = <ThrowOnError extends boolean = false>(options?: Options<GetSystemCapabilitiesData, ThrowOnError>) => (options?.client ?? client).get<GetSystemCapabilitiesResponses, GetSystemCapabilitiesErrors, ThrowOnError>({ url: '/system/capabilities', ...options });
+
+/**
+ * Get normalized system status
+ *
+ * Returns normalized status, registry summary, auth requirements, runtime summary, and capabilities for app startup and settings surfaces.
+ */
+export const getSystemStatus = <ThrowOnError extends boolean = false>(options?: Options<GetSystemStatusData, ThrowOnError>) => (options?.client ?? client).get<GetSystemStatusResponses, GetSystemStatusErrors, ThrowOnError>({ url: '/system/status', ...options });
+
+/**
+ * List known server targets
+ *
+ * Returns the local server registry inventory. This is host-scoped because it can reveal internal server connection metadata.
+ */
+export const getSystemServers = <ThrowOnError extends boolean = false>(options?: Options<GetSystemServersData, ThrowOnError>) => (options?.client ?? client).get<GetSystemServersResponses, GetSystemServersErrors, ThrowOnError>({ url: '/system/servers', ...options });
+
+/**
  * Get OpenCode health
  *
  * Returns the server-owned OpenCode runtime health, version, URL, and recent diagnostics.
@@ -66,3 +87,17 @@ export const getSystemRuntimeSummary = <ThrowOnError extends boolean = false>(op
  * Returns the active and pinned runtime versions that Server V2 resolved for OpenCode and opencode-router.
  */
 export const getSystemRuntimeVersions = <ThrowOnError extends boolean = false>(options?: Options<GetSystemRuntimeVersionsData, ThrowOnError>) => (options?.client ?? client).get<GetSystemRuntimeVersionsResponses, GetSystemRuntimeVersionsErrors, ThrowOnError>({ url: '/system/runtime/versions', ...options });
+
+/**
+ * List workspaces
+ *
+ * Returns the canonical workspace inventory from the server-owned registry. Hidden control/help workspaces are excluded unless the caller asks for them with host scope.
+ */
+export const getWorkspaces = <ThrowOnError extends boolean = false>(options?: Options<GetWorkspacesData, ThrowOnError>) => (options?.client ?? client).get<GetWorkspacesResponses, GetWorkspacesErrors, ThrowOnError>({ url: '/workspaces', ...options });
+
+/**
+ * Get workspace detail
+ *
+ * Returns the canonical workspace detail shape for a single workspace, including backend resolution and runtime summary fields.
+ */
+export const getWorkspacesByWorkspaceId = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdResponses, GetWorkspacesByWorkspaceIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}', ...options });

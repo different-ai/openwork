@@ -42,6 +42,7 @@ import {
   engineStart,
   engineStop,
   sandboxDoctor,
+  openworkServerInfo,
   orchestratorInstanceDispose,
   orchestratorStartDetached,
   orchestratorWorkspaceActivate,
@@ -3826,7 +3827,17 @@ export function createWorkspaceStore(options: {
     if (isTauriRuntime()) {
       enterPhase("workspaceBootstrap", { source: "workspace_bootstrap" });
       try {
-        const ws = await workspaceBootstrap();
+        const desktopWorkspaceState = await workspaceBootstrap();
+        const hostInfo = options.openworkServer.openworkServerHostInfo()
+          ?? await openworkServerInfo().catch(() => null);
+        const ws = hostInfo?.startupMode === "server-v2"
+          ? await options.openworkServer.listLocalServerWorkspaces({ legacyWorkspaceList: desktopWorkspaceState }).catch((error) => {
+              options.onStartupTrace?.("workspace_bootstrap:server_v2_fallback", {
+                error: error instanceof Error ? error.message : safeStringify(error),
+              });
+              return desktopWorkspaceState;
+            })
+          : desktopWorkspaceState;
         setWorkspaces(ws.workspaces);
         syncSelectedWorkspaceId(pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws));
       } catch (error) {

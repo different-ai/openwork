@@ -25,6 +25,7 @@ import {
   type OpenworkServerSettings,
   type OpenworkServerStatus,
 } from "../lib/openwork-server";
+import type { WorkspaceList } from "../lib/tauri";
 import {
   createRemoteServerId,
   createServerVersionAdapter,
@@ -573,6 +574,18 @@ export function createOpenworkServerStore(options: {
     }
   };
 
+  const listLocalServerWorkspaces = async (options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+    return serverVersionAdapter.createSdk({ serverId: LOCAL_SERVER_ID }).workspaces.list({
+      legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+    });
+  };
+
+  const getLocalServerWorkspace = async (workspaceId: string, options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+    return serverVersionAdapter.createSdk({ serverId: LOCAL_SERVER_ID }).workspaces.detail(workspaceId, {
+      legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+    });
+  };
+
   async function ensureLocalOpenworkServerClient(): Promise<OpenworkServerClient | null> {
     let hostInfo = openworkServerHostInfo();
     if (hostInfo?.startupMode === "server-v2") {
@@ -692,5 +705,7 @@ export function createOpenworkServerStore(options: {
     testOpenworkServerConnection,
     reconnectOpenworkServer,
     ensureLocalOpenworkServerClient,
+    listLocalServerWorkspaces,
+    getLocalServerWorkspace,
   };
 }

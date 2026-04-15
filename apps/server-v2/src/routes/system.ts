@@ -1,9 +1,15 @@
 import type { Hono } from "hono";
 import { describeRoute, openAPIRouteHandler } from "hono-openapi";
+import { HTTPException } from "hono/http-exception";
 import type { AppDependencies } from "../context/app-dependencies.js";
 import { getRequestContext, type AppBindings } from "../context/request-context.js";
 import { buildSuccessResponse } from "../http.js";
 import { buildOperationId, jsonResponse, withCommonErrorResponses } from "../openapi.js";
+import {
+  capabilitiesResponseSchema,
+  serverInventoryListResponseSchema,
+  systemStatusResponseSchema,
+} from "../schemas/registry.js";
 import { healthResponseSchema, metadataResponseSchema, openApiDocumentSchema, rootInfoResponseSchema } from "../schemas/system.js";
 import { routePaths } from "./route-paths.js";
 
@@ -18,7 +24,7 @@ function createOpenApiDocumentation(version: string) {
         description: [
           "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.",
           "",
-          "Phase 3 adds runtime asset resolution, OpenCode and router supervision, persisted runtime health, and server-owned /system/runtime/* status routes.",
+          "Phase 5 adds server-owned capabilities, normalized /system/status, workspace registry reads, and canonical workspace serialization.",
         ].join("\n"),
     },
     servers: [{ url: "/" }],
@@ -80,11 +86,63 @@ export function registerSystemRoutes(app: ServerV2App, dependencies: AppDependen
       description: "Returns middleware ordering, route namespace conventions, sqlite bootstrap status, and startup import diagnostics.",
       responses: withCommonErrorResponses({
         200: jsonResponse("Server metadata returned successfully.", metadataResponseSchema),
-      }),
+      }, { includeUnauthorized: true }),
     }),
     (c) => {
       const requestContext = getRequestContext(c);
-      return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.system.getMetadata()));
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
+      return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.system.getMetadata(requestContext.actor)));
+    },
+  );
+
+  app.get(
+    routePaths.system.capabilities,
+    describeRoute({
+      tags: ["System"],
+      summary: "Get server capabilities",
+      description: "Returns the typed Server V2 capability model, including auth requirements and migrated registry/runtime read slices.",
+      responses: withCommonErrorResponses({
+        200: jsonResponse("Server capabilities returned successfully.", capabilitiesResponseSchema),
+      }, { includeUnauthorized: true }),
+    }),
+    (c) => {
+      const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
+      return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.system.getCapabilities(requestContext.actor)));
+    },
+  );
+
+  app.get(
+    routePaths.system.status,
+    describeRoute({
+      tags: ["System"],
+      summary: "Get normalized system status",
+      description: "Returns normalized status, registry summary, auth requirements, runtime summary, and capabilities for app startup and settings surfaces.",
+      responses: withCommonErrorResponses({
+        200: jsonResponse("System status returned successfully.", systemStatusResponseSchema),
+      }, { includeUnauthorized: true }),
+    }),
+    (c) => {
+      const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
+      return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.system.getStatus(requestContext.actor)));
+    },
+  );
+
+  app.get(
+    routePaths.system.servers,
+    describeRoute({
+      tags: ["System"],
+      summary: "List known server targets",
+      description: "Returns the local server registry inventory. This is host-scoped because it can reveal internal server connection metadata.",
+      responses: withCommonErrorResponses({
+        200: jsonResponse("Server inventory returned successfully.", serverInventoryListResponseSchema),
+      }, { includeForbidden: true, includeUnauthorized: true }),
+    }),
+    (c) => {
+      const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireHost(requestContext.actor);
+      return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.system.listServers()));
     },
   );
 

@@ -12,7 +12,13 @@ export const errorHandlingMiddleware: MiddlewareHandler<AppBindings> = async (c,
 
     if (error instanceof HTTPException) {
       const status = error.status;
-      const code = status === 404 ? "not_found" : "invalid_request";
+      const code = status === 401
+        ? "unauthorized"
+        : status === 403
+          ? "forbidden"
+          : status === 404
+            ? "not_found"
+            : "invalid_request";
       const body = buildErrorResponse({
         requestId,
         code,

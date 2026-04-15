@@ -1,9 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppDependencies } from "./app-dependencies.js";
-
-export type RequestActor = {
-  kind: "anonymous";
-};
+import type { RequestActor } from "../services/auth-service.js";
 
 export type RequestContext = {
   actor: RequestActor;
@@ -20,9 +17,9 @@ export type AppBindings = {
   };
 };
 
-export function createRequestContext(dependencies: AppDependencies, requestId: string): RequestContext {
+export function createRequestContext(dependencies: AppDependencies, requestId: string, headers: Headers): RequestContext {
   return {
-    actor: { kind: "anonymous" },
+    actor: dependencies.services.auth.resolveActor(headers),
     dependencies,
     receivedAt: new Date(),
     requestId,
@@ -32,7 +29,7 @@ export function createRequestContext(dependencies: AppDependencies, requestId: s
 
 export function requestContextMiddleware(dependencies: AppDependencies): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
-    c.set("requestContext", createRequestContext(dependencies, c.get("requestId")));
+    c.set("requestContext", createRequestContext(dependencies, c.get("requestId"), c.req.raw.headers));
     await next();
   };
 }

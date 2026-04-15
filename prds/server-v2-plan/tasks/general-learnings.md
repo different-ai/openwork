@@ -19,6 +19,16 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-14 - Phase 5 - Keep partial remote-workspace compatibility inside the server-version boundary
+- Context: Server V2 now owns the canonical workspace registry and the app boot/switcher reads from it, but remote workspace execution still uses legacy direct-connect behavior in the app.
+- Learning: During read-slice migration, the safest place to merge Server V2 workspace summaries with legacy-only remote connection fields is the `server-version` normalization boundary keyed by stable workspace IDs, rather than leaking compatibility branches throughout UI feature code or re-exposing every secret in the public server payload.
+- Action for later phases: Continue moving remote activation/session/file flows behind Server V2, and delete the boundary merge once the app no longer needs legacy remote connection fields.
+
+### 2026-04-14 - Phase 5 - Desktop Server V2 startup must hand client and host tokens into the new process
+- Context: Phase 5 adds auth and scope checks to Server V2 read surfaces and updates the desktop host path to use them.
+- Learning: Desktop-hosted Server V2 needs the same persisted client/host token handoff that legacy local-server mode already had, otherwise scoped read routes such as hidden workspace access and server inventory cannot be exercised safely during migration.
+- Action for later phases: Reuse the existing desktop token store and token handoff when write, approval, and admin surfaces move onto Server V2.
+
 ### 2026-04-14 - Phase 4 - Packaged Server V2 binaries should read version pins from the bundled runtime manifest
 - Context: Phase 4 adds a real desktop-hosted `openwork-server-v2` launch path and smoke-tested it against Tauri sidecars in release-style asset mode.
 - Learning: Compiled Server V2 binaries cannot rely on repo-local files like `constants.json` always existing at runtime, so release asset resolution must use the bundled `manifest.json` as the source of truth for pinned OpenCode/router versions.

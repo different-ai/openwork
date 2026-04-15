@@ -9,7 +9,7 @@ export type SuccessResponse<TData> = {
   meta: ResponseMeta;
 };
 
-export type ErrorCode = "internal_error" | "invalid_request" | "not_found";
+export type ErrorCode = "forbidden" | "internal_error" | "invalid_request" | "not_found" | "unauthorized";
 
 export type ErrorDetail = {
   message: string;
