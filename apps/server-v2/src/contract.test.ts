@@ -32,7 +32,11 @@ test("openapi generation writes the committed server-v2 contract", async () => {
   expect(openApiContents).toContain('"/system/health"');
   expect(openApiContents).toContain('"getSystemHealth"');
   expect(openApiContents).toContain('"/system/status"');
+  expect(openApiContents).toContain('"/system/cloud-signin"');
+  expect(openApiContents).toContain('"/system/managed/mcps"');
+  expect(openApiContents).toContain('"/system/router/identities/telegram"');
   expect(openApiContents).toContain('"/workspaces"');
+  expect(openApiContents).toContain('"/workspaces/{workspaceId}/export"');
   expect(openApiContents).toContain('"/workspaces/{workspaceId}/sessions"');
   expect(openApiContents).toContain('"/workspaces/{workspaceId}/events"');
   expect(openApiContents).toContain('"/system/opencode/health"');
@@ -47,7 +51,11 @@ test("sdk generation succeeds from the server-v2 openapi document", async () => 
   const sdkIndex = await Bun.file(path.join(repoDir, "packages/openwork-server-sdk/generated/index.ts")).text();
   expect(sdkIndex).toContain("getSystemHealth");
   expect(sdkIndex).toContain("getSystemStatus");
+  expect(sdkIndex).toContain("getSystemCloudSignin");
+  expect(sdkIndex).toContain("getSystemManagedMcps");
+  expect(sdkIndex).toContain("getSystemRouterIdentitiesTelegram");
   expect(sdkIndex).toContain("getWorkspaces");
+  expect(sdkIndex).toContain("getWorkspacesByWorkspaceIdExport");
   expect(sdkIndex).toContain("getWorkspacesByWorkspaceIdSessions");
   expect(sdkIndex).toContain("getWorkspacesByWorkspaceIdEvents");
   expect(sdkIndex).toContain("GetSystemHealthResponse");

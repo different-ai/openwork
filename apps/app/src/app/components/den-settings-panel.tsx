@@ -16,6 +16,7 @@ import {
   normalizeDenBaseUrl,
   readDenSettings,
   resolveDenBaseUrls,
+  validateDenSettingsWithOpenwork,
   writeDenSettings,
 } from "../lib/den";
 import type { DenOrgSkillCard } from "../types";
@@ -420,6 +421,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
         activeOrgSlug: null,
         activeOrgName: null,
       });
+      await validateDenSettingsWithOpenwork().catch(() => null);
 
       setManualAuthInput("");
       setManualAuthOpen(false);

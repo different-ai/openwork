@@ -64,6 +64,7 @@ type ManagedProcessHandle = {
 };
 
 export type RuntimeService = {
+  applyRouterConfig(): Promise<ReturnType<RuntimeService["getRouterHealth"]>>;
   bootstrap(): Promise<void>;
   dispose(): Promise<void>;
   getBootstrapPolicy(): RuntimeBootstrapPolicy;
@@ -958,9 +959,35 @@ export function createRuntimeService(options: CreateRuntimeServiceOptions): Runt
     return bootstrapPromise;
   };
 
+  const applyRouterConfig = async () => {
+    routerEnablement = resolveRouterEnablement();
+    persistState();
+
+    if (bootstrapPolicy !== "disabled" && !opencodeState.running) {
+      await startOpencode();
+    }
+
+    if (routerHandle || routerState.running) {
+      await stopRouter();
+    }
+
+    if (bootstrapPolicy === "disabled") {
+      routerState.status = "disabled";
+      persistState();
+      return;
+    }
+
+    await startRouter();
+  };
+
   persistState();
 
-  return {
+  const service: RuntimeService = {
+    async applyRouterConfig() {
+      await applyRouterConfig();
+      return this.getRouterHealth();
+    },
+
     async bootstrap() {
       await bootstrap();
     },
@@ -1053,4 +1080,6 @@ export function createRuntimeService(options: CreateRuntimeServiceOptions): Runt
       return this.getRuntimeSummary();
     },
   };
+
+  return service;
 }

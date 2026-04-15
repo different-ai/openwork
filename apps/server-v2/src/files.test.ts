@@ -239,7 +239,7 @@ test("reconciliation absorbs recognized managed items from local workspace files
   expect(providers).toHaveLength(1);
   expect(skills).toHaveLength(1);
   expect(snapshot.stored.opencode.mcp).toBeUndefined();
-  expect(snapshot.effective.opencode.mcp.demo.type).toBe("local");
+  expect((snapshot.effective.opencode.mcp as any).demo.type).toBe("local");
   expect(snapshot.effective.opencode.plugin).toContain("demo-plugin");
-  expect(snapshot.effective.opencode.provider.openai.options.apiKey).toBe("redacted");
+  expect((snapshot.effective.opencode.provider as any).openai.options.apiKey).toBe("redacted");
 });

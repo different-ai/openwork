@@ -92,13 +92,13 @@ test("system health returns a consistent envelope", async () => {
   expect(["ready", "warning"]).toContain(body.data.database.status);
 });
 
-test("system metadata includes phase 7 registry, config, and runtime migration state", async () => {
+test("system metadata includes phase 8 registry, managed-resource, and runtime migration state", async () => {
   const { app } = createTestApp();
   const response = await app.request("http://openwork.local/system/meta");
   const body = await response.json();
 
   expect(response.status).toBe(200);
-  expect(body.data.foundation.phase).toBe(7);
+  expect(body.data.foundation.phase).toBe(8);
   expect(body.data.foundation.startup.registry.localServerId).toBe("srv_local");
   expect(body.data.foundation.startup.registry.hiddenWorkspaceIds).toHaveLength(2);
   expect(body.data.runtimeSupervisor.bootstrapPolicy).toBe("disabled");
@@ -121,6 +121,10 @@ test("openapi route is generated from the live Hono app", async () => {
   expect(document.paths["/workspaces"].get.operationId).toBe("getWorkspaces");
   expect(document.paths["/workspaces/local"].post.operationId).toBe("postWorkspacesLocal");
   expect(document.paths["/workspaces/{workspaceId}/config"].get.operationId).toBe("getWorkspacesByWorkspaceIdConfig");
+  expect(document.paths["/system/cloud-signin"].get.operationId).toBe("getSystemCloudSignin");
+  expect(document.paths["/system/managed/mcps"].get.operationId).toBe("getSystemManagedMcps");
+  expect(document.paths["/system/router/identities/telegram"].get.operationId).toBe("getSystemRouterIdentitiesTelegram");
+  expect(document.paths["/workspaces/{workspaceId}/export"].get.operationId).toBe("getWorkspacesByWorkspaceIdExport");
   expect(document.paths["/workspaces/{workspaceId}/reload-events"].get.operationId).toBe("getWorkspacesByWorkspaceIdReloadEvents");
   expect(document.paths["/workspaces/{workspaceId}/sessions"].get.operationId).toBe("getWorkspacesByWorkspaceIdSessions");
   expect(document.paths["/workspaces/{workspaceId}/events"].get.operationId).toBe("getWorkspacesByWorkspaceIdEvents");

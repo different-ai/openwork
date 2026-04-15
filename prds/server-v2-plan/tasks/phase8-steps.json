@@ -22,7 +22,7 @@
         "The server DB is the source of truth for managed MCP metadata.",
         "The routes are typed and auth-aware."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-002",
@@ -33,7 +33,7 @@
         "Later workspace creation can attach existing MCPs cleanly.",
         "Projection updates are triggered after assignment changes."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-003",
@@ -44,7 +44,7 @@
         "Skill source or ownership status is preserved.",
         "The public routes are typed and deletable from legacy use later."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-004",
@@ -55,7 +55,7 @@
         "Managed versus imported skill provenance is retained.",
         "Filesystem projection stays behind the server boundary."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-005",
@@ -66,7 +66,7 @@
         "Assignments are reflected in projected workspace config.",
         "The API makes no global-by-default assumption."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-006",
@@ -77,7 +77,7 @@
         "Enable/disable behavior can be expressed without direct file edits in the UI.",
         "Projection or materialization happens through the server."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-007",
@@ -88,7 +88,7 @@
         "Assignments update effective workspace config deterministically.",
         "The linking model is consistent with other managed concepts."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-008",
@@ -99,7 +99,7 @@
         "Workspace attachments are explicit.",
         "Later cloud sync or import flows can reuse the same model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-009",
@@ -110,7 +110,7 @@
         "The server can validate or refresh cloud metadata when needed.",
         "The app no longer treats cloud signin as only local preference state."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-010",
@@ -121,7 +121,7 @@
         "Routes exist for listing and mutating identity metadata.",
         "Identity changes can flow into router config materialization later in this phase."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-011",
@@ -132,7 +132,7 @@
         "Binding state can drive router enablement decisions.",
         "Routes are typed and easy to validate."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-012",
@@ -143,7 +143,7 @@
         "Config materialization can trigger router apply/reload behavior.",
         "The implementation matches the server-owned router model from the architecture docs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-013",
@@ -154,7 +154,7 @@
         "The UI does not need direct router requests for migrated flows.",
         "Route behavior matches the runtime supervisor and config materialization model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-014",
@@ -165,7 +165,7 @@
         "Share status and audit metadata are persisted.",
         "The server can expose, revoke, and inspect shares through typed routes."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-015",
@@ -176,7 +176,7 @@
         "The export model respects portable-file and secret-safety rules.",
         "The output matches current product expectations where still needed."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-016",
@@ -187,7 +187,7 @@
         "Replace and merge semantics are explicit and tested.",
         "Import triggers the correct projection and reload follow-up."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-017",
@@ -198,7 +198,7 @@
         "Trusted-origin or publisher rules are enforced server-side.",
         "The app can consume the server routes instead of building payloads locally for everything."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-018",
@@ -209,7 +209,7 @@
         "Legacy fallbacks remain isolated for anything not yet migrated.",
         "The app can render managed item state from the server DB-backed model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-019",
@@ -220,7 +220,7 @@
         "Workspace assignment and projection behavior are asserted.",
         "Import/export and share safety rules are exercised."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P8-020",
@@ -231,7 +231,7 @@
         "Later phases can see what temporary compatibility code still exists.",
         "Phase 8 leaves settings surfaces much closer to the thin-client target."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

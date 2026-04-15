@@ -1,11 +1,13 @@
 import { createAuthService, type AuthService } from "../services/auth-service.js";
 import { createCapabilitiesService, type CapabilitiesService } from "../services/capabilities-service.js";
 import { createConfigMaterializationService, type ConfigMaterializationService } from "../services/config-materialization-service.js";
+import { createManagedResourceService, type ManagedResourceService } from "../services/managed-resource-service.js";
 import { createProcessInfoAdapter, type ProcessInfoAdapter } from "../adapters/process-info.js";
 import { createServerPersistence, type ServerPersistence } from "../database/persistence.js";
 import { createSqliteDatabaseStatusProvider, type DatabaseStatusProvider } from "../database/status-provider.js";
 import type { RuntimeAssetService } from "../runtime/assets.js";
 import type { RegistryService } from "../services/registry-service.js";
+import { createRouterProductService, type RouterProductService } from "../services/router-product-service.js";
 import { createServerRegistryService, type ServerRegistryService } from "../services/server-registry-service.js";
 import { createRuntimeService, type RuntimeService } from "../services/runtime-service.js";
 import { createWorkspaceFileService, type WorkspaceFileService } from "../services/workspace-file-service.js";
@@ -19,12 +21,14 @@ export type AppDependencies = {
   persistence: ServerPersistence;
   processInfo: ProcessInfoAdapter;
   services: {
-    auth: AuthService;
-    capabilities: CapabilitiesService;
-    config: ConfigMaterializationService;
-    files: WorkspaceFileService;
-    registry: RegistryService;
-    runtime: RuntimeService;
+      auth: AuthService;
+      capabilities: CapabilitiesService;
+      config: ConfigMaterializationService;
+      files: WorkspaceFileService;
+      managed: ManagedResourceService;
+      registry: RegistryService;
+      router: RouterProductService;
+      runtime: RuntimeService;
     sessions: WorkspaceSessionService;
     serverRegistry: ServerRegistryService;
     system: SystemService;
@@ -143,6 +147,18 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     runtime,
     serverId: persistence.registry.localServerId,
   });
+  const managed = createManagedResourceService({
+    config,
+    files,
+    repositories: persistence.repositories,
+    serverId: persistence.registry.localServerId,
+    workingDirectory: persistence.workingDirectory,
+  });
+  const router = createRouterProductService({
+    repositories: persistence.repositories,
+    runtime,
+    serverId: persistence.registry.localServerId,
+  });
 
   return {
     database,
@@ -154,7 +170,9 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
       capabilities,
       config,
       files,
+      managed,
       registry: persistence.registry,
+      router,
       runtime,
       sessions,
       serverRegistry,

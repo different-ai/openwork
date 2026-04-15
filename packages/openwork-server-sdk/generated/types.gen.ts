@@ -139,7 +139,7 @@ export type OpenWorkServerV2StartupDiagnostics = {
 };
 
 export type OpenWorkServerV2FoundationInfo = {
-    phase: 5;
+    phase: 8;
     middlewareOrder: Array<OpenWorkServerV2Identifier>;
     routeNamespaces: OpenWorkServerV2RouteNamespaces;
     database: OpenWorkServerV2DatabaseStatus;
@@ -315,6 +315,16 @@ export type OpenWorkServerV2AuthSummary = {
 
 export type OpenWorkServerV2CapabilitiesData = {
     auth: OpenWorkServerV2AuthSummary;
+    bundles: {
+        fetch: true;
+        publish: true;
+        workspaceExport: true;
+        workspaceImport: true;
+    };
+    cloud: {
+        persistence: true;
+        validation: true;
+    };
     config: {
         projection: true;
         rawRead: true;
@@ -328,6 +338,13 @@ export type OpenWorkServerV2CapabilitiesData = {
         fileSessions: true;
         inbox: true;
         mutations: true;
+    };
+    managed: {
+        assignments: true;
+        mcps: true;
+        plugins: true;
+        providerConfigs: true;
+        skills: true;
     };
     reload: {
         manualEngineReload: true;
@@ -355,6 +372,15 @@ export type OpenWorkServerV2CapabilitiesData = {
         routerHealth: true;
         runtimeSummary: true;
         runtimeVersions: true;
+    };
+    router: {
+        bindings: true;
+        identities: true;
+        outboundSend: true;
+        productRoutes: true;
+    };
+    shares: {
+        workspaceScoped: true;
     };
     workspaces: {
         activate: true;
@@ -825,6 +851,328 @@ export type OpenWorkServerV2BinaryUploadData = {
 export type OpenWorkServerV2BinaryUploadResponse = {
     ok: true;
     data: OpenWorkServerV2BinaryUploadData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2ManagedItem = {
+    auth: {
+        [key: string]: unknown;
+    } | null;
+    cloudItemId: string | null;
+    config: {
+        [key: string]: unknown;
+    };
+    createdAt: OpenWorkServerV2IsoTimestamp;
+    displayName: string;
+    id: OpenWorkServerV2Identifier;
+    key: string | null;
+    metadata: {
+        [key: string]: unknown;
+    } | null;
+    source: 'cloud_synced' | 'discovered' | 'imported' | 'openwork_managed';
+    updatedAt: OpenWorkServerV2IsoTimestamp;
+    workspaceIds: Array<OpenWorkServerV2Identifier>;
+};
+
+export type OpenWorkServerV2ManagedItemListResponse = {
+    ok: true;
+    data: {
+        items: Array<OpenWorkServerV2ManagedItem>;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2ManagedItemResponse = {
+    ok: true;
+    data: OpenWorkServerV2ManagedItem;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2ManagedDeleteResponse = {
+    ok: true;
+    data: {
+        deleted: boolean;
+        id: OpenWorkServerV2Identifier;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2CloudSignin = {
+    auth: {
+        [key: string]: unknown;
+    } | null;
+    cloudBaseUrl: string;
+    createdAt: OpenWorkServerV2IsoTimestamp;
+    id: OpenWorkServerV2Identifier;
+    lastValidatedAt: OpenWorkServerV2IsoTimestamp | null;
+    metadata: {
+        [key: string]: unknown;
+    } | null;
+    orgId: string | null;
+    serverId: OpenWorkServerV2Identifier;
+    updatedAt: OpenWorkServerV2IsoTimestamp;
+    userId: string | null;
+};
+
+export type OpenWorkServerV2CloudSigninResponse = {
+    ok: true;
+    data: OpenWorkServerV2CloudSignin | null;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2CloudSigninValidationResponse = {
+    ok: true;
+    data: {
+        lastValidatedAt: OpenWorkServerV2IsoTimestamp | null;
+        ok: boolean;
+        record: OpenWorkServerV2CloudSignin;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RouterHealthSnapshot = {
+    config: {
+        groupsEnabled: boolean;
+    };
+    channels: {
+        slack: boolean;
+        telegram: boolean;
+        whatsapp: boolean;
+    };
+    ok: boolean;
+    opencode: {
+        healthy: boolean;
+        url: string;
+        version?: string;
+    };
+};
+
+export type OpenWorkServerV2RouterHealthCompatResponse = {
+    ok: true;
+    data: OpenWorkServerV2RouterHealthSnapshot;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RouterMutationResponse = {
+    ok: true;
+    data: {
+        [key: string]: unknown;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RouterIdentityItem = {
+    access?: 'private' | 'public';
+    enabled: boolean;
+    id: string;
+    pairingRequired?: boolean;
+    running: boolean;
+};
+
+export type OpenWorkServerV2RouterIdentityListResponse = {
+    ok: true;
+    data: {
+        items: Array<OpenWorkServerV2RouterIdentityItem>;
+        ok: boolean;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RouterTelegramInfoResponse = {
+    ok: true;
+    data: {
+        bot: {
+            id: number;
+            name?: string;
+            username?: string;
+        } | null;
+        configured: boolean;
+        enabled: boolean;
+        ok: boolean;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RouterBindingListResponse = {
+    ok: true;
+    data: {
+        items: Array<{
+            channel: string;
+            directory: string;
+            identityId: string;
+            peerId: string;
+            updatedAt?: number;
+        }>;
+        ok: boolean;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceShare = {
+    accessKey: string | null;
+    audit: {
+        [key: string]: unknown;
+    } | null;
+    createdAt: OpenWorkServerV2IsoTimestamp;
+    id: OpenWorkServerV2Identifier;
+    lastUsedAt: OpenWorkServerV2IsoTimestamp | null;
+    revokedAt: OpenWorkServerV2IsoTimestamp | null;
+    status: 'active' | 'disabled' | 'revoked';
+    updatedAt: OpenWorkServerV2IsoTimestamp;
+    workspaceId: OpenWorkServerV2Identifier;
+};
+
+export type OpenWorkServerV2WorkspaceShareResponse = {
+    ok: true;
+    data: OpenWorkServerV2WorkspaceShare | null;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceExportData = {
+    commands: Array<{
+        description?: string;
+        name: string;
+        template: string;
+    }>;
+    exportedAt: number;
+    files?: Array<{
+        content: string;
+        path: string;
+    }>;
+    openwork: {
+        [key: string]: unknown;
+    };
+    opencode: {
+        [key: string]: unknown;
+    };
+    skills: Array<{
+        content: string;
+        description?: string;
+        name: string;
+        trigger?: string;
+    }>;
+    workspaceId: OpenWorkServerV2Identifier;
+};
+
+export type OpenWorkServerV2WorkspaceExportResponse = {
+    ok: true;
+    data: OpenWorkServerV2WorkspaceExportData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceImportResponse = {
+    ok: true;
+    data: {
+        ok: boolean;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2SharedBundlePublishResponse = {
+    ok: true;
+    data: {
+        url: string;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2SharedBundleFetchResponse = {
+    ok: true;
+    data: {
+        [key: string]: unknown;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceMcpItem = {
+    config: {
+        [key: string]: unknown;
+    };
+    disabledByTools?: boolean;
+    name: string;
+    source: 'config.global' | 'config.project' | 'config.remote';
+};
+
+export type OpenWorkServerV2WorkspaceMcpListResponse = {
+    ok: true;
+    data: {
+        items: Array<OpenWorkServerV2WorkspaceMcpItem>;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspacePluginItem = {
+    path?: string;
+    scope: 'global' | 'project';
+    source: 'config' | 'dir.project' | 'dir.global';
+    spec: string;
+};
+
+export type OpenWorkServerV2WorkspacePluginListResponse = {
+    ok: true;
+    data: {
+        items: Array<OpenWorkServerV2WorkspacePluginItem>;
+        loadOrder: Array<string>;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceSkillItem = {
+    description: string;
+    name: string;
+    path: string;
+    scope: 'global' | 'project';
+    trigger?: string;
+};
+
+export type OpenWorkServerV2WorkspaceSkillListResponse = {
+    ok: true;
+    data: {
+        items: Array<OpenWorkServerV2WorkspaceSkillItem>;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceSkillContent = {
+    content: string;
+    item: OpenWorkServerV2WorkspaceSkillItem;
+};
+
+export type OpenWorkServerV2WorkspaceSkillResponse = {
+    ok: true;
+    data: OpenWorkServerV2WorkspaceSkillContent;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2HubSkillItem = {
+    description: string;
+    name: string;
+    source: {
+        owner: string;
+        path: string;
+        ref: string;
+        repo: string;
+    };
+    trigger?: string;
+};
+
+export type OpenWorkServerV2HubSkillListResponse = {
+    ok: true;
+    data: {
+        items: Array<OpenWorkServerV2HubSkillItem>;
+    };
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2HubSkillInstallResponse = {
+    ok: true;
+    data: {
+        action: 'added' | 'updated';
+        name: string;
+        path: string;
+        skipped: number;
+        written: number;
+    };
     meta: OpenWorkServerV2ResponseMeta;
 };
 
@@ -2187,6 +2535,2184 @@ export type GetWorkspacesByWorkspaceIdArtifactsByArtifactIdResponses = {
 };
 
 export type GetWorkspacesByWorkspaceIdArtifactsByArtifactIdResponse = GetWorkspacesByWorkspaceIdArtifactsByArtifactIdResponses[keyof GetWorkspacesByWorkspaceIdArtifactsByArtifactIdResponses];
+
+export type GetSystemManagedMcpsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/mcps';
+};
+
+export type GetSystemManagedMcpsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemManagedMcpsError = GetSystemManagedMcpsErrors[keyof GetSystemManagedMcpsErrors];
+
+export type GetSystemManagedMcpsResponses = {
+    /**
+     * Managed mcps returned successfully.
+     */
+    200: OpenWorkServerV2ManagedItemListResponse;
+};
+
+export type GetSystemManagedMcpsResponse = GetSystemManagedMcpsResponses[keyof GetSystemManagedMcpsResponses];
+
+export type PostSystemManagedMcpsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/mcps';
+};
+
+export type PostSystemManagedMcpsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemManagedMcpsError = PostSystemManagedMcpsErrors[keyof PostSystemManagedMcpsErrors];
+
+export type PostSystemManagedMcpsResponses = {
+    /**
+     * Managed mcp created successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PostSystemManagedMcpsResponse = PostSystemManagedMcpsResponses[keyof PostSystemManagedMcpsResponses];
+
+export type DeleteSystemManagedMcpsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/mcps/{itemId}';
+};
+
+export type DeleteSystemManagedMcpsByItemIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteSystemManagedMcpsByItemIdError = DeleteSystemManagedMcpsByItemIdErrors[keyof DeleteSystemManagedMcpsByItemIdErrors];
+
+export type DeleteSystemManagedMcpsByItemIdResponses = {
+    /**
+     * Managed mcp deleted successfully.
+     */
+    200: OpenWorkServerV2ManagedDeleteResponse;
+};
+
+export type DeleteSystemManagedMcpsByItemIdResponse = DeleteSystemManagedMcpsByItemIdResponses[keyof DeleteSystemManagedMcpsByItemIdResponses];
+
+export type PutSystemManagedMcpsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/mcps/{itemId}';
+};
+
+export type PutSystemManagedMcpsByItemIdErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedMcpsByItemIdError = PutSystemManagedMcpsByItemIdErrors[keyof PutSystemManagedMcpsByItemIdErrors];
+
+export type PutSystemManagedMcpsByItemIdResponses = {
+    /**
+     * Managed mcp updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedMcpsByItemIdResponse = PutSystemManagedMcpsByItemIdResponses[keyof PutSystemManagedMcpsByItemIdResponses];
+
+export type PutSystemManagedMcpsByItemIdAssignmentsData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/mcps/{itemId}/assignments';
+};
+
+export type PutSystemManagedMcpsByItemIdAssignmentsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedMcpsByItemIdAssignmentsError = PutSystemManagedMcpsByItemIdAssignmentsErrors[keyof PutSystemManagedMcpsByItemIdAssignmentsErrors];
+
+export type PutSystemManagedMcpsByItemIdAssignmentsResponses = {
+    /**
+     * Managed mcp assignments updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedMcpsByItemIdAssignmentsResponse = PutSystemManagedMcpsByItemIdAssignmentsResponses[keyof PutSystemManagedMcpsByItemIdAssignmentsResponses];
+
+export type GetSystemManagedPluginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/plugins';
+};
+
+export type GetSystemManagedPluginsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemManagedPluginsError = GetSystemManagedPluginsErrors[keyof GetSystemManagedPluginsErrors];
+
+export type GetSystemManagedPluginsResponses = {
+    /**
+     * Managed plugins returned successfully.
+     */
+    200: OpenWorkServerV2ManagedItemListResponse;
+};
+
+export type GetSystemManagedPluginsResponse = GetSystemManagedPluginsResponses[keyof GetSystemManagedPluginsResponses];
+
+export type PostSystemManagedPluginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/plugins';
+};
+
+export type PostSystemManagedPluginsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemManagedPluginsError = PostSystemManagedPluginsErrors[keyof PostSystemManagedPluginsErrors];
+
+export type PostSystemManagedPluginsResponses = {
+    /**
+     * Managed plugin created successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PostSystemManagedPluginsResponse = PostSystemManagedPluginsResponses[keyof PostSystemManagedPluginsResponses];
+
+export type DeleteSystemManagedPluginsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/plugins/{itemId}';
+};
+
+export type DeleteSystemManagedPluginsByItemIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteSystemManagedPluginsByItemIdError = DeleteSystemManagedPluginsByItemIdErrors[keyof DeleteSystemManagedPluginsByItemIdErrors];
+
+export type DeleteSystemManagedPluginsByItemIdResponses = {
+    /**
+     * Managed plugin deleted successfully.
+     */
+    200: OpenWorkServerV2ManagedDeleteResponse;
+};
+
+export type DeleteSystemManagedPluginsByItemIdResponse = DeleteSystemManagedPluginsByItemIdResponses[keyof DeleteSystemManagedPluginsByItemIdResponses];
+
+export type PutSystemManagedPluginsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/plugins/{itemId}';
+};
+
+export type PutSystemManagedPluginsByItemIdErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedPluginsByItemIdError = PutSystemManagedPluginsByItemIdErrors[keyof PutSystemManagedPluginsByItemIdErrors];
+
+export type PutSystemManagedPluginsByItemIdResponses = {
+    /**
+     * Managed plugin updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedPluginsByItemIdResponse = PutSystemManagedPluginsByItemIdResponses[keyof PutSystemManagedPluginsByItemIdResponses];
+
+export type PutSystemManagedPluginsByItemIdAssignmentsData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/plugins/{itemId}/assignments';
+};
+
+export type PutSystemManagedPluginsByItemIdAssignmentsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedPluginsByItemIdAssignmentsError = PutSystemManagedPluginsByItemIdAssignmentsErrors[keyof PutSystemManagedPluginsByItemIdAssignmentsErrors];
+
+export type PutSystemManagedPluginsByItemIdAssignmentsResponses = {
+    /**
+     * Managed plugin assignments updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedPluginsByItemIdAssignmentsResponse = PutSystemManagedPluginsByItemIdAssignmentsResponses[keyof PutSystemManagedPluginsByItemIdAssignmentsResponses];
+
+export type GetSystemManagedProviderConfigsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/providerConfigs';
+};
+
+export type GetSystemManagedProviderConfigsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemManagedProviderConfigsError = GetSystemManagedProviderConfigsErrors[keyof GetSystemManagedProviderConfigsErrors];
+
+export type GetSystemManagedProviderConfigsResponses = {
+    /**
+     * Managed providerConfigs returned successfully.
+     */
+    200: OpenWorkServerV2ManagedItemListResponse;
+};
+
+export type GetSystemManagedProviderConfigsResponse = GetSystemManagedProviderConfigsResponses[keyof GetSystemManagedProviderConfigsResponses];
+
+export type PostSystemManagedProviderConfigsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/providerConfigs';
+};
+
+export type PostSystemManagedProviderConfigsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemManagedProviderConfigsError = PostSystemManagedProviderConfigsErrors[keyof PostSystemManagedProviderConfigsErrors];
+
+export type PostSystemManagedProviderConfigsResponses = {
+    /**
+     * Managed providerConfig created successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PostSystemManagedProviderConfigsResponse = PostSystemManagedProviderConfigsResponses[keyof PostSystemManagedProviderConfigsResponses];
+
+export type DeleteSystemManagedProviderConfigsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/providerConfigs/{itemId}';
+};
+
+export type DeleteSystemManagedProviderConfigsByItemIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteSystemManagedProviderConfigsByItemIdError = DeleteSystemManagedProviderConfigsByItemIdErrors[keyof DeleteSystemManagedProviderConfigsByItemIdErrors];
+
+export type DeleteSystemManagedProviderConfigsByItemIdResponses = {
+    /**
+     * Managed providerConfig deleted successfully.
+     */
+    200: OpenWorkServerV2ManagedDeleteResponse;
+};
+
+export type DeleteSystemManagedProviderConfigsByItemIdResponse = DeleteSystemManagedProviderConfigsByItemIdResponses[keyof DeleteSystemManagedProviderConfigsByItemIdResponses];
+
+export type PutSystemManagedProviderConfigsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/providerConfigs/{itemId}';
+};
+
+export type PutSystemManagedProviderConfigsByItemIdErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedProviderConfigsByItemIdError = PutSystemManagedProviderConfigsByItemIdErrors[keyof PutSystemManagedProviderConfigsByItemIdErrors];
+
+export type PutSystemManagedProviderConfigsByItemIdResponses = {
+    /**
+     * Managed providerConfig updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedProviderConfigsByItemIdResponse = PutSystemManagedProviderConfigsByItemIdResponses[keyof PutSystemManagedProviderConfigsByItemIdResponses];
+
+export type PutSystemManagedProviderConfigsByItemIdAssignmentsData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/providerConfigs/{itemId}/assignments';
+};
+
+export type PutSystemManagedProviderConfigsByItemIdAssignmentsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedProviderConfigsByItemIdAssignmentsError = PutSystemManagedProviderConfigsByItemIdAssignmentsErrors[keyof PutSystemManagedProviderConfigsByItemIdAssignmentsErrors];
+
+export type PutSystemManagedProviderConfigsByItemIdAssignmentsResponses = {
+    /**
+     * Managed providerConfig assignments updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedProviderConfigsByItemIdAssignmentsResponse = PutSystemManagedProviderConfigsByItemIdAssignmentsResponses[keyof PutSystemManagedProviderConfigsByItemIdAssignmentsResponses];
+
+export type GetSystemManagedSkillsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/skills';
+};
+
+export type GetSystemManagedSkillsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemManagedSkillsError = GetSystemManagedSkillsErrors[keyof GetSystemManagedSkillsErrors];
+
+export type GetSystemManagedSkillsResponses = {
+    /**
+     * Managed skills returned successfully.
+     */
+    200: OpenWorkServerV2ManagedItemListResponse;
+};
+
+export type GetSystemManagedSkillsResponse = GetSystemManagedSkillsResponses[keyof GetSystemManagedSkillsResponses];
+
+export type PostSystemManagedSkillsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/managed/skills';
+};
+
+export type PostSystemManagedSkillsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemManagedSkillsError = PostSystemManagedSkillsErrors[keyof PostSystemManagedSkillsErrors];
+
+export type PostSystemManagedSkillsResponses = {
+    /**
+     * Managed skill created successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PostSystemManagedSkillsResponse = PostSystemManagedSkillsResponses[keyof PostSystemManagedSkillsResponses];
+
+export type DeleteSystemManagedSkillsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/skills/{itemId}';
+};
+
+export type DeleteSystemManagedSkillsByItemIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteSystemManagedSkillsByItemIdError = DeleteSystemManagedSkillsByItemIdErrors[keyof DeleteSystemManagedSkillsByItemIdErrors];
+
+export type DeleteSystemManagedSkillsByItemIdResponses = {
+    /**
+     * Managed skill deleted successfully.
+     */
+    200: OpenWorkServerV2ManagedDeleteResponse;
+};
+
+export type DeleteSystemManagedSkillsByItemIdResponse = DeleteSystemManagedSkillsByItemIdResponses[keyof DeleteSystemManagedSkillsByItemIdResponses];
+
+export type PutSystemManagedSkillsByItemIdData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/skills/{itemId}';
+};
+
+export type PutSystemManagedSkillsByItemIdErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedSkillsByItemIdError = PutSystemManagedSkillsByItemIdErrors[keyof PutSystemManagedSkillsByItemIdErrors];
+
+export type PutSystemManagedSkillsByItemIdResponses = {
+    /**
+     * Managed skill updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedSkillsByItemIdResponse = PutSystemManagedSkillsByItemIdResponses[keyof PutSystemManagedSkillsByItemIdResponses];
+
+export type PutSystemManagedSkillsByItemIdAssignmentsData = {
+    body?: never;
+    path: {
+        itemId: string;
+    };
+    query?: never;
+    url: '/system/managed/skills/{itemId}/assignments';
+};
+
+export type PutSystemManagedSkillsByItemIdAssignmentsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemManagedSkillsByItemIdAssignmentsError = PutSystemManagedSkillsByItemIdAssignmentsErrors[keyof PutSystemManagedSkillsByItemIdAssignmentsErrors];
+
+export type PutSystemManagedSkillsByItemIdAssignmentsResponses = {
+    /**
+     * Managed skill assignments updated successfully.
+     */
+    200: OpenWorkServerV2ManagedItemResponse;
+};
+
+export type PutSystemManagedSkillsByItemIdAssignmentsResponse = PutSystemManagedSkillsByItemIdAssignmentsResponses[keyof PutSystemManagedSkillsByItemIdAssignmentsResponses];
+
+export type DeleteSystemCloudSigninData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/cloud-signin';
+};
+
+export type DeleteSystemCloudSigninErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteSystemCloudSigninError = DeleteSystemCloudSigninErrors[keyof DeleteSystemCloudSigninErrors];
+
+export type DeleteSystemCloudSigninResponses = {
+    /**
+     * Cloud signin cleared successfully.
+     */
+    200: OpenWorkServerV2CloudSigninResponse;
+};
+
+export type DeleteSystemCloudSigninResponse = DeleteSystemCloudSigninResponses[keyof DeleteSystemCloudSigninResponses];
+
+export type GetSystemCloudSigninData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/cloud-signin';
+};
+
+export type GetSystemCloudSigninErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemCloudSigninError = GetSystemCloudSigninErrors[keyof GetSystemCloudSigninErrors];
+
+export type GetSystemCloudSigninResponses = {
+    /**
+     * Cloud signin returned successfully.
+     */
+    200: OpenWorkServerV2CloudSigninResponse;
+};
+
+export type GetSystemCloudSigninResponse = GetSystemCloudSigninResponses[keyof GetSystemCloudSigninResponses];
+
+export type PutSystemCloudSigninData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/cloud-signin';
+};
+
+export type PutSystemCloudSigninErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PutSystemCloudSigninError = PutSystemCloudSigninErrors[keyof PutSystemCloudSigninErrors];
+
+export type PutSystemCloudSigninResponses = {
+    /**
+     * Cloud signin persisted successfully.
+     */
+    200: OpenWorkServerV2CloudSigninResponse;
+};
+
+export type PutSystemCloudSigninResponse = PutSystemCloudSigninResponses[keyof PutSystemCloudSigninResponses];
+
+export type PostSystemCloudSigninValidateData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/cloud-signin/validate';
+};
+
+export type PostSystemCloudSigninValidateErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemCloudSigninValidateError = PostSystemCloudSigninValidateErrors[keyof PostSystemCloudSigninValidateErrors];
+
+export type PostSystemCloudSigninValidateResponses = {
+    /**
+     * Cloud signin validated successfully.
+     */
+    200: OpenWorkServerV2CloudSigninValidationResponse;
+};
+
+export type PostSystemCloudSigninValidateResponse = PostSystemCloudSigninValidateResponses[keyof PostSystemCloudSigninValidateResponses];
+
+export type GetSystemRouterProductHealthData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/product-health';
+};
+
+export type GetSystemRouterProductHealthErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRouterProductHealthError = GetSystemRouterProductHealthErrors[keyof GetSystemRouterProductHealthErrors];
+
+export type GetSystemRouterProductHealthResponses = {
+    /**
+     * Router product health returned successfully.
+     */
+    200: OpenWorkServerV2RouterHealthCompatResponse;
+};
+
+export type GetSystemRouterProductHealthResponse = GetSystemRouterProductHealthResponses[keyof GetSystemRouterProductHealthResponses];
+
+export type PostSystemRouterApplyData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/apply';
+};
+
+export type PostSystemRouterApplyErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemRouterApplyError = PostSystemRouterApplyErrors[keyof PostSystemRouterApplyErrors];
+
+export type PostSystemRouterApplyResponses = {
+    /**
+     * Router state applied successfully.
+     */
+    200: OpenWorkServerV2RouterMutationResponse;
+};
+
+export type PostSystemRouterApplyResponse = PostSystemRouterApplyResponses[keyof PostSystemRouterApplyResponses];
+
+export type GetSystemRouterIdentitiesTelegramData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/identities/telegram';
+};
+
+export type GetSystemRouterIdentitiesTelegramErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRouterIdentitiesTelegramError = GetSystemRouterIdentitiesTelegramErrors[keyof GetSystemRouterIdentitiesTelegramErrors];
+
+export type GetSystemRouterIdentitiesTelegramResponses = {
+    /**
+     * Telegram identities returned successfully.
+     */
+    200: OpenWorkServerV2RouterIdentityListResponse;
+};
+
+export type GetSystemRouterIdentitiesTelegramResponse = GetSystemRouterIdentitiesTelegramResponses[keyof GetSystemRouterIdentitiesTelegramResponses];
+
+export type PostSystemRouterIdentitiesTelegramData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/identities/telegram';
+};
+
+export type PostSystemRouterIdentitiesTelegramErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemRouterIdentitiesTelegramError = PostSystemRouterIdentitiesTelegramErrors[keyof PostSystemRouterIdentitiesTelegramErrors];
+
+export type PostSystemRouterIdentitiesTelegramResponses = {
+    /**
+     * Telegram identity upserted successfully.
+     */
+    200: OpenWorkServerV2RouterMutationResponse;
+};
+
+export type PostSystemRouterIdentitiesTelegramResponse = PostSystemRouterIdentitiesTelegramResponses[keyof PostSystemRouterIdentitiesTelegramResponses];
+
+export type GetSystemRouterIdentitiesSlackData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/identities/slack';
+};
+
+export type GetSystemRouterIdentitiesSlackErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRouterIdentitiesSlackError = GetSystemRouterIdentitiesSlackErrors[keyof GetSystemRouterIdentitiesSlackErrors];
+
+export type GetSystemRouterIdentitiesSlackResponses = {
+    /**
+     * Slack identities returned successfully.
+     */
+    200: OpenWorkServerV2RouterIdentityListResponse;
+};
+
+export type GetSystemRouterIdentitiesSlackResponse = GetSystemRouterIdentitiesSlackResponses[keyof GetSystemRouterIdentitiesSlackResponses];
+
+export type PostSystemRouterIdentitiesSlackData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/identities/slack';
+};
+
+export type PostSystemRouterIdentitiesSlackErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemRouterIdentitiesSlackError = PostSystemRouterIdentitiesSlackErrors[keyof PostSystemRouterIdentitiesSlackErrors];
+
+export type PostSystemRouterIdentitiesSlackResponses = {
+    /**
+     * Slack identity upserted successfully.
+     */
+    200: OpenWorkServerV2RouterMutationResponse;
+};
+
+export type PostSystemRouterIdentitiesSlackResponse = PostSystemRouterIdentitiesSlackResponses[keyof PostSystemRouterIdentitiesSlackResponses];
+
+export type GetSystemRouterTelegramData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/telegram';
+};
+
+export type GetSystemRouterTelegramErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRouterTelegramError = GetSystemRouterTelegramErrors[keyof GetSystemRouterTelegramErrors];
+
+export type GetSystemRouterTelegramResponses = {
+    /**
+     * Telegram router info returned successfully.
+     */
+    200: OpenWorkServerV2RouterTelegramInfoResponse;
+};
+
+export type GetSystemRouterTelegramResponse = GetSystemRouterTelegramResponses[keyof GetSystemRouterTelegramResponses];
+
+export type GetSystemRouterBindingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/bindings';
+};
+
+export type GetSystemRouterBindingsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRouterBindingsError = GetSystemRouterBindingsErrors[keyof GetSystemRouterBindingsErrors];
+
+export type GetSystemRouterBindingsResponses = {
+    /**
+     * Router bindings returned successfully.
+     */
+    200: OpenWorkServerV2RouterBindingListResponse;
+};
+
+export type GetSystemRouterBindingsResponse = GetSystemRouterBindingsResponses[keyof GetSystemRouterBindingsResponses];
+
+export type PostSystemRouterBindingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/bindings';
+};
+
+export type PostSystemRouterBindingsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemRouterBindingsError = PostSystemRouterBindingsErrors[keyof PostSystemRouterBindingsErrors];
+
+export type PostSystemRouterBindingsResponses = {
+    /**
+     * Router binding updated successfully.
+     */
+    200: OpenWorkServerV2RouterMutationResponse;
+};
+
+export type PostSystemRouterBindingsResponse = PostSystemRouterBindingsResponses[keyof PostSystemRouterBindingsResponses];
+
+export type PostSystemRouterSendData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/send';
+};
+
+export type PostSystemRouterSendErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemRouterSendError = PostSystemRouterSendErrors[keyof PostSystemRouterSendErrors];
+
+export type PostSystemRouterSendResponses = {
+    /**
+     * Router message delivered successfully.
+     */
+    200: OpenWorkServerV2RouterMutationResponse;
+};
+
+export type PostSystemRouterSendResponse = PostSystemRouterSendResponses[keyof PostSystemRouterSendResponses];
+
+export type DeleteWorkspacesByWorkspaceIdShareData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/share';
+};
+
+export type DeleteWorkspacesByWorkspaceIdShareErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteWorkspacesByWorkspaceIdShareError = DeleteWorkspacesByWorkspaceIdShareErrors[keyof DeleteWorkspacesByWorkspaceIdShareErrors];
+
+export type DeleteWorkspacesByWorkspaceIdShareResponses = {
+    /**
+     * Workspace share revoked successfully.
+     */
+    200: OpenWorkServerV2WorkspaceShareResponse;
+};
+
+export type DeleteWorkspacesByWorkspaceIdShareResponse = DeleteWorkspacesByWorkspaceIdShareResponses[keyof DeleteWorkspacesByWorkspaceIdShareResponses];
+
+export type GetWorkspacesByWorkspaceIdShareData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/share';
+};
+
+export type GetWorkspacesByWorkspaceIdShareErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdShareError = GetWorkspacesByWorkspaceIdShareErrors[keyof GetWorkspacesByWorkspaceIdShareErrors];
+
+export type GetWorkspacesByWorkspaceIdShareResponses = {
+    /**
+     * Workspace share returned successfully.
+     */
+    200: OpenWorkServerV2WorkspaceShareResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdShareResponse = GetWorkspacesByWorkspaceIdShareResponses[keyof GetWorkspacesByWorkspaceIdShareResponses];
+
+export type PostWorkspacesByWorkspaceIdShareData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/share';
+};
+
+export type PostWorkspacesByWorkspaceIdShareErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdShareError = PostWorkspacesByWorkspaceIdShareErrors[keyof PostWorkspacesByWorkspaceIdShareErrors];
+
+export type PostWorkspacesByWorkspaceIdShareResponses = {
+    /**
+     * Workspace share exposed successfully.
+     */
+    200: OpenWorkServerV2WorkspaceShareResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdShareResponse = PostWorkspacesByWorkspaceIdShareResponses[keyof PostWorkspacesByWorkspaceIdShareResponses];
+
+export type GetWorkspacesByWorkspaceIdExportData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/export';
+};
+
+export type GetWorkspacesByWorkspaceIdExportErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdExportError = GetWorkspacesByWorkspaceIdExportErrors[keyof GetWorkspacesByWorkspaceIdExportErrors];
+
+export type GetWorkspacesByWorkspaceIdExportResponses = {
+    /**
+     * Workspace exported successfully.
+     */
+    200: OpenWorkServerV2WorkspaceExportResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdExportResponse = GetWorkspacesByWorkspaceIdExportResponses[keyof GetWorkspacesByWorkspaceIdExportResponses];
+
+export type PostWorkspacesByWorkspaceIdImportData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/import';
+};
+
+export type PostWorkspacesByWorkspaceIdImportErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdImportError = PostWorkspacesByWorkspaceIdImportErrors[keyof PostWorkspacesByWorkspaceIdImportErrors];
+
+export type PostWorkspacesByWorkspaceIdImportResponses = {
+    /**
+     * Workspace imported successfully.
+     */
+    200: OpenWorkServerV2WorkspaceImportResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdImportResponse = PostWorkspacesByWorkspaceIdImportResponses[keyof PostWorkspacesByWorkspaceIdImportResponses];
+
+export type PostShareBundlesPublishData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/share/bundles/publish';
+};
+
+export type PostShareBundlesPublishErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostShareBundlesPublishError = PostShareBundlesPublishErrors[keyof PostShareBundlesPublishErrors];
+
+export type PostShareBundlesPublishResponses = {
+    /**
+     * Shared bundle published successfully.
+     */
+    200: OpenWorkServerV2SharedBundlePublishResponse;
+};
+
+export type PostShareBundlesPublishResponse = PostShareBundlesPublishResponses[keyof PostShareBundlesPublishResponses];
+
+export type PostShareBundlesFetchData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/share/bundles/fetch';
+};
+
+export type PostShareBundlesFetchErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostShareBundlesFetchError = PostShareBundlesFetchErrors[keyof PostShareBundlesFetchErrors];
+
+export type PostShareBundlesFetchResponses = {
+    /**
+     * Shared bundle fetched successfully.
+     */
+    200: OpenWorkServerV2SharedBundleFetchResponse;
+};
+
+export type PostShareBundlesFetchResponse = PostShareBundlesFetchResponses[keyof PostShareBundlesFetchResponses];
+
+export type GetWorkspacesByWorkspaceIdMcpData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/mcp';
+};
+
+export type GetWorkspacesByWorkspaceIdMcpErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdMcpError = GetWorkspacesByWorkspaceIdMcpErrors[keyof GetWorkspacesByWorkspaceIdMcpErrors];
+
+export type GetWorkspacesByWorkspaceIdMcpResponses = {
+    /**
+     * Workspace MCPs returned successfully.
+     */
+    200: OpenWorkServerV2WorkspaceMcpListResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdMcpResponse = GetWorkspacesByWorkspaceIdMcpResponses[keyof GetWorkspacesByWorkspaceIdMcpResponses];
+
+export type PostWorkspacesByWorkspaceIdMcpData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/mcp';
+};
+
+export type PostWorkspacesByWorkspaceIdMcpErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdMcpError = PostWorkspacesByWorkspaceIdMcpErrors[keyof PostWorkspacesByWorkspaceIdMcpErrors];
+
+export type PostWorkspacesByWorkspaceIdMcpResponses = {
+    /**
+     * Workspace MCP updated successfully.
+     */
+    200: OpenWorkServerV2WorkspaceMcpListResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdMcpResponse = PostWorkspacesByWorkspaceIdMcpResponses[keyof PostWorkspacesByWorkspaceIdMcpResponses];
+
+export type GetWorkspacesByWorkspaceIdPluginsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/plugins';
+};
+
+export type GetWorkspacesByWorkspaceIdPluginsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdPluginsError = GetWorkspacesByWorkspaceIdPluginsErrors[keyof GetWorkspacesByWorkspaceIdPluginsErrors];
+
+export type GetWorkspacesByWorkspaceIdPluginsResponses = {
+    /**
+     * Workspace plugins returned successfully.
+     */
+    200: OpenWorkServerV2WorkspacePluginListResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdPluginsResponse = GetWorkspacesByWorkspaceIdPluginsResponses[keyof GetWorkspacesByWorkspaceIdPluginsResponses];
+
+export type PostWorkspacesByWorkspaceIdPluginsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/plugins';
+};
+
+export type PostWorkspacesByWorkspaceIdPluginsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdPluginsError = PostWorkspacesByWorkspaceIdPluginsErrors[keyof PostWorkspacesByWorkspaceIdPluginsErrors];
+
+export type PostWorkspacesByWorkspaceIdPluginsResponses = {
+    /**
+     * Workspace plugins updated successfully.
+     */
+    200: OpenWorkServerV2WorkspacePluginListResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdPluginsResponse = PostWorkspacesByWorkspaceIdPluginsResponses[keyof PostWorkspacesByWorkspaceIdPluginsResponses];
+
+export type GetWorkspacesByWorkspaceIdSkillsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/skills';
+};
+
+export type GetWorkspacesByWorkspaceIdSkillsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSkillsError = GetWorkspacesByWorkspaceIdSkillsErrors[keyof GetWorkspacesByWorkspaceIdSkillsErrors];
+
+export type GetWorkspacesByWorkspaceIdSkillsResponses = {
+    /**
+     * Workspace skills returned successfully.
+     */
+    200: OpenWorkServerV2WorkspaceSkillListResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSkillsResponse = GetWorkspacesByWorkspaceIdSkillsResponses[keyof GetWorkspacesByWorkspaceIdSkillsResponses];
+
+export type PostWorkspacesByWorkspaceIdSkillsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/skills';
+};
+
+export type PostWorkspacesByWorkspaceIdSkillsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSkillsError = PostWorkspacesByWorkspaceIdSkillsErrors[keyof PostWorkspacesByWorkspaceIdSkillsErrors];
+
+export type PostWorkspacesByWorkspaceIdSkillsResponses = {
+    /**
+     * Workspace skill updated successfully.
+     */
+    200: OpenWorkServerV2WorkspaceSkillResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSkillsResponse = PostWorkspacesByWorkspaceIdSkillsResponses[keyof PostWorkspacesByWorkspaceIdSkillsResponses];
+
+export type GetHubSkillsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/hub/skills';
+};
+
+export type GetHubSkillsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetHubSkillsError = GetHubSkillsErrors[keyof GetHubSkillsErrors];
+
+export type GetHubSkillsResponses = {
+    /**
+     * Hub skills returned successfully.
+     */
+    200: OpenWorkServerV2HubSkillListResponse;
+};
+
+export type GetHubSkillsResponse = GetHubSkillsResponses[keyof GetHubSkillsResponses];
+
+export type PostWorkspacesByWorkspaceIdSkillsHubByNameData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        name: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/skills/hub/{name}';
+};
+
+export type PostWorkspacesByWorkspaceIdSkillsHubByNameErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSkillsHubByNameError = PostWorkspacesByWorkspaceIdSkillsHubByNameErrors[keyof PostWorkspacesByWorkspaceIdSkillsHubByNameErrors];
+
+export type PostWorkspacesByWorkspaceIdSkillsHubByNameResponses = {
+    /**
+     * Hub skill installed successfully.
+     */
+    200: OpenWorkServerV2HubSkillInstallResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSkillsHubByNameResponse = PostWorkspacesByWorkspaceIdSkillsHubByNameResponses[keyof PostWorkspacesByWorkspaceIdSkillsHubByNameResponses];
+
+export type GetWorkspaceByWorkspaceIdMcpData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/mcp';
+};
+
+export type GetWorkspaceByWorkspaceIdMcpResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdMcpData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/mcp';
+};
+
+export type PostWorkspaceByWorkspaceIdMcpResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspaceByWorkspaceIdMcpByNameData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        name: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/mcp/{name}';
+};
+
+export type DeleteWorkspaceByWorkspaceIdMcpByNameResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspaceByWorkspaceIdMcpByNameAuthData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        name: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/mcp/{name}/auth';
+};
+
+export type DeleteWorkspaceByWorkspaceIdMcpByNameAuthResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdPluginsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/plugins';
+};
+
+export type GetWorkspaceByWorkspaceIdPluginsResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdPluginsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/plugins';
+};
+
+export type PostWorkspaceByWorkspaceIdPluginsResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspaceByWorkspaceIdPluginsByNameData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        name: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/plugins/{name}';
+};
+
+export type DeleteWorkspaceByWorkspaceIdPluginsByNameResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdSkillsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/skills';
+};
+
+export type GetWorkspaceByWorkspaceIdSkillsResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdSkillsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/skills';
+};
+
+export type PostWorkspaceByWorkspaceIdSkillsResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspaceByWorkspaceIdSkillsByNameData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        name: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/skills/{name}';
+};
+
+export type DeleteWorkspaceByWorkspaceIdSkillsByNameResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdSkillsByNameData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        name: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/skills/{name}';
+};
+
+export type GetWorkspaceByWorkspaceIdSkillsByNameResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdSkillsHubByNameData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        name: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/skills/hub/{name}';
+};
+
+export type PostWorkspaceByWorkspaceIdSkillsHubByNameResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterHealthData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/health';
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterHealthResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterTelegramTokenData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/telegram-token';
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterTelegramTokenResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterTelegramData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/telegram';
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterTelegramResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterTelegramEnabledData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/telegram-enabled';
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterTelegramEnabledResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterIdentitiesTelegramData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/identities/telegram';
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterIdentitiesTelegramResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterIdentitiesTelegramData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/identities/telegram';
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterIdentitiesTelegramResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspaceByWorkspaceIdOpencodeRouterIdentitiesTelegramByIdentityIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        identityId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/identities/telegram/{identityId}';
+};
+
+export type DeleteWorkspaceByWorkspaceIdOpencodeRouterIdentitiesTelegramByIdentityIdResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterIdentitiesSlackData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/identities/slack';
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterIdentitiesSlackResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterIdentitiesSlackData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/identities/slack';
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterIdentitiesSlackResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspaceByWorkspaceIdOpencodeRouterIdentitiesSlackByIdentityIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        identityId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/identities/slack/{identityId}';
+};
+
+export type DeleteWorkspaceByWorkspaceIdOpencodeRouterIdentitiesSlackByIdentityIdResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterSlackTokensData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/slack-tokens';
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterSlackTokensResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterBindingsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/bindings';
+};
+
+export type GetWorkspaceByWorkspaceIdOpencodeRouterBindingsResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterBindingsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/bindings';
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterBindingsResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterSendData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/opencode-router/send';
+};
+
+export type PostWorkspaceByWorkspaceIdOpencodeRouterSendResponses = {
+    200: unknown;
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterHealthData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/health';
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterHealthResponses = {
+    200: unknown;
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterTelegramTokenData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/telegram-token';
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterTelegramTokenResponses = {
+    200: unknown;
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterTelegramData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/telegram';
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterTelegramResponses = {
+    200: unknown;
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterTelegramEnabledData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/telegram-enabled';
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterTelegramEnabledResponses = {
+    200: unknown;
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterIdentitiesTelegramData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/identities/telegram';
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterIdentitiesTelegramResponses = {
+    200: unknown;
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterIdentitiesTelegramData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/identities/telegram';
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterIdentitiesTelegramResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspacesByWorkspaceIdOpencodeRouterIdentitiesTelegramByIdentityIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        identityId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/identities/telegram/{identityId}';
+};
+
+export type DeleteWorkspacesByWorkspaceIdOpencodeRouterIdentitiesTelegramByIdentityIdResponses = {
+    200: unknown;
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterIdentitiesSlackData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/identities/slack';
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterIdentitiesSlackResponses = {
+    200: unknown;
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterIdentitiesSlackData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/identities/slack';
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterIdentitiesSlackResponses = {
+    200: unknown;
+};
+
+export type DeleteWorkspacesByWorkspaceIdOpencodeRouterIdentitiesSlackByIdentityIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        identityId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/identities/slack/{identityId}';
+};
+
+export type DeleteWorkspacesByWorkspaceIdOpencodeRouterIdentitiesSlackByIdentityIdResponses = {
+    200: unknown;
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterSlackTokensData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/slack-tokens';
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterSlackTokensResponses = {
+    200: unknown;
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterBindingsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/bindings';
+};
+
+export type GetWorkspacesByWorkspaceIdOpencodeRouterBindingsResponses = {
+    200: unknown;
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterBindingsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/bindings';
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterBindingsResponses = {
+    200: unknown;
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterSendData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/opencode-router/send';
+};
+
+export type PostWorkspacesByWorkspaceIdOpencodeRouterSendResponses = {
+    200: unknown;
+};
+
+export type GetWorkspaceByWorkspaceIdExportData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/export';
+};
+
+export type GetWorkspaceByWorkspaceIdExportResponses = {
+    200: unknown;
+};
+
+export type PostWorkspaceByWorkspaceIdImportData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspace/{workspaceId}/import';
+};
+
+export type PostWorkspaceByWorkspaceIdImportResponses = {
+    200: unknown;
+};
 
 export type GetWorkspacesByWorkspaceIdSessionsData = {
     body?: never;

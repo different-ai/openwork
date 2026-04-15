@@ -4,6 +4,16 @@ import type { AuthService } from "./auth-service.js";
 
 export type CapabilitiesData = {
   auth: ReturnType<AuthService["getSummary"]>;
+  bundles: {
+    fetch: true;
+    publish: true;
+    workspaceExport: true;
+    workspaceImport: true;
+  };
+  cloud: {
+    persistence: true;
+    validation: true;
+  };
   config: {
     projection: true;
     rawRead: true;
@@ -17,6 +27,13 @@ export type CapabilitiesData = {
     fileSessions: true;
     inbox: true;
     mutations: true;
+  };
+  managed: {
+    assignments: true;
+    mcps: true;
+    plugins: true;
+    providerConfigs: true;
+    skills: true;
   };
   reload: {
     manualEngineReload: true;
@@ -45,6 +62,15 @@ export type CapabilitiesData = {
     runtimeSummary: true;
     runtimeVersions: true;
   };
+  router: {
+    bindings: true;
+    identities: true;
+    outboundSend: true;
+    productRoutes: true;
+  };
+  shares: {
+    workspaceScoped: true;
+  };
   workspaces: {
     activate: true;
     createLocal: true;
@@ -68,6 +94,16 @@ export function createCapabilitiesService(input: {
       void runtimeSummary;
       return {
         auth: input.auth.getSummary(actor),
+        bundles: {
+          fetch: true,
+          publish: true,
+          workspaceExport: true,
+          workspaceImport: true,
+        },
+        cloud: {
+          persistence: true,
+          validation: true,
+        },
         config: {
           projection: true,
           rawRead: true,
@@ -81,6 +117,13 @@ export function createCapabilitiesService(input: {
           fileSessions: true,
           inbox: true,
           mutations: true,
+        },
+        managed: {
+          assignments: true,
+          mcps: true,
+          plugins: true,
+          providerConfigs: true,
+          skills: true,
         },
         reload: {
           manualEngineReload: true,
@@ -108,6 +151,15 @@ export function createCapabilitiesService(input: {
           routerHealth: true,
           runtimeSummary: true,
           runtimeVersions: true,
+        },
+        router: {
+          bindings: true,
+          identities: true,
+          outboundSend: true,
+          productRoutes: true,
+        },
+        shares: {
+          workspaceScoped: true,
         },
         workspaces: {
           activate: true,

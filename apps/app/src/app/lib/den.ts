@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isDesktopDeployment } from "./openwork-deployment";
 import { isTauriRuntime } from "../utils";
 import type { DenOrgSkillCard } from "../types";
+import type { OpenworkCloudSignin, OpenworkServerClient } from "./openwork-server";
 
 const STORAGE_BASE_URL = "openwork.den.baseUrl";
 const STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
@@ -26,10 +27,15 @@ export type DenSettings = {
   activeOrgName?: string | null;
 };
 
+type DenCloudSyncClient = Pick<OpenworkServerClient, "clearCloudSignin" | "getCloudSignin" | "persistCloudSignin" | "validateCloudSignin">;
+
 type DenBaseUrls = {
   baseUrl: string;
   apiBaseUrl: string;
 };
+
+let denCloudSyncClientGetter: (() => DenCloudSyncClient | null) | null = null;
+let lastCloudPersistSnapshot: string | null = null;
 
 export type DenUser = {
   id: string;
@@ -332,7 +338,7 @@ export function readDenSettings(): DenSettings {
   };
 }
 
-export function writeDenSettings(next: DenSettings) {
+function writeDenSettingsLocally(next: DenSettings) {
   if (typeof window === "undefined") {
     return;
   }
@@ -370,7 +376,7 @@ export function writeDenSettings(next: DenSettings) {
   }
 }
 
-export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
+function clearDenSessionLocally(options?: { includeBaseUrls?: boolean }) {
   if (typeof window === "undefined") {
     return;
   }
@@ -384,6 +390,152 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_ID);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_SLUG);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_NAME);
+}
+
+function resolveDenCloudSyncClient(client?: DenCloudSyncClient | null) {
+  return client ?? denCloudSyncClientGetter?.() ?? null;
+}
+
+function denSettingsToCloudSigninPayload(next: DenSettings) {
+  const baseUrls = resolveDenBaseUrls(next);
+  return {
+    auth: next.authToken?.trim() ? { authToken: next.authToken.trim() } : null,
+    cloudBaseUrl: baseUrls.baseUrl,
+    metadata: {
+      activeOrgName: next.activeOrgName?.trim() || null,
+      activeOrgSlug: next.activeOrgSlug?.trim() || null,
+    },
+    orgId: next.activeOrgId?.trim() || null,
+    userId: null,
+  };
+}
+
+function cloudSigninSnapshot(next: DenSettings) {
+  return JSON.stringify(denSettingsToCloudSigninPayload(next));
+}
+
+function denSettingsFromCloudSignin(record: OpenworkCloudSignin | null, fallback?: DenSettings): DenSettings | null {
+  if (!record) {
+    return null;
+  }
+  const metadata = record.metadata ?? null;
+  const auth = record.auth ?? null;
+  return {
+    ...resolveDenBaseUrls(record.cloudBaseUrl),
+    activeOrgId: record.orgId ?? null,
+    activeOrgName: metadata && typeof metadata.activeOrgName === "string" ? metadata.activeOrgName : null,
+    activeOrgSlug: metadata && typeof metadata.activeOrgSlug === "string" ? metadata.activeOrgSlug : null,
+    authToken: auth && typeof auth.authToken === "string"
+      ? auth.authToken
+      : auth && typeof auth.token === "string"
+        ? auth.token
+        : null,
+    ...(fallback?.activeOrgId && !record.orgId ? { activeOrgId: fallback.activeOrgId } : {}),
+  };
+}
+
+export function registerDenCloudSyncClient(getter: (() => DenCloudSyncClient | null) | null) {
+  denCloudSyncClientGetter = getter;
+}
+
+export async function persistDenSettingsToOpenwork(next: DenSettings, options?: { client?: DenCloudSyncClient | null; validate?: boolean }) {
+  const client = resolveDenCloudSyncClient(options?.client);
+  if (!client || typeof client.persistCloudSignin !== "function") {
+    return null;
+  }
+
+  const snapshot = cloudSigninSnapshot(next);
+  if (snapshot === lastCloudPersistSnapshot) {
+    return null;
+  }
+
+  const record = await client.persistCloudSignin(denSettingsToCloudSigninPayload(next));
+  lastCloudPersistSnapshot = snapshot;
+
+  if (options?.validate && next.authToken?.trim() && typeof client.validateCloudSignin === "function") {
+    const validated = await client.validateCloudSignin();
+    const synced = denSettingsFromCloudSignin(validated.record, next);
+    if (synced) {
+      writeDenSettingsLocally(synced);
+      lastCloudPersistSnapshot = cloudSigninSnapshot(synced);
+      return validated.record;
+    }
+  }
+
+  return record;
+}
+
+export async function hydrateDenSettingsFromOpenwork(options?: { client?: DenCloudSyncClient | null; preserveLocalIfMissing?: boolean }) {
+  const client = resolveDenCloudSyncClient(options?.client);
+  if (!client || typeof client.getCloudSignin !== "function") {
+    return readDenSettings();
+  }
+
+  const record = await client.getCloudSignin();
+  const current = readDenSettings();
+  const next = denSettingsFromCloudSignin(record, current);
+  if (!next) {
+    return options?.preserveLocalIfMissing === false
+      ? {
+          ...resolveDenBaseUrls(DEFAULT_DEN_BASE_URL),
+          activeOrgId: null,
+          activeOrgName: null,
+          activeOrgSlug: null,
+          authToken: null,
+        }
+      : current;
+  }
+
+  writeDenSettingsLocally(next);
+  lastCloudPersistSnapshot = cloudSigninSnapshot(next);
+  return next;
+}
+
+export async function clearDenSessionFromOpenwork(options?: { client?: DenCloudSyncClient | null; preserveBaseUrl?: string | null }) {
+  const client = resolveDenCloudSyncClient(options?.client);
+  if (!client) {
+    return;
+  }
+  const preserveBaseUrl = normalizeDenBaseUrl(options?.preserveBaseUrl ?? "");
+  if (preserveBaseUrl && typeof client.persistCloudSignin === "function") {
+    await client.persistCloudSignin({
+      auth: null,
+      cloudBaseUrl: preserveBaseUrl,
+      metadata: null,
+      orgId: null,
+      userId: null,
+    });
+  } else if (typeof client.clearCloudSignin === "function") {
+    await client.clearCloudSignin();
+  }
+  lastCloudPersistSnapshot = null;
+}
+
+export async function validateDenSettingsWithOpenwork(options?: { client?: DenCloudSyncClient | null }) {
+  const client = resolveDenCloudSyncClient(options?.client);
+  if (!client || typeof client.validateCloudSignin !== "function") {
+    return null;
+  }
+  const validated = await client.validateCloudSignin();
+  const next = denSettingsFromCloudSignin(validated.record, readDenSettings());
+  if (next) {
+    writeDenSettingsLocally(next);
+    lastCloudPersistSnapshot = cloudSigninSnapshot(next);
+  }
+  return validated;
+}
+
+export function writeDenSettings(next: DenSettings) {
+  writeDenSettingsLocally(next);
+  void persistDenSettingsToOpenwork(next).catch(() => undefined);
+}
+
+export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
+  const current = readDenSettings();
+  clearDenSessionLocally(options);
+  void clearDenSessionFromOpenwork({
+    preserveBaseUrl: options?.includeBaseUrls ? null : current.baseUrl,
+  }).catch(() => undefined);
 }
 
 function getErrorMessage(payload: unknown, fallback: string): string {

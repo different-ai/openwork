@@ -19,6 +19,16 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-15 - Phase 8 - Server-owned settings can migrate behind a cache bridge before full bootstrap parity exists
+- Context: Phase 8 moved cloud signin persistence and validation into Server V2, but the desktop app still needed a temporary local cache because the legacy browser-localStorage handoff into the new server is not fully solved yet.
+- Learning: A thin cache-sync bridge lets the server become the durable owner of product settings now, while the app keeps only reconnect/bootstrap convenience state until the final host handoff is ready.
+- Action for later phases: Reuse this pattern only as a migration bridge, document when the cache is authoritative versus mirrored, and delete the bridge once desktop startup can hand the server the canonical state directly.
+
+### 2026-04-15 - Phase 8 - Root-mounted compatibility aliases are a practical bridge during ownership cutover
+- Context: Phase 8 moved managed-resource, bundle, export/import, and router product logic into Server V2, but some app surfaces still called legacy-shaped root paths like `/workspace/:id/*` through shared client helpers.
+- Learning: A root-mounted server can preserve one canonical documented contract while temporarily serving compatibility aliases at sibling paths, which keeps feature ownership moving server-side without reintroducing the old `/v2` mount or scattering emergency client rewrites.
+- Action for later phases: Keep compatibility aliases explicitly temporary, track which app surfaces still depend on them, and remove them once the Phase 4 seam routes those calls only through the canonical Server V2 paths.
+
 ### 2026-04-14 - Phase 7 - Canonical config can move before the runtime path does
 - Context: Phase 7 stores local workspace config in the server DB/config-dir, but still rematerializes compatibility copies into each workspace data dir so the current local OpenCode/runtime path keeps seeing project config during migration.
 - Learning: Moving the source of truth first is safe as long as the server also projects compatibility files into the legacy runtime locations that still gate execution.

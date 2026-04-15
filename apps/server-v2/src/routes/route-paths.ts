@@ -47,9 +47,23 @@ export const routePaths = {
   system: {
     base: routeNamespaces.system,
     capabilities: `${routeNamespaces.system}/capabilities`,
+    cloudSignin: `${routeNamespaces.system}/cloud-signin`,
     health: `${routeNamespaces.system}/health`,
+    managed: {
+      item: (kind: string, itemId: string = ":itemId") => `${routeNamespaces.system}/managed/${kind}/${itemId}`,
+      list: (kind: string) => `${routeNamespaces.system}/managed/${kind}`,
+      assignments: (kind: string, itemId: string = ":itemId") => `${routeNamespaces.system}/managed/${kind}/${itemId}/assignments`,
+    },
     meta: `${routeNamespaces.system}/meta`,
     opencodeHealth: `${routeNamespaces.system}/opencode/health`,
+    router: {
+      apply: `${routeNamespaces.system}/router/apply`,
+      bindings: `${routeNamespaces.system}/router/bindings`,
+      health: `${routeNamespaces.system}/router/product-health`,
+      identities: (kind: string) => `${routeNamespaces.system}/router/identities/${kind}`,
+      telegram: `${routeNamespaces.system}/router/telegram`,
+      send: `${routeNamespaces.system}/router/send`,
+    },
     routerHealth: `${routeNamespaces.system}/router/health`,
     servers: `${routeNamespaces.system}/servers`,
     status: `${routeNamespaces.system}/status`,
@@ -72,6 +86,7 @@ export const routePaths = {
     },
     config: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/config`,
     engineReload: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/engine/reload`,
+    export: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/export`,
     fileSessions: {
       base: workspaceFileSessionsBasePath,
       byId: workspaceFileSessionPath,
@@ -93,8 +108,28 @@ export const routePaths = {
       byId: (inboxId: string = ":inboxId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
         `${workspaceRoutePath(workspaceId)}/inbox/${inboxId}`,
     },
+    import: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/import`,
+    mcp: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/mcp`,
+    plugins: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/plugins`,
     rawOpencodeConfig: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/config/opencode-raw`,
     reloadEvents: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/reload-events`,
+    router: {
+      base: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router`,
+      bindings: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/bindings`,
+      health: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/health`,
+      identities: {
+        slack: (workspaceId: string = WORKSPACE_ID_PARAMETER, identityId: string = ":identityId") => `${workspaceRoutePath(workspaceId)}/opencode-router/identities/slack/${identityId}`,
+        slackBase: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/identities/slack`,
+        telegram: (workspaceId: string = WORKSPACE_ID_PARAMETER, identityId: string = ":identityId") => `${workspaceRoutePath(workspaceId)}/opencode-router/identities/telegram/${identityId}`,
+        telegramBase: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/identities/telegram`,
+      },
+      send: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/send`,
+      slackTokens: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/slack-tokens`,
+      telegram: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/telegram`,
+      telegramEnabled: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/telegram-enabled`,
+      telegramToken: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/opencode-router/telegram-token`,
+    },
+    share: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/share`,
     sessions: {
       base: workspaceSessionsBasePath,
       byId: workspaceSessionPath,
@@ -136,6 +171,8 @@ export const routePaths = {
       unrevert: (sessionId: string = ":sessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
         `${workspaceSessionPath(sessionId, workspaceId)}/unrevert`,
     },
+    skills: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/skills`,
+    hubSkills: "/hub/skills",
     simpleContent: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/files/content`,
   },
 } as const;

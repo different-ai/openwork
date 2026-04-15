@@ -99,7 +99,7 @@ export const runtimeInfoSchema = z.object({
 
 export const metadataDataSchema = z.object({
   foundation: z.object({
-    phase: z.literal(5),
+    phase: z.literal(8),
     middlewareOrder: z.array(identifierSchema).min(1),
     routeNamespaces: routeNamespacesSchema,
     database: databaseStatusSchema,

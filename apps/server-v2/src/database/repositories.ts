@@ -673,10 +673,25 @@ export class ManagedConfigRepository {
     );
   }
 
+  findByKey(key: string) {
+    return (this.database
+      .query(`SELECT * FROM ${this.tableName} WHERE item_key = ?1 ORDER BY updated_at DESC`)
+      .all(key) as RawManagedConfigRow[]).map(mapManagedConfig).filter(Boolean) as ManagedConfigRecord[];
+  }
+
   list() {
     return (this.database
       .query(`SELECT * FROM ${this.tableName} ORDER BY updated_at DESC`)
       .all() as RawManagedConfigRow[]).map(mapManagedConfig).filter(Boolean) as ManagedConfigRecord[];
+  }
+
+  deleteById(id: string) {
+    const existing = this.getById(id);
+    if (!existing) {
+      return false;
+    }
+    this.database.query(`DELETE FROM ${this.tableName} WHERE id = ?1`).run(id);
+    return true;
   }
 
   upsert(input: Omit<ManagedConfigRecord, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
@@ -752,6 +767,26 @@ export class WorkspaceAssignmentRepository {
     })) as WorkspaceAssignmentRecord[];
   }
 
+  listForItem(itemId: string) {
+    return (this.database
+      .query(`SELECT workspace_id, item_id, created_at, updated_at FROM ${this.tableName} WHERE item_id = ?1`)
+      .all(itemId) as Array<{
+      created_at: string;
+      item_id: string;
+      updated_at: string;
+      workspace_id: string;
+    }>).map((row) => ({
+      createdAt: row.created_at,
+      itemId: row.item_id,
+      updatedAt: row.updated_at,
+      workspaceId: row.workspace_id,
+    })) as WorkspaceAssignmentRecord[];
+  }
+
+  deleteForItem(itemId: string) {
+    this.database.query(`DELETE FROM ${this.tableName} WHERE item_id = ?1`).run(itemId);
+  }
+
   replaceAssignments(workspaceId: string, itemIds: string[]) {
     const replace = this.database.transaction((nextItemIds: string[]) => {
       this.database.query(`DELETE FROM ${this.tableName} WHERE workspace_id = ?1`).run(workspaceId);
@@ -812,15 +847,29 @@ export class CloudSigninRepository {
       );
     return this.getPrimary()!;
   }
+
+  deletePrimary() {
+    this.database.query("DELETE FROM cloud_signin").run();
+  }
 }
 
 export class WorkspaceSharesRepository {
   constructor(private readonly database: Database) {}
 
+  getById(id: string) {
+    return mapWorkspaceShare(this.database.query("SELECT * FROM workspace_shares WHERE id = ?1").get(id) as RawWorkspaceShareRow | null);
+  }
+
   listByWorkspace(workspaceId: string) {
     return (this.database
       .query("SELECT * FROM workspace_shares WHERE workspace_id = ?1 ORDER BY updated_at DESC")
       .all(workspaceId) as RawWorkspaceShareRow[]).map(mapWorkspaceShare).filter(Boolean) as WorkspaceShareRecord[];
+  }
+
+  getLatestByWorkspace(workspaceId: string) {
+    return mapWorkspaceShare(
+      this.database.query("SELECT * FROM workspace_shares WHERE workspace_id = ?1 ORDER BY updated_at DESC LIMIT 1").get(workspaceId) as RawWorkspaceShareRow | null,
+    );
   }
 
   upsert(input: Omit<WorkspaceShareRecord, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
@@ -861,10 +910,23 @@ export class WorkspaceSharesRepository {
 export class RouterIdentitiesRepository {
   constructor(private readonly database: Database) {}
 
+  getById(id: string) {
+    return mapRouterIdentity(this.database.query("SELECT * FROM router_identities WHERE id = ?1").get(id) as RawRouterIdentityRow | null);
+  }
+
   listByServer(serverId: string) {
     return (this.database
       .query("SELECT * FROM router_identities WHERE server_id = ?1 ORDER BY updated_at DESC")
       .all(serverId) as RawRouterIdentityRow[]).map(mapRouterIdentity).filter(Boolean) as RouterIdentityRecord[];
+  }
+
+  deleteById(id: string) {
+    const existing = this.getById(id);
+    if (!existing) {
+      return false;
+    }
+    this.database.query("DELETE FROM router_identities WHERE id = ?1").run(id);
+    return true;
   }
 
   upsert(input: Omit<RouterIdentityRecord, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
@@ -905,10 +967,23 @@ export class RouterIdentitiesRepository {
 export class RouterBindingsRepository {
   constructor(private readonly database: Database) {}
 
+  getById(id: string) {
+    return mapRouterBinding(this.database.query("SELECT * FROM router_bindings WHERE id = ?1").get(id) as RawRouterBindingRow | null);
+  }
+
   listByServer(serverId: string) {
     return (this.database
       .query("SELECT * FROM router_bindings WHERE server_id = ?1 ORDER BY updated_at DESC")
       .all(serverId) as RawRouterBindingRow[]).map(mapRouterBinding).filter(Boolean) as RouterBindingRecord[];
+  }
+
+  deleteById(id: string) {
+    const existing = this.getById(id);
+    if (!existing) {
+      return false;
+    }
+    this.database.query("DELETE FROM router_bindings WHERE id = ?1").run(id);
+    return true;
   }
 
   upsert(input: Omit<RouterBindingRecord, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {

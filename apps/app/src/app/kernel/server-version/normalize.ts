@@ -129,6 +129,16 @@ export function buildSyntheticDiagnostics(input: {
 
 export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatusResponse): OpenworkServerCapabilities {
   const auth = input.data.auth;
+  const bundles = input.data.capabilities.bundles ?? {
+    fetch: false,
+    publish: false,
+    workspaceExport: false,
+    workspaceImport: false,
+  };
+  const cloud = input.data.capabilities.cloud ?? {
+    persistence: false,
+    validation: false,
+  };
   const sessions = input.data.capabilities.sessions ?? {
     events: false,
     list: false,
@@ -137,19 +147,51 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
     promptAsync: false,
     revertHistory: false,
   };
+  const shares = input.data.capabilities.shares ?? {
+    workspaceScoped: false,
+  };
   return {
+    bundles: {
+      fetch: bundles.fetch,
+      publish: bundles.publish,
+      workspaceExport: bundles.workspaceExport,
+      workspaceImport: bundles.workspaceImport,
+    },
+    cloud: {
+      persistence: cloud.persistence,
+      validation: cloud.validation,
+    },
     commands: { read: false, write: false },
     config: {
       read: input.data.capabilities.config.read,
       write: input.data.capabilities.config.write,
     },
-    mcp: { read: false, write: false },
-    plugins: { read: false, write: false },
+    mcp: {
+      read: input.data.capabilities.managed?.mcps === true,
+      write: input.data.capabilities.managed?.mcps === true,
+    },
+    plugins: {
+      read: input.data.capabilities.managed?.plugins === true,
+      write: input.data.capabilities.managed?.plugins === true,
+    },
+    shares: {
+      workspaceScoped: shares.workspaceScoped,
+    },
     serverV2: {
       auth: {
         actorKind: auth.actorKind,
         hostTokenConfigured: auth.configured.hostToken,
         required: auth.required,
+      },
+      bundles: {
+        fetch: bundles.fetch,
+        publish: bundles.publish,
+        workspaceExport: bundles.workspaceExport,
+        workspaceImport: bundles.workspaceImport,
+      },
+      cloud: {
+        persistence: cloud.persistence,
+        validation: cloud.validation,
       },
       config: {
         projection: input.data.capabilities.config.projection,
@@ -186,6 +228,9 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
         promptAsync: sessions.promptAsync,
         revertHistory: sessions.revertHistory,
       },
+      shares: {
+        workspaceScoped: shares.workspaceScoped,
+      },
       transport: {
         rootMounted: input.data.capabilities.transport.rootMounted,
         v2: input.data.capabilities.transport.v2,
@@ -195,7 +240,11 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
         createLocal: input.data.capabilities.workspaces.createLocal,
       },
     },
-    skills: { read: false, source: "openwork", write: false },
+    skills: {
+      read: input.data.capabilities.managed?.skills === true,
+      source: "openwork",
+      write: input.data.capabilities.managed?.skills === true,
+    },
     toolProviders: {
       files: {
         inboxPath: ".opencode/openwork/inbox/",

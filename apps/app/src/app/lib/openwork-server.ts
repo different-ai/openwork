@@ -4,6 +4,16 @@ import { isTauriRuntime } from "../utils";
 import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./tauri";
 
 export type OpenworkServerCapabilities = {
+  bundles?: {
+    fetch: boolean;
+    publish: boolean;
+    workspaceExport: boolean;
+    workspaceImport: boolean;
+  };
+  cloud?: {
+    persistence: boolean;
+    validation: boolean;
+  };
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
   hub?: {
     skills?: {
@@ -32,11 +42,24 @@ export type OpenworkServerCapabilities = {
       maxBytes: number;
     };
   };
+  shares?: {
+    workspaceScoped: boolean;
+  };
   serverV2?: {
     auth: {
       actorKind: "anonymous" | "client" | "host";
       hostTokenConfigured: boolean;
       required: boolean;
+    };
+    bundles?: {
+      fetch: boolean;
+      publish: boolean;
+      workspaceExport: boolean;
+      workspaceImport: boolean;
+    };
+    cloud?: {
+      persistence: boolean;
+      validation: boolean;
     };
     config?: {
       projection: boolean;
@@ -72,6 +95,9 @@ export type OpenworkServerCapabilities = {
       mutations: boolean;
       promptAsync: boolean;
       revertHistory: boolean;
+    };
+    shares?: {
+      workspaceScoped: boolean;
     };
     transport: {
       rootMounted: boolean;
@@ -447,6 +473,31 @@ export type OpenworkWorkspaceExportWarning = {
   id: string;
   label: string;
   detail: string;
+};
+
+export type OpenworkCloudSignin = {
+  id: string;
+  serverId: string;
+  cloudBaseUrl: string;
+  userId: string | null;
+  orgId: string | null;
+  auth: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
+  lastValidatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OpenworkWorkspaceShare = {
+  id: string;
+  workspaceId: string;
+  accessKey: string | null;
+  status: "active" | "disabled" | "revoked";
+  lastUsedAt: string | null;
+  audit: Record<string, unknown> | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type OpenworkBlueprintSessionsMaterializeResult = {
@@ -869,9 +920,10 @@ async function requestJson<T>(
   const json = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
-    const code = typeof json?.code === "string" ? json.code : "request_failed";
-    const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
+    const errorRecord = json && typeof json?.error === "object" ? json.error : json;
+    const code = typeof (errorRecord as any)?.code === "string" ? (errorRecord as any).code : "request_failed";
+    const message = typeof (errorRecord as any)?.message === "string" ? (errorRecord as any).message : response.statusText;
+    throw new OpenworkServerError(response.status, code, message, (errorRecord as any)?.details);
   }
 
   return json as T;
@@ -952,9 +1004,10 @@ async function requestBinary(
     } catch {
       json = null;
     }
-    const code = typeof json?.code === "string" ? json.code : "request_failed";
-    const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
+    const errorRecord = json && typeof json?.error === "object" ? json.error : json;
+    const code = typeof errorRecord?.code === "string" ? errorRecord.code : "request_failed";
+    const message = typeof errorRecord?.message === "string" ? errorRecord.message : response.statusText;
+    throw new OpenworkServerError(response.status, code, message, errorRecord?.details);
   }
 
   const contentType = response.headers.get("content-type");
@@ -1135,12 +1188,23 @@ export function createOpenworkServerClient(options: {
             hostToken,
             timeoutMs: timeouts.capabilities,
           }).then((response) => ({
+            bundles: {
+              fetch: response.data.bundles.fetch,
+              publish: response.data.bundles.publish,
+              workspaceExport: response.data.bundles.workspaceExport,
+              workspaceImport: response.data.bundles.workspaceImport,
+            },
+            cloud: {
+              persistence: response.data.cloud.persistence,
+              validation: response.data.cloud.validation,
+            },
             commands: { read: false, write: false },
             config: { read: response.data.config.read, write: response.data.config.write },
-            mcp: { read: false, write: false },
-            plugins: { read: false, write: false },
+            mcp: { read: response.data.managed?.mcps === true, write: response.data.managed?.mcps === true },
+            plugins: { read: response.data.managed?.plugins === true, write: response.data.managed?.plugins === true },
             serverV2: response.data,
-            skills: { read: false, source: "openwork", write: false },
+            shares: { workspaceScoped: response.data.shares.workspaceScoped },
+            skills: { read: response.data.managed?.skills === true, source: "openwork", write: response.data.managed?.skills === true },
             toolProviders: {
               files: {
                 inboxPath: ".opencode/openwork/inbox/",
@@ -1364,6 +1428,60 @@ export function createOpenworkServerClient(options: {
         },
         timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
       }),
+    getCloudSignin: () =>
+      requestJson<{ ok: true; data: OpenworkCloudSignin | null; meta: { requestId: string; timestamp: string } }>(baseUrl, "/system/cloud-signin", {
+        token,
+        hostToken,
+        timeoutMs: timeouts.status,
+      }).then((response) => response.data),
+    persistCloudSignin: (payload: {
+      auth?: Record<string, unknown> | null;
+      cloudBaseUrl: string;
+      metadata?: Record<string, unknown> | null;
+      orgId?: string | null;
+      userId?: string | null;
+    }) =>
+      requestJson<{ ok: true; data: OpenworkCloudSignin | null; meta: { requestId: string; timestamp: string } }>(baseUrl, "/system/cloud-signin", {
+        token,
+        hostToken,
+        method: "PUT",
+        body: payload,
+        timeoutMs: timeouts.status,
+      }).then((response) => response.data),
+    clearCloudSignin: () =>
+      requestJson<{ ok: true; data: OpenworkCloudSignin | null; meta: { requestId: string; timestamp: string } }>(baseUrl, "/system/cloud-signin", {
+        token,
+        hostToken,
+        method: "DELETE",
+        timeoutMs: timeouts.status,
+      }).then((response) => response.data),
+    validateCloudSignin: () =>
+      requestJson<{ ok: true; data: { lastValidatedAt: string | null; ok: boolean; record: OpenworkCloudSignin }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/system/cloud-signin/validate", {
+        token,
+        hostToken,
+        method: "POST",
+        timeoutMs: timeouts.status,
+      }).then((response) => response.data),
+    getWorkspaceShare: (workspaceId: string) =>
+      requestJson<{ ok: true; data: OpenworkWorkspaceShare | null; meta: { requestId: string; timestamp: string } }>(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/share`, {
+        token,
+        hostToken,
+        timeoutMs: timeouts.status,
+      }).then((response) => response.data),
+    exposeWorkspaceShare: (workspaceId: string) =>
+      requestJson<{ ok: true; data: OpenworkWorkspaceShare | null; meta: { requestId: string; timestamp: string } }>(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/share`, {
+        token,
+        hostToken,
+        method: "POST",
+        timeoutMs: timeouts.status,
+      }).then((response) => response.data),
+    revokeWorkspaceShare: (workspaceId: string) =>
+      requestJson<{ ok: true; data: OpenworkWorkspaceShare | null; meta: { requestId: string; timestamp: string } }>(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/share`, {
+        token,
+        hostToken,
+        method: "DELETE",
+        timeoutMs: timeouts.status,
+      }).then((response) => response.data),
     getConfig: (workspaceId: string) =>
       canUseServerV2Config
         ? requestJson<{ ok: true; data: { stored: { openwork: Record<string, unknown> }; effective: { opencode: Record<string, unknown> }; updatedAt: string }; meta: { requestId: string; timestamp: string } }>(

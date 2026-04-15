@@ -2,7 +2,7 @@ import { createEffect, createSignal, type Accessor } from "solid-js";
 
 import { t, currentLocale } from "../../i18n";
 
-import { createDenClient, writeDenSettings } from "../lib/den";
+import { createDenClient, validateDenSettingsWithOpenwork, writeDenSettings } from "../lib/den";
 import { dispatchDenSessionUpdated } from "../lib/den-session-events";
 import { stripBundleQuery } from "../bundles";
 import type { createBundlesStore } from "../bundles/store";
@@ -202,7 +202,7 @@ export function createDeepLinksController(options: {
 
     void createDenClient({ baseUrl: pending.denBaseUrl })
       .exchangeDesktopHandoff(pending.grant)
-      .then((result) => {
+      .then(async (result) => {
         if (!result.token) {
           throw new Error(t("app.error_desktop_signin", currentLocale()));
         }
@@ -214,6 +214,7 @@ export function createDeepLinksController(options: {
           activeOrgSlug: null,
           activeOrgName: null,
         });
+        await validateDenSettingsWithOpenwork().catch(() => null);
 
         dispatchDenSessionUpdated({
           status: "success",

@@ -513,6 +513,9 @@ export default function SettingsShell(props: SettingsShellProps) {
   const [shareSkillsSetBusy, setShareSkillsSetBusy] = createSignal(false);
   const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
   const [shareSkillsSetError, setShareSkillsSetError] = createSignal<string | null>(null);
+  const [localWorkspaceShareAccessKey, setLocalWorkspaceShareAccessKey] = createSignal<string | null>(null);
+  const [localWorkspaceShareSyncError, setLocalWorkspaceShareSyncError] = createSignal<string | null>(null);
+  const [localWorkspaceShareSyncBusy, setLocalWorkspaceShareSyncBusy] = createSignal(false);
 
   createEffect(
     on(shareWorkspaceId, () => {
@@ -527,6 +530,9 @@ export default function SettingsShell(props: SettingsShellProps) {
       setShareSkillsSetBusy(false);
       setShareSkillsSetUrl(null);
       setShareSkillsSetError(null);
+      setLocalWorkspaceShareAccessKey(null);
+      setLocalWorkspaceShareSyncError(null);
+      setLocalWorkspaceShareSyncBusy(false);
     }),
   );
 
@@ -566,6 +572,78 @@ export default function SettingsShell(props: SettingsShellProps) {
     });
   });
 
+  createEffect(() => {
+    const ws = shareWorkspace();
+    const workspaceId = shareLocalOpenworkWorkspaceId()?.trim() ?? "";
+    const remoteAccessEnabled = props.openworkServerHostInfo?.remoteAccessEnabled === true;
+    const client = props.openworkServerClient;
+
+    if (
+      !ws ||
+      ws.workspaceType !== "local" ||
+      !workspaceId ||
+      !remoteAccessEnabled ||
+      !client ||
+      typeof client.getWorkspaceShare !== "function" ||
+      typeof client.exposeWorkspaceShare !== "function"
+    ) {
+      setLocalWorkspaceShareAccessKey(null);
+      setLocalWorkspaceShareSyncError(null);
+      setLocalWorkspaceShareSyncBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLocalWorkspaceShareSyncBusy(true);
+    setLocalWorkspaceShareSyncError(null);
+
+    void (async () => {
+      try {
+        let record = await client.getWorkspaceShare(workspaceId);
+        if (!record || record.status !== "active" || !record.accessKey?.trim()) {
+          record = await client.exposeWorkspaceShare(workspaceId);
+        }
+        if (cancelled) return;
+        setLocalWorkspaceShareAccessKey(record?.accessKey?.trim() || null);
+      } catch (error) {
+        if (cancelled) return;
+        setLocalWorkspaceShareAccessKey(null);
+        setLocalWorkspaceShareSyncError(error instanceof Error ? error.message : "Failed to prepare a workspace share key.");
+      } finally {
+        if (!cancelled) {
+          setLocalWorkspaceShareSyncBusy(false);
+        }
+      }
+    })();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  createEffect(on(
+    () => ({
+      client: props.openworkServerClient,
+      remoteAccessEnabled: props.openworkServerHostInfo?.remoteAccessEnabled === true,
+      workspaceId: shareLocalOpenworkWorkspaceId()?.trim() ?? "",
+      workspaceType: shareWorkspace()?.workspaceType ?? null,
+    }),
+    (next, previous) => {
+      if (
+        previous?.workspaceType === "local" &&
+        previous.remoteAccessEnabled === true &&
+        next.workspaceType === "local" &&
+        next.remoteAccessEnabled === false &&
+        next.workspaceId &&
+        next.workspaceId === previous.workspaceId &&
+        next.client &&
+        typeof next.client.revokeWorkspaceShare === "function"
+      ) {
+        void next.client.revokeWorkspaceShare(next.workspaceId).catch(() => undefined);
+      }
+    },
+  ));
+
   const shareFields = createMemo(() => {
     const ws = shareWorkspace();
     if (!ws) {
@@ -592,6 +670,43 @@ export default function SettingsShell(props: SettingsShellProps) {
         ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId())
         : null;
       const url = mountedUrl || hostUrl;
+      const accessKey = localWorkspaceShareAccessKey()?.trim() || "";
+      if (url && accessKey) {
+        return [
+          {
+            label: "Worker URL",
+            value: url,
+            hint: "Use on phones or laptops connecting to this worker.",
+          },
+          {
+            label: "Access token",
+            value: accessKey,
+            secret: true,
+            hint: "Workspace-scoped access managed by OpenWork Server V2.",
+          },
+        ];
+      }
+      if (!localWorkspaceShareSyncError()) {
+        return [
+          {
+            label: "Worker URL",
+            value: url,
+            placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+            hint: mountedUrl
+              ? "Use on phones or laptops connecting to this worker."
+              : hostUrl
+                ? "Worker URL is resolving; host URL shown as fallback."
+                : undefined,
+          },
+          {
+            label: "Access token",
+            value: "",
+            secret: true,
+            placeholder: localWorkspaceShareSyncBusy() ? "Preparing workspace share..." : "Waiting for workspace share...",
+            hint: localWorkspaceShareSyncBusy() ? "Creating a workspace-scoped share key through OpenWork Server V2." : undefined,
+          },
+        ];
+      }
       const ownerToken = props.openworkServerHostInfo?.ownerToken?.trim() || "";
       const collaboratorToken = props.openworkServerHostInfo?.clientToken?.trim() || "";
       return [
@@ -666,6 +781,9 @@ export default function SettingsShell(props: SettingsShellProps) {
   const shareNote = createMemo(() => {
     const ws = shareWorkspace();
     if (!ws) return null;
+    if (ws.workspaceType === "local" && localWorkspaceShareSyncError()?.trim()) {
+      return localWorkspaceShareSyncError();
+    }
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
       return "Engine runtime is set to Direct. Switching local workspaces can restart the host and disconnect clients. The token may change after a restart.";
     }

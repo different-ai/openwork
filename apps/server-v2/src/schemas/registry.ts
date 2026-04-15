@@ -49,6 +49,16 @@ export const registrySummarySchema = z.object({
 
 export const capabilitiesDataSchema = z.object({
   auth: authSummarySchema,
+  bundles: z.object({
+    fetch: z.literal(true),
+    publish: z.literal(true),
+    workspaceExport: z.literal(true),
+    workspaceImport: z.literal(true),
+  }),
+  cloud: z.object({
+    persistence: z.literal(true),
+    validation: z.literal(true),
+  }),
   config: z.object({
     projection: z.literal(true),
     rawRead: z.literal(true),
@@ -62,6 +72,13 @@ export const capabilitiesDataSchema = z.object({
     fileSessions: z.literal(true),
     inbox: z.literal(true),
     mutations: z.literal(true),
+  }),
+  managed: z.object({
+    assignments: z.literal(true),
+    mcps: z.literal(true),
+    plugins: z.literal(true),
+    providerConfigs: z.literal(true),
+    skills: z.literal(true),
   }),
   reload: z.object({
     manualEngineReload: z.literal(true),
@@ -89,6 +106,15 @@ export const capabilitiesDataSchema = z.object({
     routerHealth: z.literal(true),
     runtimeSummary: z.literal(true),
     runtimeVersions: z.literal(true),
+  }),
+  router: z.object({
+    bindings: z.literal(true),
+    identities: z.literal(true),
+    outboundSend: z.literal(true),
+    productRoutes: z.literal(true),
+  }),
+  shares: z.object({
+    workspaceScoped: z.literal(true),
   }),
   workspaces: z.object({
     activate: z.literal(true),

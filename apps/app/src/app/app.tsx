@@ -122,6 +122,8 @@ import {
   writeOpenworkServerSettings,
   type OpenworkServerSettings,
 } from "./lib/openwork-server";
+import { hydrateDenSettingsFromOpenwork, readDenSettings, registerDenCloudSyncClient } from "./lib/den";
+import { dispatchDenSessionUpdated } from "./lib/den-session-events";
 import { ReactIsland } from "../react/island";
 import { reactSessionEnabled } from "../react/feature-flag";
 import { ReactSessionRuntime } from "../react/session/runtime-sync.react";
@@ -716,6 +718,46 @@ export default function App() {
     reconnectOpenworkServer,
     ensureLocalOpenworkServerClient,
   } = openworkServerStore;
+
+  registerDenCloudSyncClient(() => openworkServerClient() ?? null);
+  onCleanup(() => registerDenCloudSyncClient(null));
+
+  let hydratedDenCloudKey: string | null = null;
+  createEffect(() => {
+    if (openworkServerStatus() !== "connected") {
+      return;
+    }
+    const clientForCloud = openworkServerClient();
+    const baseUrl = clientForCloud?.baseUrl?.trim() ?? "";
+    if (!clientForCloud || !baseUrl) {
+      return;
+    }
+    const hydrateKey = `${baseUrl}|${clientForCloud.token?.trim() ?? ""}`;
+    if (hydrateKey === hydratedDenCloudKey) {
+      return;
+    }
+    hydratedDenCloudKey = hydrateKey;
+
+    const currentCloudSettings = readDenSettings();
+    void hydrateDenSettingsFromOpenwork({ client: clientForCloud }).then((nextCloudSettings) => {
+      const tokenChanged = (currentCloudSettings.authToken?.trim() ?? "") !== (nextCloudSettings.authToken?.trim() ?? "");
+      const orgChanged = (currentCloudSettings.activeOrgId?.trim() ?? "") !== (nextCloudSettings.activeOrgId?.trim() ?? "");
+      const baseChanged = (currentCloudSettings.baseUrl?.trim() ?? "") !== (nextCloudSettings.baseUrl?.trim() ?? "");
+      if (!tokenChanged && !orgChanged && !baseChanged) {
+        return;
+      }
+      if (!nextCloudSettings.authToken?.trim()) {
+        return;
+      }
+      dispatchDenSessionUpdated({
+        status: "success",
+        baseUrl: nextCloudSettings.baseUrl,
+        token: nextCloudSettings.authToken,
+        user: null,
+        email: null,
+      });
+    }).catch(() => undefined);
+  });
 
   const extensionsStore = createExtensionsStore({
     client,

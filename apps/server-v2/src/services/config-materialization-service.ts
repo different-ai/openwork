@@ -492,9 +492,11 @@ export function createConfigMaterializationService(input: {
     const skills = listAssignedSkills(workspace.id);
     const roots = workspaceSkillRoots(workspace);
     if (roots.managedConfig) {
+      fs.rmSync(roots.managedConfig, { force: true, recursive: true });
       fs.mkdirSync(roots.managedConfig, { recursive: true });
     }
     if (roots.compatibility) {
+      fs.rmSync(roots.compatibility, { force: true, recursive: true });
       fs.mkdirSync(roots.compatibility, { recursive: true });
     }
     for (const skill of skills) {

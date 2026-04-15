@@ -23,10 +23,15 @@ function startServer(fetch: (request: Request) => Response | Promise<Response>) 
 
 const serverV2Capabilities = {
   auth: { actorKind: "client", hostTokenConfigured: true, required: true },
+  bundles: { fetch: true, publish: true, workspaceExport: true, workspaceImport: true },
+  cloud: { persistence: true, validation: true },
   config: { projection: true, rawRead: true, rawWrite: true, read: true, write: true },
   files: { artifacts: true, contentRoutes: true, fileSessions: true, inbox: true, mutations: true },
+  managed: { assignments: true, mcps: true, plugins: true, providerConfigs: true, skills: true },
   registry: { backendResolution: true, hiddenWorkspaceFiltering: true, serverInventory: true, workspaceDetail: true, workspaceList: true },
   reload: { manualEngineReload: true, reconciliation: true, watch: true, workspaceEvents: true },
+  router: { bindings: true, identities: true, outboundSend: true, productRoutes: true },
+  shares: { workspaceScoped: true },
   sessions: { events: true, list: true, messages: true, mutations: true, promptAsync: true, revertHistory: true },
   transport: { rootMounted: true, v2: true },
   workspaces: { activate: true, createLocal: true },
@@ -148,4 +153,105 @@ test("server-v2 client routes workspace lifecycle and config/file calls to root-
   expect(calls).toContain("GET /workspaces/ws_local/config/opencode-raw?scope=project");
   expect(calls).toContain("GET /workspaces/ws_local/reload-events");
   expect(calls).toContain("POST /workspaces/ws_local/files/content");
+});
+
+test("client parses server-v2 error envelopes and compatibility routes for managed export flows", async () => {
+  const baseUrl = startServer(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/workspace/ws_local/export") {
+      return Response.json({
+        ok: false,
+        error: {
+          code: "workspace_export_requires_decision",
+          details: { warnings: [{ detail: "Contains secret-like plugin config.", id: "plugin-config", label: "Plugin settings" }] },
+          message: "Choose a sensitive mode.",
+          requestId: "owreq_err",
+        },
+      }, { status: 409 });
+    }
+
+    if (url.pathname === "/workspace/ws_local/skills" && request.method === "GET") {
+      return Response.json({ items: [{ description: "Demo", name: "demo-skill", path: "/tmp/demo-skill/SKILL.md", scope: "project" }] });
+    }
+
+    if (url.pathname === "/workspace/ws_local/plugins" && request.method === "GET") {
+      return Response.json({ items: [{ scope: "project", source: "config", spec: "demo-plugin" }], loadOrder: ["config.project"] });
+    }
+
+    if (url.pathname === "/workspace/ws_local/mcp" && request.method === "GET") {
+      return Response.json({ items: [{ config: { type: "local", command: ["demo"] }, name: "demo", source: "config.project" }] });
+    }
+
+    if (url.pathname === "/system/cloud-signin" && request.method === "GET") {
+      return Response.json({ ok: true, data: { id: "cloud_primary", serverId: "srv_local", cloudBaseUrl: "https://app.openworklabs.com", userId: null, orgId: "org_123", auth: { authToken: "tok_123" }, metadata: { activeOrgName: "Acme", activeOrgSlug: "acme" }, lastValidatedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, meta: { requestId: "owreq_cloud_1", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/system/cloud-signin" && request.method === "PUT") {
+      return Response.json({ ok: true, data: { id: "cloud_primary", serverId: "srv_local", cloudBaseUrl: "https://app.openworklabs.com", userId: null, orgId: "org_123", auth: { authToken: "tok_123" }, metadata: { activeOrgName: "Acme", activeOrgSlug: "acme" }, lastValidatedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, meta: { requestId: "owreq_cloud_2", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/system/cloud-signin" && request.method === "DELETE") {
+      return Response.json({ ok: true, data: null, meta: { requestId: "owreq_cloud_3", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/system/cloud-signin/validate" && request.method === "POST") {
+      return Response.json({ ok: true, data: { ok: true, lastValidatedAt: new Date().toISOString(), record: { id: "cloud_primary", serverId: "srv_local", cloudBaseUrl: "https://app.openworklabs.com", userId: "usr_123", orgId: "org_123", auth: { authToken: "tok_123" }, metadata: { activeOrgName: "Acme", activeOrgSlug: "acme" }, lastValidatedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } }, meta: { requestId: "owreq_cloud_4", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/workspaces/ws_local/share" && request.method === "GET") {
+      return Response.json({ ok: true, data: { id: "share_ws_local", workspaceId: "ws_local", accessKey: "share_key", status: "active", lastUsedAt: null, audit: null, revokedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, meta: { requestId: "owreq_share_1", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/workspaces/ws_local/share" && request.method === "POST") {
+      return Response.json({ ok: true, data: { id: "share_ws_local", workspaceId: "ws_local", accessKey: "share_key", status: "active", lastUsedAt: null, audit: null, revokedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, meta: { requestId: "owreq_share_2", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/workspaces/ws_local/share" && request.method === "DELETE") {
+      return Response.json({ ok: true, data: { id: "share_ws_local", workspaceId: "ws_local", accessKey: null, status: "revoked", lastUsedAt: null, audit: null, revokedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, meta: { requestId: "owreq_share_3", timestamp: new Date().toISOString() } });
+    }
+
+    return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+  });
+
+  const client = createOpenworkServerClient({
+    baseUrl,
+    serverV2: { enabled: true, capabilities: serverV2Capabilities as any },
+    token: "client-token",
+  });
+
+  await expect(client.exportWorkspace("ws_local")).rejects.toMatchObject({
+    code: "workspace_export_requires_decision",
+    details: { warnings: [{ id: "plugin-config" }] },
+  });
+
+  const [skills, plugins, mcps] = await Promise.all([
+    client.listSkills("ws_local"),
+    client.listPlugins("ws_local"),
+    client.listMcp("ws_local"),
+  ]);
+
+  const cloudSignin = await client.getCloudSignin();
+  const persistedCloudSignin = await client.persistCloudSignin({
+    auth: { authToken: "tok_123" },
+    cloudBaseUrl: "https://app.openworklabs.com",
+    metadata: { activeOrgName: "Acme", activeOrgSlug: "acme" },
+    orgId: "org_123",
+  });
+  const validatedCloudSignin = await client.validateCloudSignin();
+  const clearedCloudSignin = await client.clearCloudSignin();
+  const workspaceShare = await client.getWorkspaceShare("ws_local");
+  const exposedWorkspaceShare = await client.exposeWorkspaceShare("ws_local");
+  const revokedWorkspaceShare = await client.revokeWorkspaceShare("ws_local");
+
+  expect(skills.items[0]?.name).toBe("demo-skill");
+  expect(plugins.items[0]?.spec).toBe("demo-plugin");
+  expect(mcps.items[0]?.name).toBe("demo");
+  expect(cloudSignin?.orgId).toBe("org_123");
+  expect(persistedCloudSignin?.metadata?.activeOrgSlug).toBe("acme");
+  expect(validatedCloudSignin.record.userId).toBe("usr_123");
+  expect(clearedCloudSignin).toBeNull();
+  expect(workspaceShare?.accessKey).toBe("share_key");
+  expect(exposedWorkspaceShare?.status).toBe("active");
+  expect(revokedWorkspaceShare?.status).toBe("revoked");
 });
