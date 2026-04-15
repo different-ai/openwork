@@ -15,7 +15,7 @@
     "README.md"
   ],
   "scripts": {
-    "generate": "node ./scripts/generate.mjs",
+    "generate": "pnpm exec openapi-ts -f openapi-ts.config.ts",
     "watch": "node ./scripts/watch.mjs",
     "typecheck": "tsc --noEmit"
   },

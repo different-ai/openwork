@@ -1,0 +1,577 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenWork Server V2",
+    "description": "OpenAPI contract for the standalone OpenWork Server V2 foundation.\n\nPhase 1 establishes the contract loop and the initial /system/* operational surface.",
+    "version": "0.0.0"
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "Server-level operational routes and contract metadata."
+    },
+    {
+      "name": "Workspaces",
+      "description": "Workspace-first resources will live under /workspaces/:workspaceId."
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "getIndex",
+        "tags": [
+          "System"
+        ],
+        "summary": "Get server root information",
+        "description": "Returns the root metadata for the standalone Server V2 process and its route conventions.",
+        "responses": {
+          "200": {
+            "description": "Server root information returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2RootInfoResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/health": {
+      "get": {
+        "operationId": "getSystemHealth",
+        "tags": [
+          "System"
+        ],
+        "summary": "Check Server V2 health",
+        "description": "Returns a lightweight health response for the standalone Server V2 process.",
+        "responses": {
+          "200": {
+            "description": "Server health returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2HealthResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/meta": {
+      "get": {
+        "operationId": "getSystemMeta",
+        "tags": [
+          "System"
+        ],
+        "summary": "Get foundation metadata",
+        "description": "Returns middleware ordering, route namespace conventions, and current foundation-level runtime metadata.",
+        "responses": {
+          "200": {
+            "description": "Server metadata returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2MetadataResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "OpenWorkServerV2RouteNamespaces": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "const": "/"
+          },
+          "openapi": {
+            "type": "string",
+            "const": "/openapi.json"
+          },
+          "system": {
+            "type": "string",
+            "const": "/system"
+          },
+          "workspaces": {
+            "type": "string",
+            "const": "/workspaces"
+          },
+          "workspaceResource": {
+            "type": "string",
+            "pattern": "^\\/workspaces\\/.*"
+          }
+        },
+        "required": [
+          "root",
+          "openapi",
+          "system",
+          "workspaces",
+          "workspaceResource"
+        ]
+      },
+      "OpenWorkServerV2ContractMetadata": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "const": "hono-openapi"
+          },
+          "openapiPath": {
+            "type": "string",
+            "const": "/openapi.json"
+          },
+          "sdkPackage": {
+            "type": "string",
+            "const": "@openwork/server-sdk"
+          }
+        },
+        "required": [
+          "source",
+          "openapiPath",
+          "sdkPackage"
+        ]
+      },
+      "OpenWorkServerV2RootInfoData": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "const": "openwork-server-v2"
+          },
+          "packageName": {
+            "type": "string",
+            "const": "openwork-server-v2"
+          },
+          "version": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "routes": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RouteNamespaces"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ContractMetadata"
+          }
+        },
+        "required": [
+          "service",
+          "packageName",
+          "version",
+          "environment",
+          "routes",
+          "contract"
+        ]
+      },
+      "OpenWorkServerV2RequestId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "OpenWorkServerV2IsoTimestamp": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+      },
+      "OpenWorkServerV2ResponseMeta": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
+          },
+          "timestamp": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          }
+        },
+        "required": [
+          "requestId",
+          "timestamp"
+        ]
+      },
+      "OpenWorkServerV2RootInfoResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RootInfoData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2ErrorDetail": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "OpenWorkServerV2InternalError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ErrorDetail"
+                }
+              },
+              "code": {
+                "type": "string",
+                "const": "internal_error"
+              }
+            },
+            "required": [
+              "message",
+              "requestId",
+              "code"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      },
+      "OpenWorkServerV2DatabaseStatus": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "const": false
+          },
+          "kind": {
+            "type": "string",
+            "const": "none"
+          },
+          "phaseOwner": {
+            "type": "number",
+            "const": 2
+          },
+          "status": {
+            "type": "string",
+            "const": "pending"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "configured",
+          "kind",
+          "phaseOwner",
+          "status",
+          "summary"
+        ]
+      },
+      "OpenWorkServerV2HealthData": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "const": "openwork-server-v2"
+          },
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "startedAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "uptimeMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "database": {
+            "$ref": "#/components/schemas/OpenWorkServerV2DatabaseStatus"
+          }
+        },
+        "required": [
+          "service",
+          "status",
+          "startedAt",
+          "uptimeMs",
+          "database"
+        ]
+      },
+      "OpenWorkServerV2HealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2HealthData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2Identifier": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "OpenWorkServerV2FoundationInfo": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "number",
+            "const": 1
+          },
+          "middlewareOrder": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+            }
+          },
+          "routeNamespaces": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RouteNamespaces"
+          },
+          "database": {
+            "$ref": "#/components/schemas/OpenWorkServerV2DatabaseStatus"
+          }
+        },
+        "required": [
+          "phase",
+          "middlewareOrder",
+          "routeNamespaces",
+          "database"
+        ]
+      },
+      "OpenWorkServerV2RequestContextInfo": {
+        "type": "object",
+        "properties": {
+          "actorKind": {
+            "type": "string",
+            "const": "anonymous"
+          },
+          "requestIdHeader": {
+            "type": "string",
+            "const": "X-Request-Id"
+          }
+        },
+        "required": [
+          "actorKind",
+          "requestIdHeader"
+        ]
+      },
+      "OpenWorkServerV2RuntimeInfo": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "platform": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string",
+            "const": "bun"
+          },
+          "runtimeVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "environment",
+          "hostname",
+          "pid",
+          "platform",
+          "runtime",
+          "runtimeVersion"
+        ]
+      },
+      "OpenWorkServerV2MetadataData": {
+        "type": "object",
+        "properties": {
+          "foundation": {
+            "$ref": "#/components/schemas/OpenWorkServerV2FoundationInfo"
+          },
+          "requestContext": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RequestContextInfo"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeInfo"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ContractMetadata"
+          }
+        },
+        "required": [
+          "foundation",
+          "requestContext",
+          "runtime",
+          "contract"
+        ]
+      },
+      "OpenWorkServerV2MetadataResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2MetadataData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2OpenApiDocument": {
+        "type": "object",
+        "properties": {
+          "openapi": {
+            "type": "string"
+          },
+          "info": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "version"
+            ],
+            "additionalProperties": {}
+          },
+          "paths": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "components": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "openapi",
+          "info",
+          "paths"
+        ],
+        "additionalProperties": {}
+      }
+    }
+  }
+}

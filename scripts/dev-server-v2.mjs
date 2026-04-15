@@ -6,11 +6,11 @@ const includeApp = process.argv.includes("--app");
 const commands = [
   {
     name: "server",
-    args: ["--filter", "openwork-server", "dev"],
+    args: ["--filter", "openwork-server-v2", "dev"],
   },
   {
     name: "openapi",
-    args: ["--filter", "openwork-server", "openapi:watch"],
+    args: ["--filter", "openwork-server-v2", "openapi:watch"],
   },
   {
     name: "sdk",
@@ -54,6 +54,7 @@ for (const command of commands) {
   const child = spawn("pnpm", command.args, {
     stdio: "inherit",
     env: process.env,
+    cwd: process.cwd(),
   });
   children.push(child);
   child.once("exit", (code, signal) => {

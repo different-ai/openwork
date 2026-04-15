@@ -22,7 +22,7 @@
         "The package structure matches the planned `app.ts`, `cli.ts`, `routes/`, `services/`, `schemas/`, `middleware/`, `context/`, `adapters/`, `bootstrap/`, and `database/` shape.",
         "No new Server V2 runtime code is added under `apps/server/src/**`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-002",
@@ -33,7 +33,7 @@
         "Workspace filtering or package naming is stable enough for later agents to reuse without renaming scripts again.",
         "Script names line up with `prds/server-v2-plan/sdk-generation.md` and `prds/server-v2-plan/local-dev.md`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-003",
@@ -44,7 +44,7 @@
         "The server is not mounted under a legacy `/v2` path inside the current server.",
         "Startup logs identify Server V2 clearly enough for debugging."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-004",
@@ -55,7 +55,7 @@
         "The context model can grow without forcing route rewrites in later phases.",
         "There is a clear place to attach auth actor, request ID, and shared services."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-005",
@@ -66,7 +66,7 @@
         "Errors are returned in one consistent envelope instead of ad hoc text or mixed JSON shapes.",
         "Middleware ordering is explicit and documented in code."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-006",
@@ -77,7 +77,7 @@
         "Server-level operational routes live under `/system/*`.",
         "The chosen route layout matches `prds/server-v2-plan/plan.md` and `prds/server-v2-plan/ideal-flow.md`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-007",
@@ -88,7 +88,7 @@
         "The route responses already use the shared schema and error conventions.",
         "Tests or smoke checks prove the server boots independently."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-008",
@@ -99,7 +99,7 @@
         "Error and success payloads can be documented once and reused.",
         "Later phases can add route schemas without redefining primitives."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-009",
@@ -110,7 +110,7 @@
         "Operation IDs and schema names are stable and readable.",
         "There is no parallel manual contract file to keep in sync."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-010",
@@ -121,7 +121,7 @@
         "Regeneration is deterministic when the contract does not change.",
         "The generation command succeeds locally without manual patching."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-011",
@@ -132,7 +132,7 @@
         "The package layout matches the planned `generated/` plus `src/index.ts` and `src/streams/**` split.",
         "The app can depend on the workspace package directly."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-012",
@@ -143,7 +143,7 @@
         "The generator version is pinned exactly as recommended in the plan.",
         "The generated output is committed in a predictable layout."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-013",
@@ -154,7 +154,7 @@
         "There is an obvious future home for SSE helpers and transport utilities.",
         "Generated and handwritten code compile together cleanly."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-014",
@@ -165,7 +165,7 @@
         "The package layout matches the assumptions in `sdk-generation.md`.",
         "Later phases can add typed SSE helpers without reorganizing the package."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-015",
@@ -176,7 +176,7 @@
         "There is a watcher for `openapi/openapi.json` -> SDK regeneration.",
         "The scripts are shaped so later phases can extend them instead of replacing them."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-016",
@@ -187,7 +187,7 @@
         "Generated artifacts do not drift silently.",
         "The command can be reused in future CI or pre-merge automation."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-017",
@@ -198,7 +198,7 @@
         "The tests cover both runtime start and contract artifact generation.",
         "The tests are fast enough to run regularly during future phases."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P1-018",
@@ -209,7 +209,7 @@
         "Any foundation-level uncertainty is visible to later phases.",
         "Phase 1 ends with a stable enough platform for Phase 2 and Phase 4 to begin."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

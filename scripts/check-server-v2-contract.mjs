@@ -1,19 +1,15 @@
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const packageDir = path.resolve(scriptDir, "..");
-const specPath = path.resolve(packageDir, "../../apps/server/openapi/v2.json");
-const outputDir = path.resolve(packageDir, "generated");
+const repoDir = path.resolve(scriptDir, "..");
 
-function run(command, args, cwd) {
+function run(command, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd,
+      cwd: repoDir,
       env: process.env,
       stdio: "inherit",
     });
@@ -31,16 +27,14 @@ function run(command, args, cwd) {
 }
 
 async function main() {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "openwork-server-sdk-"));
-
-  try {
-    await run("pnpm", ["exec", "openapi-ts", "-i", specPath, "-o", tempDir], packageDir);
-    await rm(outputDir, { recursive: true, force: true });
-    await cp(tempDir, outputDir, { recursive: true });
-    process.stdout.write(`[openwork-server-sdk] wrote ${outputDir}\n`);
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+  await run("pnpm", ["run", "sdk:generate"]);
+  await run("git", [
+    "diff",
+    "--exit-code",
+    "--",
+    "apps/server-v2/openapi/openapi.json",
+    "packages/openwork-server-sdk/generated",
+  ]);
 }
 
 main().catch((error) => {

@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetHealthData, GetHealthResponses } from './types.gen';
+import type { GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -19,8 +19,22 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 };
 
 /**
- * Check OpenWork Server V2 health
+ * Get server root information
  *
- * Returns a lightweight health payload for the V2 server scaffold.
+ * Returns the root metadata for the standalone Server V2 process and its route conventions.
  */
-export const getHealth = <ThrowOnError extends boolean = false>(options?: Options<GetHealthData, ThrowOnError>) => (options?.client ?? client).get<GetHealthResponses, unknown, ThrowOnError>({ url: '/health', ...options });
+export const getIndex = <ThrowOnError extends boolean = false>(options?: Options<GetIndexData, ThrowOnError>) => (options?.client ?? client).get<GetIndexResponses, GetIndexErrors, ThrowOnError>({ url: '/', ...options });
+
+/**
+ * Check Server V2 health
+ *
+ * Returns a lightweight health response for the standalone Server V2 process.
+ */
+export const getSystemHealth = <ThrowOnError extends boolean = false>(options?: Options<GetSystemHealthData, ThrowOnError>) => (options?.client ?? client).get<GetSystemHealthResponses, GetSystemHealthErrors, ThrowOnError>({ url: '/system/health', ...options });
+
+/**
+ * Get foundation metadata
+ *
+ * Returns middleware ordering, route namespace conventions, and current foundation-level runtime metadata.
+ */
+export const getSystemMeta = <ThrowOnError extends boolean = false>(options?: Options<GetSystemMetaData, ThrowOnError>) => (options?.client ?? client).get<GetSystemMetaResponses, GetSystemMetaErrors, ThrowOnError>({ url: '/system/meta', ...options });

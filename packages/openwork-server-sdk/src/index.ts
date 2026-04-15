@@ -1,6 +1,18 @@
-export { configureServerSdk, createSdk, resolveSdkTarget } from "./create-sdk.js";
-export { DEFAULT_SERVER_API_PATH } from "./create-sdk.js";
-export type { ResolveServerTarget, ResolvedServerTarget, ServerSdkCapabilities } from "./create-sdk.js";
-export { streamSessionMessages } from "./streams/session-messages.js";
-export { getHealth } from "../generated/sdk.gen.js";
-export type { GetHealthResponse, OpenWorkServerV2HealthResponse } from "../generated/types.gen.js";
+export * from "../generated/index.js";
+export { createClient } from "../generated/client/index.js";
+export type {
+  Client,
+  ClientOptions,
+  Config,
+  CreateClientConfig,
+  RequestOptions,
+  RequestResult,
+} from "../generated/client/index.js";
+export {
+  createOpenWorkServerClient,
+  normalizeServerBaseUrl,
+  type OpenWorkServerClient,
+  type OpenWorkServerClientConfig,
+  type OpenWorkServerClientFactory,
+} from "./client.js";
+export * from "./streams/index.js";
