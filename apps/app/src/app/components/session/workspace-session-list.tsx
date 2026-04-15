@@ -23,6 +23,7 @@ import type {
 import {
   formatRelativeTime,
   getWorkspaceTaskLoadErrorDisplay,
+  isSandboxWorkspace,
   isWindowsPlatform,
 } from "../../utils";
 
@@ -164,10 +165,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
-    ? workspace.sandboxBackend === "docker" ||
-      workspace.sandboxBackend === "microsandbox" ||
-      Boolean(workspace.sandboxRunId?.trim()) ||
-      Boolean(workspace.sandboxContainerName?.trim())
+    ? isSandboxWorkspace(workspace)
       ? "Sandbox"
       : "Remote"
     : "Local";

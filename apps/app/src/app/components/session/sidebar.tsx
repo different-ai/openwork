@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Check, ChevronDown, GripVertical, Loader2, Plus, RefreshCcw, Settings, Square, Trash2 } from "lucide-solid";
+import { isSandboxWorkspace as isSandboxWorkspaceValue } from "../../utils";
 
 import type { TodoItem, WorkspaceConnectionState } from "../../types";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -291,11 +292,7 @@ export default function SessionSidebar(props: SidebarProps) {
                   const pathLabel = () => workspacePathLabel(group.workspace);
                   const detailLabel = () => workspaceDetailLabel(group.workspace);
                   const isSandboxWorkspace = () =>
-                    group.workspace.workspaceType === "remote" &&
-                    (group.workspace.sandboxBackend === "docker" ||
-                      group.workspace.sandboxBackend === "microsandbox" ||
-                      Boolean(group.workspace.sandboxRunId?.trim()) ||
-                      Boolean(group.workspace.sandboxContainerName?.trim()));
+                    isSandboxWorkspaceValue(group.workspace);
                   const sessions = () => group.sessions;
                   const connectionState = () => props.workspaceConnectionStateById[group.workspace.id];
                   const connectionStatus = () => connectionState()?.status ?? "idle";

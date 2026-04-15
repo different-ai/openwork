@@ -73,6 +73,7 @@ import { t, currentLocale } from "../../i18n";
 import { filterProviderList, mapConfigProvidersToList } from "../utils/providers";
 import { buildDefaultWorkspaceBlueprint, normalizeWorkspaceOpenworkConfig } from "../lib/workspace-blueprints";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
+import { resolveSandboxCreateMode, type SandboxBackendType } from "./sandbox-create-mode";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -2260,19 +2261,7 @@ export function createWorkspaceStore(options: {
 
     const runId = makeRunId();
     const startedAt = Date.now();
-    const useMicrosandboxCreateSandbox = options.useMicrosandboxCreateSandbox?.() === true;
-    const selectedSandboxBackend: "docker" | "microsandbox" = useMicrosandboxCreateSandbox
-      ? "microsandbox"
-      : "docker";
-    const selectedSandboxImage = useMicrosandboxCreateSandbox
-      ? "openwork-microsandbox:dev"
-      : null;
-    const runtimeReadyLabel = useMicrosandboxCreateSandbox
-      ? "Microsandbox runtime ready"
-      : "Docker ready";
-    const runtimeCheckingStage = useMicrosandboxCreateSandbox
-      ? "Checking sandbox runtime..."
-      : "Checking Docker...";
+    const sandboxMode = resolveSandboxCreateMode(options.useMicrosandboxCreateSandbox?.() === true);
     setSandboxCreatePhase("preflight");
     setSandboxPreflightBusy(true);
     options.setError(null);
@@ -2284,11 +2273,11 @@ export function createWorkspaceStore(options: {
     setSandboxCreateProgress({
       runId,
       startedAt,
-      stage: runtimeCheckingStage,
+      stage: sandboxMode.runtimeCheckingStage,
       error: null,
       logs: [],
       steps: [
-        { key: "docker", label: runtimeReadyLabel, status: "active", detail: null },
+        { key: "docker", label: sandboxMode.runtimeReadyLabel, status: "active", detail: null },
         { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
         { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
         { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
@@ -2458,8 +2447,8 @@ export function createWorkspaceStore(options: {
 
         const host = await orchestratorStartDetached({
           workspacePath: resolvedFolder,
-          sandboxBackend: selectedSandboxBackend,
-          sandboxImageRef: selectedSandboxImage,
+          sandboxBackend: sandboxMode.backend,
+          sandboxImageRef: sandboxMode.sandboxImageRef,
           runId,
         });
         setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
@@ -2475,7 +2464,7 @@ export function createWorkspaceStore(options: {
           openworkHostToken: host.hostToken,
           directory: resolvedFolder,
           displayName: name,
-          sandboxBackend: host.sandboxBackend ?? selectedSandboxBackend,
+          sandboxBackend: host.sandboxBackend ?? sandboxMode.backend,
           sandboxRunId: host.sandboxRunId ?? runId,
           sandboxContainerName: host.sandboxContainerName ?? null,
           manageBusy: false,
@@ -2528,7 +2517,7 @@ export function createWorkspaceStore(options: {
     closeModal?: boolean;
 
     // Sandbox lifecycle metadata (desktop-managed)
-    sandboxBackend?: "docker" | "microsandbox" | null;
+    sandboxBackend?: SandboxBackendType | null;
     sandboxRunId?: string | null;
     sandboxContainerName?: string | null;
   }) {
