@@ -39,18 +39,6 @@
             ]
           },
           {
-            "group": "Roadmap",
-            "pages": [
-              "roadmap"
-            ]
-          },
-          {
-            "group": "Changelog",
-            "pages": [
-              "changelog"
-            ]
-          },
-          {
             "group": "Improve this doc",
             "pages": [
               "missing-docs"
@@ -73,6 +61,12 @@
       {
         "tab": "Cloud API",
         "openapi": "https://api.openworklabs.com/openapi.json"
+      },
+      {
+        "tab": "Roadmap",
+        "pages": [
+          "roadmap"
+        ]
       },
       {
         "tab": "Changelog",
