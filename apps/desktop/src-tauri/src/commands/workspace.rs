@@ -8,12 +8,13 @@ use crate::types::{
 };
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
-    load_workspace_state, normalize_local_workspace_path, save_workspace_state,
+    load_workspace_state, load_workspace_state_fast, normalize_local_workspace_path,
+    save_workspace_state,
     stable_workspace_id, stable_workspace_id_for_openwork, stable_workspace_id_for_remote,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -41,6 +42,16 @@ fn update_watched_workspace(
         .iter()
         .find(|workspace| workspace.id == state.watched_workspace_id);
     update_workspace_watch(app, watch_state, watched_workspace)
+}
+
+fn schedule_watched_workspace_update(app: &tauri::AppHandle, state: crate::types::WorkspaceState) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let watch_state = app_handle.state::<WorkspaceWatchState>();
+        if let Err(error) = update_watched_workspace(&app_handle, watch_state, &state) {
+            eprintln!("[workspace] deferred watcher update failed: {error}");
+        }
+    });
 }
 
 #[tauri::command]
@@ -72,7 +83,8 @@ pub fn workspace_bootstrap(
     }
 
     save_workspace_state(&app, &state)?;
-    update_watched_workspace(&app, watch_state, &state)?;
+    let _ = watch_state;
+    schedule_watched_workspace_update(&app, state.clone());
 
     Ok(build_workspace_list(state))
 }
@@ -128,7 +140,7 @@ pub fn workspace_set_selected(
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] set_selected request: {workspace_id}");
-    let mut state = load_workspace_state(&app)?;
+    let mut state = load_workspace_state_fast(&app)?;
     let id = workspace_id.trim();
 
     if id.is_empty() {
@@ -155,7 +167,7 @@ pub fn workspace_set_runtime_active(
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] set_runtime_active request: {workspace_id}");
-    let mut state = load_workspace_state(&app)?;
+    let mut state = load_workspace_state_fast(&app)?;
     let id = workspace_id.trim();
 
     if id.is_empty() {
@@ -168,7 +180,8 @@ pub fn workspace_set_runtime_active(
     }
 
     save_workspace_state(&app, &state)?;
-    update_watched_workspace(&app, watch_state, &state)?;
+    let _ = watch_state;
+    schedule_watched_workspace_update(&app, state.clone());
     println!(
         "[workspace] set_runtime_active complete: {}",
         if id.is_empty() { "(cleared)" } else { id }

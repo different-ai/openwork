@@ -181,7 +181,7 @@ jobs:
             xorg-server-xvfb
 
       - name: Checkout target ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref_name }}
           fetch-depth: 0
@@ -231,7 +231,7 @@ jobs:
 
       - name: Download local workflow artifact
         if: env.ARTIFACT_SOURCE == 'local-build-artifact' && env.INPUT_ASSET_URL_X86_64 == ''
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_name || 'openwork-desktop-linux-amd64-deb' }}
           run-id: ${{ inputs.artifact_run_id }}

@@ -161,7 +161,6 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 export type SettingsTab =
   | "general"
   | "den"
-  | "model"
   | "automations"
   | "skills"
   | "extensions"
@@ -280,6 +279,7 @@ export type DenOrgSkillCard = {
   skillText: string;
   hubName: string | null;
   shared: "org" | "public" | null;
+  updatedAt: string | null;
 };
 
 export type PluginInstallStep = {

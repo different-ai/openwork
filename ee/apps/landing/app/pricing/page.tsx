@@ -13,8 +13,6 @@ export const metadata = {
 export default async function PricingPage() {
   const github = await getGithubData();
   const callUrl = process.env.NEXT_PUBLIC_CAL_URL || "/enterprise#book";
-  const windowsCheckoutUrl =
-    process.env.NEXT_PUBLIC_WINDOWS_CHECKOUT_URL || "/download#windows-support";
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -38,7 +36,6 @@ export default async function PricingPage() {
           </section>
 
           <PricingGrid
-            windowsCheckoutUrl={windowsCheckoutUrl}
             callUrl={callUrl}
             showHeader={false}
           />

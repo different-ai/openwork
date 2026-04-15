@@ -6,6 +6,7 @@ const EnvSchema = z.object({
   DATABASE_HOST: z.string().min(1).optional(),
   DATABASE_USERNAME: z.string().min(1).optional(),
   DATABASE_PASSWORD: z.string().optional(),
+  DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
   DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
@@ -67,6 +68,7 @@ const EnvSchema = z.object({
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
   DAYTONA_WORKER_PROXY_BASE_URL: z.string().optional(),
   DAYTONA_SANDBOX_NAME_PREFIX: z.string().optional(),
+  DAYTONA_SHARED_VOLUME_NAME: z.string().optional(),
   DAYTONA_VOLUME_NAME_PREFIX: z.string().optional(),
   DAYTONA_WORKSPACE_MOUNT_PATH: z.string().optional(),
   DAYTONA_DATA_MOUNT_PATH: z.string().optional(),
@@ -145,6 +147,7 @@ const planetscaleCredentials =
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
+  dbEncryptionKey: optionalString(parsed.DEN_DB_ENCRYPTION_KEY),
   dbMode: parsed.DB_MODE ?? (parsed.DATABASE_URL ? "mysql" : "planetscale"),
   planetscale: planetscaleCredentials,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
@@ -238,8 +241,10 @@ export const env = {
       optionalString(parsed.DAYTONA_WORKER_PROXY_BASE_URL) ?? "https://workers.den.openworklabs",
     sandboxNamePrefix:
       optionalString(parsed.DAYTONA_SANDBOX_NAME_PREFIX) ?? "den-daytona-worker",
-    volumeNamePrefix:
-      optionalString(parsed.DAYTONA_VOLUME_NAME_PREFIX) ?? "den-daytona-worker",
+    sharedVolumeName:
+      optionalString(parsed.DAYTONA_SHARED_VOLUME_NAME) ??
+      optionalString(parsed.DAYTONA_VOLUME_NAME_PREFIX) ??
+      "den-daytona-workers",
     workspaceMountPath:
       optionalString(parsed.DAYTONA_WORKSPACE_MOUNT_PATH) ?? "/workspace",
     dataMountPath:

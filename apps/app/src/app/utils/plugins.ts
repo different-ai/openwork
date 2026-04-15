@@ -78,11 +78,6 @@ export function loadPluginsFromConfig(
   }
 }
 
-export function parsePluginsFromConfig(config: OpencodeConfigFile | null) {
-  if (!config?.content) return [] as string[];
-  return parsePluginListFromContent(config.content);
-}
-
 export function parsePluginListFromContent(content: string) {
   try {
     const parsed = parse(content) as Record<string, unknown> | undefined;

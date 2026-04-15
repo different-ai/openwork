@@ -10,7 +10,6 @@ export type QuestionModalProps = {
     open: boolean;
     questions: QuestionInfo[];
     busy: boolean;
-    onClose: () => void;
     onReply: (answers: string[][]) => void;
 };
 

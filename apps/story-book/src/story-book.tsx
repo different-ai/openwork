@@ -15,15 +15,16 @@ import {
 } from "lucide-solid";
 
 import Button from "../../app/src/app/components/button";
-import CreateWorkspaceModal from "../../app/src/app/components/create-workspace-modal";
 import DenSettingsPanel from "../../app/src/app/components/den-settings-panel";
 import ModelPickerModal from "../../app/src/app/components/model-picker-modal";
-import ShareWorkspaceModal from "../../app/src/app/components/share-workspace-modal";
 import StatusBar from "../../app/src/app/components/status-bar";
 import Composer from "../../app/src/app/components/session/composer";
-import InboxPanel from "../../app/src/app/components/session/inbox-panel";
 import MessageList from "../../app/src/app/components/session/message-list";
 import WorkspaceSessionList from "../../app/src/app/components/session/workspace-session-list";
+import {
+  CreateWorkspaceModal,
+  ShareWorkspaceModal,
+} from "../../app/src/app/workspace";
 import { createWorkspaceShellLayout } from "../../app/src/app/lib/workspace-shell-layout";
 import { getModelBehaviorSummary, sanitizeModelBehaviorValue } from "../../app/src/app/lib/model-behavior";
 import {
@@ -858,13 +859,8 @@ export default function StoryBookApp() {
         </div>
 
         <Show when={expanded && selectedWorkspaceId() === remoteWorkspace.id}>
-          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
-            <InboxPanel
-              id="sidebar-inbox"
-              client={null}
-              workspaceId={null}
-              onToast={(message) => setComposerToast(message)}
-            />
+          <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)] text-sm text-dls-secondary">
+            Remote inbox preview has been removed from the app shell.
           </div>
         </Show>
       </div>
@@ -1047,6 +1043,8 @@ export default function StoryBookApp() {
           <Show when={!showingSettings()}>
             <Composer
               prompt={composerPrompt()}
+              draftMode="prompt"
+              draftScopeKey="story-book-composer"
               developerMode
               busy={false}
               isStreaming={false}
@@ -1071,10 +1069,8 @@ export default function StoryBookApp() {
                 setAgentPickerOpen(false);
               }}
               setAgentPickerRef={() => undefined}
-              showNotionBanner={false}
-              onNotionBannerClick={() => undefined}
-              toast={composerToast()}
-              onToast={(message) => setComposerToast(message)}
+              notice={composerToast() ? { title: composerToast() } : null}
+              onNotice={(notice) => setComposerToast(notice.title)}
               listAgents={async () => []}
               recentFiles={workingFiles}
               searchFiles={async (query) => {
@@ -1086,7 +1082,9 @@ export default function StoryBookApp() {
               isSandboxWorkspace={selectedWorkspaceId() === remoteWorkspace.id}
               attachmentsEnabled
               attachmentsDisabledReason={null}
+              skills={[]}
               listCommands={async () => commandOptions}
+              onOpenSettings={() => undefined}
             />
           </Show>
 
@@ -1105,11 +1103,7 @@ export default function StoryBookApp() {
               if (!rightSidebarExpanded()) toggleRightSidebar();
               setRightRailNav("advanced");
             }}
-            onOpenMessaging={() => undefined}
-            onOpenProviders={() => undefined}
-            onOpenMcp={() => undefined}
             providerConnectedIds={["anthropic", "openai"]}
-            mcpStatuses={mcpStatuses}
             statusLabel="Session Ready"
           />
         </main>

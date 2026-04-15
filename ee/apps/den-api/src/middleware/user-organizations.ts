@@ -1,5 +1,6 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
+import { getApiKeyScopedOrganizationId } from "../api-keys.js"
 import { resolveUserOrganizations, type UserOrgSummary } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
 
@@ -18,13 +19,24 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   }
 
   const session = c.get("session")
+  const apiKey = c.get("apiKey")
+  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const resolved = await resolveUserOrganizations({
-    activeOrganizationId: session?.activeOrganizationId ?? null,
+    activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
     userId: normalizeDenTypeId("user", user.id),
   })
 
-  c.set("userOrganizations", resolved.orgs)
-  c.set("activeOrganizationId", resolved.activeOrgId)
-  c.set("activeOrganizationSlug", resolved.activeOrgSlug)
+  const scopedOrgs = scopedOrganizationId
+    ? resolved.orgs.filter((org) => org.id === scopedOrganizationId)
+    : resolved.orgs
+
+  c.set("userOrganizations", scopedOrgs)
+  c.set("activeOrganizationId", scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId)
+  c.set(
+    "activeOrganizationSlug",
+    scopedOrganizationId
+      ? scopedOrgs[0]?.slug ?? null
+      : resolved.activeOrgSlug,
+  )
   await next()
 }

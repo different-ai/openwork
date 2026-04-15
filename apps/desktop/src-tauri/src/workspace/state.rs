@@ -36,6 +36,28 @@ pub fn normalize_local_workspace_path(path: &str) -> String {
     normalized.to_string_lossy().to_string()
 }
 
+pub fn normalize_local_workspace_path_fast(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let expanded = if trimmed == "~" {
+        home_dir().unwrap_or_else(|| PathBuf::from(trimmed))
+    } else if trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
+        if let Some(home) = home_dir() {
+            let suffix = trimmed[2..].trim_start_matches(['/', '\\']);
+            home.join(suffix)
+        } else {
+            PathBuf::from(trimmed)
+        }
+    } else {
+        PathBuf::from(trimmed)
+    };
+
+    expanded.to_string_lossy().to_string()
+}
+
 pub fn openwork_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
     let data_dir = app
         .path()
@@ -52,7 +74,16 @@ pub fn repair_workspace_state(state: &mut WorkspaceState) {
     for workspace in state.workspaces.iter_mut() {
         let next_id = match workspace.workspace_type {
             WorkspaceType::Local => {
-                let normalized = normalize_local_workspace_path(&workspace.path);
+                // Canonicalize only currently selected/watched entries. Full canonicalization across
+                // every workspace can block startup/switch paths when mounts are slow.
+                let canonicalize_for_active_workspace =
+                    workspace.id == old_selected_workspace_id
+                        || workspace.id == old_watched_workspace_id;
+                let normalized = if canonicalize_for_active_workspace {
+                    normalize_local_workspace_path(&workspace.path)
+                } else {
+                    normalize_local_workspace_path_fast(&workspace.path)
+                };
                 if !normalized.is_empty() {
                     workspace.path = normalized;
                 }
@@ -124,6 +155,17 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
     repair_workspace_state(&mut state);
 
     Ok(state)
+}
+
+pub fn load_workspace_state_fast(app: &tauri::AppHandle) -> Result<WorkspaceState, String> {
+    let (_, path) = openwork_state_paths(app)?;
+    if !path.exists() {
+        return Ok(WorkspaceState::default());
+    }
+
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    serde_json::from_str(&raw).map_err(|e| format!("Failed to parse {}: {e}", path.display()))
 }
 
 pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> Result<(), String> {

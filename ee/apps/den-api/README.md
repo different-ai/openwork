@@ -34,6 +34,13 @@ pnpm --filter @openwork-ee/den-api dev:local
 
 Each major folder also has its own `README.md` so future agents can inspect one area in isolation.
 
+## TypeID validation
+
+- Shared Den TypeID validation lives in `ee/packages/utils/src/typeid.ts`.
+- Use `typeId.schema("...")` or the compatibility helpers like `normalizeDenTypeId("...", value)` when an endpoint accepts or returns a Den TypeID.
+- `ee/apps/den-api/src/openapi.ts` exposes `denTypeIdSchema(...)` so path params, request bodies, and response fields all share the same validation rules and Swagger examples.
+- Swagger now documents Den IDs with their required prefix and fixed 26-character TypeID suffix, so invalid IDs fail request validation before route logic runs.
+
 ## Migration approach
 
 1. Keep `den-api` (formerly `den-controller`) as the source of truth for Den control-plane behavior.

@@ -42,7 +42,6 @@ import {
   engineStart,
   engineStop,
   sandboxDoctor,
-  sandboxStop,
   orchestratorInstanceDispose,
   orchestratorStartDetached,
   orchestratorWorkspaceActivate,
@@ -67,6 +66,7 @@ import {
   type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import type { BootPhase, StartupBranch } from "../lib/startup-boot";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale } from "../../i18n";
@@ -142,7 +142,7 @@ export function createWorkspaceStore(options: {
   creatingSession: () => boolean;
   readLastSessionByWorkspace?: () => Record<string, string>;
   selectedSessionId: () => string | null;
-  selectSession: (id: string) => Promise<void>;
+  selectSession: (id: string, options?: { skipHealthCheck?: boolean; source?: string }) => Promise<void>;
   setBlueprintSeedMessagesBySessionId: (
     updater: (current: Record<string, BlueprintSeedMessage[]>) => Record<string, BlueprintSeedMessage[]>,
   ) => void;
@@ -166,6 +166,9 @@ export function createWorkspaceStore(options: {
   openworkEnvWorkspaceId?: string | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
+  onBootPhaseChange?: (phase: BootPhase, detail?: Record<string, unknown>) => void;
+  onStartupBranch?: (branch: StartupBranch, detail?: Record<string, unknown>) => void;
+  onStartupTrace?: (event: string, detail?: Record<string, unknown>) => void;
   engineRuntime?: () => EngineRuntime;
   developerMode: () => boolean;
   pendingInitialSessionSelection?: () => { workspaceId: string; title: string | null; readyAt: number } | null;
@@ -472,8 +475,18 @@ export function createWorkspaceStore(options: {
     if (!workspaceId) return null;
     const workspace = workspaces().find((item) => item.id === workspaceId) ?? null;
     if (!workspace || workspace.workspaceType !== "remote") return null;
+    const openworkHostUrl =
+      normalizeRemoteType(workspace.remoteType) === "openwork"
+        ? buildOpenworkWorkspaceBaseUrl(
+            workspace.openworkHostUrl?.trim() ?? "",
+            workspace.openworkWorkspaceId,
+          ) ||
+          workspace.openworkHostUrl?.trim() ||
+          workspace.baseUrl?.trim() ||
+          ""
+        : workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
     return {
-      openworkHostUrl: workspace.openworkHostUrl ?? workspace.baseUrl ?? "",
+      openworkHostUrl,
       openworkToken: workspace.openworkToken ?? options.openworkServer.openworkServerSettings().token ?? "",
       directory: workspace.directory ?? "",
       displayName: workspace.displayName ?? "",
@@ -750,7 +763,10 @@ export function createWorkspaceStore(options: {
         const shouldDeferInitialOpen = Boolean(pending && pending.workspaceId === workspaceId);
         if (result.openSessionId && !shouldDeferInitialOpen) {
           options.setView("session", result.openSessionId);
-          await options.selectSession(result.openSessionId);
+          await options.selectSession(result.openSessionId, {
+            skipHealthCheck: true,
+            source: "blueprint-open-session",
+          });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : safeStringify(error);
@@ -2056,6 +2072,14 @@ export function createWorkspaceStore(options: {
         await options.loadSessions(targetRoot);
         connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
         wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
+        options.onBootPhaseChange?.("sessionIndexReady", {
+          source: context?.reason ?? "connectToServer",
+          targetRoot: targetRoot || null,
+        });
+        options.onStartupTrace?.("session-index-ready", {
+          source: context?.reason ?? "connectToServer",
+          targetRoot: targetRoot || null,
+        });
         const pendingPermissionsAt = Date.now();
         await options.refreshPendingPermissions();
         connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
@@ -2224,7 +2248,10 @@ export function createWorkspaceStore(options: {
           options.setPendingInitialSessionSelection?.(null);
           options.setSelectedSessionId(openSessionId);
           options.setView("session", openSessionId);
-          await options.selectSession(openSessionId);
+          await options.selectSession(openSessionId, {
+            skipHealthCheck: true,
+            source: "create-workspace-open-session",
+          });
         }
       }
 
@@ -3083,63 +3110,6 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function stopSandbox(workspaceId: string) {
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    const id = workspaceId.trim();
-    if (!id) return;
-
-    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
-    const containerName = workspace?.sandboxContainerName?.trim() ?? "";
-    if (!containerName) {
-      options.setError("Sandbox container name missing.");
-      return;
-    }
-
-    options.setBusy(true);
-    options.setBusyLabel("Stopping sandbox...");
-    options.setBusyStartedAt(Date.now());
-    options.setError(null);
-
-    try {
-      const result = await sandboxStop(containerName);
-      if (!result.ok) {
-        const details = [result.stderr?.trim(), result.stdout?.trim()]
-          .filter(Boolean)
-          .join("\n")
-          .trim();
-        throw new Error(details || `Failed to stop sandbox (status ${result.status})`);
-      }
-
-      // If the user stopped the runtime-connected workspace, proactively disconnect the client.
-      if (connectedWorkspaceId() === id) {
-        options.setClient(null);
-        options.setConnectedVersion(null);
-        setConnectedWorkspaceId(null);
-        if (isTauriRuntime()) {
-          try {
-            await workspaceSetRuntimeActive(null);
-          } catch {
-            // ignore
-          }
-        }
-        options.setSseConnected(false);
-      }
-
-      updateWorkspaceConnectionState(id, { status: "error", message: "Sandbox stopped." });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
   async function pickWorkspaceFolder() {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -3173,12 +3143,6 @@ export function createWorkspaceStore(options: {
   async function resolveFirstRunWelcomeFolder() {
     const base = (await homeDir()).replace(/[\\/]+$/, "");
     return joinNativePath(joinNativePath(base, DEFAULT_WORKSPACE_HOME_FOLDER_NAME), FIRST_RUN_WELCOME_WORKSPACE_NAME);
-  }
-
-  async function createWorkspaceFromPickedFolder() {
-    const folder = await pickWorkspaceFolder();
-    if (!folder) return false;
-    return createWorkspaceFlow("minimal", folder);
   }
 
   async function exportWorkspaceConfig(workspaceId?: string) {
@@ -3770,31 +3734,6 @@ export function createWorkspaceStore(options: {
     setWorkspaceConfig(cfg);
   }
 
-  async function persistReloadSettings(next: { auto?: boolean; resume?: boolean }) {
-    if (!isTauriRuntime()) return;
-    if (selectedWorkspaceInfo()?.workspaceType === "remote") return;
-    const root = selectedWorkspacePath().trim();
-    if (!root) return;
-
-    const existing = workspaceConfig();
-    const cfg: WorkspaceOpenworkConfig = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: Array.isArray(existing?.authorizedRoots) ? existing!.authorizedRoots : authorizedDirs(),
-      blueprint: existing?.blueprint ?? null,
-      reload: {
-        auto: Boolean(next.auto),
-        resume: Boolean(next.resume),
-      },
-    };
-
-    const persistedViaServer = await persistWorkspaceConfigToOpenworkServer(cfg).catch(() => false);
-    if (!persistedViaServer) {
-      await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
-    }
-    setWorkspaceConfig(cfg);
-  }
-
   async function addAuthorizedDir() {
     if (selectedWorkspaceInfo()?.workspaceType === "remote") return;
     const next = newAuthorizedDir().trim();
@@ -3864,31 +3803,49 @@ export function createWorkspaceStore(options: {
     if (options.selectedSessionId() === lastSessionId) return;
     options.setSelectedSessionId(lastSessionId);
     options.setView("session", lastSessionId);
-    void options.selectSession(lastSessionId);
+    void options.selectSession(lastSessionId, { skipHealthCheck: true, source: "restore-last-session" });
   }
 
   async function bootstrapOnboarding() {
+    const enterPhase = (phase: BootPhase, detail?: Record<string, unknown>) => {
+      options.onBootPhaseChange?.(phase, detail);
+      options.onStartupTrace?.(`phase:${phase}`, detail);
+    };
+    const markBranch = (branch: StartupBranch, detail?: Record<string, unknown>) => {
+      options.onStartupBranch?.(branch, detail);
+      options.onStartupTrace?.(`branch:${branch}`, detail);
+    };
+
     const startupPref = readStartupPreference();
+    let info: EngineInfo | null = null;
+
     if (isTauriRuntime()) {
+      enterPhase("workspaceBootstrap", { source: "workspace_bootstrap" });
       try {
         const ws = await workspaceBootstrap();
         setWorkspaces(ws.workspaces);
         syncSelectedWorkspaceId(pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws));
-      } catch {
-        // ignore
+      } catch (error) {
+        options.onStartupTrace?.("workspace_bootstrap:error", {
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
       }
     }
 
-    await refreshEngine();
-    await refreshEngineDoctor();
+    enterPhase("engineProbe", { source: "ts-probe" });
+    void refreshEngine().catch(() => undefined);
+    info = engine();
+    void refreshEngineDoctor().catch(() => undefined);
 
     if (isTauriRuntime() && workspaces().length === 0) {
+      markBranch("firstRunNoWorkspace", { startupPref });
       options.setStartupPreference("local");
       const welcomeFolder = await resolveFirstRunWelcomeFolder();
       const ok = await createWorkspaceFlow("starter", welcomeFolder);
       if (!ok) {
         options.setOnboardingStep("local");
       }
+      enterPhase("ready", { reason: "first-run-no-workspace" });
       return;
     }
 
@@ -3921,28 +3878,35 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    const info = engine();
-    if (info?.baseUrl) {
-      options.setBaseUrl(info.baseUrl);
+    const localEngine = info ?? engine();
+    if (localEngine?.baseUrl) {
+      options.setBaseUrl(localEngine.baseUrl);
     }
 
     const activeWorkspace = selectedWorkspaceInfo();
-    if (isTauriRuntime() && !info?.baseUrl) {
+    if (isTauriRuntime() && !localEngine?.baseUrl) {
       const firstLocalWorkspace = workspaces().find((workspace) => workspace.workspaceType === "local");
       if (firstLocalWorkspace?.path?.trim()) {
+        enterPhase("engineStartOrConnect", { source: "bootstrap-first-local-host-start" });
         await startHost({ workspacePath: firstLocalWorkspace.path.trim(), navigate: false }).catch(() => false);
+        info = engine();
       }
     }
 
     if (activeWorkspace?.workspaceType === "remote") {
+      markBranch("remoteWorkspace", { workspaceId: activeWorkspace.id });
       options.setStartupPreference("server");
       options.setOnboardingStep("connecting");
+      enterPhase("engineStartOrConnect", { source: "remote-activate" });
       const ok = await activateWorkspace(activeWorkspace.id);
       if (!ok) {
         options.setOnboardingStep("server");
       } else {
+        enterPhase("sessionIndexReady", { source: "remote-activate" });
         restoreLastSession();
+        enterPhase("firstSessionReady", { source: "restore-last-session" });
       }
+      enterPhase("ready", { reason: "remote-workspace-branch" });
       return;
     }
 
@@ -3951,18 +3915,24 @@ export function createWorkspaceStore(options: {
     }
 
     if (startupPref === "server") {
+      markBranch("serverPreference", { startupPref });
       options.setOnboardingStep("server");
+      enterPhase("ready", { reason: "server-preference" });
       return;
     }
 
     if (selectedWorkspacePath().trim()) {
       options.setStartupPreference("local");
 
-      if (info?.running && info.baseUrl) {
-        const bootstrapRoot = selectedWorkspacePath().trim() || info.projectDir?.trim() || "";
+      if (localEngine?.running && localEngine.baseUrl) {
+        markBranch("localAttachExisting", {
+          baseUrl: localEngine.baseUrl,
+        });
+        const bootstrapRoot = selectedWorkspacePath().trim() || localEngine.projectDir?.trim() || "";
         options.setOnboardingStep("connecting");
+        enterPhase("engineStartOrConnect", { source: "bootstrap-local-attach" });
         const ok = await connectToServer(
-          info.baseUrl,
+          localEngine.baseUrl,
           bootstrapRoot || undefined,
           { workspaceType: "local", targetRoot: bootstrapRoot, reason: "bootstrap-local" },
           engineAuth() ?? undefined,
@@ -3970,28 +3940,42 @@ export function createWorkspaceStore(options: {
         if (!ok) {
           options.setStartupPreference(null);
           options.setOnboardingStep("welcome");
+          enterPhase("error", { reason: "bootstrap-local-connect-failed" });
           return;
         }
+        enterPhase("sessionIndexReady", { source: "bootstrap-local-attach" });
         restoreLastSession();
+        enterPhase("firstSessionReady", { source: "restore-last-session" });
+        enterPhase("ready", { reason: "bootstrap-local-attach" });
         return;
       }
 
+      markBranch("localHostStart", { workspacePath: selectedWorkspacePath().trim() });
       options.setOnboardingStep("connecting");
+      enterPhase("engineStartOrConnect", { source: "bootstrap-local-host-start" });
       const ok = await startHost({ workspacePath: selectedWorkspacePath().trim() });
       if (!ok) {
         options.setOnboardingStep("local");
+        enterPhase("error", { reason: "bootstrap-local-host-start-failed" });
         return;
       }
+      enterPhase("sessionIndexReady", { source: "bootstrap-local-host-start" });
       restoreLastSession();
+      enterPhase("firstSessionReady", { source: "restore-last-session" });
+      enterPhase("ready", { reason: "bootstrap-local-host-start" });
       return;
     }
 
     if (startupPref === "local") {
+      markBranch("localPreference", { startupPref });
       options.setOnboardingStep("local");
+      enterPhase("ready", { reason: "local-preference" });
       return;
     }
 
+    markBranch("welcome", { startupPref: startupPref ?? null });
     options.setOnboardingStep("welcome");
+    enterPhase("ready", { reason: "default-welcome" });
   }
 
   function onSelectStartup(nextPref: StartupPreference) {
@@ -4125,7 +4109,6 @@ export function createWorkspaceStore(options: {
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
-    createWorkspaceFromPickedFolder,
     createSandboxFlow,
     createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow,
@@ -4138,7 +4121,6 @@ export function createWorkspaceStore(options: {
     saveWorkspaceConnectionSettings,
     forgetWorkspace,
     recoverWorkspace,
-    stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig,
     importWorkspaceConfig,
@@ -4158,7 +4140,6 @@ export function createWorkspaceStore(options: {
     addAuthorizedDirFromPicker,
     removeAuthorizedDir,
     removeAuthorizedDirAtIndex,
-    persistReloadSettings,
     setEngineInstallLogs,
     refreshSandboxDoctor,
     sandboxCreateProgress,

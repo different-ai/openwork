@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 use std::net::TcpListener;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::async_runtime::Receiver;
 use tauri::AppHandle;
@@ -10,6 +11,8 @@ use tauri_plugin_shell::ShellExt;
 
 pub const OPENWORK_PORT_RANGE_START: u16 = 48_000;
 pub const OPENWORK_PORT_RANGE_END: u16 = 51_000;
+const PREFERRED_PORT_RETRY_ATTEMPTS: usize = 20;
+const PREFERRED_PORT_RETRY_DELAY_MS: u64 = 50;
 
 fn bind_available_port(host: &str, port: u16) -> bool {
     TcpListener::bind((host, port)).is_ok()
@@ -27,13 +30,25 @@ fn random_range_offset() -> usize {
     usize::try_from(nanos).unwrap_or(0) % range_port_count()
 }
 
+fn wait_for_preferred_port(host: &str, port: u16) -> bool {
+    for attempt in 0..=PREFERRED_PORT_RETRY_ATTEMPTS {
+        if bind_available_port(host, port) {
+            return true;
+        }
+        if attempt < PREFERRED_PORT_RETRY_ATTEMPTS {
+            thread::sleep(Duration::from_millis(PREFERRED_PORT_RETRY_DELAY_MS));
+        }
+    }
+    false
+}
+
 pub fn resolve_openwork_port(
     host: &str,
     preferred_port: Option<u16>,
     reserved_ports: &HashSet<u16>,
 ) -> Result<u16, String> {
     if let Some(port) = preferred_port.filter(|port| *port > 0) {
-        if !reserved_ports.contains(&port) && bind_available_port(host, port) {
+        if !reserved_ports.contains(&port) && wait_for_preferred_port(host, port) {
             return Ok(port);
         }
     }
@@ -70,6 +85,7 @@ mod tests {
     use super::{resolve_openwork_port, OPENWORK_PORT_RANGE_END, OPENWORK_PORT_RANGE_START};
     use std::collections::HashSet;
     use std::net::TcpListener;
+    use std::time::Duration;
 
     #[test]
     fn uses_preferred_port_when_available() {
@@ -109,6 +125,23 @@ mod tests {
         assert_ne!(resolved, OPENWORK_PORT_RANGE_START);
         assert!(resolved >= OPENWORK_PORT_RANGE_START);
         assert!(resolved <= OPENWORK_PORT_RANGE_END);
+    }
+
+    #[test]
+    fn waits_briefly_to_reuse_preferred_port_during_restart() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind preferred port");
+        let preferred_port = listener.local_addr().expect("listener addr").port();
+
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(listener);
+        });
+
+        let resolved = resolve_openwork_port("127.0.0.1", Some(preferred_port), &HashSet::new())
+            .expect("resolve restarted preferred port");
+
+        release.join().expect("join release thread");
+        assert_eq!(resolved, preferred_port);
     }
 }
 

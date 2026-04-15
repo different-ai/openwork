@@ -3,9 +3,11 @@ import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable, DesktopHandoffGrantTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { jsonValidator, requireUserMiddleware } from "../../middleware/index.js"
 import { db } from "../../db.js"
+import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const createGrantSchema = z.object({
@@ -17,6 +19,26 @@ const exchangeGrantSchema = z.object({
   grant: z.string().trim().min(12).max(128),
 })
 
+const desktopHandoffGrantResponseSchema = z.object({
+  grant: z.string(),
+  expiresAt: z.string().datetime(),
+  openworkUrl: z.string().url(),
+}).meta({ ref: "DesktopHandoffGrantResponse" })
+
+const desktopHandoffExchangeResponseSchema = z.object({
+  token: z.string(),
+  user: z.object({
+    id: denTypeIdSchema("user"),
+    email: z.string().email(),
+    name: z.string().nullable(),
+  }),
+}).meta({ ref: "DesktopHandoffExchangeResponse" })
+
+const grantNotFoundSchema = z.object({
+  error: z.literal("grant_not_found"),
+  message: z.string(),
+}).meta({ ref: "DesktopHandoffGrantNotFoundError" })
+
 function readSingleHeader(value: string | null) {
   const first = value?.split(",")[0]?.trim() ?? ""
   return first || null
@@ -24,6 +46,35 @@ function readSingleHeader(value: string | null) {
 
 function isWebAppHost(hostname: string) {
   const normalized = hostname.trim().toLowerCase()
+
+  if (
+    normalized === "localhost"
+    || normalized === "0.0.0.0"
+    || normalized === "::1"
+    || normalized === "[::1]"
+    || /^127(?:\.\d{1,3}){3}$/.test(normalized)
+  ) {
+    return true
+  }
+
+  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4Match) {
+    const [first, second, third, fourth] = ipv4Match.slice(1).map(Number)
+    const octets = [first, second, third, fourth]
+    if (octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+      if (
+        first === 10
+        || first === 127
+        || (first === 172 && second >= 16 && second <= 31)
+        || (first === 192 && second === 168)
+        || (first === 169 && second === 254)
+        || (first === 100 && second >= 64 && second <= 127)
+      ) {
+        return true
+      }
+    }
+  }
+
   return normalized === "app.openworklabs.com"
     || normalized === "app.openwork.software"
     || normalized.startsWith("app.")
@@ -90,7 +141,22 @@ function buildOpenworkDeepLink(input: {
 }
 
 export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
-  app.post("/v1/auth/desktop-handoff", requireUserMiddleware, jsonValidator(createGrantSchema), async (c) => {
+  app.post(
+    "/v1/auth/desktop-handoff",
+    describeRoute({
+      hide: true,
+      tags: ["Authentication"],
+      summary: "Create desktop handoff grant",
+      description: "Creates a short-lived desktop handoff grant and deep link so a signed-in web user can continue the same account in the OpenWork desktop app.",
+      responses: {
+        200: jsonResponse("Desktop handoff grant created successfully.", desktopHandoffGrantResponseSchema),
+        400: jsonResponse("The handoff request body was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create a desktop handoff grant.", unauthorizedSchema),
+      },
+    }),
+    requireUserMiddleware,
+    jsonValidator(createGrantSchema),
+    async (c) => {
     const user = c.get("user")
     const session = c.get("session")
     if (!user?.id || !session?.token) {
@@ -120,56 +186,96 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         denBaseUrl,
       }),
     })
-  })
+    },
+  )
 
-  app.post("/v1/auth/desktop-handoff/exchange", jsonValidator(exchangeGrantSchema), async (c) => {
+  app.post(
+    "/v1/auth/desktop-handoff/exchange",
+    describeRoute({
+      hide: true,
+      tags: ["Authentication"],
+      summary: "Exchange desktop handoff grant",
+      description: "Exchanges a one-time desktop handoff grant for the user's session token and basic profile so the desktop app can sign the user in.",
+      responses: {
+        200: jsonResponse("Desktop handoff grant exchanged successfully.", desktopHandoffExchangeResponseSchema),
+        400: jsonResponse("The handoff exchange request body was invalid.", invalidRequestSchema),
+        404: jsonResponse("The handoff grant was missing, expired, or already used.", grantNotFoundSchema),
+      },
+    }),
+    jsonValidator(exchangeGrantSchema),
+    async (c) => {
     const input = c.req.valid("json")
 
     const now = new Date()
-    const rows = await db
-      .select({
-        grant: DesktopHandoffGrantTable,
-        session: AuthSessionTable,
-        user: AuthUserTable,
-      })
-      .from(DesktopHandoffGrantTable)
-      .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
-      .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
-      .where(
-        and(
-          eq(DesktopHandoffGrantTable.id, input.grant),
-          isNull(DesktopHandoffGrantTable.consumed_at),
-          gt(DesktopHandoffGrantTable.expires_at, now),
-          gt(AuthSessionTable.expiresAt, now),
-        ),
-      )
-      .limit(1)
+    const exchange = await db.transaction(async (tx) => {
+      const rows = await tx
+        .select({
+          session: AuthSessionTable,
+          user: AuthUserTable,
+        })
+        .from(DesktopHandoffGrantTable)
+        .innerJoin(AuthSessionTable, eq(DesktopHandoffGrantTable.session_token, AuthSessionTable.token))
+        .innerJoin(AuthUserTable, eq(DesktopHandoffGrantTable.user_id, AuthUserTable.id))
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            isNull(DesktopHandoffGrantTable.consumed_at),
+            gt(DesktopHandoffGrantTable.expires_at, now),
+            gt(AuthSessionTable.expiresAt, now),
+          ),
+        )
+        .limit(1)
 
-    const row = rows[0]
-    if (!row) {
+      const row = rows[0]
+      if (!row) {
+        return null
+      }
+
+      const consumedAt = new Date()
+      await tx
+        .update(DesktopHandoffGrantTable)
+        .set({ consumed_at: consumedAt })
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            isNull(DesktopHandoffGrantTable.consumed_at),
+            gt(DesktopHandoffGrantTable.expires_at, now),
+          ),
+        )
+
+      const claimed = await tx
+        .select({ id: DesktopHandoffGrantTable.id })
+        .from(DesktopHandoffGrantTable)
+        .where(
+          and(
+            eq(DesktopHandoffGrantTable.id, input.grant),
+            eq(DesktopHandoffGrantTable.consumed_at, consumedAt),
+          ),
+        )
+        .limit(1)
+
+      if (!claimed[0]) {
+        return null
+      }
+
+      return {
+        token: row.session.token,
+        user: {
+          id: row.user.id,
+          email: row.user.email,
+          name: row.user.name,
+        },
+      }
+    })
+
+    if (!exchange) {
       return c.json({
         error: "grant_not_found",
         message: "This desktop sign-in link is missing, expired, or already used.",
       }, 404)
     }
 
-    await db
-      .update(DesktopHandoffGrantTable)
-      .set({ consumed_at: now })
-      .where(
-        and(
-          eq(DesktopHandoffGrantTable.id, input.grant),
-          isNull(DesktopHandoffGrantTable.consumed_at),
-        ),
-      )
-
-    return c.json({
-      token: row.session.token,
-      user: {
-        id: row.user.id,
-        email: row.user.email,
-        name: row.user.name,
-      },
-    })
-  })
+    return c.json(exchange)
+    },
+  )
 }

@@ -73,7 +73,7 @@ export function createSessionActionsStore(options: {
   selectedWorkspaceRoot: () => string;
   runtimeWorkspaceRoot: () => string;
   ensureWorkspaceRuntime: (workspaceId: string) => Promise<boolean>;
-  selectSession: (id: string) => Promise<void>;
+  selectSession: (id: string, options?: { skipHealthCheck?: boolean; source?: string }) => Promise<void>;
   refreshSidebarWorkspaceSessions: (workspaceId: string) => Promise<void>;
   abortRefreshes: () => void;
   modelConfig: ReturnType<typeof createModelConfigStore>;
@@ -362,7 +362,7 @@ export function createSessionActionsStore(options: {
 
       options.setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
-      await options.selectSession(session.id);
+      await options.selectSession(session.id, { skipHealthCheck: true, source: "create-ready-session" });
       mark("session:select:ok", { sessionID: session.id });
 
       options.modelConfig.applyPendingSessionChoice(session.id);

@@ -8,8 +8,10 @@ import {
   SkillTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
+import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import {
@@ -20,16 +22,34 @@ import {
   resolveOrganizationContextMiddleware,
 } from "../../middleware/index.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema, memberHasRole, orgIdParamSchema } from "./shared.js"
 
+const skillTextSchema = z.string().superRefine((value, ctx) => {
+  if (!value.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Skill content cannot be empty.",
+    })
+    return
+  }
+
+  if (!hasSkillFrontmatterName(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Skill content must start with frontmatter that includes a name.",
+    })
+  }
+})
+
 const createSkillSchema = z.object({
-  skillText: z.string().trim().min(1),
+  skillText: skillTextSchema,
   shared: z.enum(["org", "public"]).nullable().optional(),
 })
 
 const updateSkillSchema = z.object({
-  skillText: z.string().trim().min(1).optional(),
+  skillText: skillTextSchema.optional(),
   shared: z.enum(["org", "public"]).nullable().optional(),
 }).superRefine((value, ctx) => {
   if (value.skillText === undefined && value.shared === undefined) {
@@ -60,12 +80,12 @@ const updateSkillHubSchema = z.object({
 })
 
 const addSkillToHubSchema = z.object({
-  skillId: z.string().trim().min(1),
+  skillId: denTypeIdSchema("skill"),
 })
 
 const addSkillHubAccessSchema = z.object({
-  orgMembershipId: z.string().trim().min(1).optional(),
-  teamId: z.string().trim().min(1).optional(),
+  orgMembershipId: denTypeIdSchema("member").optional(),
+  teamId: denTypeIdSchema("team").optional(),
 }).superRefine((value, ctx) => {
   const count = Number(Boolean(value.orgMembershipId)) + Number(Boolean(value.teamId))
   if (count !== 1) {
@@ -85,10 +105,35 @@ type MemberId = typeof MemberTable.$inferSelect.id
 type SkillRow = typeof SkillTable.$inferSelect
 type SkillHubRow = typeof SkillHubTable.$inferSelect
 
-const orgSkillHubParamsSchema = orgIdParamSchema.extend(idParamSchema("skillHubId").shape)
-const orgSkillParamsSchema = orgIdParamSchema.extend(idParamSchema("skillId").shape)
-const orgSkillHubSkillParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("skillId").shape)
-const orgSkillHubAccessParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("accessId").shape)
+const orgSkillHubParamsSchema = orgIdParamSchema.extend(idParamSchema("skillHubId", "skillHub").shape)
+const orgSkillParamsSchema = orgIdParamSchema.extend(idParamSchema("skillId", "skill").shape)
+const orgSkillHubSkillParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("skillId", "skill").shape)
+const orgSkillHubAccessParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("accessId", "skillHubMember").shape)
+
+const skillResponseSchema = z.object({
+  skill: z.object({}).passthrough(),
+}).meta({ ref: "SkillResponse" })
+
+const skillListResponseSchema = z.object({
+  skills: z.array(z.object({}).passthrough()),
+}).meta({ ref: "SkillListResponse" })
+
+const skillHubResponseSchema = z.object({
+  skillHub: z.object({}).passthrough(),
+}).meta({ ref: "SkillHubResponse" })
+
+const skillHubListResponseSchema = z.object({
+  skillHubs: z.array(z.object({}).passthrough()),
+}).meta({ ref: "SkillHubListResponse" })
+
+const skillHubAccessResponseSchema = z.object({
+  access: z.object({}).passthrough(),
+}).meta({ ref: "SkillHubAccessResponse" })
+
+const conflictSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+}).meta({ ref: "ConflictError" })
 
 function parseSkillId(value: string) {
   return normalizeDenTypeId("skill", value)
@@ -111,6 +156,17 @@ function parseTeamId(value: string) {
 }
 
 function parseSkillMetadata(skillText: string) {
+  const parsed = parseSkillMarkdown(skillText)
+  if (parsed.hasFrontmatter) {
+    const title = parsed.name.trim() || "Untitled skill"
+    const description = parsed.description.trim() || null
+
+    return {
+      title: title.slice(0, 255),
+      description: description ? description.slice(0, 65535) : null,
+    }
+  }
+
   const lines = skillText
     .split(/\r?\n/g)
     .map((line) => line.trim())
@@ -208,6 +264,16 @@ function canViewSkill(input: {
 export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
   app.post(
     "/v1/orgs/:orgId/skills",
+    describeRoute({
+      tags: ["Skills"],
+      summary: "Create skill",
+      description: "Creates a new skill in the organization from markdown content and optional sharing visibility.",
+      responses: {
+        201: jsonResponse("Skill created successfully.", skillResponseSchema),
+        400: jsonResponse("The skill creation request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create skills.", unauthorizedSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -249,6 +315,16 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.get(
     "/v1/orgs/:orgId/skills",
+    describeRoute({
+      tags: ["Skills"],
+      summary: "List skills",
+      description: "Lists the skills the current member can view, including owned skills, shared skills, and skills available through hub access.",
+      responses: {
+        200: jsonResponse("Accessible skills returned successfully.", skillListResponseSchema),
+        400: jsonResponse("The skill list path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to list skills.", unauthorizedSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -285,6 +361,18 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.delete(
     "/v1/orgs/:orgId/skills/:skillId",
+    describeRoute({
+      tags: ["Skills"],
+      summary: "Delete skill",
+      description: "Deletes one organization skill when the caller is allowed to manage it.",
+      responses: {
+        204: emptyResponse("Skill deleted successfully."),
+        400: jsonResponse("The skill deletion path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to delete skills.", unauthorizedSchema),
+        403: jsonResponse("Only the skill creator or a workspace admin can delete skills.", forbiddenSchema),
+        404: jsonResponse("The skill could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -311,7 +399,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageSkill(payload, skill)) {
-        return c.json({ error: "forbidden", message: "Only the skill creator or an org admin can delete skills." }, 403)
+        return c.json({ error: "forbidden", message: "Only the skill creator or a workspace admin can delete skills." }, 403)
       }
 
       await db.transaction(async (tx) => {
@@ -325,6 +413,18 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.patch(
     "/v1/orgs/:orgId/skills/:skillId",
+    describeRoute({
+      tags: ["Skills"],
+      summary: "Update skill",
+      description: "Updates a skill's markdown content and-or sharing visibility while keeping derived metadata in sync.",
+      responses: {
+        200: jsonResponse("Skill updated successfully.", skillResponseSchema),
+        400: jsonResponse("The skill update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update skills.", unauthorizedSchema),
+        403: jsonResponse("Only the skill creator or a workspace admin can update skills.", forbiddenSchema),
+        404: jsonResponse("The skill could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -353,7 +453,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageSkill(payload, skill)) {
-        return c.json({ error: "forbidden", message: "Only the skill creator or an org admin can update skills." }, 403)
+        return c.json({ error: "forbidden", message: "Only the skill creator or a workspace admin can update skills." }, 403)
       }
 
       const nextSkillText = input.skillText ?? skill.skillText
@@ -387,6 +487,16 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.post(
     "/v1/orgs/:orgId/skill-hubs",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "Create skill hub",
+      description: "Creates a skill hub that can group skills and assign access to specific members or teams.",
+      responses: {
+        201: jsonResponse("Skill hub created successfully.", skillHubResponseSchema),
+        400: jsonResponse("The skill hub creation request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create skill hubs.", unauthorizedSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -433,6 +543,16 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.get(
     "/v1/orgs/:orgId/skill-hubs",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "List skill hubs",
+      description: "Lists the skill hubs the current member can access, along with linked skills and access metadata.",
+      responses: {
+        200: jsonResponse("Accessible skill hubs returned successfully.", skillHubListResponseSchema),
+        400: jsonResponse("The skill hub list path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to list skill hubs.", unauthorizedSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -579,6 +699,18 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.patch(
     "/v1/orgs/:orgId/skill-hubs/:skillHubId",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "Update skill hub",
+      description: "Updates a skill hub's display name or description.",
+      responses: {
+        200: jsonResponse("Skill hub updated successfully.", skillHubResponseSchema),
+        400: jsonResponse("The skill hub update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update skill hubs.", unauthorizedSchema),
+        403: jsonResponse("Only the hub creator or a workspace admin can update skill hubs.", forbiddenSchema),
+        404: jsonResponse("The skill hub could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillHubParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -607,7 +739,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageHub(payload, skillHub)) {
-        return c.json({ error: "forbidden", message: "Only the hub creator or an org admin can update hubs." }, 403)
+        return c.json({ error: "forbidden", message: "Only the hub creator or a workspace admin can update hubs." }, 403)
       }
 
       const updatedAt = new Date()
@@ -636,6 +768,18 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.delete(
     "/v1/orgs/:orgId/skill-hubs/:skillHubId",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "Delete skill hub",
+      description: "Deletes a skill hub and removes its access links and skill links.",
+      responses: {
+        204: emptyResponse("Skill hub deleted successfully."),
+        400: jsonResponse("The skill hub deletion path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to delete skill hubs.", unauthorizedSchema),
+        403: jsonResponse("Only the hub creator or a workspace admin can delete skill hubs.", forbiddenSchema),
+        404: jsonResponse("The skill hub could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillHubParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -662,7 +806,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageHub(payload, skillHub)) {
-        return c.json({ error: "forbidden", message: "Only the hub creator or an org admin can delete hubs." }, 403)
+        return c.json({ error: "forbidden", message: "Only the hub creator or a workspace admin can delete hubs." }, 403)
       }
 
       await db.transaction(async (tx) => {
@@ -677,6 +821,19 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.post(
     "/v1/orgs/:orgId/skill-hubs/:skillHubId/skills",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "Add skill to skill hub",
+      description: "Adds an existing organization skill to a skill hub so hub members can discover and use it.",
+      responses: {
+        201: jsonResponse("Skill added to skill hub successfully.", successSchema),
+        400: jsonResponse("The add-skill-to-hub request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage skill hub contents.", unauthorizedSchema),
+        403: jsonResponse("Only the hub creator or a workspace admin can manage hub skills, and private skills stay creator-controlled.", forbiddenSchema),
+        404: jsonResponse("The skill hub or skill could not be found.", notFoundSchema),
+        409: jsonResponse("The skill is already attached to the skill hub.", conflictSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillHubParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -707,7 +864,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageHub(payload, skillHub)) {
-        return c.json({ error: "forbidden", message: "Only the hub creator or an org admin can manage hub skills." }, 403)
+        return c.json({ error: "forbidden", message: "Only the hub creator or a workspace admin can manage hub skills." }, 403)
       }
 
       const skillRows = await db
@@ -724,7 +881,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       if (!canManageSkill(payload, skill) && skill.shared === null) {
         return c.json({
           error: "forbidden",
-          message: "Private skills can only be added to hubs by their creator or an org admin.",
+          message: "Private skills can only be added to hubs by their creator or a workspace admin.",
         }, 403)
       }
 
@@ -752,6 +909,18 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.delete(
     "/v1/orgs/:orgId/skill-hubs/:skillHubId/skills/:skillId",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "Remove skill from skill hub",
+      description: "Removes a skill from a skill hub without deleting the underlying skill itself.",
+      responses: {
+        204: emptyResponse("Skill removed from skill hub successfully."),
+        400: jsonResponse("The remove-skill-from-hub path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage skill hub contents.", unauthorizedSchema),
+        403: jsonResponse("Only the hub creator or a workspace admin can remove skills from a hub.", forbiddenSchema),
+        404: jsonResponse("The skill hub or hub-skill link could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillHubSkillParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -780,7 +949,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageHub(payload, skillHub)) {
-        return c.json({ error: "forbidden", message: "Only the hub creator or an org admin can manage hub skills." }, 403)
+        return c.json({ error: "forbidden", message: "Only the hub creator or a workspace admin can manage hub skills." }, 403)
       }
 
       const existing = await db
@@ -803,6 +972,19 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.post(
     "/v1/orgs/:orgId/skill-hubs/:skillHubId/access",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "Grant skill hub access",
+      description: "Grants a specific member or team access to a skill hub.",
+      responses: {
+        201: jsonResponse("Skill hub access granted successfully.", skillHubAccessResponseSchema),
+        400: jsonResponse("The skill hub access request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage skill hub access.", unauthorizedSchema),
+        403: jsonResponse("Only the hub creator or a workspace admin can grant hub access.", forbiddenSchema),
+        404: jsonResponse("The skill hub or access target could not be found.", notFoundSchema),
+        409: jsonResponse("The requested access entry already exists.", conflictSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillHubParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -835,7 +1017,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageHub(payload, skillHub)) {
-        return c.json({ error: "forbidden", message: "Only the hub creator or an org admin can manage access." }, 403)
+        return c.json({ error: "forbidden", message: "Only the hub creator or a workspace admin can manage access." }, 403)
       }
 
       if (orgMembershipId) {
@@ -901,6 +1083,18 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
 
   app.delete(
     "/v1/orgs/:orgId/skill-hubs/:skillHubId/access/:accessId",
+    describeRoute({
+      tags: ["Skill Hubs"],
+      summary: "Revoke skill hub access",
+      description: "Revokes one member or team access entry from a skill hub.",
+      responses: {
+        204: emptyResponse("Skill hub access removed successfully."),
+        400: jsonResponse("The skill hub access deletion path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage skill hub access.", unauthorizedSchema),
+        403: jsonResponse("Only the hub creator or a workspace admin can revoke hub access.", forbiddenSchema),
+        404: jsonResponse("The skill hub or access entry could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgSkillHubAccessParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -929,7 +1123,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       }
 
       if (!canManageHub(payload, skillHub)) {
-        return c.json({ error: "forbidden", message: "Only the hub creator or an org admin can manage access." }, 403)
+        return c.json({ error: "forbidden", message: "Only the hub creator or a workspace admin can manage access." }, 403)
       }
 
       const accessRows = await db

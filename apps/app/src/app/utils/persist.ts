@@ -99,22 +99,6 @@ export const Persist = {
   },
 };
 
-export function removePersisted(target: { storage?: string; key: string }) {
-  const platform = usePlatform();
-  const isDesktop = platform.platform === "desktop" && !!platform.storage;
-
-  if (isDesktop) {
-    return platform.storage?.(target.storage)?.removeItem(target.key);
-  }
-
-  if (!target.storage) {
-    localStorage.removeItem(target.key);
-    return;
-  }
-
-  localStorageWithPrefix(target.storage).removeItem(target.key);
-}
-
 export function persisted<T>(
   target: string | PersistTarget,
   store: [Store<T>, SetStoreFunction<T>],

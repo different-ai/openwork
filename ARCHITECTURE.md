@@ -230,6 +230,7 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 
 - `/ee/apps/den-web/` is the hosted web control surface (sign-in, worker create, upcoming user management).
 - `/ee/apps/den-api/` (formerly `/ee/apps/den-controller/`) is the cloud control plane API (auth/session + worker CRUD + provisioning orchestration).
+- Daytona-backed workers mount a single shared provider volume and isolate each worker's persistent data by subpaths (`workers/<workerId>/workspace` and `workers/<workerId>/data`) rather than creating dedicated provider volumes per worker.
 - `/ee/apps/den-worker-runtime/` defines the runtime packaging and boot path used inside cloud workers (including Docker/snapshot artifacts and `openwork serve` startup assumptions).
 - `/ee/apps/den-worker-proxy/` fronts Daytona worker preview URLs, refreshes signed links with provider credentials, and proxies traffic to the worker runtime.
 - The OpenWork app (desktop or mobile client) connects to worker OpenWork server surfaces via URL + token (`/w/ws_*` when available).

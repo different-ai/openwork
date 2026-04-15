@@ -15,6 +15,7 @@ const readPort = () => {
 const hostOverride = process.env.OPENWORK_DEV_HOST?.trim() || null;
 const port = readPort();
 const baseUrls = (hostOverride ? [hostOverride] : ["127.0.0.1", "localhost"]).map((host) => `http://${host}:${port}`);
+const expectedAppRoot = resolve(fileURLToPath(new URL("../../app", import.meta.url)));
 
 const fetchWithTimeout = async (url, { timeoutMs = 1200 } = {}) => {
   const controller = new AbortController();
@@ -110,6 +111,17 @@ const looksLikeVite = async (baseUrl) => {
     return body.includes("import.meta.hot") || body.includes("@vite/client");
   } catch {
     return false;
+  }
+};
+
+const fetchOpenWorkDevServerId = async (baseUrl) => {
+  try {
+    const res = await fetchWithTimeout(`${baseUrl}/__openwork_dev_server_id`, { timeoutMs: 1200 });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data?.appRoot === "string" ? resolve(data.appRoot) : null;
+  } catch {
+    return null;
   }
 };
 
@@ -235,14 +247,32 @@ ensureLinuxDesktopDependencies();
 
 const main = async () => {
   let detectedViteUrl = null;
+  let detectedViteAppRoot = null;
   for (const candidate of baseUrls) {
     if (await looksLikeVite(candidate)) {
       detectedViteUrl = candidate;
+      detectedViteAppRoot = await fetchOpenWorkDevServerId(candidate);
       break;
     }
   }
 
   if (detectedViteUrl) {
+    if (detectedViteAppRoot && detectedViteAppRoot !== expectedAppRoot) {
+      console.error(
+        `[openwork] Found a Vite dev server at ${detectedViteUrl}, but it serves a different checkout:\n` +
+          `  running app root: ${detectedViteAppRoot}\n` +
+          `  expected app root: ${expectedAppRoot}\n\n` +
+          `Stop the other dev server or run with a different PORT (for example: PORT=5174 pnpm dev).`
+      );
+      process.exit(1);
+    }
+    if (!detectedViteAppRoot) {
+      console.error(
+        `[openwork] Found a Vite dev server at ${detectedViteUrl}, but could not verify which checkout it belongs to.\n` +
+          `Stop the other dev server or run with a different PORT (for example: PORT=5174 pnpm dev).`
+      );
+      process.exit(1);
+    }
     console.log(`[openwork] UI dev server already running at ${detectedViteUrl} (reusing).`);
     holdOpenUntilSignal();
     return;

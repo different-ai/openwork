@@ -81,8 +81,8 @@ export function BookCallForm() {
   };
 
   return (
-    <section id="book" className="landing-shell rounded-[2rem] p-6 md:p-8">
-      <div className="rounded-[1.5rem] border border-slate-200/70 bg-white/80 p-5 shadow-sm md:p-6">
+    <section id="book" className="rounded-[2rem] border border-gray-200 bg-white p-6 md:p-8">
+      <div className="rounded-[1.5rem] border border-slate-200/70 bg-white p-5 md:p-6">
         <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200/70 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
           <Mail size={12} />
           Get in touch with us

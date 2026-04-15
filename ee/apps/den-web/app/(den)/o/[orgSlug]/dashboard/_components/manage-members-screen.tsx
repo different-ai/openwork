@@ -64,12 +64,14 @@ function toggleAction(
 function ActionButton({
   children,
   tone = "default",
+  size = "sm",
   icon,
   onClick,
   disabled,
 }: {
   children: React.ReactNode;
   tone?: "default" | "danger";
+  size?: "md" | "sm";
   icon?: ElementType<{ size?: number; className?: string }>;
   onClick?: () => void;
   disabled?: boolean;
@@ -77,7 +79,7 @@ function ActionButton({
   return (
     <DenButton
       variant={tone === "danger" ? "destructive" : "secondary"}
-      size="sm"
+      size={size}
       icon={icon}
       onClick={onClick}
       disabled={disabled}
@@ -314,7 +316,7 @@ export function ManageMembersScreen() {
             </DenSelect>
           </label>
           <div className="flex gap-2 lg:justify-end">
-            <ActionButton onClick={resetInviteForm}>Cancel</ActionButton>
+            <ActionButton size="md" onClick={resetInviteForm}>Cancel</ActionButton>
             <DenButton type="submit" loading={mutationBusy === "invite-member"}>
               Send invite
             </DenButton>
@@ -354,7 +356,7 @@ export function ManageMembersScreen() {
             </DenSelect>
           </label>
           <div className="flex gap-2 lg:justify-end">
-            <ActionButton onClick={resetMemberEditor}>Cancel</ActionButton>
+            <ActionButton size="md" onClick={resetMemberEditor}>Cancel</ActionButton>
             <DenButton type="submit" loading={mutationBusy === "update-member-role"}>
               Save member
             </DenButton>
@@ -456,7 +458,7 @@ export function ManageMembersScreen() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <ActionButton onClick={resetTeamEditor}>Cancel</ActionButton>
+            <ActionButton size="md" onClick={resetTeamEditor}>Cancel</ActionButton>
             <DenButton
               type="submit"
               loading={mutationBusy === "create-team" || mutationBusy === "update-team"}
@@ -554,7 +556,7 @@ export function ManageMembersScreen() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <ActionButton onClick={resetRoleEditor}>Cancel</ActionButton>
+            <ActionButton size="md" onClick={resetRoleEditor}>Cancel</ActionButton>
             <DenButton
               type="submit"
               loading={mutationBusy === "create-role" || mutationBusy === "update-role"}

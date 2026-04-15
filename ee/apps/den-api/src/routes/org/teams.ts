@@ -7,6 +7,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import {
@@ -15,6 +16,7 @@ import {
   requireUserMiddleware,
   resolveOrganizationContextMiddleware,
 } from "../../middleware/index.js"
+import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
   ensureTeamManager,
@@ -24,12 +26,12 @@ import {
 
 const createTeamSchema = z.object({
   name: z.string().trim().min(1).max(255),
-  memberIds: z.array(z.string().trim().min(1)).optional().default([]),
+  memberIds: z.array(denTypeIdSchema("member")).optional().default([]),
 })
 
 const updateTeamSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
-  memberIds: z.array(z.string().trim().min(1)).optional(),
+  memberIds: z.array(denTypeIdSchema("member")).optional(),
 }).superRefine((value, ctx) => {
   if (value.name === undefined && value.memberIds === undefined) {
     ctx.addIssue({
@@ -43,7 +45,18 @@ const updateTeamSchema = z.object({
 type TeamId = typeof TeamTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 
-const orgTeamParamsSchema = orgIdParamSchema.extend(idParamSchema("teamId").shape)
+const orgTeamParamsSchema = orgIdParamSchema.extend(idParamSchema("teamId", "team").shape)
+
+const teamResponseSchema = z.object({
+  team: z.object({
+    id: denTypeIdSchema("team"),
+    organizationId: denTypeIdSchema("organization"),
+    name: z.string(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    memberIds: z.array(denTypeIdSchema("member")),
+  }),
+}).meta({ ref: "TeamResponse" })
 
 function parseTeamId(value: string) {
   return normalizeDenTypeId("team", value)
@@ -73,6 +86,18 @@ async function ensureMembersBelongToOrganization(input: {
 export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
     "/v1/orgs/:orgId/teams",
+    describeRoute({
+      tags: ["Teams"],
+      summary: "Create team",
+      description: "Creates a team inside an organization and can optionally attach existing organization members to it.",
+      responses: {
+        201: jsonResponse("Team created successfully.", teamResponseSchema),
+        400: jsonResponse("The team creation request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create teams.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can create teams.", forbiddenSchema),
+        404: jsonResponse("The organization or a referenced member could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
@@ -150,6 +175,18 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
 
   app.patch(
     "/v1/orgs/:orgId/teams/:teamId",
+    describeRoute({
+      tags: ["Teams"],
+      summary: "Update team",
+      description: "Updates a team's name and-or membership list within an organization.",
+      responses: {
+        200: jsonResponse("Team updated successfully.", teamResponseSchema),
+        400: jsonResponse("The team update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update teams.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can update teams.", forbiddenSchema),
+        404: jsonResponse("The team, organization, or a referenced member could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgTeamParamsSchema),
     resolveOrganizationContextMiddleware,
@@ -242,6 +279,18 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
 
   app.delete(
     "/v1/orgs/:orgId/teams/:teamId",
+    describeRoute({
+      tags: ["Teams"],
+      summary: "Delete team",
+      description: "Deletes a team and removes its related hub-access and team-membership records.",
+      responses: {
+        204: emptyResponse("Team deleted successfully."),
+        400: jsonResponse("The team deletion path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to delete teams.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can delete teams.", forbiddenSchema),
+        404: jsonResponse("The team or organization could not be found.", notFoundSchema),
+      },
+    }),
     requireUserMiddleware,
     paramValidator(orgTeamParamsSchema),
     resolveOrganizationContextMiddleware,

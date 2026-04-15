@@ -1,7 +1,8 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
 import { env } from "../../env.js"
+import { denTypeIdSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 export type OrgRouteVariables =
@@ -11,13 +12,19 @@ export type OrgRouteVariables =
   & Partial<MemberTeamsContext>
 
 export const orgIdParamSchema = z.object({
-  orgId: z.string().trim().min(1).max(255),
+  orgId: denTypeIdSchema("organization"),
 })
 
-export function idParamSchema<K extends string>(key: K) {
+export function idParamSchema<K extends string>(key: K, typeName?: DenTypeIdName) {
+  if (!typeName) {
+    return z.object({
+      [key]: z.string().trim().min(1).max(255),
+    } as unknown as Record<K, z.ZodString>)
+  }
+
   return z.object({
-    [key]: z.string().trim().min(1).max(255),
-  } as Record<K, z.ZodString>)
+    [key]: denTypeIdSchema(typeName),
+  } as unknown as Record<K, z.ZodType<string, string>>)
 }
 
 export function splitRoles(value: string) {
@@ -72,7 +79,7 @@ export function ensureOwner(c: { get: (key: "organizationContext") => OrgRouteVa
       ok: false as const,
       response: {
         error: "forbidden",
-        message: "Only organization owners can manage members and roles.",
+        message: "Only workspace owners can manage members and roles.",
       },
     }
   }
@@ -99,7 +106,7 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only organization owners and admins can invite members.",
+      message: "Only workspace owners and admins can invite members.",
     },
   }
 }
@@ -123,7 +130,31 @@ export function ensureTeamManager(c: { get: (key: "organizationContext") => OrgR
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only organization owners and admins can manage teams.",
+      message: "Only workspace owners and admins can manage teams.",
+    },
+  }
+}
+
+export function ensureApiKeyManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only workspace owners and admins can manage API keys.",
     },
   }
 }

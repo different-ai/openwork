@@ -2,6 +2,7 @@
 import { render } from "solid-js/web";
 
 import "../../app/src/app/index.css";
+import { ConnectionsProvider } from "../../app/src/app/connections/provider";
 import { PlatformProvider, type Platform } from "../../app/src/app/context/platform";
 import { bootstrapTheme } from "../../app/src/app/theme";
 import { isTauriRuntime } from "../../app/src/app/utils";
@@ -48,10 +49,18 @@ const platform: Platform = {
   fetch,
 };
 
+const storyConnectionsStore = {
+  mcpServers: () => [],
+  mcpStatuses: () => ({}),
+  mcpStatus: () => null,
+} as any;
+
 render(
   () => (
     <PlatformProvider value={platform}>
-      <NewLayoutApp />
+      <ConnectionsProvider store={storyConnectionsStore}>
+        <NewLayoutApp />
+      </ConnectionsProvider>
     </PlatformProvider>
   ),
   root,

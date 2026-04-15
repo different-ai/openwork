@@ -2,10 +2,12 @@ import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { sendDenOrganizationInvitationEmail } from "../../email.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { listAssignableRoles } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -16,11 +18,37 @@ const inviteMemberSchema = z.object({
   role: z.string().trim().min(1).max(64),
 })
 
+const invitationResponseSchema = z.object({
+  invitationId: denTypeIdSchema("invitation"),
+  email: z.string().email(),
+  role: z.string(),
+  expiresAt: z.string().datetime(),
+}).meta({ ref: "InvitationResponse" })
+
 type InvitationId = typeof InvitationTable.$inferSelect.id
-const orgInvitationParamsSchema = orgIdParamSchema.extend(idParamSchema("invitationId").shape)
+const orgInvitationParamsSchema = orgIdParamSchema.extend(idParamSchema("invitationId", "invitation").shape)
 
 export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  app.post("/v1/orgs/:orgId/invitations", requireUserMiddleware, paramValidator(orgIdParamSchema), resolveOrganizationContextMiddleware, jsonValidator(inviteMemberSchema), async (c) => {
+  app.post(
+    "/v1/orgs/:orgId/invitations",
+    describeRoute({
+      tags: ["Invitations"],
+      summary: "Create organization invitation",
+      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email.",
+      responses: {
+        200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
+        201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
+        400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
+        404: jsonResponse("The organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgIdParamSchema),
+    resolveOrganizationContextMiddleware,
+    jsonValidator(inviteMemberSchema),
+    async (c) => {
     const permission = ensureInviteManager(c)
     if (!permission.ok) {
       return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
@@ -107,9 +135,27 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     })
 
     return c.json({ invitationId, email, role, expiresAt }, existingInvitation[0] ? 200 : 201)
-  })
+    },
+  )
 
-  app.post("/v1/orgs/:orgId/invitations/:invitationId/cancel", requireUserMiddleware, paramValidator(orgInvitationParamsSchema), resolveOrganizationContextMiddleware, async (c) => {
+  app.post(
+    "/v1/orgs/:orgId/invitations/:invitationId/cancel",
+    describeRoute({
+      tags: ["Invitations"],
+      summary: "Cancel organization invitation",
+      description: "Cancels a pending organization invitation so the invite link can no longer be used.",
+      responses: {
+        200: jsonResponse("Invitation cancelled successfully.", successSchema),
+        400: jsonResponse("The invitation cancellation path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to cancel invitations.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can cancel invitations.", forbiddenSchema),
+        404: jsonResponse("The invitation or organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgInvitationParamsSchema),
+    resolveOrganizationContextMiddleware,
+    async (c) => {
     const permission = ensureInviteManager(c)
     if (!permission.ok) {
       return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
@@ -136,5 +182,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
 
     await db.update(InvitationTable).set({ status: "canceled" }).where(eq(InvitationTable.id, invitationId))
     return c.json({ success: true })
-  })
+    },
+  )
 }
