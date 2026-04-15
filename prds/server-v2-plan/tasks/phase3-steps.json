@@ -23,7 +23,7 @@
         "Dev and release paths share one ownership model with different asset sources.",
         "The abstraction is explicit enough to support caching, extraction, and diagnostics later."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-002",
@@ -34,7 +34,7 @@
         "Version normalization for upstream download naming is handled in one place.",
         "Later packaging steps can reuse the same version resolution code."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-003",
@@ -45,7 +45,7 @@
         "The server can resolve absolute paths without `PATH` lookup.",
         "Repeated dev restarts reuse cached assets instead of re-downloading everything."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-004",
@@ -56,7 +56,7 @@
         "The downloaded artifact is cached locally and reused.",
         "Failures are clear when the artifact cannot be fetched or validated."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-005",
@@ -67,7 +67,7 @@
         "The staged router binary lives in a predictable gitignored location.",
         "The build step can be reused by the dev command graph in Phase 10."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-006",
@@ -78,7 +78,7 @@
         "The server can compare expected versus actual runtime assets.",
         "Manifest data can be reused for both dev diagnostics and release extraction."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-007",
@@ -89,7 +89,7 @@
         "The helper accepts explicit binary path, hostname, port, timeout, signal, and config options.",
         "The helper returns both a client and process handle suitable for supervision."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-008",
@@ -100,7 +100,7 @@
         "The parsed readiness URL becomes the canonical base URL.",
         "Startup cleanup is deterministic on failure or abort."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-009",
@@ -111,7 +111,7 @@
         "Crash reports can include recent child output.",
         "Buffers are managed safely and do not grow unbounded."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-010",
@@ -122,7 +122,7 @@
         "Last start and last exit details are recorded.",
         "The runtime state model matches the health endpoint shape from the plan docs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-011",
@@ -133,7 +133,7 @@
         "The startup path uses the new helper and runtime asset service.",
         "Ownership is clearly inside server bootstrap rather than UI code."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-012",
@@ -144,7 +144,7 @@
         "The decision model matches `architecture.md` and `ideal-flow.md`.",
         "The code can explain why router is enabled or disabled."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-013",
@@ -155,7 +155,7 @@
         "Config materialization has a clear server-owned input path.",
         "The supervisor can start router without desktop-owned config mutation."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-014",
@@ -166,7 +166,7 @@
         "Router health checks and startup waits are explicit.",
         "Unexpected router exit is visible in runtime state and logs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-015",
@@ -177,7 +177,7 @@
         "Crash or restart history is not hidden in transient process state only.",
         "The persisted state supports future router status routes."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-016",
@@ -188,7 +188,7 @@
         "Repeated crash loops are bounded and visible.",
         "Manual restart can be added without redesigning supervision later."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-017",
@@ -199,7 +199,7 @@
         "Response shapes match the direction in `spawning-opencode.md`.",
         "The endpoints are typed and documented in the contract."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-018",
@@ -210,7 +210,7 @@
         "The route namespace matches the migration direction in the docs.",
         "These routes are ready to absorb more runtime control behavior in later phases."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-019",
@@ -221,7 +221,7 @@
         "Crash and timeout cases are not only manual-test scenarios.",
         "Diagnostics and persisted runtime state are asserted in tests."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P3-020",
@@ -232,7 +232,7 @@
         "Later phases can see why runtime behavior was implemented a certain way.",
         "Phase 3 ends with the server clearly owning OpenCode and router lifecycle."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

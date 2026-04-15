@@ -335,8 +335,10 @@ export function createServerPersistence(options: CreateServerPersistenceOptions)
     localServerCapabilities: {
       contractLoop: true,
       managedConfigTables: true,
-      phase: 2,
+      phase: 3,
       rootMounted: true,
+      runtimeRoutes: true,
+      runtimeSupervision: true,
       runtimeStateTables: true,
       version: options.version,
       workspaceRegistry: true,

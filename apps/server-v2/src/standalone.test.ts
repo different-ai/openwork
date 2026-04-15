@@ -68,6 +68,7 @@ test("cli boots as a standalone process and serves system health", async () => {
     env: {
       ...process.env,
       OPENWORK_SERVER_V2_IN_MEMORY: "1",
+      OPENWORK_SERVER_V2_RUNTIME_BOOTSTRAP: "disabled",
     },
     stderr: "pipe",
     stdout: "pipe",

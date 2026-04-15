@@ -16,9 +16,9 @@ function createOpenApiDocumentation(version: string) {
         title: "OpenWork Server V2",
         version,
         description: [
-          "OpenAPI contract for the standalone OpenWork Server V2 foundation and durable registry state.",
+          "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.",
           "",
-          "Phase 2 adds sqlite bootstrap, canonical registry tables, startup diagnostics, and legacy state import.",
+          "Phase 3 adds runtime asset resolution, OpenCode and router supervision, persisted runtime health, and server-owned /system/runtime/* status routes.",
         ].join("\n"),
     },
     servers: [{ url: "/" }],
@@ -30,6 +30,10 @@ function createOpenApiDocumentation(version: string) {
       {
         name: "Workspaces",
         description: "Workspace-first resources will live under /workspaces/:workspaceId.",
+      },
+      {
+        name: "Runtime",
+        description: "Server-owned runtime supervision, versions, and child process health.",
       },
     ],
   };

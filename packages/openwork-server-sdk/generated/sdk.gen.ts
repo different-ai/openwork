@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses } from './types.gen';
+import type { GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses, GetSystemOpencodeHealthData, GetSystemOpencodeHealthErrors, GetSystemOpencodeHealthResponses, GetSystemRouterHealthData, GetSystemRouterHealthErrors, GetSystemRouterHealthResponses, GetSystemRuntimeSummaryData, GetSystemRuntimeSummaryErrors, GetSystemRuntimeSummaryResponses, GetSystemRuntimeVersionsData, GetSystemRuntimeVersionsErrors, GetSystemRuntimeVersionsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -38,3 +38,31 @@ export const getSystemHealth = <ThrowOnError extends boolean = false>(options?: 
  * Returns middleware ordering, route namespace conventions, sqlite bootstrap status, and startup import diagnostics.
  */
 export const getSystemMeta = <ThrowOnError extends boolean = false>(options?: Options<GetSystemMetaData, ThrowOnError>) => (options?.client ?? client).get<GetSystemMetaResponses, GetSystemMetaErrors, ThrowOnError>({ url: '/system/meta', ...options });
+
+/**
+ * Get OpenCode health
+ *
+ * Returns the server-owned OpenCode runtime health, version, URL, and recent diagnostics.
+ */
+export const getSystemOpencodeHealth = <ThrowOnError extends boolean = false>(options?: Options<GetSystemOpencodeHealthData, ThrowOnError>) => (options?.client ?? client).get<GetSystemOpencodeHealthResponses, GetSystemOpencodeHealthErrors, ThrowOnError>({ url: '/system/opencode/health', ...options });
+
+/**
+ * Get router health
+ *
+ * Returns the server-owned opencode-router health, enablement decision, and recent diagnostics.
+ */
+export const getSystemRouterHealth = <ThrowOnError extends boolean = false>(options?: Options<GetSystemRouterHealthData, ThrowOnError>) => (options?.client ?? client).get<GetSystemRouterHealthResponses, GetSystemRouterHealthErrors, ThrowOnError>({ url: '/system/router/health', ...options });
+
+/**
+ * Get runtime summary
+ *
+ * Returns the current runtime supervision summary, manifest, restart policy, and child process state.
+ */
+export const getSystemRuntimeSummary = <ThrowOnError extends boolean = false>(options?: Options<GetSystemRuntimeSummaryData, ThrowOnError>) => (options?.client ?? client).get<GetSystemRuntimeSummaryResponses, GetSystemRuntimeSummaryErrors, ThrowOnError>({ url: '/system/runtime/summary', ...options });
+
+/**
+ * Get runtime versions
+ *
+ * Returns the active and pinned runtime versions that Server V2 resolved for OpenCode and opencode-router.
+ */
+export const getSystemRuntimeVersions = <ThrowOnError extends boolean = false>(options?: Options<GetSystemRuntimeVersionsData, ThrowOnError>) => (options?.client ?? client).get<GetSystemRuntimeVersionsResponses, GetSystemRuntimeVersionsErrors, ThrowOnError>({ url: '/system/runtime/versions', ...options });

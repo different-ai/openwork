@@ -1,7 +1,9 @@
 import { createProcessInfoAdapter, type ProcessInfoAdapter } from "../adapters/process-info.js";
 import { createServerPersistence, type ServerPersistence } from "../database/persistence.js";
 import { createSqliteDatabaseStatusProvider, type DatabaseStatusProvider } from "../database/status-provider.js";
+import type { RuntimeAssetService } from "../runtime/assets.js";
 import type { RegistryService } from "../services/registry-service.js";
+import { createRuntimeService, type RuntimeService } from "../services/runtime-service.js";
 import { createSystemService, type SystemService } from "../services/system-service.js";
 
 export type AppDependencies = {
@@ -11,11 +13,12 @@ export type AppDependencies = {
   processInfo: ProcessInfoAdapter;
   services: {
     registry: RegistryService;
+    runtime: RuntimeService;
     system: SystemService;
   };
   startedAt: Date;
   version: string;
-  close(): void;
+  close(): Promise<void>;
 };
 
 type CreateAppDependenciesOverrides = Partial<Omit<AppDependencies, "services" | "close" | "database" | "persistence">> & {
@@ -32,6 +35,15 @@ type CreateAppDependenciesOverrides = Partial<Omit<AppDependencies, "services" |
     label?: string;
   };
   persistence?: ServerPersistence;
+  runtime?: {
+    assetService?: RuntimeAssetService;
+    bootstrapPolicy?: "disabled" | "eager" | "manual";
+    restartPolicy?: {
+      backoffMs?: number;
+      maxAttempts?: number;
+      windowMs?: number;
+    };
+  };
   workingDirectory?: string;
 };
 
@@ -78,6 +90,16 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     workingDirectory: overrides.workingDirectory,
   });
   const database = createSqliteDatabaseStatusProvider({ diagnostics: persistence.diagnostics });
+  const runtime = createRuntimeService({
+    assetService: overrides.runtime?.assetService,
+    bootstrapPolicy: overrides.runtime?.bootstrapPolicy,
+    environment,
+    repositories: persistence.repositories,
+    restartPolicy: overrides.runtime?.restartPolicy,
+    serverId: persistence.registry.localServerId,
+    serverVersion: version,
+    workingDirectory: persistence.workingDirectory,
+  });
 
   return {
     database,
@@ -86,17 +108,20 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     processInfo,
     services: {
       registry: persistence.registry,
+      runtime,
       system: createSystemService({
         database,
         environment,
         processInfo,
+        runtime,
         startedAt,
         version,
       }),
     },
     startedAt,
     version,
-    close() {
+    async close() {
+      await runtime.dispose();
       persistence.close();
     },
   };

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { identifierSchema, isoTimestampSchema, successResponseSchema } from "./common.js";
+import { runtimeSummaryDataSchema } from "./runtime.js";
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 
@@ -98,7 +99,7 @@ export const runtimeInfoSchema = z.object({
 
 export const metadataDataSchema = z.object({
   foundation: z.object({
-    phase: z.literal(2),
+    phase: z.literal(3),
     middlewareOrder: z.array(identifierSchema).min(1),
     routeNamespaces: routeNamespacesSchema,
     database: databaseStatusSchema,
@@ -109,6 +110,7 @@ export const metadataDataSchema = z.object({
     requestIdHeader: z.literal("X-Request-Id"),
   }).meta({ ref: "OpenWorkServerV2RequestContextInfo" }),
   runtime: runtimeInfoSchema,
+  runtimeSupervisor: runtimeSummaryDataSchema,
   contract: contractMetadataSchema,
 }).meta({ ref: "OpenWorkServerV2MetadataData" });
 

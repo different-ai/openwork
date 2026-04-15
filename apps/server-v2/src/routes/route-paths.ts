@@ -20,6 +20,12 @@ export const routePaths = {
     base: routeNamespaces.system,
     health: `${routeNamespaces.system}/health`,
     meta: `${routeNamespaces.system}/meta`,
+    opencodeHealth: `${routeNamespaces.system}/opencode/health`,
+    routerHealth: `${routeNamespaces.system}/router/health`,
+    runtime: {
+      summary: `${routeNamespaces.system}/runtime/summary`,
+      versions: `${routeNamespaces.system}/runtime/versions`,
+    },
   },
   workspaces: {
     base: routeNamespaces.workspaces,

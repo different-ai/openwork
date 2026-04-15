@@ -19,6 +19,11 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-14 - Phase 3 - Keep startup and runtime diagnostics in one persisted health document
+- Context: Phase 3 adds OpenCode/router supervision, restart policy state, runtime manifests, and child-process diagnostics to Server V2.
+- Learning: Extending `server_runtime_state.health_json` with a `runtime` section keeps startup import details, live runtime status, manifests, and crash diagnostics in one canonical observable document instead of splitting operational truth across multiple stores.
+- Action for later phases: Add future runtime controls, upgrade state, and reconciliation details to the same persisted health document unless a truly separate retention boundary is required.
+
 ### 2026-04-14 - Phase 2 - Keep imported workspace IDs aligned with legacy desktop hashes
 - Context: Server V2 now imports the desktop workspace registry and orchestrator snapshots into its canonical sqlite tables.
 - Learning: Preserving the legacy `ws_<hash>` rules for imported local and remote workspaces keeps selected/watched workspace references stable, makes imports idempotent, and avoids migration drift while the app still carries old workspace IDs.

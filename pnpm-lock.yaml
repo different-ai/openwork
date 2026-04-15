@@ -278,6 +278,9 @@ importers:
 
   apps/server-v2:
     dependencies:
+      '@opencode-ai/sdk':
+        specifier: 1.2.27
+        version: 1.2.27
       hono:
         specifier: 4.12.12
         version: 4.12.12

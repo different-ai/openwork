@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenWork Server V2",
-    "description": "OpenAPI contract for the standalone OpenWork Server V2 foundation and durable registry state.\n\nPhase 2 adds sqlite bootstrap, canonical registry tables, startup diagnostics, and legacy state import.",
+    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 3 adds runtime asset resolution, OpenCode and router supervision, persisted runtime health, and server-owned /system/runtime/* status routes.",
     "version": "0.0.0"
   },
   "servers": [
@@ -18,6 +18,10 @@
     {
       "name": "Workspaces",
       "description": "Workspace-first resources will live under /workspaces/:workspaceId."
+    },
+    {
+      "name": "Runtime",
+      "description": "Server-owned runtime supervision, versions, and child process health."
     }
   ],
   "paths": {
@@ -100,6 +104,134 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenWorkServerV2MetadataResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/opencode/health": {
+      "get": {
+        "operationId": "getSystemOpencodeHealth",
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get OpenCode health",
+        "description": "Returns the server-owned OpenCode runtime health, version, URL, and recent diagnostics.",
+        "responses": {
+          "200": {
+            "description": "OpenCode runtime health returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2OpencodeHealthResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/router/health": {
+      "get": {
+        "operationId": "getSystemRouterHealth",
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get router health",
+        "description": "Returns the server-owned opencode-router health, enablement decision, and recent diagnostics.",
+        "responses": {
+          "200": {
+            "description": "Router runtime health returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2RouterHealthResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/runtime/summary": {
+      "get": {
+        "operationId": "getSystemRuntimeSummary",
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get runtime summary",
+        "description": "Returns the current runtime supervision summary, manifest, restart policy, and child process state.",
+        "responses": {
+          "200": {
+            "description": "Runtime summary returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2RuntimeSummaryResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/runtime/versions": {
+      "get": {
+        "operationId": "getSystemRuntimeVersions",
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get runtime versions",
+        "description": "Returns the active and pinned runtime versions that Server V2 resolved for OpenCode and opencode-router.",
+        "responses": {
+          "200": {
+            "description": "Runtime versions returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2RuntimeVersionsResponse"
                 }
               }
             }
@@ -644,7 +776,7 @@
         "properties": {
           "phase": {
             "type": "number",
-            "const": 2
+            "const": 3
           },
           "middlewareOrder": {
             "minItems": 1,
@@ -729,6 +861,653 @@
           "runtimeVersion"
         ]
       },
+      "OpenWorkServerV2RuntimeTarget": {
+        "type": "string",
+        "enum": [
+          "darwin-arm64",
+          "darwin-x64",
+          "linux-arm64",
+          "linux-x64",
+          "windows-arm64",
+          "windows-x64"
+        ]
+      },
+      "OpenWorkServerV2RuntimeManifest": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "object",
+            "properties": {
+              "opencode": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256",
+                  "size"
+                ]
+              },
+              "opencode-router": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256",
+                  "size"
+                ]
+              }
+            },
+            "required": [
+              "opencode",
+              "opencode-router"
+            ]
+          },
+          "generatedAt": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "manifestVersion": {
+            "type": "number",
+            "const": 1
+          },
+          "opencodeVersion": {
+            "type": "string"
+          },
+          "rootDir": {
+            "type": "string"
+          },
+          "routerVersion": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "development",
+              "release"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeTarget"
+          }
+        },
+        "required": [
+          "files",
+          "generatedAt",
+          "manifestVersion",
+          "opencodeVersion",
+          "rootDir",
+          "routerVersion",
+          "serverVersion",
+          "source",
+          "target"
+        ]
+      },
+      "OpenWorkServerV2RuntimeOutputSnapshot": {
+        "type": "object",
+        "properties": {
+          "combined": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+                },
+                "stream": {
+                  "type": "string",
+                  "enum": [
+                    "stdout",
+                    "stderr"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "at",
+                "stream",
+                "text"
+              ]
+            }
+          },
+          "stderr": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stdout": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "totalLines": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "combined",
+          "stderr",
+          "stdout",
+          "totalLines",
+          "truncated"
+        ]
+      },
+      "OpenWorkServerV2RuntimeLastExit": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeOutputSnapshot"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "at",
+          "code",
+          "output",
+          "reason",
+          "signal"
+        ]
+      },
+      "OpenWorkServerV2OpencodeHealthData": {
+        "type": "object",
+        "properties": {
+          "baseUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "binaryPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeOutputSnapshot"
+          },
+          "lastError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastExit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2RuntimeLastExit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastReadyAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastStartedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2RuntimeManifest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "development",
+              "release"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "crashed",
+              "disabled",
+              "error",
+              "restart_scheduled",
+              "running",
+              "starting",
+              "stopped"
+            ]
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "baseUrl",
+          "binaryPath",
+          "diagnostics",
+          "lastError",
+          "lastExit",
+          "lastReadyAt",
+          "lastStartedAt",
+          "manifest",
+          "pid",
+          "running",
+          "source",
+          "status",
+          "version"
+        ]
+      },
+      "OpenWorkServerV2RouterEnablement": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "enabledBindingCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "enabledIdentityCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "forced": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "enabledBindingCount",
+          "enabledIdentityCount",
+          "forced",
+          "reason"
+        ]
+      },
+      "OpenWorkServerV2RouterMaterialization": {
+        "type": "object",
+        "properties": {
+          "bindingCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "configPath": {
+            "type": "string"
+          },
+          "dataDir": {
+            "type": "string"
+          },
+          "dbPath": {
+            "type": "string"
+          },
+          "identityCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "logFile": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bindingCount",
+          "configPath",
+          "dataDir",
+          "dbPath",
+          "identityCount",
+          "logFile"
+        ]
+      },
+      "OpenWorkServerV2RouterHealthData": {
+        "type": "object",
+        "properties": {
+          "baseUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "binaryPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeOutputSnapshot"
+          },
+          "enablement": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RouterEnablement"
+          },
+          "healthUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastExit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2RuntimeLastExit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastReadyAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastStartedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2IsoTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2RuntimeManifest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "materialization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2RouterMaterialization"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "development",
+              "release"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "crashed",
+              "disabled",
+              "error",
+              "restart_scheduled",
+              "running",
+              "starting",
+              "stopped"
+            ]
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "baseUrl",
+          "binaryPath",
+          "diagnostics",
+          "enablement",
+          "healthUrl",
+          "lastError",
+          "lastExit",
+          "lastReadyAt",
+          "lastStartedAt",
+          "manifest",
+          "materialization",
+          "pid",
+          "running",
+          "source",
+          "status",
+          "version"
+        ]
+      },
+      "OpenWorkServerV2RuntimeSummaryData": {
+        "type": "object",
+        "properties": {
+          "bootstrapPolicy": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "eager",
+              "manual"
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2RuntimeManifest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "opencode": {
+            "$ref": "#/components/schemas/OpenWorkServerV2OpencodeHealthData"
+          },
+          "restartPolicy": {
+            "type": "object",
+            "properties": {
+              "backoffMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxAttempts": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "windowMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "backoffMs",
+              "maxAttempts",
+              "windowMs"
+            ]
+          },
+          "router": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RouterHealthData"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "development",
+              "release"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeTarget"
+          }
+        },
+        "required": [
+          "bootstrapPolicy",
+          "manifest",
+          "opencode",
+          "restartPolicy",
+          "router",
+          "source",
+          "target"
+        ]
+      },
       "OpenWorkServerV2MetadataData": {
         "type": "object",
         "properties": {
@@ -741,6 +1520,9 @@
           "runtime": {
             "$ref": "#/components/schemas/OpenWorkServerV2RuntimeInfo"
           },
+          "runtimeSupervisor": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeSummaryData"
+          },
           "contract": {
             "$ref": "#/components/schemas/OpenWorkServerV2ContractMetadata"
           }
@@ -749,6 +1531,7 @@
           "foundation",
           "requestContext",
           "runtime",
+          "runtimeSupervisor",
           "contract"
         ]
       },
@@ -813,6 +1596,176 @@
           "paths"
         ],
         "additionalProperties": {}
+      },
+      "OpenWorkServerV2OpencodeHealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2OpencodeHealthData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2RouterHealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RouterHealthData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2RuntimeSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeSummaryData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2RuntimeVersionsData": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "object",
+            "properties": {
+              "opencodeVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "routerVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "serverVersion": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "opencodeVersion",
+              "routerVersion",
+              "serverVersion"
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenWorkServerV2RuntimeManifest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pinned": {
+            "type": "object",
+            "properties": {
+              "opencodeVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "routerVersion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "serverVersion": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "opencodeVersion",
+              "routerVersion",
+              "serverVersion"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeTarget"
+          }
+        },
+        "required": [
+          "active",
+          "manifest",
+          "pinned",
+          "target"
+        ]
+      },
+      "OpenWorkServerV2RuntimeVersionsResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RuntimeVersionsData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
       }
     }
   }

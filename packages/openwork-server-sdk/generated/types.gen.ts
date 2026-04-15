@@ -139,7 +139,7 @@ export type OpenWorkServerV2StartupDiagnostics = {
 };
 
 export type OpenWorkServerV2FoundationInfo = {
-    phase: 2;
+    phase: 3;
     middlewareOrder: Array<OpenWorkServerV2Identifier>;
     routeNamespaces: OpenWorkServerV2RouteNamespaces;
     database: OpenWorkServerV2DatabaseStatus;
@@ -160,10 +160,122 @@ export type OpenWorkServerV2RuntimeInfo = {
     runtimeVersion: string | null;
 };
 
+export type OpenWorkServerV2RuntimeTarget = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'windows-arm64' | 'windows-x64';
+
+export type OpenWorkServerV2RuntimeManifest = {
+    files: {
+        opencode: {
+            path: string;
+            sha256: string;
+            size: number;
+        };
+        'opencode-router': {
+            path: string;
+            sha256: string;
+            size: number;
+        };
+    };
+    generatedAt: OpenWorkServerV2IsoTimestamp;
+    manifestVersion: 1;
+    opencodeVersion: string;
+    rootDir: string;
+    routerVersion: string;
+    serverVersion: string;
+    source: 'development' | 'release';
+    target: OpenWorkServerV2RuntimeTarget;
+};
+
+export type OpenWorkServerV2RuntimeOutputSnapshot = {
+    combined: Array<{
+        at: OpenWorkServerV2IsoTimestamp;
+        stream: 'stdout' | 'stderr';
+        text: string;
+    }>;
+    stderr: Array<string>;
+    stdout: Array<string>;
+    totalLines: number;
+    truncated: boolean;
+};
+
+export type OpenWorkServerV2RuntimeLastExit = {
+    at: OpenWorkServerV2IsoTimestamp;
+    code: number | null;
+    output: OpenWorkServerV2RuntimeOutputSnapshot;
+    reason: string;
+    signal: string | null;
+};
+
+export type OpenWorkServerV2OpencodeHealthData = {
+    baseUrl: string | null;
+    binaryPath: string | null;
+    diagnostics: OpenWorkServerV2RuntimeOutputSnapshot;
+    lastError: string | null;
+    lastExit: OpenWorkServerV2RuntimeLastExit | null;
+    lastReadyAt: OpenWorkServerV2IsoTimestamp | null;
+    lastStartedAt: OpenWorkServerV2IsoTimestamp | null;
+    manifest: OpenWorkServerV2RuntimeManifest | null;
+    pid: number | null;
+    running: boolean;
+    source: 'development' | 'release';
+    status: 'crashed' | 'disabled' | 'error' | 'restart_scheduled' | 'running' | 'starting' | 'stopped';
+    version: string | null;
+};
+
+export type OpenWorkServerV2RouterEnablement = {
+    enabled: boolean;
+    enabledBindingCount: number;
+    enabledIdentityCount: number;
+    forced: boolean;
+    reason: string;
+};
+
+export type OpenWorkServerV2RouterMaterialization = {
+    bindingCount: number;
+    configPath: string;
+    dataDir: string;
+    dbPath: string;
+    identityCount: number;
+    logFile: string;
+};
+
+export type OpenWorkServerV2RouterHealthData = {
+    baseUrl: string | null;
+    binaryPath: string | null;
+    diagnostics: OpenWorkServerV2RuntimeOutputSnapshot;
+    enablement: OpenWorkServerV2RouterEnablement;
+    healthUrl: string | null;
+    lastError: string | null;
+    lastExit: OpenWorkServerV2RuntimeLastExit | null;
+    lastReadyAt: OpenWorkServerV2IsoTimestamp | null;
+    lastStartedAt: OpenWorkServerV2IsoTimestamp | null;
+    manifest: OpenWorkServerV2RuntimeManifest | null;
+    materialization: OpenWorkServerV2RouterMaterialization | null;
+    pid: number | null;
+    running: boolean;
+    source: 'development' | 'release';
+    status: 'crashed' | 'disabled' | 'error' | 'restart_scheduled' | 'running' | 'starting' | 'stopped';
+    version: string | null;
+};
+
+export type OpenWorkServerV2RuntimeSummaryData = {
+    bootstrapPolicy: 'disabled' | 'eager' | 'manual';
+    manifest: OpenWorkServerV2RuntimeManifest | null;
+    opencode: OpenWorkServerV2OpencodeHealthData;
+    restartPolicy: {
+        backoffMs: number;
+        maxAttempts: number;
+        windowMs: number;
+    };
+    router: OpenWorkServerV2RouterHealthData;
+    source: 'development' | 'release';
+    target: OpenWorkServerV2RuntimeTarget;
+};
+
 export type OpenWorkServerV2MetadataData = {
     foundation: OpenWorkServerV2FoundationInfo;
     requestContext: OpenWorkServerV2RequestContextInfo;
     runtime: OpenWorkServerV2RuntimeInfo;
+    runtimeSupervisor: OpenWorkServerV2RuntimeSummaryData;
     contract: OpenWorkServerV2ContractMetadata;
 };
 
@@ -187,6 +299,45 @@ export type OpenWorkServerV2OpenApiDocument = {
         [key: string]: unknown;
     };
     [key: string]: unknown;
+};
+
+export type OpenWorkServerV2OpencodeHealthResponse = {
+    ok: true;
+    data: OpenWorkServerV2OpencodeHealthData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RouterHealthResponse = {
+    ok: true;
+    data: OpenWorkServerV2RouterHealthData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RuntimeSummaryResponse = {
+    ok: true;
+    data: OpenWorkServerV2RuntimeSummaryData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2RuntimeVersionsData = {
+    active: {
+        opencodeVersion: string | null;
+        routerVersion: string | null;
+        serverVersion: string;
+    };
+    manifest: OpenWorkServerV2RuntimeManifest | null;
+    pinned: {
+        opencodeVersion: string | null;
+        routerVersion: string | null;
+        serverVersion: string;
+    };
+    target: OpenWorkServerV2RuntimeTarget;
+};
+
+export type OpenWorkServerV2RuntimeVersionsResponse = {
+    ok: true;
+    data: OpenWorkServerV2RuntimeVersionsData;
+    meta: OpenWorkServerV2ResponseMeta;
 };
 
 export type GetIndexData = {
@@ -263,3 +414,103 @@ export type GetSystemMetaResponses = {
 };
 
 export type GetSystemMetaResponse = GetSystemMetaResponses[keyof GetSystemMetaResponses];
+
+export type GetSystemOpencodeHealthData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/opencode/health';
+};
+
+export type GetSystemOpencodeHealthErrors = {
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemOpencodeHealthError = GetSystemOpencodeHealthErrors[keyof GetSystemOpencodeHealthErrors];
+
+export type GetSystemOpencodeHealthResponses = {
+    /**
+     * OpenCode runtime health returned successfully.
+     */
+    200: OpenWorkServerV2OpencodeHealthResponse;
+};
+
+export type GetSystemOpencodeHealthResponse = GetSystemOpencodeHealthResponses[keyof GetSystemOpencodeHealthResponses];
+
+export type GetSystemRouterHealthData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/router/health';
+};
+
+export type GetSystemRouterHealthErrors = {
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRouterHealthError = GetSystemRouterHealthErrors[keyof GetSystemRouterHealthErrors];
+
+export type GetSystemRouterHealthResponses = {
+    /**
+     * Router runtime health returned successfully.
+     */
+    200: OpenWorkServerV2RouterHealthResponse;
+};
+
+export type GetSystemRouterHealthResponse = GetSystemRouterHealthResponses[keyof GetSystemRouterHealthResponses];
+
+export type GetSystemRuntimeSummaryData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/runtime/summary';
+};
+
+export type GetSystemRuntimeSummaryErrors = {
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRuntimeSummaryError = GetSystemRuntimeSummaryErrors[keyof GetSystemRuntimeSummaryErrors];
+
+export type GetSystemRuntimeSummaryResponses = {
+    /**
+     * Runtime summary returned successfully.
+     */
+    200: OpenWorkServerV2RuntimeSummaryResponse;
+};
+
+export type GetSystemRuntimeSummaryResponse = GetSystemRuntimeSummaryResponses[keyof GetSystemRuntimeSummaryResponses];
+
+export type GetSystemRuntimeVersionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/runtime/versions';
+};
+
+export type GetSystemRuntimeVersionsErrors = {
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetSystemRuntimeVersionsError = GetSystemRuntimeVersionsErrors[keyof GetSystemRuntimeVersionsErrors];
+
+export type GetSystemRuntimeVersionsResponses = {
+    /**
+     * Runtime versions returned successfully.
+     */
+    200: OpenWorkServerV2RuntimeVersionsResponse;
+};
+
+export type GetSystemRuntimeVersionsResponse = GetSystemRuntimeVersionsResponses[keyof GetSystemRuntimeVersionsResponses];

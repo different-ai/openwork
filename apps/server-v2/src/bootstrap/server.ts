@@ -49,6 +49,9 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   const url = server.url.toString();
   const resolvedPort = new URL(url).port;
   dependencies.services.registry.attachLocalServerBaseUrl(url);
+  if (dependencies.services.runtime.getBootstrapPolicy() === "eager") {
+    void dependencies.services.runtime.bootstrap().catch(() => undefined);
+  }
 
   if (!options.silent) {
     console.info(
@@ -70,7 +73,7 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
     server,
     async stop() {
       server.stop(true);
-      dependencies.close();
+      await dependencies.close();
     },
     url,
   };

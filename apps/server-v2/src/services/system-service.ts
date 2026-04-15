@@ -1,6 +1,7 @@
 import type { ProcessInfoAdapter } from "../adapters/process-info.js";
 import type { DatabaseStatusProvider } from "../database/status-provider.js";
 import { routeNamespaces, workspaceResourcePattern } from "../routes/route-paths.js";
+import type { RuntimeService } from "./runtime-service.js";
 
 export type SystemService = ReturnType<typeof createSystemService>;
 
@@ -8,6 +9,7 @@ export function createSystemService(input: {
   environment: string;
   processInfo: ProcessInfoAdapter;
   database: DatabaseStatusProvider;
+  runtime: RuntimeService;
   startedAt: Date;
   version: string;
 }) {
@@ -46,7 +48,7 @@ export function createSystemService(input: {
     getMetadata() {
       return {
         foundation: {
-          phase: 2 as const,
+          phase: 3 as const,
           middlewareOrder: [
             "request-id",
             "request-context",
@@ -73,6 +75,7 @@ export function createSystemService(input: {
           runtime: input.processInfo.runtime,
           runtimeVersion: input.processInfo.runtimeVersion,
         },
+        runtimeSupervisor: input.runtime.getRuntimeSummary(),
         contract: {
           source: "hono-openapi" as const,
           openapiPath: routeNamespaces.openapi,
