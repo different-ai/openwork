@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri_plugin_shell::process::CommandChild;
 
-use crate::types::OpenworkServerInfo;
+use crate::types::{OpenworkServerInfo, OpenworkServerStartupMode};
 
 #[derive(Default)]
 pub struct OpenworkServerManager {
@@ -14,6 +14,7 @@ pub struct OpenworkServerState {
     pub child: Option<CommandChild>,
     pub child_exited: bool,
     pub remote_access_enabled: bool,
+    pub startup_mode: OpenworkServerStartupMode,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub base_url: Option<String>,
@@ -23,6 +24,11 @@ pub struct OpenworkServerState {
     pub client_token: Option<String>,
     pub owner_token: Option<String>,
     pub host_token: Option<String>,
+    pub server_version: Option<String>,
+    pub opencode_base_url: Option<String>,
+    pub opencode_status: Option<String>,
+    pub router_base_url: Option<String>,
+    pub router_status: Option<String>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
 }
@@ -41,6 +47,7 @@ impl OpenworkServerManager {
         OpenworkServerInfo {
             running,
             remote_access_enabled: state.remote_access_enabled,
+            startup_mode: state.startup_mode.clone(),
             host: state.host.clone(),
             port: state.port,
             base_url: state.base_url.clone(),
@@ -50,6 +57,11 @@ impl OpenworkServerManager {
             client_token: state.client_token.clone(),
             owner_token: state.owner_token.clone(),
             host_token: state.host_token.clone(),
+            server_version: state.server_version.clone(),
+            opencode_base_url: state.opencode_base_url.clone(),
+            opencode_status: state.opencode_status.clone(),
+            router_base_url: state.router_base_url.clone(),
+            router_status: state.router_status.clone(),
             pid,
             last_stdout: state.last_stdout.clone(),
             last_stderr: state.last_stderr.clone(),
@@ -62,6 +74,7 @@ impl OpenworkServerManager {
         }
         state.child_exited = true;
         state.remote_access_enabled = false;
+        state.startup_mode = OpenworkServerStartupMode::Legacy;
         state.host = None;
         state.port = None;
         state.base_url = None;
@@ -71,6 +84,11 @@ impl OpenworkServerManager {
         state.client_token = None;
         state.owner_token = None;
         state.host_token = None;
+        state.server_version = None;
+        state.opencode_base_url = None;
+        state.opencode_status = None;
+        state.router_base_url = None;
+        state.router_status = None;
         state.last_stdout = None;
         state.last_stderr = None;
     }

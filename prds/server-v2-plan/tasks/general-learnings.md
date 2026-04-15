@@ -19,6 +19,16 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-14 - Phase 4 - Packaged Server V2 binaries should read version pins from the bundled runtime manifest
+- Context: Phase 4 adds a real desktop-hosted `openwork-server-v2` launch path and smoke-tested it against Tauri sidecars in release-style asset mode.
+- Learning: Compiled Server V2 binaries cannot rely on repo-local files like `constants.json` always existing at runtime, so release asset resolution must use the bundled `manifest.json` as the source of truth for pinned OpenCode/router versions.
+- Action for later phases: Keep packaged desktop and standalone release flows manifest-driven, and avoid reintroducing repo-relative metadata lookups into release-only bootstrap paths.
+
+### 2026-04-14 - Phase 4 - Reuse the runtime manifest when desktop bundles Server V2
+- Context: Phase 4 adds the desktop startup branch for `openwork-server-v2` and needs the packaged desktop sidecars to satisfy Server V2 runtime asset resolution.
+- Learning: Writing a release-style `manifest.json` beside the bundled desktop sidecars keeps the desktop host path aligned with the Phase 3 runtime manifest/checksum model, so later packaging and extraction work can build on one runtime inventory contract.
+- Action for later phases: Keep Tauri bundling, release extraction, and runtime verification pointed at the shared manifest shape instead of creating desktop-specific sidecar metadata.
+
 ### 2026-04-14 - Phase 3 - Keep startup and runtime diagnostics in one persisted health document
 - Context: Phase 3 adds OpenCode/router supervision, restart policy state, runtime manifests, and child-process diagnostics to Server V2.
 - Learning: Extending `server_runtime_state.health_json` with a `runtime` section keeps startup import details, live runtime status, manifests, and crash diagnostics in one canonical observable document instead of splitting operational truth across multiple stores.

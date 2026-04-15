@@ -3,7 +3,8 @@ use tauri::{AppHandle, State};
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::openwork_server::manager::OpenworkServerManager;
-use crate::openwork_server::start_openwork_server;
+use crate::openwork_server::startup_mode::{resolve_server_startup_mode, ServerStartupMode};
+use crate::openwork_server::{start_openwork_server, start_openwork_server_v2};
 use crate::types::{OpenworkServerInfo, WorkspaceType};
 use crate::workspace::state::load_workspace_state;
 
@@ -64,6 +65,15 @@ pub fn openwork_server_restart(
         .lock()
         .ok()
         .and_then(|state| state.health_port);
+
+    if resolve_server_startup_mode() == ServerStartupMode::ServerV2 {
+        return start_openwork_server_v2(
+            &app,
+            &manager,
+            &workspace_paths,
+            remote_access_enabled.unwrap_or(false),
+        );
+    }
 
     start_openwork_server(
         &app,

@@ -147,6 +147,21 @@ const openworkServerTargetPath = openworkServerTargetName ? join(sidecarDir, ope
 
 const openworkServerDir = resolve(__dirname, "..", "..", "server");
 
+// openwork-server-v2 paths
+const openworkServerV2BaseName = "openwork-server-v2";
+const openworkServerV2Name = process.platform === "win32" ? `${openworkServerV2BaseName}.exe` : openworkServerV2BaseName;
+const openworkServerV2Path = join(sidecarDir, openworkServerV2Name);
+const openworkServerV2BuildName = bunTarget
+  ? `${openworkServerV2BaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
+  : openworkServerV2Name;
+const openworkServerV2BuildPath = join(sidecarDir, openworkServerV2BuildName);
+const openworkServerV2TargetTriple = resolvedTargetTriple;
+const openworkServerV2TargetName = openworkServerV2TargetTriple
+  ? `${openworkServerV2BaseName}-${openworkServerV2TargetTriple}${openworkServerV2TargetTriple.includes("windows") ? ".exe" : ""}`
+  : null;
+const openworkServerV2TargetPath = openworkServerV2TargetName ? join(sidecarDir, openworkServerV2TargetName) : null;
+const openworkServerV2Dir = resolve(__dirname, "..", "..", "server-v2");
+
 const resolveBuildScript = (dir) => {
   const scriptPath = resolve(dir, "script", "build.ts");
   if (existsSync(scriptPath)) return scriptPath;
@@ -354,6 +369,70 @@ if (existsSync(openworkServerBuildPath)) {
         // ignore
       }
       copyFileSync(openworkServerBuildPath, openworkServerTargetPath);
+    }
+  }
+}
+
+let didBuildOpenworkServerV2 = false;
+const shouldBuildOpenworkServerV2 =
+  forceBuild || !existsSync(openworkServerV2BuildPath) || isStubBinary(openworkServerV2BuildPath);
+
+if (shouldBuildOpenworkServerV2) {
+  mkdirSync(sidecarDir, { recursive: true });
+  if (existsSync(openworkServerV2BuildPath)) {
+    try {
+      unlinkSync(openworkServerV2BuildPath);
+    } catch {
+      // ignore
+    }
+  }
+  const openworkServerV2Script = resolveBuildScript(openworkServerV2Dir);
+  if (!existsSync(openworkServerV2Script)) {
+    console.error(`OpenWork Server V2 build script not found at ${openworkServerV2Script}`);
+    process.exit(1);
+  }
+  const openworkServerV2Args = [openworkServerV2Script, "--outdir", sidecarDir, "--filename", openworkServerV2BaseName];
+  if (bunTarget) {
+    openworkServerV2Args.push("--target", bunTarget);
+  }
+  const buildResult = spawnSync("bun", openworkServerV2Args, {
+    cwd: openworkServerV2Dir,
+    stdio: "inherit",
+    shell: true,
+  });
+
+  if (buildResult.status !== 0) {
+    process.exit(buildResult.status ?? 1);
+  }
+
+  didBuildOpenworkServerV2 = true;
+}
+
+if (existsSync(openworkServerV2BuildPath)) {
+  const shouldCopyCanonical = didBuildOpenworkServerV2 || !existsSync(openworkServerV2Path) || isStubBinary(openworkServerV2Path);
+  if (shouldCopyCanonical && openworkServerV2BuildPath !== openworkServerV2Path) {
+    try {
+      if (existsSync(openworkServerV2Path)) {
+        unlinkSync(openworkServerV2Path);
+      }
+    } catch {
+      // ignore
+    }
+    copyFileSync(openworkServerV2BuildPath, openworkServerV2Path);
+  }
+
+  if (openworkServerV2TargetPath) {
+    const shouldCopyTarget =
+      didBuildOpenworkServerV2 || !existsSync(openworkServerV2TargetPath) || isStubBinary(openworkServerV2TargetPath);
+    if (shouldCopyTarget && openworkServerV2BuildPath !== openworkServerV2TargetPath) {
+      try {
+        if (existsSync(openworkServerV2TargetPath)) {
+          unlinkSync(openworkServerV2TargetPath);
+        }
+      } catch {
+        // ignore
+      }
+      copyFileSync(openworkServerV2BuildPath, openworkServerV2TargetPath);
     }
   }
 }
@@ -715,6 +794,15 @@ const openworkServerVersion = (() => {
   }
 })();
 
+const openworkServerV2Version = (() => {
+  try {
+    const raw = readFileSync(resolve(openworkServerV2Dir, "package.json"), "utf8");
+    return String(JSON.parse(raw).version ?? "").trim();
+  } catch {
+    return null;
+  }
+})();
+
 const orchestratorVersion = (() => {
   try {
     const raw = readFileSync(resolve(orchestratorDir, "package.json"), "utf8");
@@ -732,6 +820,10 @@ const versions = {
   "openwork-server": {
     version: openworkServerVersion,
     sha256: existsSync(openworkServerPath) ? sha256File(openworkServerPath) : null,
+  },
+  "openwork-server-v2": {
+    version: openworkServerV2Version,
+    sha256: existsSync(openworkServerV2Path) ? sha256File(openworkServerV2Path) : null,
   },
   opencodeRouter: {
     version: expectedOpenCodeRouterVersion,
@@ -757,14 +849,47 @@ if (missing.length) {
 }
 
 const versionsPath = join(sidecarDir, "versions.json");
+const runtimeManifestPath = join(sidecarDir, "manifest.json");
 try {
   mkdirSync(sidecarDir, { recursive: true });
   const content = JSON.stringify(versions, null, 2) + "\n";
   writeFileSync(versionsPath, content, "utf8");
   if (resolvedTargetTriple) {
     const targetSuffix = process.platform === "win32" ? ".exe" : "";
-    const targetVersionsPath = join(sidecarDir, `versions.json-${resolvedTargetTriple}${targetSuffix}`);
-    writeFileSync(targetVersionsPath, content, "utf8");
+      const targetVersionsPath = join(sidecarDir, `versions.json-${resolvedTargetTriple}${targetSuffix}`);
+      writeFileSync(targetVersionsPath, content, "utf8");
+  }
+
+  const runtimeManifest = {
+    files: {
+      opencode: {
+        path: opencodeBaseName,
+        sha256: versions.opencode.sha256,
+        size: statSync(opencodePath).size,
+      },
+      "opencode-router": {
+        path: opencodeRouterName,
+        sha256: versions.opencodeRouter.sha256,
+        size: statSync(opencodeRouterPath).size,
+      },
+    },
+    generatedAt: new Date().toISOString(),
+    manifestVersion: 1,
+    opencodeVersion: versions.opencode.version,
+    rootDir: sidecarDir,
+    routerVersion: versions.opencodeRouter.version,
+    serverVersion: openworkServerV2Version,
+    source: "release",
+    target: (() => {
+      if (process.platform === "darwin") return process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
+      if (process.platform === "linux") return process.arch === "arm64" ? "linux-arm64" : "linux-x64";
+      return process.arch === "arm64" ? "windows-arm64" : "windows-x64";
+    })(),
+  };
+  writeFileSync(runtimeManifestPath, JSON.stringify(runtimeManifest, null, 2) + "\n", "utf8");
+  if (resolvedTargetTriple) {
+    const runtimeManifestTargetPath = join(sidecarDir, `manifest.json-${resolvedTargetTriple}`);
+    writeFileSync(runtimeManifestTargetPath, JSON.stringify(runtimeManifest, null, 2) + "\n", "utf8");
   }
 } catch (error) {
   console.error(`Failed to write versions.json: ${error}`);

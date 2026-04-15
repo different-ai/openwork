@@ -468,11 +468,24 @@ export function createRuntimeAssetService(options: RuntimeAssetServiceOptions) {
     return binaryPath;
   };
 
+  const readReleaseManifestVersion = async (name: RuntimeAssetName) => {
+    const rootDir = resolveRootDir("release");
+    const manifestPath = manifestPathOverride?.trim() ? path.resolve(manifestPathOverride) : path.join(rootDir, "manifest.json");
+    if (!fs.existsSync(manifestPath)) {
+      throw new Error(`Release runtime manifest not found at ${manifestPath}.`);
+    }
+
+    const manifest = await readJson<RuntimeManifest>(manifestPath);
+    return name === "opencode" ? manifest.opencodeVersion : manifest.routerVersion;
+  };
+
   const ensureBinary = async (name: RuntimeAssetName) => {
     const source = resolveSource();
-    const opencodeVersion = await readPinnedOpencodeVersion();
-    const routerVersion = await readRouterVersion();
-    const version = name === "opencode" ? opencodeVersion : routerVersion;
+    const version = source === "release"
+      ? await readReleaseManifestVersion(name)
+      : name === "opencode"
+        ? await readPinnedOpencodeVersion()
+        : await readRouterVersion();
 
     const absolutePath = source === "development"
       ? name === "opencode"

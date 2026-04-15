@@ -10,15 +10,18 @@ use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
-use crate::types::OpenworkServerInfo;
+use crate::paths::sidecar_path_candidates;
+use crate::types::{OpenworkServerInfo, OpenworkServerStartupMode};
 use crate::utils::now_ms;
 use crate::utils::truncate_output;
 use crate::workspace::state::normalize_local_workspace_path;
 
 pub mod manager;
 pub mod spawn;
+pub mod startup_mode;
 
 use manager::OpenworkServerManager;
 use spawn::{resolve_openwork_port, spawn_openwork_server};
@@ -334,6 +337,273 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
     (connect_url, mdns_url, lan_url)
 }
 
+fn wait_for_server_v2_health(base_url: &str, timeout: Duration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    let health_url = format!("{}/system/health", base_url.trim_end_matches('/'));
+    let mut last_error = "OpenWork Server V2 did not become healthy".to_string();
+
+    while Instant::now() < deadline {
+        match ureq::get(&health_url).call() {
+            Ok(response) if response.status() >= 200 && response.status() < 300 => return Ok(()),
+            Ok(response) => {
+                last_error = format!(
+                    "OpenWork Server V2 health check returned {}",
+                    response.status()
+                )
+            }
+            Err(error) => last_error = error.to_string(),
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    Err(last_error)
+}
+
+fn wait_for_server_v2_opencode(base_url: &str, timeout: Duration) -> Result<(String, String), String> {
+    let deadline = Instant::now() + timeout;
+    let health_url = format!("{}/system/opencode/health", base_url.trim_end_matches('/'));
+    let mut last_error = "OpenWork Server V2 did not start OpenCode".to_string();
+
+    while Instant::now() < deadline {
+        match ureq::get(&health_url).call() {
+            Ok(response) if response.status() >= 200 && response.status() < 300 => {
+                let payload: Value = response
+                    .into_json()
+                    .map_err(|error| format!("Failed to parse Server V2 OpenCode health: {error}"))?;
+                let status = payload
+                    .pointer("/data/status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let base_url = payload
+                    .pointer("/data/baseUrl")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                if status == "running" {
+                    if let Some(opencode_base_url) = base_url {
+                        return Ok((opencode_base_url, status));
+                    }
+                }
+                last_error = format!("OpenCode status is {status}");
+            }
+            Ok(response) => {
+                last_error = format!(
+                    "OpenWork Server V2 OpenCode health returned {}",
+                    response.status()
+                )
+            }
+            Err(error) => last_error = error.to_string(),
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+
+    Err(last_error)
+}
+
+fn resolve_sidecar_dir(app: &AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok();
+    let current_bin_dir = tauri::process::current_binary(&app.env())
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+    sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref())
+        .into_iter()
+        .next()
+}
+
+fn read_server_v2_details(base_url: &str) -> Result<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>), String> {
+    let root: Value = ureq::get(base_url)
+        .call()
+        .map_err(|error| error.to_string())?
+        .into_json()
+        .map_err(|error| format!("Failed to parse Server V2 root response: {error}"))?;
+    let opencode: Value = ureq::get(&format!("{}/system/opencode/health", base_url.trim_end_matches('/')))
+        .call()
+        .map_err(|error| error.to_string())?
+        .into_json()
+        .map_err(|error| format!("Failed to parse Server V2 OpenCode response: {error}"))?;
+    let router: Value = ureq::get(&format!("{}/system/router/health", base_url.trim_end_matches('/')))
+        .call()
+        .map_err(|error| error.to_string())?
+        .into_json()
+        .map_err(|error| format!("Failed to parse Server V2 router response: {error}"))?;
+
+    Ok((
+        root.pointer("/data/version")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        opencode.pointer("/data/baseUrl")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        opencode.pointer("/data/status")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        router.pointer("/data/baseUrl")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        router.pointer("/data/status")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    ))
+}
+
+pub fn start_openwork_server_v2(
+    app: &AppHandle,
+    manager: &OpenworkServerManager,
+    workspace_paths: &[String],
+    remote_access_enabled: bool,
+) -> Result<OpenworkServerInfo, String> {
+    let mut state = manager
+        .inner
+        .lock()
+        .map_err(|_| "openwork server mutex poisoned".to_string())?;
+    OpenworkServerManager::stop_locked(&mut state);
+
+    let host = if remote_access_enabled {
+        "0.0.0.0".to_string()
+    } else {
+        "127.0.0.1".to_string()
+    };
+    let active_workspace = workspace_paths
+        .first()
+        .map(|path| path.as_str())
+        .unwrap_or("");
+    let preferred_port = read_preferred_openwork_port(app, active_workspace)?;
+    let reserved_ports = reserved_openwork_ports(app, active_workspace)?;
+    let port = resolve_openwork_port(&host, preferred_port, &reserved_ports)?;
+    let base_url = format!("http://127.0.0.1:{port}");
+    let sidecar_dir = resolve_sidecar_dir(app)
+        .ok_or_else(|| "Unable to resolve the desktop sidecar directory for Server V2 runtime assets.".to_string())?;
+    let runtime_manifest_path = sidecar_dir.join("manifest.json");
+
+    let command = match app.shell().sidecar("openwork-server-v2") {
+        Ok(command) => command,
+        Err(_) => app.shell().command("openwork-server-v2"),
+    };
+    let cwd = workspace_paths
+        .first()
+        .map(|path| Path::new(path))
+        .unwrap_or_else(|| Path::new("."));
+    let port_text = port.to_string();
+
+    let mut command = command
+        .args(["--host", host.as_str(), "--port", port_text.as_str()])
+        .current_dir(cwd)
+        .env("OPENWORK_DESKTOP_HOSTED", "1")
+        .env("OPENWORK_SERVER_V2_HOSTING_KIND", "desktop")
+        .env("OPENWORK_SERVER_V2_RUNTIME_BOOTSTRAP", "eager")
+        .env("OPENWORK_SERVER_V2_RUNTIME_RELEASE_DIR", sidecar_dir.to_string_lossy().to_string())
+        .env("OPENWORK_SERVER_V2_RUNTIME_SOURCE", "release");
+
+    if runtime_manifest_path.is_file() {
+        command = command.env(
+            "OPENWORK_SERVER_V2_RUNTIME_MANIFEST_PATH",
+            runtime_manifest_path.to_string_lossy().to_string(),
+        );
+    }
+
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command = command.env(key, value);
+    }
+
+    let (mut rx, child) = command
+        .spawn()
+        .map_err(|e| format!("Failed to start OpenWork Server V2: {e}"))?;
+
+    state.child = Some(child);
+    state.child_exited = false;
+    state.remote_access_enabled = remote_access_enabled;
+    state.startup_mode = OpenworkServerStartupMode::ServerV2;
+    state.host = Some(host.clone());
+    state.port = Some(port);
+    state.base_url = Some(base_url.clone());
+    let (connect_url, mdns_url, lan_url) = if remote_access_enabled {
+        build_urls(port)
+    } else {
+        (None, None, None)
+    };
+    state.connect_url = connect_url;
+    state.mdns_url = mdns_url;
+    state.lan_url = lan_url;
+    state.client_token = None;
+    state.owner_token = None;
+    state.host_token = None;
+    state.server_version = None;
+    state.opencode_base_url = None;
+    state.opencode_status = None;
+    state.router_base_url = None;
+    state.router_status = None;
+    state.last_stdout = None;
+    state.last_stderr = None;
+    let _ = persist_preferred_openwork_port(app, active_workspace, port);
+
+    let state_handle = manager.inner.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Ok(mut state) = state_handle.try_lock() {
+                        let next =
+                            state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
+                        state.last_stdout = Some(truncate_output(&next, 8000));
+                    }
+                }
+                CommandEvent::Stderr(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Ok(mut state) = state_handle.try_lock() {
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
+                        state.last_stderr = Some(truncate_output(&next, 8000));
+                    }
+                }
+                CommandEvent::Terminated(payload) => {
+                    if let Ok(mut state) = state_handle.try_lock() {
+                        state.child_exited = true;
+                        if let Some(code) = payload.code {
+                            let next = format!("OpenWork Server V2 exited (code {code}).");
+                            state.last_stderr = Some(truncate_output(&next, 8000));
+                        }
+                    }
+                }
+                CommandEvent::Error(message) => {
+                    if let Ok(mut state) = state_handle.try_lock() {
+                        state.child_exited = true;
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &message;
+                        state.last_stderr = Some(truncate_output(&next, 8000));
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+
+    drop(state);
+    wait_for_server_v2_health(&base_url, Duration::from_secs(15))?;
+    let (opencode_base_url, opencode_status) =
+        wait_for_server_v2_opencode(&base_url, Duration::from_secs(30))?;
+    let (server_version, _, _, router_base_url, router_status) =
+        read_server_v2_details(&base_url)?;
+
+    let mut state = manager
+        .inner
+        .lock()
+        .map_err(|_| "openwork server mutex poisoned".to_string())?;
+    state.server_version = server_version;
+    state.opencode_base_url = Some(opencode_base_url);
+    state.opencode_status = Some(opencode_status);
+    state.router_base_url = router_base_url;
+    state.router_status = router_status;
+
+    Ok(OpenworkServerManager::snapshot_locked(&mut state))
+}
+
 pub fn start_openwork_server(
     app: &AppHandle,
     manager: &OpenworkServerManager,
@@ -387,6 +657,7 @@ pub fn start_openwork_server(
     state.child = Some(child);
     state.child_exited = false;
     state.remote_access_enabled = remote_access_enabled;
+    state.startup_mode = OpenworkServerStartupMode::Legacy;
     state.host = Some(host.clone());
     state.port = Some(port);
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
@@ -413,6 +684,15 @@ pub fn start_openwork_server(
         }
     }
     state.host_token = Some(host_token);
+    state.server_version = None;
+    state.opencode_base_url = opencode_base_url.map(|value| value.to_string());
+    state.opencode_status = Some("running".to_string());
+    state.router_base_url = opencode_router_health_port.map(|value| format!("http://127.0.0.1:{value}"));
+    state.router_status = Some(if opencode_router_health_port.is_some() {
+        "running".to_string()
+    } else {
+        "disabled".to_string()
+    });
     state.last_stdout = None;
     state.last_stderr = None;
     let _ = persist_preferred_openwork_port(app, active_workspace, port);

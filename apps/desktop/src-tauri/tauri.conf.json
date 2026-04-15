@@ -37,9 +37,11 @@
     "externalBin": [
       "sidecars/opencode",
       "sidecars/openwork-server",
+      "sidecars/openwork-server-v2",
       "sidecars/opencode-router",
       "sidecars/openwork-orchestrator",
       "sidecars/chrome-devtools-mcp",
+      "sidecars/manifest.json",
       "sidecars/versions.json"
     ]
   },

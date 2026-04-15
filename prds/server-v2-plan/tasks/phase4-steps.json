@@ -22,7 +22,7 @@
         "Flag semantics match `ui-migration.md`.",
         "The chosen naming is recorded clearly for later phases and tests."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-002",
@@ -33,7 +33,7 @@
         "The helper returns a simple boolean and is easy to reuse.",
         "The helper lives in a clear shell or kernel location."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-003",
@@ -44,7 +44,7 @@
         "Platform-specific env handling is hidden behind one implementation boundary.",
         "There is no separate hidden desktop-only rollout toggle."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-004",
@@ -55,7 +55,7 @@
         "The adapter remains thin and transport-focused.",
         "The generated SDK package stays server-agnostic and reusable."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-005",
@@ -66,7 +66,7 @@
         "Feature code does not pass `baseUrl` and `token` manually.",
         "The implementation is cheap enough for per-call client creation."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-006",
@@ -77,7 +77,7 @@
         "Capability checks are possible without extra feature-level plumbing.",
         "The adapter remains lightweight and does not become a second app runtime engine."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-007",
@@ -88,7 +88,7 @@
         "The generated SDK package does not mix old and new contracts together.",
         "Legacy helpers are thin enough to delete quickly once migrated."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-008",
@@ -99,7 +99,7 @@
         "Normalization stays close to the transport layer.",
         "The approach covers the payload categories called out in `ui-migration.md`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-009",
@@ -110,7 +110,7 @@
         "Feature code can branch with minimal boilerplate.",
         "The helpers support per-feature or per-endpoint migration."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-010",
@@ -121,7 +121,7 @@
         "The signal is available in dev without deep manual tracing.",
         "The instrumentation does not leak into rendering code."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-011",
@@ -132,7 +132,7 @@
         "Flag-on launches Server V2 instead of assembling the old local stack where feasible.",
         "The startup branch lives in one native location rather than many commands."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-012",
@@ -143,7 +143,7 @@
         "Minimal reconnect information is persisted or passed forward cleanly.",
         "The shell does not resume ownership of workspace behavior just to launch the server."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-013",
@@ -154,7 +154,7 @@
         "Flag-on and flag-off startup both use explicit boundaries.",
         "The app boot path becomes easier for later phases to migrate slice by slice."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-014",
@@ -165,7 +165,7 @@
         "Legacy fallback still works when the flag is off.",
         "The first migrated calls are easy to verify end to end."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-015",
@@ -176,7 +176,7 @@
         "Raw env parsing is not scattered into new feature code.",
         "The codebase shows a consistent migration pattern."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-016",
@@ -187,7 +187,7 @@
         "The rollout boundary does not break the default path.",
         "Regression checks exist for future boundary edits."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-017",
@@ -198,7 +198,7 @@
         "The startup branch and transport branch agree with each other.",
         "Developers can tell if Server V2 mode regresses before broader rollout."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P4-018",
@@ -209,7 +209,7 @@
         "Known rollout caveats are written down for later phases.",
         "Phase 4 leaves a clean seam rather than a second permanent architecture."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

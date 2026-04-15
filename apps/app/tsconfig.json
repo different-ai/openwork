@@ -7,6 +7,10 @@
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@openwork/server-sdk": ["../../packages/openwork-server-sdk/src/index.ts"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

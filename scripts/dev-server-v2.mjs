@@ -51,9 +51,14 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 for (const command of commands) {
+  const env = {
+    ...process.env,
+    VITE_OPENWORK_UI_USE_SERVER_V2:
+      process.env.VITE_OPENWORK_UI_USE_SERVER_V2 ?? process.env.OPENWORK_UI_USE_SERVER_V2 ?? "",
+  };
   const child = spawn("pnpm", command.args, {
     stdio: "inherit",
-    env: process.env,
+    env,
     cwd: process.cwd(),
   });
   children.push(child);

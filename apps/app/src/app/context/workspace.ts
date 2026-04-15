@@ -1129,8 +1129,16 @@ export function createWorkspaceStore(options: {
     preset: WorkspacePreset,
   ) => {
     if (preset !== "starter") return null;
-    const localWorkspace = await ensureBackendWorkspaceReady(workspacePath, name, preset);
-    return await localWorkspace.client.materializeBlueprintSessions(localWorkspace.workspaceId);
+    try {
+      const localWorkspace = await ensureBackendWorkspaceReady(workspacePath, name, preset);
+      return await localWorkspace.client.materializeBlueprintSessions(localWorkspace.workspaceId);
+    } catch (error) {
+      wsDebug("starter-sessions:skip-server-materialize", {
+        message: error instanceof Error ? error.message : safeStringify(error),
+        workspacePath,
+      });
+      return null;
+    }
   };
 
   const waitForWorkspaceSessionsReady = async (
@@ -2234,22 +2242,24 @@ export function createWorkspaceStore(options: {
 
       if (preset === "starter") {
         const materialized = await materializeStarterSessions(resolvedFolder, name, preset);
-        const sessionsReady = await waitForWorkspaceSessionsReady(resolvedFolder);
-        if (!sessionsReady) {
-          throw new Error("Starter sessions did not finish loading for the new workspace.");
-        }
-        if (nextSelectedId) {
-          await options.refreshWorkspaceSessions?.(nextSelectedId);
-        }
-        const openSessionId = materialized?.openSessionId?.trim() || "";
-        if (openSessionId) {
-          options.setPendingInitialSessionSelection?.(null);
-          options.setSelectedSessionId(openSessionId);
-          options.setView("session", openSessionId);
-          await options.selectSession(openSessionId, {
-            skipHealthCheck: true,
-            source: "create-workspace-open-session",
-          });
+        if (materialized) {
+          const sessionsReady = await waitForWorkspaceSessionsReady(resolvedFolder);
+          if (!sessionsReady) {
+            throw new Error("Starter sessions did not finish loading for the new workspace.");
+          }
+          if (nextSelectedId) {
+            await options.refreshWorkspaceSessions?.(nextSelectedId);
+          }
+          const openSessionId = materialized.openSessionId?.trim() || "";
+          if (openSessionId) {
+            options.setPendingInitialSessionSelection?.(null);
+            options.setSelectedSessionId(openSessionId);
+            options.setView("session", openSessionId);
+            await options.selectSession(openSessionId, {
+              skipHealthCheck: true,
+              source: "create-workspace-open-session",
+            });
+          }
         }
       }
 

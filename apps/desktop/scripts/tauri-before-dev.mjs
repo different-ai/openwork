@@ -220,6 +220,8 @@ const runUiDevServer = () => {
       // Make sure vite sees the intended port.
       PORT: String(port),
       OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE || "1",
+      VITE_OPENWORK_UI_USE_SERVER_V2:
+        process.env.VITE_OPENWORK_UI_USE_SERVER_V2 ?? process.env.OPENWORK_UI_USE_SERVER_V2 ?? "",
     },
   });
 
