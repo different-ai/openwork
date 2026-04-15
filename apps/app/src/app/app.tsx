@@ -245,7 +245,7 @@ export default function App() {
 
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
 
-  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwork-orchestrator");
+  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("direct");
   const [opencodeEnableExa, setOpencodeEnableExa] = createSignal(false);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
@@ -1455,7 +1455,7 @@ export default function App() {
       setThemeMode("system");
       setEngineSource(isTauriRuntime() ? "sidecar" : "path");
       setEngineCustomBinPath("");
-      setEngineRuntime("openwork-orchestrator");
+      setEngineRuntime("direct");
       modelConfig.resetAppDefaults();
       resetSessionDisplayPreferences();
       setHideTitlebar(false);

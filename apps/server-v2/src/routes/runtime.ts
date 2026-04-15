@@ -7,6 +7,7 @@ import {
   opencodeHealthResponseSchema,
   routerHealthResponseSchema,
   runtimeSummaryResponseSchema,
+  runtimeUpgradeResponseSchema,
   runtimeVersionsResponseSchema,
 } from "../schemas/runtime.js";
 import { routePaths } from "./route-paths.js";
@@ -77,6 +78,24 @@ export function registerRuntimeRoutes(app: Hono<AppBindings>) {
       const requestContext = getRequestContext(c);
       requestContext.services.auth.requireVisibleRead(requestContext.actor);
       return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.runtime.getRuntimeVersions()));
+    },
+  );
+
+  app.post(
+    routePaths.system.runtime.upgrade,
+    describeRoute({
+      tags: ["Runtime"],
+      summary: "Upgrade runtime assets",
+      description: "Re-resolves the pinned runtime bundle through Server V2, restarts managed children, and returns the resulting runtime summary plus upgrade state.",
+      responses: withCommonErrorResponses({
+        200: jsonResponse("Runtime upgraded successfully.", runtimeUpgradeResponseSchema),
+      }, { includeForbidden: true, includeUnauthorized: true }),
+    }),
+    async (c) => {
+      const requestContext = getRequestContext(c);
+      requestContext.services.auth.requireHost(requestContext.actor);
+      const result = await requestContext.services.runtime.upgradeRuntime();
+      return c.json(buildSuccessResponse(requestContext.requestId, result));
     },
   );
 }

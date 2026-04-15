@@ -202,6 +202,108 @@ test("file routes cover simple content, file sessions, inbox, artifacts, and rel
   expect(reloads.status).toBe(200);
   expect(reloadBody.data.items.length).toBeGreaterThan(0);
   expect(reloadBody.data.items.some((item: any) => item.reason === "config")).toBe(true);
+
+  const disposed = await app.request(`http://openwork.local/workspaces/${workspaceId}/dispose`, {
+    method: "POST",
+  });
+  const disposedBody = await disposed.json();
+  expect(disposed.status).toBe(200);
+  expect(disposedBody.data.disposed).toBe(true);
+});
+
+test("remote workspace config and file routes proxy through the local server", async () => {
+  const remote = Bun.serve({
+    fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/workspaces/remote-alpha/config" && request.method === "GET") {
+        return Response.json({
+          ok: true,
+          data: {
+            effective: { opencode: { permission: { external_directory: ["/srv/alpha"] } }, openwork: {} },
+            materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.opencode/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
+            stored: { openwork: { reload: { auto: true } }, opencode: {} },
+            updatedAt: new Date().toISOString(),
+            workspaceId: "remote-alpha",
+          },
+          meta: { requestId: "owreq_remote_cfg_1", timestamp: new Date().toISOString() },
+        });
+      }
+      if (url.pathname === "/workspaces/remote-alpha/config" && request.method === "PATCH") {
+        return Response.json({
+          ok: true,
+          data: {
+            effective: { opencode: { permission: { external_directory: ["/srv/alpha", "/srv/shared"] } }, openwork: {} },
+            materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.opencode/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
+            stored: { openwork: { reload: { auto: true } }, opencode: {} },
+            updatedAt: new Date().toISOString(),
+            workspaceId: "remote-alpha",
+          },
+          meta: { requestId: "owreq_remote_cfg_2", timestamp: new Date().toISOString() },
+        });
+      }
+      if (url.pathname === "/workspaces/remote-alpha/files/content" && request.method === "GET") {
+        return Response.json({ ok: true, data: { path: "notes.md", content: "remote hello", bytes: 12, updatedAt: 42 }, meta: { requestId: "owreq_remote_file_1", timestamp: new Date().toISOString() } });
+      }
+      if (url.pathname === "/workspaces/remote-alpha/files/content" && request.method === "POST") {
+        return Response.json({ ok: true, data: { path: "notes.md", bytes: 12, revision: "42:12", updatedAt: 43 }, meta: { requestId: "owreq_remote_file_2", timestamp: new Date().toISOString() } });
+      }
+      if (url.pathname === "/workspaces/remote-alpha/reload-events" && request.method === "GET") {
+        return Response.json({ ok: true, data: { cursor: 1, items: [{ id: "evt_remote_1", reason: "config", seq: 1, timestamp: Date.now(), workspaceId: "remote-alpha" }] }, meta: { requestId: "owreq_remote_reload_1", timestamp: new Date().toISOString() } });
+      }
+      return new Response("not found", { status: 404 });
+    },
+    hostname: "127.0.0.1",
+    port: 0,
+  });
+
+  try {
+    const { app, dependencies } = createTestApp();
+    const workspace = dependencies.persistence.registry.importRemoteWorkspace({
+      baseUrl: `http://127.0.0.1:${remote.port}`,
+      displayName: "Remote Alpha",
+      legacyNotes: {},
+      remoteType: "openwork",
+      remoteWorkspaceId: "remote-alpha",
+      serverAuth: { openworkToken: "remote-token" },
+      serverBaseUrl: `http://127.0.0.1:${remote.port}`,
+      serverHostingKind: "self_hosted",
+      serverLabel: `127.0.0.1:${remote.port}`,
+      workspaceStatus: "ready",
+    });
+
+    const config = await app.request(`http://openwork.local/workspaces/${workspace.id}/config`);
+    const configBody = await config.json();
+    expect(config.status).toBe(200);
+    expect(configBody.data.stored.openwork.reload.auto).toBe(true);
+
+    const patched = await app.request(`http://openwork.local/workspaces/${workspace.id}/config`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ opencode: { permission: { external_directory: ["/srv/shared"] } } }),
+    });
+    expect(patched.status).toBe(200);
+
+    const contentRead = await app.request(`http://openwork.local/workspaces/${workspace.id}/files/content?path=notes.md`);
+    const contentBody = await contentRead.json();
+    expect(contentRead.status).toBe(200);
+    expect(contentBody.data.content).toBe("remote hello");
+
+    const contentWrite = await app.request(`http://openwork.local/workspaces/${workspace.id}/files/content`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "notes.md", content: "remote hello" }),
+    });
+    const contentWriteBody = await contentWrite.json();
+    expect(contentWrite.status).toBe(200);
+    expect(contentWriteBody.data.revision).toBe("42:12");
+
+    const reloads = await app.request(`http://openwork.local/workspaces/${workspace.id}/reload-events`);
+    const reloadBody = await reloads.json();
+    expect(reloads.status).toBe(200);
+    expect(reloadBody.data.items[0].workspaceId).toBe("remote-alpha");
+  } finally {
+    remote.stop(true);
+  }
 });
 
 test("reconciliation absorbs recognized managed items from local workspace files", async () => {
@@ -232,7 +334,7 @@ test("reconciliation absorbs recognized managed items from local workspace files
   const plugins = dependencies.persistence.repositories.workspacePlugins.listForWorkspace(workspace.id);
   const providers = dependencies.persistence.repositories.workspaceProviderConfigs.listForWorkspace(workspace.id);
   const skills = dependencies.persistence.repositories.workspaceSkills.listForWorkspace(workspace.id);
-  const snapshot = dependencies.services.config.getWorkspaceConfigSnapshot(workspace.id);
+  const snapshot = await dependencies.services.config.getWorkspaceConfigSnapshot(workspace.id);
 
   expect(mcps).toHaveLength(1);
   expect(plugins).toHaveLength(1);

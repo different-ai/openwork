@@ -30,6 +30,7 @@ import {
   simpleContentWriteRequestSchema,
   workspaceActivationResponseSchema,
   workspaceCreateLocalRequestSchema,
+  workspaceDisposeResponseSchema,
   workspaceDeleteResponseSchema,
 } from "../schemas/files.js";
 import { workspaceDetailResponseSchema } from "../schemas/registry.js";
@@ -76,12 +77,12 @@ function requireWorkspaceAccess(c: Context<AppBindings>) {
   return { actorKey, actorKind, requestContext, workspaceId };
 }
 
-function createBinaryResponse(filePath: string, filename: string, size: number) {
+function createBinaryResponse(inputValue: { buffer?: Uint8Array; filePath?: string; filename: string; size: number }) {
   const headers = new Headers();
   headers.set("Content-Type", "application/octet-stream");
-  headers.set("Content-Disposition", `attachment; filename="${filename}"`);
-  headers.set("Content-Length", String(size));
-  return new Response((Bun as any).file(filePath), { headers, status: 200 });
+  headers.set("Content-Disposition", `attachment; filename="${inputValue.filename}"`);
+  headers.set("Content-Length", String(inputValue.size));
+  return new Response(inputValue.buffer ?? (Bun as any).file(inputValue.filePath!), { headers, status: 200 });
 }
 
 export function registerFileRoutes(app: Hono<AppBindings>) {
@@ -119,7 +120,7 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Workspace activated successfully.", workspaceActivationResponseSchema),
       }, { includeForbidden: true, includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const requestContext = getRequestContext(c);
       requestContext.services.auth.requireVisibleRead(requestContext.actor);
       const workspaceId = c.req.param("workspaceId") ?? "";
@@ -160,11 +161,30 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Workspace deleted successfully.", workspaceDeleteResponseSchema),
       }, { includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const { requestContext } = readActorKey(c);
       requestContext.services.auth.requireVisibleRead(requestContext.actor);
       const workspaceId = c.req.param("workspaceId") ?? "";
       const result = requestContext.services.files.deleteWorkspace(workspaceId);
+      return c.json(buildSuccessResponse(requestContext.requestId, result));
+    },
+  );
+
+  app.post(
+    routePaths.workspaces.dispose(),
+    describeRoute({
+      tags: ["Workspaces"],
+      summary: "Dispose workspace runtime instance",
+      description: "Disposes the runtime instance associated with the workspace through Server V2 and refreshes managed runtime supervision where required.",
+      responses: withCommonErrorResponses({
+        200: jsonResponse("Workspace runtime instance disposed successfully.", workspaceDisposeResponseSchema),
+      }, { includeUnauthorized: true }),
+    }),
+    async (c) => {
+      const { requestContext } = readActorKey(c);
+      requestContext.services.auth.requireVisibleRead(requestContext.actor);
+      const workspaceId = c.req.param("workspaceId") ?? "";
+      const result = await requestContext.services.files.disposeWorkspaceInstance(workspaceId);
       return c.json(buildSuccessResponse(requestContext.requestId, result));
     },
   );
@@ -179,9 +199,9 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Workspace config returned successfully.", workspaceConfigResponseSchema),
       }, { includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const { requestContext, workspaceId } = requireWorkspaceAccess(c);
-      const snapshot = requestContext.services.config.getWorkspaceConfigSnapshot(workspaceId);
+      const snapshot = await requestContext.services.config.getWorkspaceConfigSnapshot(workspaceId);
       return c.json(buildSuccessResponse(requestContext.requestId, snapshot));
     },
   );
@@ -199,7 +219,7 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
     async (c) => {
       const { requestContext, workspaceId } = requireWorkspaceAccess(c);
       const body = await parseJsonBody(workspaceConfigPatchRequestSchema, c.req.raw);
-      const snapshot = requestContext.services.config.patchWorkspaceConfig(workspaceId, body);
+      const snapshot = await requestContext.services.config.patchWorkspaceConfig(workspaceId, body);
       if (body.opencode) {
         requestContext.services.files.emitReloadEvent(workspaceId, "config", {
           action: "updated",
@@ -236,10 +256,10 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Raw OpenCode config returned successfully.", rawOpencodeConfigResponseSchema),
       }, { includeInvalidRequest: true, includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const { requestContext, workspaceId } = requireWorkspaceAccess(c);
       const query = parseQuery(rawOpencodeConfigQuerySchema, c.req.url);
-      const result = requestContext.services.config.readRawOpencodeConfig(workspaceId, query.scope ?? "project");
+      const result = await requestContext.services.config.readRawOpencodeConfig(workspaceId, query.scope ?? "project");
       return c.json(buildSuccessResponse(requestContext.requestId, result));
     },
   );
@@ -259,7 +279,7 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
       const body = await parseJsonBody(rawOpencodeConfigWriteRequestSchema, c.req.raw);
       const result = body.scope === "global"
         ? requestContext.services.config.writeGlobalOpencodeConfig(body.content)
-        : requestContext.services.config.writeWorkspaceRawOpencodeConfig(workspaceId, body.content);
+        : await requestContext.services.config.writeWorkspaceRawOpencodeConfig(workspaceId, body.content);
       if (body.scope !== "global") {
         requestContext.services.files.emitReloadEvent(workspaceId, "config", {
           action: "updated",
@@ -288,10 +308,10 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Reload events returned successfully.", reloadEventsResponseSchema),
       }, { includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const { requestContext, workspaceId } = requireWorkspaceAccess(c);
       const since = Number(new URL(c.req.url).searchParams.get("since") ?? "0");
-      const result = requestContext.services.files.getReloadEvents(workspaceId, Number.isFinite(since) ? since : 0);
+      const result = await requestContext.services.files.getReloadEvents(workspaceId, Number.isFinite(since) ? since : 0);
       return c.json(buildSuccessResponse(requestContext.requestId, result));
     },
   );
@@ -326,7 +346,7 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
     async (c) => {
       const { actorKey, actorKind, requestContext, workspaceId } = requireWorkspaceAccess(c);
       const body = await parseJsonBody(fileSessionCreateRequestSchema, c.req.raw);
-      const session = requestContext.services.files.createWorkspaceFileSession(workspaceId, { actorKey, actorKind, ...body });
+      const session = await requestContext.services.files.createWorkspaceFileSession(workspaceId, { actorKey, actorKind, ...body });
       return c.json(buildSuccessResponse(requestContext.requestId, session));
     },
   );
@@ -345,7 +365,7 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
       const { actorKey, actorKind, requestContext, workspaceId } = requireWorkspaceAccess(c);
       const params = fileSessionIdParamsSchema.parse(c.req.param());
       const body = await parseJsonBody(fileSessionCreateRequestSchema, c.req.raw);
-      const session = requestContext.services.files.renewWorkspaceFileSession(workspaceId, params.fileSessionId, actorKey, actorKind, body.ttlSeconds);
+      const session = await requestContext.services.files.renewWorkspaceFileSession(workspaceId, params.fileSessionId, actorKey, actorKind, body.ttlSeconds);
       return c.json(buildSuccessResponse(requestContext.requestId, session));
     },
   );
@@ -360,10 +380,10 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Workspace file session closed successfully.", workspaceActivationResponseSchema),
       }, { includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const { actorKey, actorKind, requestContext, workspaceId } = requireWorkspaceAccess(c);
       const params = fileSessionIdParamsSchema.parse(c.req.param());
-      requestContext.services.files.closeWorkspaceFileSession(workspaceId, params.fileSessionId, actorKey, actorKind);
+      await requestContext.services.files.closeWorkspaceFileSession(workspaceId, params.fileSessionId, actorKey, actorKind);
       return c.json(buildSuccessResponse(requestContext.requestId, { activeWorkspaceId: workspaceId }));
     },
   );
@@ -540,7 +560,12 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
     async (c) => {
       const { requestContext, workspaceId } = requireWorkspaceAccess(c);
       const result = await requestContext.services.files.downloadInboxItem(workspaceId, c.req.param("inboxId") ?? "");
-      return createBinaryResponse(result.absolutePath, result.filename, result.size);
+      return createBinaryResponse({
+        buffer: (result as { buffer?: Uint8Array }).buffer,
+        filePath: (result as { absolutePath?: string }).absolutePath,
+        filename: result.filename,
+        size: result.size,
+      });
     },
   );
 
@@ -604,7 +629,12 @@ export function registerFileRoutes(app: Hono<AppBindings>) {
     async (c) => {
       const { requestContext, workspaceId } = requireWorkspaceAccess(c);
       const result = await requestContext.services.files.downloadArtifact(workspaceId, c.req.param("artifactId") ?? "");
-      return createBinaryResponse(result.absolutePath, result.filename, result.size);
+      return createBinaryResponse({
+        buffer: (result as { buffer?: Uint8Array }).buffer,
+        filePath: (result as { absolutePath?: string }).absolutePath,
+        filename: result.filename,
+        size: result.size,
+      });
     },
   );
 }

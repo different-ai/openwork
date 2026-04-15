@@ -16,6 +16,9 @@ use tauri::State;
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
+use crate::openwork_server::manager::OpenworkServerManager;
+use crate::openwork_server::startup_mode::{resolve_server_startup_mode, ServerStartupMode};
+use crate::openwork_server::{probe_server_v2_snapshot, start_openwork_server_v2};
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_status};
 use crate::platform::configure_hidden;
@@ -668,6 +671,48 @@ fn resolve_base_url(manager: &OrchestratorManager) -> Result<String, String> {
         .ok_or_else(|| "orchestrator daemon is not running".to_string())
 }
 
+fn ensure_server_v2_base_url(
+    app: &AppHandle,
+    manager: &OpenworkServerManager,
+    workspace_path: &str,
+) -> Result<String, String> {
+    let snapshot = probe_server_v2_snapshot(app, manager)?
+        .or_else(|| {
+            start_openwork_server_v2(app, manager, &[workspace_path.to_string()], false).ok()
+        })
+        .ok_or_else(|| "OpenWork Server V2 is unavailable".to_string())?;
+    snapshot
+        .base_url
+        .or(snapshot.connect_url)
+        .ok_or_else(|| "OpenWork Server V2 did not expose a base URL".to_string())
+}
+
+fn ensure_server_v2_workspace(
+    base_url: &str,
+    workspace_path: &str,
+    name: Option<&str>,
+) -> Result<String, String> {
+    let payload = json!({
+        "folderPath": workspace_path,
+        "name": name.filter(|value| !value.trim().is_empty()).unwrap_or("Workspace"),
+        "preset": "starter",
+    });
+    let response: Value = ureq::post(&format!(
+        "{}/workspaces/local",
+        base_url.trim_end_matches('/')
+    ))
+    .set("Content-Type", "application/json")
+    .send_json(payload)
+    .map_err(|e| format!("Failed to ensure Server V2 workspace: {e}"))?
+    .into_json()
+    .map_err(|e| format!("Failed to parse Server V2 workspace response: {e}"))?;
+    response
+        .pointer("/data/id")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| "Server V2 workspace response did not include an id".to_string())
+}
+
 #[tauri::command]
 pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorStatus {
     let data_dir = resolve_data_dir(&manager);
@@ -681,10 +726,51 @@ pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorS
 
 #[tauri::command]
 pub fn orchestrator_workspace_activate(
+    app: AppHandle,
     manager: State<OrchestratorManager>,
+    openwork_manager: State<OpenworkServerManager>,
     workspace_path: String,
     name: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
+    if resolve_server_startup_mode() == ServerStartupMode::ServerV2 {
+        let base_url = ensure_server_v2_base_url(&app, &openwork_manager, &workspace_path)?;
+        let id = ensure_server_v2_workspace(&base_url, &workspace_path, name.as_deref())?;
+        ureq::post(&format!(
+            "{}/workspaces/{}/activate",
+            base_url.trim_end_matches('/'),
+            id
+        ))
+        .set("Content-Type", "application/json")
+        .send_string("")
+        .map_err(|e| format!("Failed to activate Server V2 workspace: {e}"))?;
+        return Ok(OrchestratorWorkspace {
+            id,
+            name: name
+                .and_then(|value| {
+                    let trimmed = value.trim().to_string();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                })
+                .unwrap_or_else(|| {
+                    workspace_path
+                        .split(['/', '\\'])
+                        .filter(|value| !value.is_empty())
+                        .last()
+                        .unwrap_or("Workspace")
+                        .to_string()
+                }),
+            path: workspace_path,
+            workspace_type: "local".to_string(),
+            base_url: Some(base_url),
+            directory: None,
+            created_at: None,
+            last_used_at: Some(now_ms()),
+        });
+    }
+
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({
@@ -719,9 +805,27 @@ pub fn orchestrator_workspace_activate(
 
 #[tauri::command]
 pub fn orchestrator_instance_dispose(
+    app: AppHandle,
     manager: State<OrchestratorManager>,
+    openwork_manager: State<OpenworkServerManager>,
     workspace_path: String,
 ) -> Result<bool, String> {
+    if resolve_server_startup_mode() == ServerStartupMode::ServerV2 {
+        let base_url = ensure_server_v2_base_url(&app, &openwork_manager, &workspace_path)?;
+        let id = ensure_server_v2_workspace(&base_url, &workspace_path, None)?;
+        let _: Value = ureq::post(&format!(
+            "{}/workspaces/{}/dispose",
+            base_url.trim_end_matches('/'),
+            id
+        ))
+        .set("Content-Type", "application/json")
+        .send_string("")
+        .map_err(|e| format!("Failed to dispose Server V2 workspace instance: {e}"))?
+        .into_json()
+        .map_err(|e| format!("Failed to parse Server V2 dispose response: {e}"))?;
+        return Ok(true);
+    }
+
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({

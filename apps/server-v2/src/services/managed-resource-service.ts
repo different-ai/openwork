@@ -1228,10 +1228,10 @@ export function createManagedResourceService(input: {
       });
     },
 
-    exportWorkspace(workspaceId: string, options?: { sensitiveMode?: WorkspaceExportSensitiveMode }) {
+    async exportWorkspace(workspaceId: string, options?: { sensitiveMode?: WorkspaceExportSensitiveMode }) {
       const workspace = ensureWorkspaceMutable(getWorkspaceOrThrow(workspaceId));
       const sensitiveMode = options?.sensitiveMode ?? "auto";
-      const snapshot = input.config.getWorkspaceConfigSnapshot(workspaceId);
+      const snapshot = await input.config.getWorkspaceConfigSnapshot(workspaceId);
       let opencode = sanitizePortableOpencodeConfig(snapshot.effective.opencode);
       const openwork = sanitizeOpenworkTemplateConfig(snapshot.stored.openwork);
       const skills = kindConfig.skills.assignmentRepo.listForWorkspace(workspaceId)
@@ -1277,15 +1277,15 @@ export function createManagedResourceService(input: {
 
       if (opencode) {
         const sanitizedOpencode = sanitizePortableOpencodeConfig(opencode);
-        input.config.patchWorkspaceConfig(workspaceId, {
-          opencode: modes.opencode === "replace" ? sanitizedOpencode : sanitizedOpencode,
-        });
+          await input.config.patchWorkspaceConfig(workspaceId, {
+            opencode: modes.opencode === "replace" ? sanitizedOpencode : sanitizedOpencode,
+          });
       }
 
       if (openwork) {
-        input.config.patchWorkspaceConfig(workspaceId, {
-          openwork: sanitizeOpenworkTemplateConfig(openwork),
-        });
+          await input.config.patchWorkspaceConfig(workspaceId, {
+            openwork: sanitizeOpenworkTemplateConfig(openwork),
+          });
       }
 
       if (skills.length > 0 && modes.skills === "replace") {

@@ -278,3 +278,30 @@ test("runtime supervisor starts router when enabled and persists router state", 
   await runtime.dispose();
   persistence.close();
 });
+
+test("runtime upgrade restarts managed children and records upgrade state", async () => {
+  const persistence = createPersistence();
+  const opencodePath = await createFakeBinary("opencode", "success");
+  const routerPath = await createFakeBinary("router", "success");
+  const assetService = await createFakeAssetService(opencodePath, routerPath);
+  const runtime = createRuntimeService({
+    assetService,
+    bootstrapPolicy: "manual",
+    environment: "test",
+    repositories: persistence.repositories,
+    restartPolicy: { backoffMs: 25, maxAttempts: 0, windowMs: 1000 },
+    serverId: persistence.registry.localServerId,
+    serverVersion: "0.0.0-test",
+    workingDirectory: persistence.workingDirectory,
+  });
+
+  await runtime.bootstrap();
+  const upgraded = await runtime.upgradeRuntime();
+
+  expect(upgraded.state.status).toBe("completed");
+  expect(upgraded.summary.opencode.running).toBe(true);
+  expect(upgraded.summary.upgrade.status).toBe("completed");
+
+  await runtime.dispose();
+  persistence.close();
+});

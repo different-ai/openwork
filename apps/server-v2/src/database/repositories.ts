@@ -450,6 +450,14 @@ export class WorkspacesRepository {
     return (this.database.query(query).all() as RawWorkspaceRow[]).map(mapWorkspace).filter(Boolean) as WorkspaceRecord[];
   }
 
+  listByServerId(serverId: string, input?: { includeHidden?: boolean }) {
+    const includeHidden = input?.includeHidden ?? false;
+    const query = includeHidden
+      ? "SELECT * FROM workspaces WHERE server_id = ?1 ORDER BY is_hidden ASC, display_name COLLATE NOCASE ASC"
+      : "SELECT * FROM workspaces WHERE server_id = ?1 AND is_hidden = 0 ORDER BY display_name COLLATE NOCASE ASC";
+    return (this.database.query(query).all(serverId) as RawWorkspaceRow[]).map(mapWorkspace).filter(Boolean) as WorkspaceRecord[];
+  }
+
   countVisible() {
     const row = this.database.query("SELECT COUNT(1) AS count FROM workspaces WHERE is_hidden = 0").get() as { count?: number } | null;
     return row?.count ?? 0;

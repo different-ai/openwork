@@ -15,10 +15,10 @@ fn env_truthy(key: &str) -> Option<bool> {
 }
 
 pub fn resolve_server_startup_mode() -> ServerStartupMode {
-    if env_truthy("OPENWORK_UI_USE_SERVER_V2").unwrap_or(false) {
-        ServerStartupMode::ServerV2
-    } else {
+    if env_truthy("OPENWORK_UI_USE_SERVER_V2") == Some(false) {
         ServerStartupMode::Legacy
+    } else {
+        ServerStartupMode::ServerV2
     }
 }
 
@@ -52,16 +52,16 @@ mod tests {
     }
 
     #[test]
-    fn startup_mode_defaults_to_legacy() {
-        let _lock = ENV_LOCK.lock().expect("lock env");
-        let _guard = EnvVarGuard::set("OPENWORK_UI_USE_SERVER_V2", "0");
-        assert_eq!(resolve_server_startup_mode(), ServerStartupMode::Legacy);
-    }
-
-    #[test]
-    fn startup_mode_resolves_server_v2_from_logical_flag() {
+    fn startup_mode_defaults_to_server_v2() {
         let _lock = ENV_LOCK.lock().expect("lock env");
         let _guard = EnvVarGuard::set("OPENWORK_UI_USE_SERVER_V2", "1");
         assert_eq!(resolve_server_startup_mode(), ServerStartupMode::ServerV2);
+    }
+
+    #[test]
+    fn startup_mode_allows_legacy_override() {
+        let _lock = ENV_LOCK.lock().expect("lock env");
+        let _guard = EnvVarGuard::set("OPENWORK_UI_USE_SERVER_V2", "0");
+        assert_eq!(resolve_server_startup_mode(), ServerStartupMode::Legacy);
     }
 }

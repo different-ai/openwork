@@ -75,6 +75,13 @@ export type OpenworkServerCapabilities = {
       inbox: boolean;
       mutations: boolean;
     };
+    managed?: {
+      assignments: boolean;
+      mcps: boolean;
+      plugins: boolean;
+      providerConfigs: boolean;
+      skills: boolean;
+    };
     reload?: {
       manualEngineReload: boolean;
       reconciliation: boolean;
@@ -84,6 +91,8 @@ export type OpenworkServerCapabilities = {
     registry: {
       backendResolution: boolean;
       hiddenWorkspaceFiltering: boolean;
+      remoteServerConnections?: boolean;
+      remoteWorkspaceSync?: boolean;
       serverInventory: boolean;
       workspaceDetail: boolean;
       workspaceList: boolean;
@@ -95,6 +104,19 @@ export type OpenworkServerCapabilities = {
       mutations: boolean;
       promptAsync: boolean;
       revertHistory: boolean;
+    };
+    runtime?: {
+      opencodeHealth: boolean;
+      routerHealth: boolean;
+      runtimeSummary: boolean;
+      runtimeUpgrade?: boolean;
+      runtimeVersions: boolean;
+    };
+    router?: {
+      bindings: boolean;
+      identities: boolean;
+      outboundSend: boolean;
+      productRoutes: boolean;
     };
     shares?: {
       workspaceScoped: boolean;
@@ -1055,8 +1077,12 @@ export function createOpenworkServerClient(options: {
   const canUseServerV2Files = Boolean(serverV2 && serverV2Capabilities?.files?.contentRoutes);
   const canUseServerV2Inbox = Boolean(serverV2 && serverV2Capabilities?.files?.inbox);
   const canUseServerV2Artifacts = Boolean(serverV2 && serverV2Capabilities?.files?.artifacts);
+  const canUseServerV2Sessions = Boolean(serverV2 && serverV2Capabilities?.sessions?.list);
+  const canUseServerV2Managed = Boolean(serverV2 && serverV2Capabilities?.managed?.skills && serverV2Capabilities?.managed?.plugins && serverV2Capabilities?.managed?.mcps);
+  const canUseServerV2Router = Boolean(serverV2 && serverV2Capabilities?.router?.productRoutes);
   const canUseServerV2WorkspaceLifecycle = Boolean(serverV2 && serverV2Capabilities?.workspaces?.createLocal);
   const canUseServerV2Reload = Boolean(serverV2 && serverV2Capabilities?.reload?.workspaceEvents);
+  const canUseServerV2RemoteRegistry = Boolean(serverV2 && serverV2Capabilities?.registry?.remoteServerConnections && serverV2Capabilities?.registry?.remoteWorkspaceSync);
 
   const mapServerV2Workspace = (item: any): OpenworkWorkspaceInfo => {
     if (item.backend?.kind === "remote_openwork") {
@@ -1221,7 +1247,7 @@ export function createOpenworkServerClient(options: {
     getOpenCodeRouterHealth: (workspaceId: string) =>
       requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/health`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/health`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
       ),
     opencodeRouterBindings: (filters?: { channel?: string; identityId?: string }) => {
@@ -1244,6 +1270,34 @@ export function createOpenworkServerClient(options: {
             timeoutMs: timeouts.listWorkspaces,
           }).then((response): OpenworkWorkspaceList => ({ items: response.data.items.map(mapServerV2Workspace), activeId: response.data.items[0]?.id ?? null }))
         : requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    connectRemoteServer: (payload: { baseUrl: string; directory?: string | null; label?: string | null; token?: string | null; hostToken?: string | null; workspaceId?: string | null }) =>
+      canUseServerV2RemoteRegistry
+        ? requestJson<{ ok: true; data: { selectedWorkspaceId: string | null; server: any; workspaces: any[] }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/system/servers/connect", {
+            token,
+            hostToken,
+            method: "POST",
+            body: payload,
+            timeoutMs: timeouts.listWorkspaces,
+          }).then((response) => ({
+            selectedWorkspaceId: response.data.selectedWorkspaceId,
+            server: response.data.server,
+            workspaces: response.data.workspaces.map(mapServerV2Workspace),
+          }))
+        : Promise.reject(new Error("Server V2 remote server registration is unavailable.")),
+    syncRemoteServer: (serverId: string, payload?: { directory?: string | null; workspaceId?: string | null }) =>
+      canUseServerV2RemoteRegistry
+        ? requestJson<{ ok: true; data: { selectedWorkspaceId: string | null; server: any; workspaces: any[] }; meta: { requestId: string; timestamp: string } }>(baseUrl, `/system/servers/${encodeURIComponent(serverId)}/sync`, {
+            token,
+            hostToken,
+            method: "POST",
+            body: payload ?? {},
+            timeoutMs: timeouts.listWorkspaces,
+          }).then((response) => ({
+            selectedWorkspaceId: response.data.selectedWorkspaceId,
+            server: response.data.server,
+            workspaces: response.data.workspaces.map(mapServerV2Workspace),
+          }))
+        : Promise.reject(new Error("Server V2 remote workspace sync is unavailable.")),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       canUseServerV2WorkspaceLifecycle
         ? requestJson<{ ok: true; data: any; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces/local", {
@@ -1322,10 +1376,22 @@ export function createOpenworkServerClient(options: {
             `/workspaces/${encodeURIComponent(workspaceId)}`,
             { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
           ),
+    disposeWorkspace: (workspaceId: string) =>
+      requestJson<{ ok: true; data: { disposed: boolean; workspaceId: string }; meta: { requestId: string; timestamp: string } }>(
+        baseUrl,
+        `/workspaces/${encodeURIComponent(workspaceId)}/dispose`,
+        { token, hostToken, method: "POST", timeoutMs: timeouts.deleteWorkspace },
+      ).then((response) => response.data),
+    reloadWorkspaceEngine: (workspaceId: string) =>
+      requestJson<{ ok: true; data: { reloadedAt: number }; meta: { requestId: string; timestamp: string } }>(
+        baseUrl,
+        `/workspaces/${encodeURIComponent(workspaceId)}/engine/reload`,
+        { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
+      ).then((response) => response.data),
     deleteSession: (workspaceId: string, sessionId: string) =>
       requestJson<{ ok: boolean }>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+        `${canUseServerV2Sessions ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
     listSessions: (
@@ -1340,14 +1406,14 @@ export function createOpenworkServerClient(options: {
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<{ items: Session[] }>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions${suffix}`,
+        `${canUseServerV2Sessions ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/sessions${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
     getSession: (workspaceId: string, sessionId: string) =>
       requestJson<{ item: Session }>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+        `${canUseServerV2Sessions ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       ),
     getSessionMessages: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
@@ -1356,7 +1422,7 @@ export function createOpenworkServerClient(options: {
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<{ items: OpenworkSessionMessage[] }>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`,
+        `${canUseServerV2Sessions ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
@@ -1366,7 +1432,7 @@ export function createOpenworkServerClient(options: {
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<{ item: OpenworkSessionSnapshot }>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/snapshot${suffix}`,
+        `${canUseServerV2Sessions ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/snapshot${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
@@ -1379,14 +1445,14 @@ export function createOpenworkServerClient(options: {
         query.set("sensitive", options.sensitiveMode);
       }
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export${suffix}`, {
+      return requestJson<OpenworkWorkspaceExport>(baseUrl, `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/export${suffix}`, {
         token,
         hostToken,
         timeoutMs: timeouts.workspaceExport,
       });
     },
     importWorkspace: (workspaceId: string, payload: Record<string, unknown>) =>
-      requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
+      requestJson<{ ok: boolean }>(baseUrl, `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/import`, {
         token,
         hostToken,
         method: "POST",
@@ -1504,7 +1570,7 @@ export function createOpenworkServerClient(options: {
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram-token`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/telegram-token`,
         {
           token,
           hostToken,
@@ -1520,7 +1586,7 @@ export function createOpenworkServerClient(options: {
     ) =>
       requestJson<OpenworkOpenCodeRouterSlackResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/slack-tokens`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/slack-tokens`,
         {
           token,
           hostToken,
@@ -1532,13 +1598,13 @@ export function createOpenworkServerClient(options: {
     getOpenCodeRouterTelegram: (workspaceId: string) =>
       requestJson<OpenworkOpenCodeRouterTelegramInfo>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/telegram`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
       ),
     getOpenCodeRouterTelegramIdentities: (workspaceId: string) =>
       requestJson<OpenworkOpenCodeRouterTelegramIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
       ),
     upsertOpenCodeRouterTelegramIdentity: (
@@ -1547,7 +1613,7 @@ export function createOpenworkServerClient(options: {
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramIdentityUpsertResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
         {
           token,
           hostToken,
@@ -1564,13 +1630,13 @@ export function createOpenworkServerClient(options: {
     deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string) =>
       requestJson<OpenworkOpenCodeRouterTelegramIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}`,
         { token, hostToken, method: "DELETE" },
       ),
     getOpenCodeRouterSlackIdentities: (workspaceId: string) =>
       requestJson<OpenworkOpenCodeRouterSlackIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
         { token, hostToken },
       ),
     upsertOpenCodeRouterSlackIdentity: (
@@ -1579,7 +1645,7 @@ export function createOpenworkServerClient(options: {
     ) =>
       requestJson<OpenworkOpenCodeRouterSlackIdentityUpsertResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
         {
           token,
           hostToken,
@@ -1595,7 +1661,7 @@ export function createOpenworkServerClient(options: {
     deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string) =>
       requestJson<OpenworkOpenCodeRouterSlackIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}`,
         { token, hostToken, method: "DELETE" },
       ),
     getOpenCodeRouterBindings: (
@@ -1608,7 +1674,7 @@ export function createOpenworkServerClient(options: {
       const suffix = search.toString();
       return requestJson<OpenworkOpenCodeRouterBindingsResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/bindings${suffix ? `?${suffix}` : ""}`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/bindings${suffix ? `?${suffix}` : ""}`,
         { token, hostToken },
       );
     },
@@ -1618,7 +1684,7 @@ export function createOpenworkServerClient(options: {
     ) =>
       requestJson<OpenworkOpenCodeRouterBindingUpdateResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/bindings`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/bindings`,
         {
           token,
           hostToken,
@@ -1651,7 +1717,7 @@ export function createOpenworkServerClient(options: {
         ...(input.autoBind === true ? { autoBind: true } : {}),
       };
 
-      const primaryPath = `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/send`;
+      const primaryPath = `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/send`;
       const mountedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(baseUrl);
       const fallbackPath =
         mountedWorkspaceId && mountedWorkspaceId === workspaceId
@@ -1684,7 +1750,7 @@ export function createOpenworkServerClient(options: {
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramEnabledResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram-enabled`,
+        `${canUseServerV2Router ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/opencode-router/telegram-enabled`,
         {
           token,
           hostToken,
@@ -1771,27 +1837,27 @@ export function createOpenworkServerClient(options: {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
-        `/workspace/${workspaceId}/plugins${query}`,
+        `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/plugins${query}`,
         { token, hostToken },
       );
     },
     addPlugin: (workspaceId: string, spec: string) =>
       requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
-        `/workspace/${workspaceId}/plugins`,
+        `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/plugins`,
         { token, hostToken, method: "POST", body: { spec } },
       ),
     removePlugin: (workspaceId: string, name: string) =>
       requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
-        `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
+        `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/plugins/${encodeURIComponent(name)}`,
         { token, hostToken, method: "DELETE" },
       ),
     listSkills: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<{ items: OpenworkSkillItem[] }>(
         baseUrl,
-        `/workspace/${workspaceId}/skills${query}`,
+        `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/skills${query}`,
         { token, hostToken },
       );
     },
@@ -1816,7 +1882,7 @@ export function createOpenworkServerClient(options: {
     ) =>
       requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
         baseUrl,
-        `/workspace/${workspaceId}/skills/hub/${encodeURIComponent(name)}`,
+        `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/skills/hub/${encodeURIComponent(name)}`,
         {
           token,
           hostToken,
@@ -1831,12 +1897,12 @@ export function createOpenworkServerClient(options: {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<OpenworkSkillContent>(
         baseUrl,
-        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
+        `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
         { token, hostToken },
       );
     },
     upsertSkill: (workspaceId: string, payload: { name: string; content: string; description?: string }) =>
-      requestJson<OpenworkSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
+      requestJson<OpenworkSkillItem>(baseUrl, `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/skills`, {
         token,
         hostToken,
         method: "POST",
@@ -1845,7 +1911,7 @@ export function createOpenworkServerClient(options: {
     deleteSkill: (workspaceId: string, name: string) =>
       requestJson<{ path: string }>(
         baseUrl,
-        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}`,
+        `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/skills/${encodeURIComponent(name)}`,
         {
           token,
           hostToken,
@@ -1853,16 +1919,16 @@ export function createOpenworkServerClient(options: {
         },
       ),
     listMcp: (workspaceId: string) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
+      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/mcp`, { token, hostToken }),
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
+      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/mcp`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
       }),
     removeMcp: (workspaceId: string, name: string) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
+      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `${canUseServerV2Managed ? "/workspaces" : "/workspace"}/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
         token,
         hostToken,
         method: "DELETE",

@@ -9,6 +9,9 @@ export const errorHandlingMiddleware: MiddlewareHandler<AppBindings> = async (c,
     await next();
   } catch (error) {
     const requestId = c.get("requestId") ?? `owreq_${crypto.randomUUID()}`;
+    const routeLike = error && typeof error === "object"
+      ? error as { code?: unknown; details?: unknown; message?: unknown; status?: unknown }
+      : null;
 
     if (error instanceof HTTPException) {
       const status = error.status;
@@ -36,6 +39,23 @@ export const errorHandlingMiddleware: MiddlewareHandler<AppBindings> = async (c,
           details: error.details,
         }),
         error.status as any,
+      );
+    }
+
+    if (
+      routeLike
+      && typeof routeLike.status === "number"
+      && typeof routeLike.code === "string"
+      && typeof routeLike.message === "string"
+    ) {
+      return c.json(
+        buildErrorResponse({
+          requestId,
+          code: routeLike.code as any,
+          message: routeLike.message,
+          details: Array.isArray(routeLike.details) ? routeLike.details as any : undefined,
+        }),
+        routeLike.status as any,
       );
     }
 

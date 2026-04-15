@@ -88,6 +88,8 @@ export const capabilitiesDataSchema = z.object({
   }),
   registry: z.object({
     backendResolution: z.literal(true),
+    remoteServerConnections: z.literal(true),
+    remoteWorkspaceSync: z.literal(true),
     hiddenWorkspaceFiltering: z.literal(true),
     serverInventory: z.literal(true),
     workspaceDetail: z.literal(true),
@@ -105,6 +107,7 @@ export const capabilitiesDataSchema = z.object({
     opencodeHealth: z.literal(true),
     routerHealth: z.literal(true),
     runtimeSummary: z.literal(true),
+    runtimeUpgrade: z.literal(true),
     runtimeVersions: z.literal(true),
   }),
   router: z.object({
@@ -180,6 +183,26 @@ export const serverInventoryListDataSchema = z.object({
   items: z.array(serverInventoryItemSchema),
 }).meta({ ref: "OpenWorkServerV2ServerInventoryListData" });
 
+export const remoteServerConnectRequestSchema = z.object({
+  baseUrl: z.string().min(1),
+  directory: z.string().nullable().optional(),
+  hostToken: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
+  token: z.string().nullable().optional(),
+  workspaceId: z.string().nullable().optional(),
+}).meta({ ref: "OpenWorkServerV2RemoteServerConnectRequest" });
+
+export const remoteServerSyncRequestSchema = z.object({
+  directory: z.string().nullable().optional(),
+  workspaceId: z.string().nullable().optional(),
+}).meta({ ref: "OpenWorkServerV2RemoteServerSyncRequest" });
+
+export const remoteServerConnectDataSchema = z.object({
+  selectedWorkspaceId: identifierSchema.nullable(),
+  server: serverInventoryItemSchema,
+  workspaces: z.array(workspaceSummaryDataSchema),
+}).meta({ ref: "OpenWorkServerV2RemoteServerConnectData" });
+
 export const systemStatusDataSchema = z.object({
   auth: authSummarySchema,
   capabilities: capabilitiesDataSchema,
@@ -228,6 +251,10 @@ export const capabilitiesResponseSchema = successResponseSchema("OpenWorkServerV
 export const serverInventoryListResponseSchema = successResponseSchema(
   "OpenWorkServerV2ServerInventoryListResponse",
   serverInventoryListDataSchema,
+);
+export const remoteServerConnectResponseSchema = successResponseSchema(
+  "OpenWorkServerV2RemoteServerConnectResponse",
+  remoteServerConnectDataSchema,
 );
 export const systemStatusResponseSchema = successResponseSchema("OpenWorkServerV2SystemStatusResponse", systemStatusDataSchema);
 export const workspaceDetailResponseSchema = successResponseSchema("OpenWorkServerV2WorkspaceDetailResponse", workspaceDetailDataSchema);

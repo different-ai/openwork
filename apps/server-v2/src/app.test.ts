@@ -92,13 +92,13 @@ test("system health returns a consistent envelope", async () => {
   expect(["ready", "warning"]).toContain(body.data.database.status);
 });
 
-test("system metadata includes phase 8 registry, managed-resource, and runtime migration state", async () => {
+test("system metadata includes phase 9 registry, remote-connect, and runtime migration state", async () => {
   const { app } = createTestApp();
   const response = await app.request("http://openwork.local/system/meta");
   const body = await response.json();
 
   expect(response.status).toBe(200);
-  expect(body.data.foundation.phase).toBe(8);
+  expect(body.data.foundation.phase).toBe(9);
   expect(body.data.foundation.startup.registry.localServerId).toBe("srv_local");
   expect(body.data.foundation.startup.registry.hiddenWorkspaceIds).toHaveLength(2);
   expect(body.data.runtimeSupervisor.bootstrapPolicy).toBe("disabled");
@@ -118,6 +118,8 @@ test("openapi route is generated from the live Hono app", async () => {
   expect(document.paths["/system/status"].get.operationId).toBe("getSystemStatus");
   expect(document.paths["/system/opencode/health"].get.operationId).toBe("getSystemOpencodeHealth");
   expect(document.paths["/system/runtime/versions"].get.operationId).toBe("getSystemRuntimeVersions");
+  expect(document.paths["/system/runtime/upgrade"].post.operationId).toBe("postSystemRuntimeUpgrade");
+  expect(document.paths["/system/servers/connect"].post.operationId).toBe("postSystemServersConnect");
   expect(document.paths["/workspaces"].get.operationId).toBe("getWorkspaces");
   expect(document.paths["/workspaces/local"].post.operationId).toBe("postWorkspacesLocal");
   expect(document.paths["/workspaces/{workspaceId}/config"].get.operationId).toBe("getWorkspacesByWorkspaceIdConfig");
@@ -177,6 +179,7 @@ test("system status reports registry summary and capabilities", async () => {
     visibleWorkspaceCount: 2,
   });
   expect(body.data.capabilities.transport.v2).toBe(true);
+  expect(body.data.capabilities.registry.remoteServerConnections).toBe(true);
   expect(body.data.auth.required).toBe(false);
 });
 
@@ -234,4 +237,102 @@ test("auth-protected registry reads require client or host scope", async () => {
   expect(client.status).toBe(200);
   expect(clientHidden.status).toBe(403);
   expect(hostInventory.status).toBe(200);
+});
+
+test("host-scoped remote server connect syncs remote workspaces into the local registry", async () => {
+  const remote = Bun.serve({
+    fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/workspaces") {
+        return Response.json({
+          ok: true,
+          data: {
+            items: [
+              {
+                backend: {
+                  kind: "local_opencode",
+                  local: { configDir: "/srv/config", dataDir: "/srv/project-alpha", opencodeProjectId: null },
+                  remote: null,
+                  serverId: "srv_local",
+                },
+                createdAt: new Date().toISOString(),
+                displayName: "Remote Project Alpha",
+                hidden: false,
+                id: "remote-alpha",
+                kind: "local",
+                notes: null,
+                preset: "starter",
+                runtime: { backendKind: "local_opencode", health: null, lastError: null, lastSessionRefreshAt: null, lastSyncAt: null, updatedAt: null },
+                server: { auth: { configured: false, scheme: "none" }, baseUrl: null, capabilities: {}, hostingKind: "self_hosted", id: "srv_local", isEnabled: true, isLocal: true, kind: "local", label: "Remote", lastSeenAt: null, source: "seeded", updatedAt: new Date().toISOString() },
+                slug: "remote-project-alpha",
+                status: "ready",
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          },
+          meta: { requestId: "owreq_remote_1", timestamp: new Date().toISOString() },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+    hostname: "127.0.0.1",
+    port: 0,
+  });
+
+  try {
+    const { app } = createTestApp({ requireAuth: true });
+    const response = await app.request("http://openwork.local/system/servers/connect", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-OpenWork-Host-Token": "host-token",
+      },
+      body: JSON.stringify({
+        baseUrl: `http://127.0.0.1:${remote.port}`,
+        token: "remote-token",
+        workspaceId: "remote-alpha",
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.server.kind).toBe("remote");
+    expect(body.data.selectedWorkspaceId).toMatch(/^ws_/);
+    expect(body.data.workspaces[0].backend.kind).toBe("remote_openwork");
+    expect(body.data.workspaces[0].backend.remote.remoteWorkspaceId).toBe("remote-alpha");
+  } finally {
+    remote.stop(true);
+  }
+});
+
+test("remote server connect returns a gateway error when the remote server rejects credentials", async () => {
+  const remote = Bun.serve({
+    fetch() {
+      return Response.json({ ok: false, error: { code: "unauthorized", message: "bad token", requestId: "owreq_remote_bad_auth" } }, { status: 401 });
+    },
+    hostname: "127.0.0.1",
+    port: 0,
+  });
+
+  try {
+    const { app } = createTestApp({ requireAuth: true });
+    const response = await app.request("http://openwork.local/system/servers/connect", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-OpenWork-Host-Token": "host-token",
+      },
+      body: JSON.stringify({
+        baseUrl: `http://127.0.0.1:${remote.port}`,
+        token: "wrong-token",
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("bad_gateway");
+  } finally {
+    remote.stop(true);
+  }
 });

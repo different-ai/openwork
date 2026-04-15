@@ -19,6 +19,21 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-15 - Phase 9 - Compatibility code stops blocking a migration once the default graph no longer depends on it
+- Context: Phase 9 leaves a few orchestrator-specific paths in place for explicit legacy override and detached Docker sandbox launch glue, but the default desktop/app runtime graph now goes through Server V2 and the local server owns remote registration, runtime control, and reconnect truth.
+- Learning: A migration can close with some compatibility code still present if that code is explicitly non-default, documented as residual shell glue, and no longer required for the canonical product path.
+- Action for later phases: When deciding whether a migration is truly complete, judge by the default runtime graph and ownership boundaries, not by whether every compatibility hook has already been deleted.
+
+### 2026-04-15 - Phase 9 - Desktop relaunch recovery should probe the canonical server before restarting anything
+- Context: Once desktop startup defaults to Server V2, the app process can restart while the local server it launched is still healthy, which makes in-memory manager state an unreliable reconnect source.
+- Learning: Persisting just enough port/token metadata and probing the live server on reconnect is a safer migration bridge than reconstructing runtime truth from legacy daemon snapshot files or blindly restarting local services.
+- Action for later phases: Prefer live server probes plus minimal persisted connection metadata for reconnect flows, and remove leftover snapshot-based recovery once every local runtime path has a server-owned probe.
+
+### 2026-04-15 - Phase 9 - Silent legacy fallbacks can fake migration completion
+- Context: Phase 9 made Server V2 the owner of remote server registration, remote workspace sync, and remote workspace routing, but a few app branches still attempted to fall back to desktop-local workspace persistence when the new server-owned path failed.
+- Learning: During control-plane migration, silent fallback branches are worse than explicit failure because they hide that the canonical server-owned route is broken while leaving stale state in side stores.
+- Action for later phases: When a slice becomes server-owned, either route through the server or fail honestly; do not keep background compatibility writes that preserve the appearance of completion.
+
 ### 2026-04-15 - Phase 8 - Server-owned settings can migrate behind a cache bridge before full bootstrap parity exists
 - Context: Phase 8 moved cloud signin persistence and validation into Server V2, but the desktop app still needed a temporary local cache because the legacy browser-localStorage handoff into the new server is not fully solved yet.
 - Learning: A thin cache-sync bridge lets the server become the durable owner of product settings now, while the app keeps only reconnect/bootstrap convenience state until the final host handoff is ready.

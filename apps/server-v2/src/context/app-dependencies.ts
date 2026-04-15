@@ -14,6 +14,7 @@ import { createWorkspaceFileService, type WorkspaceFileService } from "../servic
 import { createWorkspaceSessionService, type WorkspaceSessionService } from "../services/workspace-session-service.js";
 import { createSystemService, type SystemService } from "../services/system-service.js";
 import { createWorkspaceRegistryService, type WorkspaceRegistryService } from "../services/workspace-registry-service.js";
+import { createRemoteServerService, type RemoteServerService } from "../services/remote-server-service.js";
 
 export type AppDependencies = {
   database: DatabaseStatusProvider;
@@ -27,6 +28,7 @@ export type AppDependencies = {
       files: WorkspaceFileService;
       managed: ManagedResourceService;
       registry: RegistryService;
+      remoteServers: RemoteServerService;
       router: RouterProductService;
       runtime: RuntimeService;
     sessions: WorkspaceSessionService;
@@ -159,6 +161,9 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     runtime,
     serverId: persistence.registry.localServerId,
   });
+  const remoteServers = createRemoteServerService({
+    repositories: persistence.repositories,
+  });
 
   return {
     database,
@@ -172,6 +177,7 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
       files,
       managed,
       registry: persistence.registry,
+      remoteServers,
       router,
       runtime,
       sessions,

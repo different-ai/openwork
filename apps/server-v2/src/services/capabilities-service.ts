@@ -44,6 +44,8 @@ export type CapabilitiesData = {
   registry: {
     backendResolution: true;
     hiddenWorkspaceFiltering: true;
+    remoteServerConnections: true;
+    remoteWorkspaceSync: true;
     serverInventory: true;
     workspaceDetail: true;
     workspaceList: true;
@@ -60,6 +62,7 @@ export type CapabilitiesData = {
     opencodeHealth: true;
     routerHealth: true;
     runtimeSummary: true;
+    runtimeUpgrade: true;
     runtimeVersions: true;
   };
   router: {
@@ -134,6 +137,8 @@ export function createCapabilitiesService(input: {
         registry: {
           backendResolution: true,
           hiddenWorkspaceFiltering: true,
+          remoteServerConnections: true,
+          remoteWorkspaceSync: true,
           serverInventory: true,
           workspaceDetail: true,
           workspaceList: true,
@@ -150,6 +155,7 @@ export function createCapabilitiesService(input: {
           opencodeHealth: true,
           routerHealth: true,
           runtimeSummary: true,
+          runtimeUpgrade: true,
           runtimeVersions: true,
         },
         router: {

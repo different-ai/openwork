@@ -407,6 +407,10 @@ export function createOpenworkServerStore(options: {
       setOrchestratorStatusState(null);
       return;
     }
+    if (openworkServerHostInfo()?.startupMode === "server-v2") {
+      setOrchestratorStatusState(null);
+      return;
+    }
     if (!options.documentVisible()) return;
 
     let active = true;

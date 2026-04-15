@@ -17,7 +17,9 @@ use crate::paths::sidecar_path_candidates;
 use crate::types::{OpenworkServerInfo, OpenworkServerStartupMode};
 use crate::utils::now_ms;
 use crate::utils::truncate_output;
+use crate::workspace::state::load_workspace_state;
 use crate::workspace::state::normalize_local_workspace_path;
+use crate::types::WorkspaceType;
 
 pub mod manager;
 pub mod spawn;
@@ -281,6 +283,94 @@ fn persist_workspace_owner_token_at_path(
     save_openwork_server_token_store(path, &store)
 }
 
+fn read_workspace_tokens(
+    app: &AppHandle,
+    workspace_key: &str,
+) -> Result<Option<PersistedOpenworkServerTokens>, String> {
+    let path = openwork_server_token_store_path(app)?;
+    let store = load_openwork_server_token_store(&path)?;
+    let normalized = normalize_workspace_key(workspace_key);
+    Ok(store.workspaces.get(&normalized).cloned())
+}
+
+fn workspace_probe_candidates(app: &AppHandle) -> Result<Vec<String>, String> {
+    let state = load_workspace_state(app)?;
+    let mut candidates = Vec::new();
+    let selected = state.selected_workspace_id.trim().to_string();
+    if !selected.is_empty() {
+        if let Some(workspace) = state
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == selected && workspace.workspace_type == WorkspaceType::Local)
+        {
+            let path = workspace.path.trim();
+            if !path.is_empty() {
+                candidates.push(path.to_string());
+            }
+        }
+    }
+    for workspace in state.workspaces {
+        if workspace.workspace_type != WorkspaceType::Local {
+            continue;
+        }
+        let path = workspace.path.trim();
+        if path.is_empty() || candidates.iter().any(|candidate| candidate == path) {
+            continue;
+        }
+        candidates.push(path.to_string());
+    }
+    candidates.push(String::new());
+    Ok(candidates)
+}
+
+pub fn probe_server_v2_snapshot(
+    app: &AppHandle,
+    manager: &OpenworkServerManager,
+) -> Result<Option<OpenworkServerInfo>, String> {
+    let candidates = workspace_probe_candidates(app)?;
+    for workspace_key in candidates {
+        let preferred_port = read_preferred_openwork_port(app, &workspace_key)?;
+        let Some(port) = preferred_port else {
+            continue;
+        };
+        let base_url = format!("http://127.0.0.1:{port}");
+        if wait_for_server_v2_health(&base_url, Duration::from_millis(750)).is_err() {
+            continue;
+        }
+
+        let (server_version, opencode_base_url, opencode_status, router_base_url, router_status) =
+            read_server_v2_details(&base_url)?;
+        let tokens = read_workspace_tokens(app, &workspace_key)?;
+
+        let mut state = manager
+            .inner
+            .lock()
+            .map_err(|_| "openwork server mutex poisoned".to_string())?;
+        state.child = None;
+        state.child_exited = false;
+        state.detected_running_without_child = true;
+        state.remote_access_enabled = false;
+        state.startup_mode = OpenworkServerStartupMode::ServerV2;
+        state.host = Some("127.0.0.1".to_string());
+        state.port = Some(port);
+        state.base_url = Some(base_url);
+        state.connect_url = None;
+        state.mdns_url = None;
+        state.lan_url = None;
+        state.client_token = tokens.as_ref().map(|value| value.client_token.clone());
+        state.owner_token = tokens.as_ref().and_then(|value| value.owner_token.clone());
+        state.host_token = tokens.as_ref().map(|value| value.host_token.clone());
+        state.server_version = server_version;
+        state.opencode_base_url = opencode_base_url;
+        state.opencode_status = opencode_status;
+        state.router_base_url = router_base_url;
+        state.router_status = router_status;
+        return Ok(Some(OpenworkServerManager::snapshot_locked(&mut state)));
+    }
+
+    Ok(None)
+}
+
 fn wait_for_openwork_health(base_url: &str, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     let health_url = format!("{}/health", base_url.trim_end_matches('/'));
@@ -522,6 +612,7 @@ pub fn start_openwork_server_v2(
 
     state.child = Some(child);
     state.child_exited = false;
+    state.detected_running_without_child = false;
     state.remote_access_enabled = remote_access_enabled;
     state.startup_mode = OpenworkServerStartupMode::ServerV2;
     state.host = Some(host.clone());
@@ -661,6 +752,7 @@ pub fn start_openwork_server(
 
     state.child = Some(child);
     state.child_exited = false;
+    state.detected_running_without_child = false;
     state.remote_access_enabled = remote_access_enabled;
     state.startup_mode = OpenworkServerStartupMode::Legacy;
     state.host = Some(host.clone());

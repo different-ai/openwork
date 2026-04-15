@@ -4,17 +4,32 @@ use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::openwork_server::manager::OpenworkServerManager;
 use crate::openwork_server::startup_mode::{resolve_server_startup_mode, ServerStartupMode};
-use crate::openwork_server::{start_openwork_server, start_openwork_server_v2};
+use crate::openwork_server::{
+    probe_server_v2_snapshot, start_openwork_server, start_openwork_server_v2,
+};
 use crate::types::{OpenworkServerInfo, WorkspaceType};
 use crate::workspace::state::load_workspace_state;
 
 #[tauri::command]
-pub fn openwork_server_info(manager: State<OpenworkServerManager>) -> OpenworkServerInfo {
+pub fn openwork_server_info(
+    app: AppHandle,
+    manager: State<OpenworkServerManager>,
+) -> OpenworkServerInfo {
     let mut state = manager
         .inner
         .lock()
         .expect("openwork server mutex poisoned");
-    OpenworkServerManager::snapshot_locked(&mut state)
+    let snapshot = OpenworkServerManager::snapshot_locked(&mut state);
+    drop(state);
+
+    if snapshot.running || snapshot.base_url.is_some() {
+        return snapshot;
+    }
+
+    probe_server_v2_snapshot(&app, &manager)
+        .ok()
+        .flatten()
+        .unwrap_or(snapshot)
 }
 
 #[tauri::command]
@@ -25,6 +40,12 @@ pub fn openwork_server_restart(
     opencode_router_manager: State<OpenCodeRouterManager>,
     remote_access_enabled: Option<bool>,
 ) -> Result<OpenworkServerInfo, String> {
+    if resolve_server_startup_mode() == ServerStartupMode::ServerV2 {
+        if let Some(existing) = probe_server_v2_snapshot(&app, &manager)? {
+            return Ok(existing);
+        }
+    }
+
     let (workspace_paths, opencode_url, opencode_username, opencode_password) = {
         let engine = engine_manager
             .inner

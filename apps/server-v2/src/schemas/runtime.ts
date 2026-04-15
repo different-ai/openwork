@@ -72,6 +72,13 @@ const routerMaterializationSchema = z.object({
 
 const runtimeChildStatusSchema = z.enum(["crashed", "disabled", "error", "restart_scheduled", "running", "starting", "stopped"]);
 
+const runtimeUpgradeStateSchema = z.object({
+  error: z.string().nullable(),
+  finishedAt: isoTimestampSchema.nullable(),
+  startedAt: isoTimestampSchema.nullable(),
+  status: z.enum(["completed", "failed", "idle", "running"]),
+}).meta({ ref: "OpenWorkServerV2RuntimeUpgradeState" });
+
 export const opencodeHealthDataSchema = z.object({
   baseUrl: z.string().nullable(),
   binaryPath: z.string().nullable(),
@@ -117,9 +124,15 @@ export const runtimeSummaryDataSchema = z.object({
     windowMs: z.number().int().nonnegative(),
   }),
   router: routerHealthDataSchema,
+  upgrade: runtimeUpgradeStateSchema,
   source: z.enum(["development", "release"]),
   target: runtimeTargetSchema,
 }).meta({ ref: "OpenWorkServerV2RuntimeSummaryData" });
+
+export const runtimeUpgradeDataSchema = z.object({
+  state: runtimeUpgradeStateSchema,
+  summary: runtimeSummaryDataSchema,
+}).meta({ ref: "OpenWorkServerV2RuntimeUpgradeData" });
 
 export const runtimeVersionsDataSchema = z.object({
   active: z.object({
@@ -140,3 +153,4 @@ export const opencodeHealthResponseSchema = successResponseSchema("OpenWorkServe
 export const routerHealthResponseSchema = successResponseSchema("OpenWorkServerV2RouterHealthResponse", routerHealthDataSchema);
 export const runtimeSummaryResponseSchema = successResponseSchema("OpenWorkServerV2RuntimeSummaryResponse", runtimeSummaryDataSchema);
 export const runtimeVersionsResponseSchema = successResponseSchema("OpenWorkServerV2RuntimeVersionsResponse", runtimeVersionsDataSchema);
+export const runtimeUpgradeResponseSchema = successResponseSchema("OpenWorkServerV2RuntimeUpgradeResponse", runtimeUpgradeDataSchema);

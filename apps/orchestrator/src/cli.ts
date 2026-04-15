@@ -5687,9 +5687,10 @@ async function runWorkspaceCommand(args: ParsedArgs) {
     if (subcommand === "add") {
       if (!id) throw new Error("workspace path is required");
       const name = readFlag(args.flags, "name");
-      const result = await requestRouter(args, "POST", "/workspaces", {
-        path: id,
+      const result = await requestRouter(args, "POST", "/workspaces/local", {
+        folderPath: id,
         name: name ?? null,
+        preset: "starter",
       });
       outputResult({ ok: true, ...result }, outputJson);
       return;
@@ -5698,10 +5699,10 @@ async function runWorkspaceCommand(args: ParsedArgs) {
       if (!id) throw new Error("baseUrl is required");
       const directory = readFlag(args.flags, "directory");
       const name = readFlag(args.flags, "name");
-      const result = await requestRouter(args, "POST", "/workspaces/remote", {
+      const result = await requestRouter(args, "POST", "/system/servers/connect", {
         baseUrl: id,
         directory: directory ?? null,
-        name: name ?? null,
+        label: name ?? null,
       });
       outputResult({ ok: true, ...result }, outputJson);
       return;
@@ -5759,7 +5760,7 @@ async function runInstanceCommand(args: ParsedArgs) {
       const result = await requestRouter(
         args,
         "POST",
-        `/instances/${encodeURIComponent(id)}/dispose`,
+        `/workspaces/${encodeURIComponent(id)}/dispose`,
       );
       outputResult({ ok: true, ...result }, outputJson);
       return;
@@ -6069,10 +6070,17 @@ async function runRouterDaemon(args: ParsedArgs) {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/workspaces") {
+      if (
+        req.method === "POST"
+        && (url.pathname === "/workspaces" || url.pathname === "/workspaces/local")
+      ) {
         const body = await readBody();
         const pathInput =
-          typeof body?.path === "string" ? body.path.trim() : "";
+          typeof body?.path === "string"
+            ? body.path.trim()
+            : typeof body?.folderPath === "string"
+              ? body.folderPath.trim()
+              : "";
         if (!pathInput) {
           send(400, { error: "path is required" });
           return;
@@ -6100,7 +6108,10 @@ async function runRouterDaemon(args: ParsedArgs) {
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/workspaces/remote") {
+      if (
+        req.method === "POST"
+        && (url.pathname === "/workspaces/remote" || url.pathname === "/system/servers/connect")
+      ) {
         const body = await readBody();
         const baseUrl =
           typeof body?.baseUrl === "string" ? body.baseUrl.trim() : "";
@@ -6117,6 +6128,8 @@ async function runRouterDaemon(args: ParsedArgs) {
         const name =
           typeof body?.name === "string" && body.name.trim()
             ? body.name.trim()
+            : typeof body?.label === "string" && body.label.trim()
+              ? body.label.trim()
             : baseUrl;
         const existing = state.workspaces.find((entry) => entry.id === id);
         const entry: RouterWorkspace = {
@@ -6133,7 +6146,20 @@ async function runRouterDaemon(args: ParsedArgs) {
         state.workspaces.push(entry);
         if (!state.activeId) state.activeId = id;
         await saveRouterState(statePath, state);
-        send(200, { activeId: state.activeId, workspace: entry });
+        if (url.pathname === "/system/servers/connect") {
+          send(200, {
+            selectedWorkspaceId: entry.id,
+            server: {
+              id: `srv_${Buffer.from(baseUrl).toString("base64url")}`,
+              baseUrl,
+              label: name,
+              kind: "remote",
+            },
+            workspaces: [entry],
+          });
+        } else {
+          send(200, { activeId: state.activeId, workspace: entry });
+        }
         return;
       }
 
@@ -6213,10 +6239,9 @@ async function runRouterDaemon(args: ParsedArgs) {
       }
 
       if (
-        parts[0] === "instances" &&
-        parts.length === 3 &&
-        parts[2] === "dispose" &&
-        req.method === "POST"
+        ((parts[0] === "instances" && parts.length === 3 && parts[2] === "dispose")
+          || (parts[0] === "workspaces" && parts.length === 3 && parts[2] === "dispose"))
+        && req.method === "POST"
       ) {
         const workspace = findWorkspace(
           state,
@@ -7794,12 +7819,18 @@ async function runStart(args: ParsedArgs) {
         res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
         return;
       }
-      if (method === "GET" && url.pathname === "/runtime/versions") {
+      if (
+        method === "GET"
+        && (url.pathname === "/runtime/versions" || url.pathname === "/system/runtime/versions")
+      ) {
         res.statusCode = 200;
         res.end(JSON.stringify(getRuntimeSnapshot()));
         return;
       }
-      if (method === "POST" && url.pathname === "/runtime/upgrade") {
+      if (
+        method === "POST"
+        && (url.pathname === "/runtime/upgrade" || url.pathname === "/system/runtime/upgrade")
+      ) {
         const chunks: Buffer[] = [];
         for await (const chunk of req) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

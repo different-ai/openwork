@@ -63,6 +63,13 @@ type ManagedProcessHandle = {
   waitForExit(): Promise<LocalProcessExit>;
 };
 
+type RuntimeUpgradeState = {
+  error: string | null;
+  finishedAt: string | null;
+  startedAt: string | null;
+  status: "completed" | "failed" | "idle" | "running";
+};
+
 export type RuntimeService = {
   applyRouterConfig(): Promise<ReturnType<RuntimeService["getRouterHealth"]>>;
   bootstrap(): Promise<void>;
@@ -107,6 +114,7 @@ export type RuntimeService = {
     opencode: ReturnType<RuntimeService["getOpencodeHealth"]>;
     restartPolicy: RuntimeRestartPolicy;
     router: ReturnType<RuntimeService["getRouterHealth"]>;
+    upgrade: RuntimeUpgradeState;
     source: "development" | "release";
     target: ReturnType<RuntimeAssetService["getTarget"]>;
   };
@@ -125,6 +133,7 @@ export type RuntimeService = {
     target: ReturnType<RuntimeAssetService["getTarget"]>;
   };
   getStateForPersistence(): ReturnType<RuntimeService["getRuntimeSummary"]>;
+  upgradeRuntime(): Promise<{ state: RuntimeUpgradeState; summary: ReturnType<RuntimeService["getRuntimeSummary"]> }>;
 };
 
 type CreateRuntimeServiceOptions = {
@@ -439,6 +448,12 @@ export function createRuntimeService(options: CreateRuntimeServiceOptions): Runt
     forced: false,
     reason: "router_not_evaluated",
   };
+  let upgradeState: RuntimeUpgradeState = {
+    error: null,
+    finishedAt: null,
+    startedAt: null,
+    status: "idle",
+  };
 
   const restartHistory = {
     opencode: [] as number[],
@@ -467,6 +482,7 @@ export function createRuntimeService(options: CreateRuntimeServiceOptions): Runt
           materialization: routerMaterialization,
         },
         target: assetService.getTarget(),
+        upgrade: upgradeState,
       },
     };
     const latestExit = pickLatestExit(opencodeState, routerState);
@@ -1053,6 +1069,7 @@ export function createRuntimeService(options: CreateRuntimeServiceOptions): Runt
         opencode: this.getOpencodeHealth(),
         restartPolicy,
         router: this.getRouterHealth(),
+        upgrade: upgradeState,
         source: assetService.getSource(),
         target: assetService.getTarget(),
       };
@@ -1078,6 +1095,45 @@ export function createRuntimeService(options: CreateRuntimeServiceOptions): Runt
 
     getStateForPersistence(): ReturnType<RuntimeService["getRuntimeSummary"]> {
       return this.getRuntimeSummary();
+    },
+
+    async upgradeRuntime() {
+      upgradeState = {
+        error: null,
+        finishedAt: null,
+        startedAt: nowIso(),
+        status: "running",
+      };
+      persistState();
+
+      try {
+        await stopRouter();
+        await stopOpencode();
+        runtimeManifest = null;
+        opencodeState.asset = null;
+        routerState.asset = null;
+        await bootstrap();
+        upgradeState = {
+          error: null,
+          finishedAt: nowIso(),
+          startedAt: upgradeState.startedAt,
+          status: "completed",
+        };
+        persistState();
+        return {
+          state: upgradeState,
+          summary: this.getRuntimeSummary(),
+        };
+      } catch (error) {
+        upgradeState = {
+          error: error instanceof Error ? error.message : String(error),
+          finishedAt: nowIso(),
+          startedAt: upgradeState.startedAt,
+          status: "failed",
+        };
+        persistState();
+        throw error;
+      }
     },
   };
 

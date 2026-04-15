@@ -6,6 +6,7 @@ import type { JsonObject, ManagedConfigRecord, WorkspaceRecord } from "../databa
 import type { ServerWorkingDirectory } from "../database/working-directory.js";
 import { ensureWorkspaceConfigDir } from "../database/working-directory.js";
 import { RouteError } from "../http.js";
+import { requestRemoteOpenwork, resolveRemoteWorkspaceTarget } from "../adapters/remote-openwork.js";
 
 const MANAGED_SKILL_DOMAIN = "openwork-managed";
 const OPENWORK_CONFIG_VERSION = 1;
@@ -194,6 +195,14 @@ export function createConfigMaterializationService(input: {
       throw new HTTPException(404, { message: `Workspace not found: ${workspaceId}` });
     }
     return workspace;
+  }
+
+  function getRemoteServerOrThrow(workspace: WorkspaceRecord) {
+    const server = input.repositories.servers.getById(workspace.serverId);
+    if (!server) {
+      throw new RouteError(502, "bad_gateway", `Workspace ${workspace.id} points at missing remote server ${workspace.serverId}.`);
+    }
+    return server;
   }
 
   function ensureWorkspaceLocal(workspace: WorkspaceRecord) {
@@ -577,8 +586,17 @@ export function createConfigMaterializationService(input: {
       return materializeWorkspaceSnapshot(workspaceId);
     },
 
-    getWorkspaceConfigSnapshot(workspaceId: string) {
+    async getWorkspaceConfigSnapshot(workspaceId: string) {
       const workspace = getWorkspaceOrThrow(workspaceId);
+      if (workspace.kind === "remote") {
+        const server = getRemoteServerOrThrow(workspace);
+        const target = resolveRemoteWorkspaceTarget(server, workspace);
+        return requestRemoteOpenwork<WorkspaceConfigSnapshot>({
+          path: `/workspaces/${encodeURIComponent(target.remoteWorkspaceId)}/config`,
+          server,
+          timeoutMs: 10_000,
+        });
+      }
       ensureWorkspaceLocal(workspace);
       return computeSnapshot(workspace);
     },
@@ -593,8 +611,19 @@ export function createConfigMaterializationService(input: {
       ].filter((value): value is string => Boolean(value));
     },
 
-    patchWorkspaceConfig(workspaceId: string, patch: { openwork?: JsonObject; opencode?: JsonObject }) {
+    async patchWorkspaceConfig(workspaceId: string, patch: { openwork?: JsonObject; opencode?: JsonObject }) {
       const workspace = getWorkspaceOrThrow(workspaceId);
+      if (workspace.kind === "remote") {
+        const server = getRemoteServerOrThrow(workspace);
+        const target = resolveRemoteWorkspaceTarget(server, workspace);
+        return requestRemoteOpenwork<WorkspaceConfigSnapshot>({
+          body: patch,
+          method: "PATCH",
+          path: `/workspaces/${encodeURIComponent(target.remoteWorkspaceId)}/config`,
+          server,
+          timeoutMs: 15_000,
+        });
+      }
       ensureWorkspaceLocal(workspace);
       const current = ensureWorkspaceConfigState(workspace);
       const nextOpenwork = patch.openwork ? mergeObjects(current.openwork, asObject(patch.openwork)) : current.openwork;
@@ -615,7 +644,18 @@ export function createConfigMaterializationService(input: {
       return materializeWorkspaceSnapshot(workspaceId);
     },
 
-    readRawOpencodeConfig(workspaceId: string, scope: "global" | "project") {
+    async readRawOpencodeConfig(workspaceId: string, scope: "global" | "project") {
+      const workspace = getWorkspaceOrThrow(workspaceId);
+      if (workspace.kind === "remote") {
+        const server = getRemoteServerOrThrow(workspace);
+        const target = resolveRemoteWorkspaceTarget(server, workspace);
+        const query = `?scope=${encodeURIComponent(scope)}`;
+        return requestRemoteOpenwork<{ content: string; exists: boolean; path: string | null; updatedAt: string }>({
+          path: `/workspaces/${encodeURIComponent(target.remoteWorkspaceId)}/config/opencode-raw${query}`,
+          server,
+          timeoutMs: 10_000,
+        });
+      }
       return scope === "global" ? readRawGlobalOpencodeConfig() : readRawProjectOpencodeConfig(workspaceId);
     },
 
@@ -648,8 +688,19 @@ export function createConfigMaterializationService(input: {
       return readRawGlobalOpencodeConfig();
     },
 
-    writeWorkspaceRawOpencodeConfig(workspaceId: string, content: string) {
+    async writeWorkspaceRawOpencodeConfig(workspaceId: string, content: string) {
       const workspace = getWorkspaceOrThrow(workspaceId);
+      if (workspace.kind === "remote") {
+        const server = getRemoteServerOrThrow(workspace);
+        const target = resolveRemoteWorkspaceTarget(server, workspace);
+        return requestRemoteOpenwork<{ content: string; exists: boolean; path: string | null; updatedAt: string }>({
+          body: { content, scope: "project" },
+          method: "POST",
+          path: `/workspaces/${encodeURIComponent(target.remoteWorkspaceId)}/config/opencode-raw`,
+          server,
+          timeoutMs: 15_000,
+        });
+      }
       ensureWorkspaceLocal(workspace);
       const parsed = asObject(parseJsoncText(content));
       const recognized = extractRecognizedOpencodeSections(parsed);

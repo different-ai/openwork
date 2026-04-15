@@ -11,7 +11,8 @@ use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::openwork_server::startup_mode::{resolve_server_startup_mode, ServerStartupMode};
 use crate::openwork_server::{
-    manager::OpenworkServerManager, start_openwork_server, start_openwork_server_v2,
+    manager::OpenworkServerManager, probe_server_v2_snapshot, start_openwork_server,
+    start_openwork_server_v2,
 };
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
@@ -135,6 +136,7 @@ fn parse_base_url_parts(base_url: Option<&str>) -> (Option<String>, Option<u16>)
 
 #[tauri::command]
 pub fn engine_info(
+    app: AppHandle,
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
     openwork_manager: State<OpenworkServerManager>,
@@ -166,6 +168,40 @@ pub fn engine_info(
             last_stdout: info.last_stdout.clone(),
             last_stderr: info.last_stderr.clone(),
         };
+    }
+
+    if resolve_server_startup_mode() == ServerStartupMode::ServerV2 {
+        let mut openwork_state = openwork_manager
+            .inner
+            .lock()
+            .expect("openwork server mutex poisoned");
+        let snapshot = OpenworkServerManager::snapshot_locked(&mut openwork_state);
+        drop(openwork_state);
+
+        let info = if snapshot.running || snapshot.base_url.is_some() {
+            Some(snapshot)
+        } else {
+            probe_server_v2_snapshot(&app, &openwork_manager)
+                .ok()
+                .flatten()
+        };
+
+        if let Some(info) = info {
+            let (hostname, port) = parse_base_url_parts(info.opencode_base_url.as_deref());
+            return EngineInfo {
+                running: info.running && info.opencode_status.as_deref() == Some("running"),
+                runtime: EngineRuntime::Direct,
+                base_url: info.opencode_base_url,
+                project_dir: state.project_dir.clone(),
+                hostname,
+                port,
+                opencode_username: None,
+                opencode_password: None,
+                pid: info.pid,
+                last_stdout: info.last_stdout,
+                last_stderr: info.last_stderr,
+            };
+        }
     }
 
     if state.runtime == EngineRuntime::Orchestrator {

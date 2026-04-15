@@ -159,7 +159,7 @@ test("client parses server-v2 error envelopes and compatibility routes for manag
   const baseUrl = startServer(async (request) => {
     const url = new URL(request.url);
 
-    if (url.pathname === "/workspace/ws_local/export") {
+    if (url.pathname === "/workspaces/ws_local/export") {
       return Response.json({
         ok: false,
         error: {
@@ -171,15 +171,15 @@ test("client parses server-v2 error envelopes and compatibility routes for manag
       }, { status: 409 });
     }
 
-    if (url.pathname === "/workspace/ws_local/skills" && request.method === "GET") {
+    if (url.pathname === "/workspaces/ws_local/skills" && request.method === "GET") {
       return Response.json({ items: [{ description: "Demo", name: "demo-skill", path: "/tmp/demo-skill/SKILL.md", scope: "project" }] });
     }
 
-    if (url.pathname === "/workspace/ws_local/plugins" && request.method === "GET") {
+    if (url.pathname === "/workspaces/ws_local/plugins" && request.method === "GET") {
       return Response.json({ items: [{ scope: "project", source: "config", spec: "demo-plugin" }], loadOrder: ["config.project"] });
     }
 
-    if (url.pathname === "/workspace/ws_local/mcp" && request.method === "GET") {
+    if (url.pathname === "/workspaces/ws_local/mcp" && request.method === "GET") {
       return Response.json({ items: [{ config: { type: "local", command: ["demo"] }, name: "demo", source: "config.project" }] });
     }
 

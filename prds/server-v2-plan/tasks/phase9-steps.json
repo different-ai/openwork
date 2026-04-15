@@ -23,7 +23,7 @@
         "The list distinguishes true host-shell needs from product control-plane debt.",
         "Open questions are recorded if ownership is still ambiguous."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-002",
@@ -34,7 +34,7 @@
         "The server updates its own registry and runtime state when activation occurs.",
         "Clients no longer need a separate daemon API for this capability."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-003",
@@ -45,7 +45,7 @@
         "The route updates runtime and registry state consistently.",
         "The app and CLI can stop calling daemon disposal endpoints."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-004",
@@ -56,7 +56,7 @@
         "Legacy route names are replaced or shimmed intentionally.",
         "The route family aligns with the architecture plan."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-005",
@@ -67,7 +67,7 @@
         "The server can report upgrade status and errors consistently.",
         "Later cutover can remove the legacy runtime control server."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-006",
@@ -78,7 +78,7 @@
         "Connection validation happens through the local server, not the app alone.",
         "The model supports remote and cloud-hosted OpenWork servers."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-007",
@@ -89,7 +89,7 @@
         "The local server stores remote workspace mappings durably.",
         "The app can remain workspace-first even for remote content."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-008",
@@ -100,7 +100,7 @@
         "Remote backend IDs stay server-owned.",
         "The local server remains the canonical registry and policy layer."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-009",
@@ -111,7 +111,7 @@
         "The CLI no longer depends on daemon-only APIs for product behavior.",
         "Any remaining host-shell CLI concerns are clearly separated."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-010",
@@ -122,7 +122,7 @@
         "Remaining startup logic is thin and explicit.",
         "The desktop app or CLI can launch one main server process in the target path."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-011",
@@ -133,7 +133,7 @@
         "The server owns product-facing config mutation for these capabilities.",
         "The migration reduces duplicate config-writing logic."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-012",
@@ -144,7 +144,7 @@
         "Host shells do not make separate product decisions about messaging capabilities.",
         "The behavior matches the server-owned router state model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-013",
@@ -155,7 +155,7 @@
         "Container launch code is separated from product behavior ownership.",
         "Any residual shell-only setup is explicit and small."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-014",
@@ -166,7 +166,7 @@
         "Status surfaces read from the main server.",
         "Orchestrator state files stop being the canonical runtime source for migrated flows."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-015",
@@ -177,7 +177,7 @@
         "Deprecation or removal is explicit and traceable.",
         "Clients have a clear canonical control surface."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-016",
@@ -188,7 +188,7 @@
         "Absorbed orchestrator control routes are covered.",
         "The tests catch regressions in startup and runtime control."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-017",
@@ -199,7 +199,7 @@
         "Workspace/server mapping behavior is asserted.",
         "The tests prove the app can stay workspace-first even with remote backends."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-018",
@@ -210,7 +210,7 @@
         "The app and CLI receive clear typed errors or degraded status responses.",
         "Residual orchestrator-only recovery behavior is visible if it still exists."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-019",
@@ -221,7 +221,7 @@
         "Future cleanup work does not have to rediscover why something stayed outside the server.",
         "The list is small enough to evaluate for final cutover."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P9-020",
@@ -232,7 +232,7 @@
         "No hidden second product control plane remains for the migrated flows.",
         "Phase 9 leaves Phase 10 with a clear cutover target."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

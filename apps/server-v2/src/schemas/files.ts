@@ -20,6 +20,11 @@ export const workspaceDeleteDataSchema = z.object({
   workspaceId: identifierSchema,
 }).meta({ ref: "OpenWorkServerV2WorkspaceDeleteData" });
 
+export const workspaceDisposeDataSchema = z.object({
+  disposed: z.boolean(),
+  workspaceId: identifierSchema,
+}).meta({ ref: "OpenWorkServerV2WorkspaceDisposeData" });
+
 export const workspaceCreateLocalRequestSchema = z.object({
   folderPath: z.string().min(1),
   name: z.string().min(1),
@@ -151,6 +156,11 @@ export const engineReloadResponseSchema = successResponseSchema(
 export const workspaceDeleteResponseSchema = successResponseSchema(
   "OpenWorkServerV2WorkspaceDeleteResponse",
   workspaceDeleteDataSchema,
+);
+
+export const workspaceDisposeResponseSchema = successResponseSchema(
+  "OpenWorkServerV2WorkspaceDisposeResponse",
+  workspaceDisposeDataSchema,
 );
 
 export const reloadEventsResponseSchema = successResponseSchema(

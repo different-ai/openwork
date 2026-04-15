@@ -216,9 +216,18 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
       registry: {
         backendResolution: input.data.capabilities.registry.backendResolution,
         hiddenWorkspaceFiltering: input.data.capabilities.registry.hiddenWorkspaceFiltering,
+        remoteServerConnections: input.data.capabilities.registry.remoteServerConnections,
+        remoteWorkspaceSync: input.data.capabilities.registry.remoteWorkspaceSync,
         serverInventory: input.data.capabilities.registry.serverInventory,
         workspaceDetail: input.data.capabilities.registry.workspaceDetail,
         workspaceList: input.data.capabilities.registry.workspaceList,
+      },
+      runtime: {
+        opencodeHealth: input.data.capabilities.runtime.opencodeHealth,
+        routerHealth: input.data.capabilities.runtime.routerHealth,
+        runtimeSummary: input.data.capabilities.runtime.runtimeSummary,
+        runtimeUpgrade: input.data.capabilities.runtime.runtimeUpgrade,
+        runtimeVersions: input.data.capabilities.runtime.runtimeVersions,
       },
       sessions: {
         events: sessions.events,

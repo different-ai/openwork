@@ -61,7 +61,7 @@ async function waitForHealth(url: string) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-test("cli boots as a standalone process and serves system health", async () => {
+test("cli boots as a standalone process and serves health plus runtime routes", async () => {
   const port = await getFreePort();
   const child = Bun.spawn(["bun", "src/cli.ts", "--port", String(port)], {
     cwd: packageDir,
@@ -78,6 +78,16 @@ test("cli boots as a standalone process and serves system health", async () => {
   const response = await waitForHealth(`http://127.0.0.1:${port}/system/health`);
   const body = await response.json();
 
+  const runtimeSummaryResponse = await waitForHealth(`http://127.0.0.1:${port}/system/runtime/summary`);
+  const runtimeSummary = await runtimeSummaryResponse.json();
+
+  const runtimeVersionsResponse = await waitForHealth(`http://127.0.0.1:${port}/system/runtime/versions`);
+  const runtimeVersions = await runtimeVersionsResponse.json();
+
   expect(body.ok).toBe(true);
   expect(body.data.service).toBe("openwork-server-v2");
+  expect(runtimeSummary.ok).toBe(true);
+  expect(runtimeSummary.data.target).toBeTruthy();
+  expect(runtimeVersions.ok).toBe(true);
+  expect(runtimeVersions.data.pinned.serverVersion).toBeTruthy();
 }, 15_000);

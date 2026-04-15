@@ -257,6 +257,13 @@ export type OpenWorkServerV2RouterHealthData = {
     version: string | null;
 };
 
+export type OpenWorkServerV2RuntimeUpgradeState = {
+    error: string | null;
+    finishedAt: OpenWorkServerV2IsoTimestamp | null;
+    startedAt: OpenWorkServerV2IsoTimestamp | null;
+    status: 'completed' | 'failed' | 'idle' | 'running';
+};
+
 export type OpenWorkServerV2RuntimeSummaryData = {
     bootstrapPolicy: 'disabled' | 'eager' | 'manual';
     manifest: OpenWorkServerV2RuntimeManifest | null;
@@ -267,6 +274,7 @@ export type OpenWorkServerV2RuntimeSummaryData = {
         windowMs: number;
     };
     router: OpenWorkServerV2RouterHealthData;
+    upgrade: OpenWorkServerV2RuntimeUpgradeState;
     source: 'development' | 'release';
     target: OpenWorkServerV2RuntimeTarget;
 };
@@ -354,6 +362,8 @@ export type OpenWorkServerV2CapabilitiesData = {
     };
     registry: {
         backendResolution: true;
+        remoteServerConnections: true;
+        remoteWorkspaceSync: true;
         hiddenWorkspaceFiltering: true;
         serverInventory: true;
         workspaceDetail: true;
@@ -371,6 +381,7 @@ export type OpenWorkServerV2CapabilitiesData = {
         opencodeHealth: true;
         routerHealth: true;
         runtimeSummary: true;
+        runtimeUpgrade: true;
         runtimeVersions: true;
     };
     router: {
@@ -497,6 +508,83 @@ export type OpenWorkServerV2ForbiddenError = {
     };
 };
 
+export type OpenWorkServerV2WorkspaceBackend = {
+    kind: 'local_opencode' | 'remote_openwork';
+    local: {
+        configDir: string | null;
+        dataDir: string | null;
+        opencodeProjectId: string | null;
+    } | null;
+    remote: {
+        directory: string | null;
+        hostUrl: string | null;
+        remoteType: 'openwork' | 'opencode';
+        remoteWorkspaceId: string | null;
+        workspaceName: string | null;
+    } | null;
+    serverId: OpenWorkServerV2Identifier;
+};
+
+export type OpenWorkServerV2WorkspaceRuntimeSummary = {
+    backendKind: 'local_opencode' | 'remote_openwork';
+    health: {
+        [key: string]: unknown;
+    } | null;
+    lastError: {
+        [key: string]: unknown;
+    } | null;
+    lastSessionRefreshAt: OpenWorkServerV2IsoTimestamp | null;
+    lastSyncAt: OpenWorkServerV2IsoTimestamp | null;
+    updatedAt: OpenWorkServerV2IsoTimestamp | null;
+};
+
+export type OpenWorkServerV2WorkspaceSummaryData = {
+    backend: OpenWorkServerV2WorkspaceBackend;
+    createdAt: OpenWorkServerV2IsoTimestamp;
+    displayName: string;
+    hidden: boolean;
+    id: OpenWorkServerV2Identifier;
+    kind: 'local' | 'remote' | 'control' | 'help';
+    preset: 'minimal' | 'remote' | 'starter';
+    runtime: OpenWorkServerV2WorkspaceRuntimeSummary;
+    server: OpenWorkServerV2ServerInventoryItem;
+    slug: string;
+    status: 'ready' | 'imported' | 'attention';
+    updatedAt: OpenWorkServerV2IsoTimestamp;
+};
+
+export type OpenWorkServerV2RemoteServerConnectData = {
+    selectedWorkspaceId: OpenWorkServerV2Identifier | null;
+    server: OpenWorkServerV2ServerInventoryItem;
+    workspaces: Array<OpenWorkServerV2WorkspaceSummaryData>;
+};
+
+export type OpenWorkServerV2RemoteServerConnectResponse = {
+    ok: true;
+    data: OpenWorkServerV2RemoteServerConnectData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2InvalidRequestError = {
+    ok: false;
+    error: {
+        message: string;
+        requestId: OpenWorkServerV2RequestId;
+        details?: Array<OpenWorkServerV2ErrorDetail>;
+        code: 'invalid_request';
+    };
+};
+
+export type OpenWorkServerV2NotFoundError = {
+    ok: false;
+    error: {
+        message: string;
+        requestId: OpenWorkServerV2RequestId;
+        details?: Array<OpenWorkServerV2ErrorDetail>;
+        code: 'not_found';
+    };
+};
+
 export type OpenWorkServerV2OpenApiDocument = {
     openapi: string;
     info: {
@@ -552,49 +640,15 @@ export type OpenWorkServerV2RuntimeVersionsResponse = {
     meta: OpenWorkServerV2ResponseMeta;
 };
 
-export type OpenWorkServerV2WorkspaceBackend = {
-    kind: 'local_opencode' | 'remote_openwork';
-    local: {
-        configDir: string | null;
-        dataDir: string | null;
-        opencodeProjectId: string | null;
-    } | null;
-    remote: {
-        directory: string | null;
-        hostUrl: string | null;
-        remoteType: 'openwork' | 'opencode';
-        remoteWorkspaceId: string | null;
-        workspaceName: string | null;
-    } | null;
-    serverId: OpenWorkServerV2Identifier;
+export type OpenWorkServerV2RuntimeUpgradeData = {
+    state: OpenWorkServerV2RuntimeUpgradeState;
+    summary: OpenWorkServerV2RuntimeSummaryData;
 };
 
-export type OpenWorkServerV2WorkspaceRuntimeSummary = {
-    backendKind: 'local_opencode' | 'remote_openwork';
-    health: {
-        [key: string]: unknown;
-    } | null;
-    lastError: {
-        [key: string]: unknown;
-    } | null;
-    lastSessionRefreshAt: OpenWorkServerV2IsoTimestamp | null;
-    lastSyncAt: OpenWorkServerV2IsoTimestamp | null;
-    updatedAt: OpenWorkServerV2IsoTimestamp | null;
-};
-
-export type OpenWorkServerV2WorkspaceSummaryData = {
-    backend: OpenWorkServerV2WorkspaceBackend;
-    createdAt: OpenWorkServerV2IsoTimestamp;
-    displayName: string;
-    hidden: boolean;
-    id: OpenWorkServerV2Identifier;
-    kind: 'local' | 'remote' | 'control' | 'help';
-    preset: 'minimal' | 'remote' | 'starter';
-    runtime: OpenWorkServerV2WorkspaceRuntimeSummary;
-    server: OpenWorkServerV2ServerInventoryItem;
-    slug: string;
-    status: 'ready' | 'imported' | 'attention';
-    updatedAt: OpenWorkServerV2IsoTimestamp;
+export type OpenWorkServerV2RuntimeUpgradeResponse = {
+    ok: true;
+    data: OpenWorkServerV2RuntimeUpgradeData;
+    meta: OpenWorkServerV2ResponseMeta;
 };
 
 export type OpenWorkServerV2WorkspaceListData = {
@@ -631,26 +685,6 @@ export type OpenWorkServerV2WorkspaceDetailResponse = {
     meta: OpenWorkServerV2ResponseMeta;
 };
 
-export type OpenWorkServerV2NotFoundError = {
-    ok: false;
-    error: {
-        message: string;
-        requestId: OpenWorkServerV2RequestId;
-        details?: Array<OpenWorkServerV2ErrorDetail>;
-        code: 'not_found';
-    };
-};
-
-export type OpenWorkServerV2InvalidRequestError = {
-    ok: false;
-    error: {
-        message: string;
-        requestId: OpenWorkServerV2RequestId;
-        details?: Array<OpenWorkServerV2ErrorDetail>;
-        code: 'invalid_request';
-    };
-};
-
 export type OpenWorkServerV2WorkspaceActivationData = {
     activeWorkspaceId: OpenWorkServerV2Identifier;
 };
@@ -669,6 +703,17 @@ export type OpenWorkServerV2WorkspaceDeleteData = {
 export type OpenWorkServerV2WorkspaceDeleteResponse = {
     ok: true;
     data: OpenWorkServerV2WorkspaceDeleteData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceDisposeData = {
+    disposed: boolean;
+    workspaceId: OpenWorkServerV2Identifier;
+};
+
+export type OpenWorkServerV2WorkspaceDisposeResponse = {
+    ok: true;
+    data: OpenWorkServerV2WorkspaceDisposeData;
     meta: OpenWorkServerV2ResponseMeta;
 };
 
@@ -1514,6 +1559,86 @@ export type GetSystemServersResponses = {
 
 export type GetSystemServersResponse = GetSystemServersResponses[keyof GetSystemServersResponses];
 
+export type PostSystemServersConnectData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/servers/connect';
+};
+
+export type PostSystemServersConnectErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The authenticated actor does not have access to this route.
+     */
+    403: OpenWorkServerV2ForbiddenError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemServersConnectError = PostSystemServersConnectErrors[keyof PostSystemServersConnectErrors];
+
+export type PostSystemServersConnectResponses = {
+    /**
+     * Remote OpenWork server connected successfully.
+     */
+    200: OpenWorkServerV2RemoteServerConnectResponse;
+};
+
+export type PostSystemServersConnectResponse = PostSystemServersConnectResponses[keyof PostSystemServersConnectResponses];
+
+export type PostSystemServersByServerIdSyncData = {
+    body?: never;
+    path: {
+        serverId: string;
+    };
+    query?: never;
+    url: '/system/servers/{serverId}/sync';
+};
+
+export type PostSystemServersByServerIdSyncErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The authenticated actor does not have access to this route.
+     */
+    403: OpenWorkServerV2ForbiddenError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemServersByServerIdSyncError = PostSystemServersByServerIdSyncErrors[keyof PostSystemServersByServerIdSyncErrors];
+
+export type PostSystemServersByServerIdSyncResponses = {
+    /**
+     * Remote OpenWork server synced successfully.
+     */
+    200: OpenWorkServerV2RemoteServerConnectResponse;
+};
+
+export type PostSystemServersByServerIdSyncResponse = PostSystemServersByServerIdSyncResponses[keyof PostSystemServersByServerIdSyncResponses];
+
 export type GetSystemOpencodeHealthData = {
     body?: never;
     path?: never;
@@ -1629,6 +1754,39 @@ export type GetSystemRuntimeVersionsResponses = {
 };
 
 export type GetSystemRuntimeVersionsResponse = GetSystemRuntimeVersionsResponses[keyof GetSystemRuntimeVersionsResponses];
+
+export type PostSystemRuntimeUpgradeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/system/runtime/upgrade';
+};
+
+export type PostSystemRuntimeUpgradeErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The authenticated actor does not have access to this route.
+     */
+    403: OpenWorkServerV2ForbiddenError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostSystemRuntimeUpgradeError = PostSystemRuntimeUpgradeErrors[keyof PostSystemRuntimeUpgradeErrors];
+
+export type PostSystemRuntimeUpgradeResponses = {
+    /**
+     * Runtime upgraded successfully.
+     */
+    200: OpenWorkServerV2RuntimeUpgradeResponse;
+};
+
+export type PostSystemRuntimeUpgradeResponse = PostSystemRuntimeUpgradeResponses[keyof PostSystemRuntimeUpgradeResponses];
 
 export type GetWorkspacesData = {
     body?: never;
@@ -1835,6 +1993,37 @@ export type PatchWorkspacesByWorkspaceIdDisplayNameResponses = {
 };
 
 export type PatchWorkspacesByWorkspaceIdDisplayNameResponse = PatchWorkspacesByWorkspaceIdDisplayNameResponses[keyof PatchWorkspacesByWorkspaceIdDisplayNameResponses];
+
+export type PostWorkspacesByWorkspaceIdDisposeData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/dispose';
+};
+
+export type PostWorkspacesByWorkspaceIdDisposeErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdDisposeError = PostWorkspacesByWorkspaceIdDisposeErrors[keyof PostWorkspacesByWorkspaceIdDisposeErrors];
+
+export type PostWorkspacesByWorkspaceIdDisposeResponses = {
+    /**
+     * Workspace runtime instance disposed successfully.
+     */
+    200: OpenWorkServerV2WorkspaceDisposeResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdDisposeResponse = PostWorkspacesByWorkspaceIdDisposeResponses[keyof PostWorkspacesByWorkspaceIdDisposeResponses];
 
 export type GetWorkspacesByWorkspaceIdConfigData = {
     body?: never;

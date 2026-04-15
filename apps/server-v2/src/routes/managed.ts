@@ -171,7 +171,7 @@ export function registerManagedRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Cloud signin returned successfully.", cloudSigninResponseSchema),
       }, { includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const requestContext = requireVisible(c);
       return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.managed.getCloudSignin()));
     },
@@ -220,7 +220,7 @@ export function registerManagedRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Cloud signin cleared successfully.", cloudSigninResponseSchema),
       }, { includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const requestContext = requireVisible(c);
       return c.json(buildSuccessResponse(requestContext.requestId, requestContext.services.managed.clearCloudSignin()));
     },
@@ -454,10 +454,10 @@ export function registerManagedRoutes(app: Hono<AppBindings>) {
         200: jsonResponse("Workspace exported successfully.", workspaceExportResponseSchema),
       }, { includeUnauthorized: true }),
     }),
-    (c) => {
+    async (c) => {
       const { requestContext, workspaceId } = requireWorkspace(c);
       const sensitiveMode = (new URL(c.req.url).searchParams.get("sensitive")?.trim() as "auto" | "exclude" | "include" | null) ?? "auto";
-      const result = requestContext.services.managed.exportWorkspace(workspaceId, { sensitiveMode: sensitiveMode === "exclude" || sensitiveMode === "include" || sensitiveMode === "auto" ? sensitiveMode : "auto" });
+      const result = await requestContext.services.managed.exportWorkspace(workspaceId, { sensitiveMode: sensitiveMode === "exclude" || sensitiveMode === "include" || sensitiveMode === "auto" ? sensitiveMode : "auto" });
       if ("conflict" in result) {
         return c.json({ code: "workspace_export_requires_decision", details: { warnings: result.warnings }, message: "This workspace includes sensitive config. Choose whether to exclude it or include it before exporting." }, 409);
       }
@@ -748,10 +748,10 @@ export function registerManagedRoutes(app: Hono<AppBindings>) {
     addCompatibilityRoute(app, "POST", `${basePath}/send`, async (c) => c.json(await getRequestContext(c).services.router.sendMessage(await parseJsonBody(routerSendWriteSchema, c.req.raw))));
   }
 
-  addCompatibilityRoute(app, "GET", "/workspace/:workspaceId/export", (c) => {
+  addCompatibilityRoute(app, "GET", "/workspace/:workspaceId/export", async (c) => {
     const { requestContext, workspaceId } = requireWorkspace(c);
     const sensitiveMode = (new URL(c.req.url).searchParams.get("sensitive")?.trim() as "auto" | "exclude" | "include" | null) ?? "auto";
-    const result = requestContext.services.managed.exportWorkspace(workspaceId, { sensitiveMode: sensitiveMode === "exclude" || sensitiveMode === "include" || sensitiveMode === "auto" ? sensitiveMode : "auto" });
+    const result = await requestContext.services.managed.exportWorkspace(workspaceId, { sensitiveMode: sensitiveMode === "exclude" || sensitiveMode === "include" || sensitiveMode === "auto" ? sensitiveMode : "auto" });
     if ("conflict" in result) {
       return c.json({ code: "workspace_export_requires_decision", details: { warnings: result.warnings }, message: "This workspace includes sensitive config. Choose whether to exclude it or include it before exporting." }, 409);
     }

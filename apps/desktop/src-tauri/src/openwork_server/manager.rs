@@ -13,6 +13,7 @@ pub struct OpenworkServerManager {
 pub struct OpenworkServerState {
     pub child: Option<CommandChild>,
     pub child_exited: bool,
+    pub detected_running_without_child: bool,
     pub remote_access_enabled: bool,
     pub startup_mode: OpenworkServerStartupMode,
     pub host: Option<String>,
@@ -36,9 +37,11 @@ pub struct OpenworkServerState {
 impl OpenworkServerManager {
     pub fn snapshot_locked(state: &mut OpenworkServerState) -> OpenworkServerInfo {
         let (running, pid) = match state.child.as_ref() {
+            None if state.detected_running_without_child => (true, None),
             None => (false, None),
             Some(_child) if state.child_exited => {
                 state.child = None;
+                state.detected_running_without_child = false;
                 (false, None)
             }
             Some(child) => (true, Some(child.pid())),
@@ -73,6 +76,7 @@ impl OpenworkServerManager {
             let _ = child.kill();
         }
         state.child_exited = true;
+        state.detected_running_without_child = false;
         state.remote_access_enabled = false;
         state.startup_mode = OpenworkServerStartupMode::Legacy;
         state.host = None;
