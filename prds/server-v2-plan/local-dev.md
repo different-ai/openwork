@@ -9,6 +9,14 @@ This document defines how Server V2, the generated SDK, and the app should stay 
 
 This doc assumes Server V2 is a separate new server package, not a mounted sub-application inside the old server.
 
+While Server V2 is still under validation, the current product should continue to work by default on the legacy path. For local testing of the new path, opt in explicitly with:
+
+```bash
+OPENWORK_UI_USE_SERVER_V2=1 pnpm dev:server-v2
+```
+
+That same logical flag should control both app routing and desktop startup behavior.
+
 Detailed generator selection and script shape live in `prds/server-v2-plan/sdk-generation.md`.
 
 ## Goal

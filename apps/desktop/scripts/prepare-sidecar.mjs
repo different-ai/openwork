@@ -295,6 +295,34 @@ const sha256File = (filePath) => {
   return hash.digest("hex");
 };
 
+const ensureBinaryAlias = (sourcePath, targetPath) => {
+  if (!sourcePath || !targetPath || sourcePath === targetPath || !existsSync(sourcePath)) {
+    return;
+  }
+  try {
+    if (existsSync(targetPath)) {
+      unlinkSync(targetPath);
+    }
+  } catch {
+    // ignore
+  }
+  copyFileSync(sourcePath, targetPath);
+  try {
+    chmodSync(targetPath, 0o755);
+  } catch {
+    // ignore
+  }
+};
+
+const resolveExistingBinaryPath = (...candidates) => {
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
 const parseChecksum = (content, assetName) => {
   const lines = content.split(/\r?\n/);
   for (const line of lines) {
@@ -478,6 +506,14 @@ const shouldDownloadOpencode =
 
 if (!shouldDownloadOpencode) {
   console.log(`OpenCode sidecar already present (${existingOpencodeVersion}).`);
+}
+
+const existingOpencodePath = resolveExistingBinaryPath(opencodeCandidatePath, opencodePath);
+if (existingOpencodePath) {
+  ensureBinaryAlias(existingOpencodePath, opencodePath);
+  if (opencodeTargetPath) {
+    ensureBinaryAlias(existingOpencodePath, opencodeTargetPath);
+  }
 }
 
 if (shouldDownloadOpencode) {
@@ -852,6 +888,11 @@ const versionsPath = join(sidecarDir, "versions.json");
 const runtimeManifestPath = join(sidecarDir, "manifest.json");
 try {
   mkdirSync(sidecarDir, { recursive: true });
+  const canonicalOpencodePath = resolveExistingBinaryPath(opencodePath, opencodeCandidatePath);
+  const canonicalRouterPath = resolveExistingBinaryPath(opencodeRouterPath, opencodeRouterBuildPath, opencodeRouterTargetPath);
+  if (!canonicalOpencodePath || !canonicalRouterPath) {
+    throw new Error(`Missing canonical sidecars before manifest write (opencode=${canonicalOpencodePath ?? "missing"}, router=${canonicalRouterPath ?? "missing"})`);
+  }
   const content = JSON.stringify(versions, null, 2) + "\n";
   writeFileSync(versionsPath, content, "utf8");
   if (resolvedTargetTriple) {
@@ -865,12 +906,12 @@ try {
       opencode: {
         path: opencodeBaseName,
         sha256: versions.opencode.sha256,
-        size: statSync(opencodePath).size,
+        size: statSync(canonicalOpencodePath).size,
       },
       "opencode-router": {
         path: opencodeRouterName,
         sha256: versions.opencodeRouter.sha256,
-        size: statSync(opencodeRouterPath).size,
+        size: statSync(canonicalRouterPath).size,
       },
     },
     generatedAt: new Date().toISOString(),

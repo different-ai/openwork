@@ -9,9 +9,9 @@ This document defines how the app and desktop shell should migrate from the curr
 
 Current Phase 10 note:
 
-- The migration rollout flag has now been retired from the default product path.
-- App routing and desktop startup now assume Server V2 by default.
-- Any remaining legacy behavior should be treated as residual compatibility debt or explicit non-default host-shell behavior, not as a first-class rollout mode.
+- The migration rollout flag remains the practical opt-in switch while Server V2 is still being validated.
+- Current app routing and desktop startup should continue to use the legacy path by default.
+- Server V2 should be enabled explicitly with `OPENWORK_UI_USE_SERVER_V2=1` (or the Vite-exposed equivalent in the frontend build).
 
 It focuses on one practical requirement:
 
@@ -61,6 +61,12 @@ Example conceptual flag:
 ```text
 OPENWORK_UI_USE_SERVER_V2=1
 ```
+
+Current implementation note:
+
+- legacy/default behavior should continue when the flag is unset
+- Server V2 should only become the active app + desktop path when this flag is explicitly enabled
+- do not remove this flag until the old path is intentionally retired
 
 Implementation note:
 

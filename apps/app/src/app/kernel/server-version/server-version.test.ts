@@ -3,8 +3,17 @@ import { isServerV2Enabled } from "./flag";
 import { LOCAL_SERVER_ID, createRemoteServerId } from "./ids";
 import { resolveServerVersionRoute } from "./routing";
 
-test("server version routing is always enabled for Server V2", () => {
+test("server version routing defaults to legacy until Server V2 is opted in", () => {
+  const previous = process.env.OPENWORK_UI_USE_SERVER_V2;
+  delete process.env.OPENWORK_UI_USE_SERVER_V2;
+  expect(isServerV2Enabled()).toBe(false);
+  process.env.OPENWORK_UI_USE_SERVER_V2 = "1";
   expect(isServerV2Enabled()).toBe(true);
+  if (previous === undefined) {
+    delete process.env.OPENWORK_UI_USE_SERVER_V2;
+  } else {
+    process.env.OPENWORK_UI_USE_SERVER_V2 = previous;
+  }
 });
 
 test("createRemoteServerId keeps local server stable and remote ids deterministic", () => {

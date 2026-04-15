@@ -6,8 +6,8 @@ In progress. This checklist is the honest Phase 10 cutover and release ledger fo
 
 ## Default Path Checks
 
-- Desktop startup default: `ServerV2`
-- App rollout default: Server V2 enabled unless explicitly disabled
+- Desktop startup default: `Legacy`
+- App rollout default: legacy path unless `OPENWORK_UI_USE_SERVER_V2=1`
 - Runtime ownership default: Server V2 supervises OpenCode and router
 - Route mount: root-mounted (`/system/*`, `/workspaces/*`), no legacy `/v2`
 
@@ -21,8 +21,8 @@ In progress. This checklist is the honest Phase 10 cutover and release ledger fo
 - Bun compile build exists for Server V2.
 - Embedded runtime packaging exists via `apps/server-v2/script/build.ts --embed-runtime`.
 - Release runtime extraction uses a persistent versioned runtime directory with lock, atomic replace, lease tracking, and cleanup.
-- Desktop bundles and starts Server V2 by default.
-- App default routing now prefers Server V2.
+- Desktop can bundle and start Server V2 when `OPENWORK_UI_USE_SERVER_V2=1` is enabled.
+- App can route through Server V2 when `OPENWORK_UI_USE_SERVER_V2=1` is enabled.
 - Windows signing workflow exists at `.github/workflows/windows-signed-artifacts.yml` for the standalone Server V2 binary, signed sidecars, and desktop Windows artifacts.
 
 ## Remaining Release Gates
