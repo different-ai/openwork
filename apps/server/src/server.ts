@@ -37,7 +37,6 @@ import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot, buildSessionStatuses, buildSessionTodos } from "./session-read-model.js";
-import { v2App } from "./v2/app.js";
 import {
   collectWorkspaceExportWarnings,
   stripSensitiveWorkspaceExportData,
@@ -145,8 +144,6 @@ function logRequest(input: {
 
 type AuthMode = "none" | "client" | "host";
 
-const V2_MOUNT_PATH = "/v2";
-
 function normalizeOpenCodeRouterProxyPath(pathname: string): string {
   const trimmed = pathname.trim();
   if (!trimmed) return "/opencode-router";
@@ -188,24 +185,6 @@ function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath:
   const restPath = remainder.slice(slash) || "/";
   if (!workspaceId.trim()) return null;
   return { workspaceId: decodeURIComponent(workspaceId), restPath };
-}
-
-function parseV2Mount(pathname: string): { restPath: string } | null {
-  if (pathname === V2_MOUNT_PATH) {
-    return { restPath: "/" };
-  }
-
-  if (!pathname.startsWith(`${V2_MOUNT_PATH}/`)) {
-    return null;
-  }
-
-  return { restPath: pathname.slice(V2_MOUNT_PATH.length) || "/" };
-}
-
-async function dispatchV2Request(request: Request, url: URL, pathname: string) {
-  const target = new URL(url);
-  target.pathname = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  return v2App.fetch(new Request(target, request));
 }
 
 function normalizeOpencodeProxyPath(proxyPath: string): string {
@@ -301,34 +280,6 @@ export function startServer(config: ServerConfig) {
       }
 
       const mount = parseWorkspaceMount(url.pathname);
-      const mountedV2 = mount ? parseV2Mount(mount.restPath) : null;
-      if (mountedV2) {
-        try {
-          const response = await dispatchV2Request(request, url, mountedV2.restPath);
-          return finalize(response);
-        } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
-          errorMessage = apiError.message;
-          return finalize(jsonResponse(formatError(apiError), apiError.status));
-        }
-      }
-
-      const v2Mount = parseV2Mount(url.pathname);
-      if (v2Mount) {
-        try {
-          const response = await dispatchV2Request(request, url, v2Mount.restPath);
-          return finalize(response);
-        } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
-          errorMessage = apiError.message;
-          return finalize(jsonResponse(formatError(apiError), apiError.status));
-        }
-      }
-
       if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
         authMode = "client";
         try {

@@ -8,8 +8,6 @@
   },
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
-    "openapi:generate": "bun ./script/generate-openapi-v2.ts",
-    "openapi:watch": "node ./script/watch-openapi-v2.mjs",
     "test": "bun test",
     "build": "tsc -p tsconfig.json",
     "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
@@ -44,9 +42,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "1.2.27",
-    "hono": "4.12.12",
-    "hono-openapi": "1.3.0",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",
     "yaml": "^2.6.1",

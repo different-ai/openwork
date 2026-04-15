@@ -17,7 +17,7 @@ This is meant to help break down the current server into clear migration targets
 
 - The current server is still a Bun-first, custom-router server centered in `apps/server/src/server.ts`.
 - Most meaningful behavior is implemented through one large route-registration function, `createRoutes`, plus focused modules for config mutation, OpenCode integration, auth/tokens, reload/watch behavior, portable export/import, and OpenCode Router bridging.
-- A V2 scaffold exists under `apps/server/src/v2`, but it is still only a minimal Hono/OpenAPI scaffold rather than the real replacement server.
+- The earlier in-place `/v2` scaffold under `apps/server/src/v2` has been removed. The real replacement server now lives separately under `apps/server-v2/**`.
 
 ## 1. Startup, CLI, Config, And Process Boot
 
@@ -61,16 +61,16 @@ This is meant to help break down the current server into clear migration targets
 - What it is: main server boot function.
 - What it does: initializes approvals, reload events, tokens, watchers, route registration, and starts Bun HTTP serving.
 - Called from and when: called once after config resolution.
-- What it calls: Bun `serve`, `ApprovalService`, `TokenService`, `ReloadEventStore`, `startReloadWatchers`, V2 mount, proxy behavior, and all legacy routes.
+- What it calls: Bun `serve`, `ApprovalService`, `TokenService`, `ReloadEventStore`, `startReloadWatchers`, proxy behavior, and all legacy routes.
 
 ## 2. HTTP Routing And Request Dispatch
 
 ### `startServer(...).fetch`
 
 - What it is: the top-level Bun request handler.
-- What it does: handles every incoming request, applies CORS and request logging, routes mounted workspace paths, proxies OpenCode/OpenCode Router requests, mounts `/v2`, and finally dispatches to legacy routes.
+- What it does: handles every incoming request, applies CORS and request logging, routes mounted workspace paths, proxies OpenCode/OpenCode Router requests, and finally dispatches to legacy routes.
 - Called from and when: called by Bun for every HTTP request.
-- What it calls: `parseWorkspaceMount`, `parseV2Mount`, `dispatchV2Request`, OpenCode proxy helpers, OpenCode Router proxy helpers, and `createRoutes` matches.
+- What it calls: `parseWorkspaceMount`, OpenCode proxy helpers, OpenCode Router proxy helpers, and `createRoutes` matches.
 
 ### `parseWorkspaceMount`
 
@@ -78,13 +78,6 @@ This is meant to help break down the current server into clear migration targets
 - What it does: detects workspace-mounted URLs like `/w/:id/...`.
 - Called from and when: called early in request dispatch.
 - What it calls: enables single-workspace mounted base URL behavior.
-
-### `parseV2Mount` + `dispatchV2Request`
-
-- What they are: V2 mount detection and handoff helpers.
-- What they do: detect `/v2` requests and forward them to the current Hono V2 app.
-- Called from and when: called before legacy route matching.
-- What they call: `v2App.fetch`.
 
 ### `createRoutes`
 
@@ -464,43 +457,6 @@ This is meant to help break down the current server into clear migration targets
 - What it does: calls the configured runtime control base URL with bearer auth.
 - Called from and when: called by runtime version/upgrade routes.
 - What it calls: external runtime control plane.
-
-## 14. V2 Scaffold Status
-
-### `createV2App` / `v2App`
-
-- What they are: the current Hono-based V2 scaffold.
-- What they do: create a minimal Hono app for the future replacement server surface.
-- Called from and when: currently mounted by the legacy dispatcher at `/v2`.
-- What they call: only system routes today.
-
-### `registerSystemRoutes`
-
-- What it is: V2 system route registration.
-- What it does: defines `/v2/`, `/v2/health`, `/v2/openapi.json`, and `/v2/openapi/meta`.
-- Called from and when: called during V2 app creation.
-- What it calls: minimal health and contract-scaffold behavior.
-
-### `getV2Health`
-
-- What it is: minimal V2 health payload builder.
-- What it does: returns the tiny V2 health payload.
-- Called from and when: called by `/v2/health`.
-- What it calls: no deeper business logic yet.
-
-### OpenAPI helpers in `src/v2/openapi.ts`
-
-- What they are: V2 OpenAPI helper utilities.
-- What they do: generate operation IDs and response descriptors for the scaffold.
-- Called from and when: called by V2 route registration.
-- What they call: contract-generation support only.
-
-### `V2_ADAPTERS_READY = false`
-
-- What it is: explicit readiness marker.
-- What it does: signals that the current V2 adapter layer is not implemented yet.
-- Called from and when: static status only.
-- What it calls: nothing; it is a signal of scaffold status.
 
 ## Key Takeaways
 
