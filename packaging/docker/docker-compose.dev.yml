@@ -34,7 +34,7 @@ x-shared: &shared
     - ${OPENWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.openwork-host-opencode-data}:/persist/.openwork-host-opencode-data:ro
 
 services:
-  orchestrator:
+  server:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -59,15 +59,21 @@ services:
         # --- Enable pnpm via corepack ---
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Install deps ---
-        echo "[orchestrator] Installing dependencies..."
-        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
-
-        # --- Use source entrypoints for the dev stack ---
-        # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
-        # issues from bun --compile inside Docker on macOS.
-        export OPENWORK_SERVER_BIN="/app/apps/server/src/cli.ts"
-        export OPENCODE_ROUTER_BIN="/app/apps/opencode-router/src/cli.ts"
+        # --- Install deps once across shared services ---
+        export OPENWORK_INSTALL_LOCK_DIR="/app/tmp/pnpm-install.lock"
+        export OPENWORK_INSTALL_DONE_FILE="/app/tmp/pnpm-install.done"
+        mkdir -p /app/tmp
+        if [ ! -f "$$OPENWORK_INSTALL_DONE_FILE" ]; then
+          if mkdir "$$OPENWORK_INSTALL_LOCK_DIR" 2>/dev/null; then
+            echo "[server] Installing dependencies..."
+            pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+            touch "$$OPENWORK_INSTALL_DONE_FILE"
+            rmdir "$$OPENWORK_INSTALL_LOCK_DIR"
+          else
+            echo "[server] Waiting for shared dependency install..."
+            until [ -f "$$OPENWORK_INSTALL_DONE_FILE" ]; do sleep 2; done
+          fi
+        fi
 
         # --- Resolve tokens ---
         if [ -z "$$OPENWORK_TOKEN" ]; then
@@ -86,29 +92,54 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork orchestrator"
+        echo "  OpenWork Server V2"
         echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
-        echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
+        echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/system/health"
         echo "  Token:      $$OPENWORK_TOKEN"
         echo "  Host token: $$OPENWORK_HOST_TOKEN"
         echo "============================================"
         echo ""
 
-        exec pnpm --filter openwork-orchestrator dev -- start \
-          --workspace /workspace \
-          --remote-access \
-          --openwork-port 8787 \
-          --openwork-token "$$OPENWORK_TOKEN" \
-          --openwork-host-token "$$OPENWORK_HOST_TOKEN" \
-          --openwork-server-bin "$$OPENWORK_SERVER_BIN" \
-          --opencode-router-bin "$$OPENCODE_ROUTER_BIN" \
-          --approval auto \
-          --allow-external \
-          --cors "*"
+        export OPENWORK_SERVER_V2_WORKDIR="/app/tmp/server-v2-${OPENWORK_DEV_ID:-default}"
+        export OPENWORK_SERVER_V2_RUNTIME_SOURCE="development"
+        export OPENWORK_SERVER_V2_HOSTING_KIND="self_hosted"
+        export OPENWORK_SERVER_V2_HOST="0.0.0.0"
+        export OPENWORK_SERVER_V2_PORT="8787"
+
+        bun /app/apps/server-v2/src/cli.ts --host 0.0.0.0 --port 8787 &
+        SERVER_PID=$$!
+
+        cleanup() {
+          kill $$SERVER_PID 2>/dev/null || true
+          wait $$SERVER_PID 2>/dev/null || true
+        }
+        trap cleanup EXIT INT TERM
+
+        until curl -sf http://127.0.0.1:8787/system/health >/dev/null; do
+          sleep 2
+        done
+
+        workspace_response=$$(curl -sf \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -H "X-OpenWork-Host-Token: $$OPENWORK_HOST_TOKEN" \
+          --data '{"folderPath":"/workspace","name":"Docker Dev Workspace","preset":"starter"}' \
+          http://127.0.0.1:8787/workspaces/local)
+
+        workspace_id=$$(printf '%s' "$$workspace_response" | node -e 'let data="";process.stdin.on("data",(chunk)=>data+=chunk);process.stdin.on("end",()=>{const parsed=JSON.parse(data);process.stdout.write(parsed?.data?.id ?? "");});')
+        if [ -n "$$workspace_id" ]; then
+          curl -sf \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-OpenWork-Host-Token: $$OPENWORK_HOST_TOKEN" \
+            http://127.0.0.1:8787/workspaces/$$workspace_id/activate >/dev/null
+        fi
+
+        wait $$SERVER_PID
     ports:
       - "${OPENWORK_PORT:-8787}:8787"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8787/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8787/system/health || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -123,11 +154,11 @@ services:
       OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
       OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.openwork-host-opencode-data
       OPENWORK_SIDECAR_SOURCE: external
- 
+  
   web:
     <<: *shared
     depends_on:
-      orchestrator:
+      server:
         condition: service_healthy
       share:
         condition: service_healthy
@@ -148,7 +179,7 @@ services:
         fi
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Read token written by orchestrator ---
+        # --- Read token written by server startup ---
         if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
           . "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
           export VITE_OPENWORK_TOKEN="$$OPENWORK_TOKEN"
@@ -158,7 +189,7 @@ services:
         echo "============================================"
         echo "  OpenWork web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
+        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see server logs>}"
         echo "============================================"
         echo ""
 
@@ -190,8 +221,20 @@ services:
 
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        echo "[share] Installing dependencies..."
-        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+        export OPENWORK_INSTALL_LOCK_DIR="/app/tmp/pnpm-install.lock"
+        export OPENWORK_INSTALL_DONE_FILE="/app/tmp/pnpm-install.done"
+        mkdir -p /app/tmp
+        if [ ! -f "$$OPENWORK_INSTALL_DONE_FILE" ]; then
+          if mkdir "$$OPENWORK_INSTALL_LOCK_DIR" 2>/dev/null; then
+            echo "[share] Installing dependencies..."
+            pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+            touch "$$OPENWORK_INSTALL_DONE_FILE"
+            rmdir "$$OPENWORK_INSTALL_LOCK_DIR"
+          else
+            echo "[share] Waiting for shared dependency install..."
+            until [ -f "$$OPENWORK_INSTALL_DONE_FILE" ]; do sleep 2; done
+          fi
+        fi
 
         mkdir -p /app/tmp/share-service-blobs
 

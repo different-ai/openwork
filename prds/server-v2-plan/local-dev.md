@@ -302,7 +302,15 @@ packages/openwork-server-sdk
 
 repo root
 - dev:server-v2       # run server watch + openapi watch + sdk watch + app dev together
+- dev:server-v2:server # run only the backend/spec/sdk watch graph when the app is not needed
 ```
+
+Current implementation note:
+
+- `pnpm dev:server-v2` is the default composite command and includes the app dev server.
+- `pnpm dev:server-v2:server` exists for backend-only work.
+- The SDK watcher watches the OpenAPI directory entry instead of a single file handle so spec rewrites do not silently stop regeneration after replace-style writes.
+- OpenAPI generation runs against an isolated temporary Server V2 working directory so contract generation does not touch or depend on a developer's live imported workspace state.
 
 ## Developer Experience Target
 

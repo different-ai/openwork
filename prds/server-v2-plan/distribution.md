@@ -116,6 +116,14 @@ This keeps the runtime identical between:
 
 The server executable should embed sidecar payloads and extract them to a persistent versioned runtime directory.
 
+Current implementation note:
+
+- Phase 10 now treats the managed app-data runtime directory as the canonical release runtime location.
+- The release runtime is populated on first run from a bundled runtime source directory (for example the desktop resource sidecar directory or an executable-adjacent bundle with `manifest.json`) and is then reused across later runs.
+- `apps/server-v2/script/build.ts` now also supports `--embed-runtime`, which generates a temporary build entrypoint that embeds `opencode`, `opencode-router`, and `manifest.json` directly into the compiled Server V2 binary via Bun `with { type: "file" }` imports.
+- Extraction now uses a lock, temp directory, atomic replace, lease file, and conservative cleanup of stale runtime directories.
+- The standalone embedded artifact can now boot without an adjacent sidecar bundle: when no filesystem bundle is present, Server V2 falls back to the embedded runtime payload and extracts from there.
+
 Recommended behavior:
 
 1. On startup, the server determines its runtime version.
@@ -179,6 +187,13 @@ The exact build script will likely be JS-driven rather than a one-liner so it ca
 - generate the manifest
 - inject build-time constants
 - compile per target
+
+Current implementation note:
+
+- `pnpm --filter openwork-server-v2 build:bin` builds the plain compiled executable.
+- `pnpm --filter openwork-server-v2 build:bin:embedded --bundle-dir <runtime-bundle-dir>` builds the compiled executable with embedded runtime assets from a prepared bundle directory.
+- `pnpm --filter openwork-server-v2 build:bin:embedded:all` drives the same embedding flow across the supported Bun targets when target-specific runtime bundle files are staged.
+- The build script resolves target-specific asset filenames like `opencode-<triple>` and `manifest.json-<triple>` when cross-target bundles are staged.
 
 ## Bun Embedding Model
 
@@ -367,7 +382,7 @@ So the key shift is:
 Based on the current repo workflows in this branch:
 
 - macOS notarization is explicitly configured
-- Windows signing is not explicitly configured in the GitHub workflows we inspected
+- Windows signing now has an explicit repo workflow path in `.github/workflows/windows-signed-artifacts.yml`, but it still requires a real signing certificate and Windows validation run before broad rollout
 
 That means:
 

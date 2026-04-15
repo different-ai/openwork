@@ -1,5 +1,5 @@
-export * from "../generated/index.js";
-export { createClient } from "../generated/client/index.js";
+export * from "../generated/index";
+export { createClient } from "../generated/client/index";
 export type {
   Client,
   ClientOptions,
@@ -7,7 +7,7 @@ export type {
   CreateClientConfig,
   RequestOptions,
   RequestResult,
-} from "../generated/client/index.js";
+} from "../generated/client/index";
 export {
   createOpenWorkServerClient,
   normalizeServerBaseUrl,

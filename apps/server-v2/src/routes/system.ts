@@ -87,7 +87,7 @@ function createOpenApiDocumentation(version: string) {
         description: [
           "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.",
           "",
-          "Phase 9 adds remote server registration, remote workspace discovery/sync, runtime control under /system/runtime/*, and continued orchestrator collapse behind Server V2.",
+          "Phase 10 makes Server V2 the default runtime, keeps release/runtime assets in a managed extracted directory, and closes the remaining cutover tooling around the standalone contract.",
         ].join("\n"),
     },
     servers: [{ url: "/" }],

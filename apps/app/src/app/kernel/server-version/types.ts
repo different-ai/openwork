@@ -2,12 +2,12 @@ import type { OpenworkServerCapabilities, OpenworkServerDiagnostics, OpenworkSer
 import type { OpenworkServerInfo } from "../../lib/tauri";
 import type { StartupPreference, WorkspaceDisplay } from "../../types";
 
-export type ServerContractMode = "legacy" | "server-v2";
+export type ServerContractMode = "server-v2";
 
 export type ServerTargetHostingKind = "desktop" | "self_hosted" | "cloud";
 export type ServerTargetKind = "local" | "remote";
 export type ServerTargetSource = "desktop-host" | "server-settings" | "selected-remote-workspace";
-export type ServerContractHint = ServerContractMode | "unknown";
+export type ServerContractHint = ServerContractMode | "legacy" | "unknown";
 
 export type ServerTarget = {
   baseUrl: string;

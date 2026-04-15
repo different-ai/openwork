@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenWork Server V2",
-    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 9 adds remote server registration, remote workspace discovery/sync, runtime control under /system/runtime/*, and continued orchestrator collapse behind Server V2.",
-    "version": "0.0.0"
+    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 10 makes Server V2 the default runtime, keeps release/runtime assets in a managed extracted directory, and closes the remaining cutover tooling around the standalone contract.",
+    "version": "0.11.206"
   },
   "servers": [
     {

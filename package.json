@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
     "dev:server-v2": "node scripts/dev-server-v2.mjs",
-    "dev:server-v2:app": "node scripts/dev-server-v2.mjs --app",
+    "dev:server-v2:server": "node scripts/dev-server-v2.mjs --no-app",
     "dev:windows": ".\\scripts\\dev-windows.cmd",
     "dev:windows:x64": ".\\scripts\\dev-windows.cmd x64",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",

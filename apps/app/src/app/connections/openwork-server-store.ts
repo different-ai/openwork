@@ -65,7 +65,7 @@ export function createOpenworkServerStore(options: {
   const [openworkServerDiagnostics, setOpenworkServerDiagnostics] =
     createSignal<OpenworkServerDiagnostics | null>(null);
   const [openworkServerContractMode, setOpenworkServerContractMode] =
-    createSignal<"legacy" | "server-v2" | null>(null);
+    createSignal<"server-v2" | null>(null);
   const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
   const [opencodeRouterInfoState, setOpenCodeRouterInfoState] =
     createSignal<OpenCodeRouterInfo | null>(null);
@@ -124,15 +124,15 @@ export function createOpenworkServerStore(options: {
     const baseUrl = openworkServerBaseUrl().trim();
     if (!baseUrl) return null;
     const auth = openworkServerAuth();
-    return createOpenworkServerClient({
-      baseUrl,
-      hostToken: auth.hostToken,
-      serverV2: {
-        capabilities: openworkServerCapabilities()?.serverV2 ?? null,
-        enabled: openworkServerContractMode() === "server-v2",
-      },
-      token: auth.token,
-    });
+      return createOpenworkServerClient({
+        baseUrl,
+        hostToken: auth.hostToken,
+        serverV2: {
+          capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+          enabled: true,
+        },
+        token: auth.token,
+      });
   });
 
   const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
@@ -179,7 +179,7 @@ export function createOpenworkServerStore(options: {
     } catch (error) {
       const resolved = error as OpenworkServerError | Error;
       if ("status" in resolved && (resolved.status === 401 || resolved.status === 403)) {
-        setOpenworkServerContractMode("legacy");
+        setOpenworkServerContractMode("server-v2");
         return { status: "limited" as OpenworkServerStatus, capabilities: null };
       }
       setOpenworkServerContractMode(null);

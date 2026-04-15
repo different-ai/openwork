@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 
-const includeApp = process.argv.includes("--app");
+const includeApp = !process.argv.includes("--no-app");
 
 const commands = [
   {
@@ -51,14 +51,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 for (const command of commands) {
-  const env = {
-    ...process.env,
-    VITE_OPENWORK_UI_USE_SERVER_V2:
-      process.env.VITE_OPENWORK_UI_USE_SERVER_V2 ?? process.env.OPENWORK_UI_USE_SERVER_V2 ?? "",
-  };
   const child = spawn("pnpm", command.args, {
     stdio: "inherit",
-    env,
+    env: process.env,
     cwd: process.cwd(),
   });
   children.push(child);

@@ -1,5 +1,5 @@
-import { createSseClient } from "../../generated/core/serverSentEvents.gen.js";
-import type { ServerSentEventsOptions, ServerSentEventsResult, StreamEvent } from "../../generated/core/serverSentEvents.gen.js";
+import { createSseClient } from "../../generated/core/serverSentEvents.gen";
+import type { ServerSentEventsOptions, ServerSentEventsResult, StreamEvent } from "../../generated/core/serverSentEvents.gen";
 
 export type OpenWorkServerEventStreamOptions<TData = unknown> = ServerSentEventsOptions<TData>;
 export type OpenWorkServerEventStreamResult<TData = unknown> = ServerSentEventsResult<TData>;

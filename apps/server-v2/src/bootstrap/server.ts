@@ -1,5 +1,6 @@
 import { createApp } from "../app.js";
 import { createAppDependencies, type AppDependencies } from "../context/app-dependencies.js";
+import { resolveServerV2Version } from "../version.js";
 
 export type StartServerOptions = {
   dependencies?: AppDependencies;
@@ -33,12 +34,14 @@ function resolvePort(value: number | undefined) {
 export function startServer(options: StartServerOptions = {}): StartedServer {
   const host = options.host ?? process.env.OPENWORK_SERVER_V2_HOST ?? "127.0.0.1";
   const port = resolvePort(options.port ?? Number.parseInt(process.env.OPENWORK_SERVER_V2_PORT ?? "3100", 10));
+  const version = resolveServerV2Version();
   const dependencies = options.dependencies ?? createAppDependencies({
     localServer: {
       baseUrl: port === 0 ? null : `http://${host}:${port}`,
       hostingKind: process.env.OPENWORK_SERVER_V2_HOSTING_KIND === "desktop" ? "desktop" : "self_hosted",
       label: "Local OpenWork Server",
     },
+    version,
   });
   const app = createApp({ dependencies });
   const server = Bun.serve({

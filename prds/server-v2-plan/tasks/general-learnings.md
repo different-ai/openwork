@@ -19,6 +19,21 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-15 - Phase 10 - Shared dev containers should not race on one bind-mounted node_modules tree
+- Context: The Docker dev stack initially let multiple services run `pnpm install` concurrently against the same mounted repo and produced `ERR_PNPM_ENOTEMPTY` failures inside `node_modules`.
+- Learning: Multi-service dev stacks need an explicit install lock or a dedicated setup service whenever they share one mutable dependency tree.
+- Action for later phases: When adding or revising multi-container dev workflows, serialize dependency installation before parallel app/service startup.
+
+### 2026-04-15 - Phase 10 - Compiled release runtimes should prefer embedded or bundled assets over repo-local dev assets
+- Context: After adding embedded runtime packaging, a compiled Server V2 binary launched from inside the repo still discovered `.local/runtime-assets` and tried to boot the development runtime instead of the embedded release bundle.
+- Learning: When a compiled binary has an embedded or explicit bundled runtime source, that release source must win over repo-local development asset discovery.
+- Action for later phases: Keep runtime-source precedence explicit so release artifacts behave like release artifacts even when developers launch them from source checkouts.
+
+### 2026-04-15 - Phase 10 - Code generation should not boot against live user state
+- Context: Server V2 OpenAPI generation uses real dependency wiring, which started touching managed workspace reconciliation once more product slices moved behind the server.
+- Learning: Contract/spec generation is only trustworthy when it runs in an isolated temporary working directory instead of the developer's persistent app-data tree.
+- Action for later phases: Keep OpenAPI/SDK generation and drift checks side-effect-free by giving them explicit temporary runtime roots whenever server bootstrap would otherwise materialize or reconcile real workspace state.
+
 ### 2026-04-15 - Phase 9 - Compatibility code stops blocking a migration once the default graph no longer depends on it
 - Context: Phase 9 leaves a few orchestrator-specific paths in place for explicit legacy override and detached Docker sandbox launch glue, but the default desktop/app runtime graph now goes through Server V2 and the local server owns remote registration, runtime control, and reconnect truth.
 - Learning: A migration can close with some compatibility code still present if that code is explicitly non-default, documented as residual shell glue, and no longer required for the canonical product path.

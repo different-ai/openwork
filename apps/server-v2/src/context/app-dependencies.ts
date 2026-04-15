@@ -15,6 +15,7 @@ import { createWorkspaceSessionService, type WorkspaceSessionService } from "../
 import { createSystemService, type SystemService } from "../services/system-service.js";
 import { createWorkspaceRegistryService, type WorkspaceRegistryService } from "../services/workspace-registry-service.js";
 import { createRemoteServerService, type RemoteServerService } from "../services/remote-server-service.js";
+import { resolveServerV2Version } from "../version.js";
 
 export type AppDependencies = {
   database: DatabaseStatusProvider;
@@ -95,7 +96,7 @@ function resolveLocalHostingKind(explicit?: "cloud" | "desktop" | "self_hosted")
 export function createAppDependencies(overrides: CreateAppDependenciesOverrides = {}): AppDependencies {
   const environment = overrides.environment ?? process.env.NODE_ENV ?? "development";
   const startedAt = overrides.startedAt ?? new Date();
-  const version = overrides.version ?? "0.0.0";
+  const version = overrides.version ?? resolveServerV2Version();
   const processInfo = overrides.processInfo ?? createProcessInfoAdapter(environment);
   const persistence = overrides.persistence ?? createServerPersistence({
     environment,

@@ -1,0 +1,122 @@
+name: Windows Signed Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-sign-windows:
+    name: Build and sign Windows artifacts
+    runs-on: windows-latest
+    env:
+      TAURI_TARGET: x86_64-pc-windows-msvc
+      BUN_TARGET: bun-windows-x64
+      WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.3.10
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare sidecars
+        run: pnpm -C apps/desktop prepare:sidecar
+
+      - name: Import Windows signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)) {
+            throw "WINDOWS_CERT_PFX_BASE64 is required for Windows signing."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+            throw "WINDOWS_CERT_PASSWORD is required for Windows signing."
+          }
+          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64)
+          $certPath = Join-Path $env:RUNNER_TEMP "windows-codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, $bytes)
+          "WINDOWS_CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Sign bundled Windows sidecars
+        shell: pwsh
+        run: |
+          $targets = @(
+            "apps/desktop/src-tauri/sidecars/opencode-$env:TAURI_TARGET.exe",
+            "apps/desktop/src-tauri/sidecars/opencode-router-$env:TAURI_TARGET.exe",
+            "apps/desktop/src-tauri/sidecars/openwork-server-v2-$env:TAURI_TARGET.exe"
+          )
+          foreach ($target in $targets) {
+            if (!(Test-Path $target)) {
+              throw "Expected Windows sidecar missing: $target"
+            }
+            signtool sign /fd SHA256 /td SHA256 /tr $env:WINDOWS_TIMESTAMP_URL /f $env:WINDOWS_CERT_PATH /p $env:WINDOWS_SIGNING_CERT_PASSWORD $target
+          }
+
+      - name: Build embedded Server V2 runtime
+        run: pnpm --filter openwork-server-v2 build:bin:embedded:windows --bundle-dir ../desktop/src-tauri/sidecars
+        working-directory: apps/server-v2
+
+      - name: Sign Server V2 executable
+        shell: pwsh
+        run: |
+          $serverPath = "apps/server-v2/dist/bin/openwork-server-v2-$env:BUN_TARGET.exe"
+          if (!(Test-Path $serverPath)) {
+            throw "Expected Server V2 executable missing: $serverPath"
+          }
+          signtool sign /fd SHA256 /td SHA256 /tr $env:WINDOWS_TIMESTAMP_URL /f $env:WINDOWS_CERT_PATH /p $env:WINDOWS_SIGNING_CERT_PASSWORD $serverPath
+          signtool verify /pa /v $serverPath
+
+      - name: Build desktop Windows bundle
+        run: pnpm --filter @openwork/desktop exec tauri build --target x86_64-pc-windows-msvc
+
+      - name: Sign desktop Windows artifacts
+        shell: pwsh
+        run: |
+          $artifacts = Get-ChildItem -Path "apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse -Include *.exe,*.msi
+          if ($artifacts.Count -eq 0) {
+            throw "No Windows desktop artifacts were produced to sign."
+          }
+          foreach ($artifact in $artifacts) {
+            signtool sign /fd SHA256 /td SHA256 /tr $env:WINDOWS_TIMESTAMP_URL /f $env:WINDOWS_CERT_PATH /p $env:WINDOWS_SIGNING_CERT_PASSWORD $artifact.FullName
+            signtool verify /pa /v $artifact.FullName
+          }
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-signed-artifacts
+          path: |
+            apps/server-v2/dist/bin/openwork-server-v2-*.exe
+            apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.msi

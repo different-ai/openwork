@@ -11,17 +11,8 @@ export type ServerVersionRouteDecision = {
 export function resolveServerVersionRoute(input: {
   contractHint: ServerContractHint;
   feature: ServerVersionFeature;
-  rolloutEnabled: boolean;
   targetKind: "local" | "remote";
 }): ServerVersionRouteDecision {
-  if (!input.rolloutEnabled) {
-    return {
-      fallback: "none",
-      primary: "legacy",
-      reason: "rollout_flag_disabled",
-    };
-  }
-
   if (input.contractHint === "legacy") {
     return {
       fallback: "none",

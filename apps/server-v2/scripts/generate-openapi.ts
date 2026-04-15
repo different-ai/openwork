@@ -1,8 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAppDependencies } from "../src/context/app-dependencies.js";
 import { createApp } from "../src/app-factory.js";
+import { resolveServerV2Version } from "../src/version.js";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const packageDir = resolve(scriptDir, "..");
@@ -24,7 +26,13 @@ async function writeIfChanged(filePath: string, contents: string) {
 }
 
 async function main() {
-  const dependencies = createAppDependencies({ inMemory: true, version: "0.0.0" });
+  const workingDirectory = await mkdtemp(join(os.tmpdir(), "openwork-server-v2-openapi-"));
+  const dependencies = createAppDependencies({
+    environment: "test",
+    inMemory: true,
+    version: resolveServerV2Version(),
+    workingDirectory,
+  });
   try {
     const app = createApp({ dependencies });
     const response = await app.request("http://openwork.local/openapi.json");
@@ -40,6 +48,7 @@ async function main() {
     process.stdout.write(`[openwork-server-v2] ${changed ? "wrote" : "verified"} ${outputPath}\n`);
   } finally {
     await dependencies.close();
+    await rm(workingDirectory, { force: true, recursive: true });
   }
 }
 

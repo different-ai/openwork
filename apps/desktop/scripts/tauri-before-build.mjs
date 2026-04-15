@@ -7,11 +7,7 @@ const runPnpm = (args) => {
   const result = spawnSync(pnpmCmd, [...pnpmArgs, ...args], {
     stdio: "inherit",
     shell: process.platform === "win32",
-    env: {
-      ...process.env,
-      VITE_OPENWORK_UI_USE_SERVER_V2:
-        process.env.VITE_OPENWORK_UI_USE_SERVER_V2 ?? process.env.OPENWORK_UI_USE_SERVER_V2 ?? "",
-    },
+    env: process.env,
   });
 
   if (result.status !== 0) {

@@ -7,6 +7,12 @@
 
 This document defines how the app and desktop shell should migrate from the current mixed legacy call patterns to the new Server V2 SDK and startup model.
 
+Current Phase 10 note:
+
+- The migration rollout flag has now been retired from the default product path.
+- App routing and desktop startup now assume Server V2 by default.
+- Any remaining legacy behavior should be treated as residual compatibility debt or explicit non-default host-shell behavior, not as a first-class rollout mode.
+
 It focuses on one practical requirement:
 
 - we need to move without breaking the current app

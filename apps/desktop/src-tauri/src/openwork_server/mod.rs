@@ -592,7 +592,7 @@ pub fn start_openwork_server_v2(
         .env("OPENWORK_TOKEN", client_token.clone())
         .env("OPENWORK_SERVER_V2_HOSTING_KIND", "desktop")
         .env("OPENWORK_SERVER_V2_RUNTIME_BOOTSTRAP", "eager")
-        .env("OPENWORK_SERVER_V2_RUNTIME_RELEASE_DIR", sidecar_dir.to_string_lossy().to_string())
+        .env("OPENWORK_SERVER_V2_RUNTIME_BUNDLE_DIR", sidecar_dir.to_string_lossy().to_string())
         .env("OPENWORK_SERVER_V2_RUNTIME_SOURCE", "release");
 
     if runtime_manifest_path.is_file() {

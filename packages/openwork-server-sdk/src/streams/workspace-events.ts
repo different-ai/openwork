@@ -1,5 +1,5 @@
 import { normalizeServerBaseUrl } from "../client.js";
-import type { OpenWorkServerV2WorkspaceEvent } from "../../generated/types.gen.js";
+import type { OpenWorkServerV2WorkspaceEvent } from "../../generated/types.gen";
 import {
   createOpenWorkServerEventStream,
   type OpenWorkServerEventStreamOptions,

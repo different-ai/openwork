@@ -92,13 +92,13 @@ test("system health returns a consistent envelope", async () => {
   expect(["ready", "warning"]).toContain(body.data.database.status);
 });
 
-test("system metadata includes phase 9 registry, remote-connect, and runtime migration state", async () => {
+test("system metadata includes phase 10 registry, runtime, and cutover state", async () => {
   const { app } = createTestApp();
   const response = await app.request("http://openwork.local/system/meta");
   const body = await response.json();
 
   expect(response.status).toBe(200);
-  expect(body.data.foundation.phase).toBe(9);
+  expect(body.data.foundation.phase).toBe(10);
   expect(body.data.foundation.startup.registry.localServerId).toBe("srv_local");
   expect(body.data.foundation.startup.registry.hiddenWorkspaceIds).toHaveLength(2);
   expect(body.data.runtimeSupervisor.bootstrapPolicy).toBe("disabled");

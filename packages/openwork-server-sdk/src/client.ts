@@ -1,5 +1,5 @@
-import { createClient } from "../generated/client/index.js";
-import type { Client, Config, CreateClientConfig } from "../generated/client/index.js";
+import { createClient } from "../generated/client/index";
+import type { Client, Config, CreateClientConfig } from "../generated/client/index";
 
 export type OpenWorkServerClientConfig = Config;
 export type OpenWorkServerClient = Client;

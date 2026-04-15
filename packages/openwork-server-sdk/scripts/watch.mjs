@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(scriptDir, "..");
 const specPath = path.resolve(packageDir, "../../apps/server-v2/openapi/openapi.json");
+const specDir = path.dirname(specPath);
+const specFilename = path.basename(specPath);
 
 let activeChild = null;
 let queued = false;
@@ -47,7 +49,10 @@ function scheduleGenerate() {
 }
 
 try {
-  watch(specPath, () => {
+  watch(specDir, (_eventType, filename) => {
+    if (!filename || path.basename(String(filename)) !== specFilename) {
+      return;
+    }
     scheduleGenerate();
   });
 } catch (error) {

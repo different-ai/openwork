@@ -14,29 +14,20 @@ import { normalizeOpenworkServerUrl } from "../../lib/openwork-server";
 import type { OpenworkServerCapabilities } from "../../lib/openwork-server";
 import type { OpenworkServerInfo, WorkspaceInfo, WorkspaceList } from "../../lib/tauri";
 import { isTauriRuntime } from "../../utils";
-import { isServerV2Enabled } from "./flag";
 import { createRemoteServerId, LOCAL_SERVER_ID } from "./ids";
 import {
-  buildSyntheticDiagnostics,
-  normalizeLegacyDiagnostics,
   normalizeServerV2Capabilities,
   normalizeServerV2Diagnostics,
   normalizeServerV2WorkspaceDetail,
   normalizeServerV2WorkspaceList,
 } from "./normalize";
 import { recordServerVersionDecision } from "./observability";
-import { resolveServerVersionRoute, shouldFallbackToLegacy } from "./routing";
 import type {
   ExplicitServerTargetInput,
   ServerStatusProbe,
   ServerTarget,
   ServerVersionAccessors,
 } from "./types";
-import {
-  fetchLegacyCapabilities,
-  fetchLegacySystemHealth,
-  fetchLegacySystemStatus,
-} from "./legacy/system";
 
 function resolveHostingKind(baseUrl: string) {
   try {
@@ -130,7 +121,6 @@ async function fetchServerV2WorkspaceDetail(target: ServerTarget, workspaceId: s
 
 export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
   const developerMode = () => accessors.developerMode();
-  const rolloutEnabled = () => isServerV2Enabled();
 
   const listTargets = () => {
     const targets = new Map<string, ServerTarget>();
@@ -251,81 +241,18 @@ export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
     serverId: string;
   }): Promise<ServerStatusProbe> => {
     const target = resolveTarget(input.serverId, input.explicitTarget);
-    const route = resolveServerVersionRoute({
-      contractHint: target.contractHint,
-      feature: "system-status",
-      rolloutEnabled: rolloutEnabled(),
-      targetKind: target.kind,
+    const status = await fetchServerV2Status(target);
+    recordServerVersionDecision(developerMode(), "status:server-v2", {
+      baseUrl: target.baseUrl,
+      reason: target.contractHint === "legacy" ? "legacy_contract_rejected" : "server_v2_default",
+      serverId: target.serverId,
     });
-
-    const runLegacy = async () => {
-      const health = await fetchLegacySystemHealth(target);
-      if (!target.token) {
-        recordServerVersionDecision(developerMode(), "status:legacy-limited", {
-          baseUrl: target.baseUrl,
-          reason: route.reason,
-          serverId: target.serverId,
-        });
-        return {
-          capabilities: null,
-          contract: "legacy" as const,
-          diagnostics: buildSyntheticDiagnostics({
-            target,
-            uptimeMs: health.uptimeMs,
-            version: health.version,
-          }),
-          status: "limited" as const,
-        } satisfies ServerStatusProbe;
-      }
-
-      const legacy = await fetchLegacySystemStatus(target);
-      const capabilities = target.legacyCapabilities ?? await fetchLegacyCapabilities(target).catch(() => null);
-      recordServerVersionDecision(developerMode(), "status:legacy", {
-        baseUrl: target.baseUrl,
-        reason: route.reason,
-        serverId: target.serverId,
-      });
-      return {
-        capabilities,
-        contract: "legacy" as const,
-        diagnostics: normalizeLegacyDiagnostics({ diagnostics: legacy.diagnostics }),
-        status: capabilities ? "connected" as const : "limited" as const,
-      } satisfies ServerStatusProbe;
-    };
-
-    const runServerV2 = async () => {
-      const status = await fetchServerV2Status(target);
-      recordServerVersionDecision(developerMode(), "status:server-v2", {
-        baseUrl: target.baseUrl,
-        reason: route.reason,
-        serverId: target.serverId,
-      });
-      return {
-        capabilities: normalizeServerV2Capabilities(status.status),
-        contract: "server-v2" as const,
-        diagnostics: normalizeServerV2Diagnostics({ status: status.status, target }),
-        status: "connected" as const,
-      } satisfies ServerStatusProbe;
-    };
-
-    if (route.primary === "legacy") {
-      return runLegacy();
-    }
-
-    try {
-      return await runServerV2();
-    } catch (error) {
-      if (route.fallback !== "legacy" || !shouldFallbackToLegacy(error)) {
-        throw error;
-      }
-
-      recordServerVersionDecision(developerMode(), "status:fallback-legacy", {
-        baseUrl: target.baseUrl,
-        message: error instanceof Error ? error.message : String(error),
-        serverId: target.serverId,
-      });
-      return runLegacy();
-    }
+    return {
+      capabilities: normalizeServerV2Capabilities(status.status),
+      contract: "server-v2" as const,
+      diagnostics: normalizeServerV2Diagnostics({ status: status.status, target }),
+      status: "connected" as const,
+    } satisfies ServerStatusProbe;
   };
 
   const probeHealth = async (input: {
@@ -333,48 +260,16 @@ export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
     serverId: string;
   }) => {
     const target = resolveTarget(input.serverId, input.explicitTarget);
-    const route = resolveServerVersionRoute({
-      contractHint: target.contractHint,
-      feature: "system-health",
-      rolloutEnabled: rolloutEnabled(),
-      targetKind: target.kind,
-    });
-
-    if (route.primary === "server-v2") {
-      try {
-        const status = await fetchServerV2Status(target);
-        recordServerVersionDecision(developerMode(), "health:server-v2", {
-          baseUrl: target.baseUrl,
-          reason: route.reason,
-          serverId: target.serverId,
-        });
-        return {
-          contract: "server-v2" as const,
-          health: status.health,
-          ok: status.health.data.status === "ok",
-        };
-      } catch (error) {
-        if (route.fallback !== "legacy" || !shouldFallbackToLegacy(error)) {
-          throw error;
-        }
-        recordServerVersionDecision(developerMode(), "health:fallback-legacy", {
-          baseUrl: target.baseUrl,
-          message: error instanceof Error ? error.message : String(error),
-          serverId: target.serverId,
-        });
-      }
-    }
-
-    const legacy = await fetchLegacySystemHealth(target);
-    recordServerVersionDecision(developerMode(), "health:legacy", {
+    const status = await fetchServerV2Status(target);
+    recordServerVersionDecision(developerMode(), "health:server-v2", {
       baseUrl: target.baseUrl,
-      reason: route.reason,
+      reason: target.contractHint === "legacy" ? "legacy_contract_rejected" : "server_v2_default",
       serverId: target.serverId,
     });
     return {
-      contract: "legacy" as const,
-      health: legacy,
-      ok: legacy.ok === true,
+      contract: "server-v2" as const,
+      health: status.health,
+      ok: status.health.data.status === "ok",
     };
   };
 
@@ -389,73 +284,19 @@ export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
     workspaces: {
       detail: async (workspaceId: string, options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
         const target = resolveTarget(input.serverId, input.explicitTarget);
-        const route = resolveServerVersionRoute({
-          contractHint: target.contractHint,
-          feature: "workspace-read",
-          rolloutEnabled: rolloutEnabled(),
-          targetKind: target.kind,
+        const response = await fetchServerV2WorkspaceDetail(target, workspaceId);
+        return normalizeServerV2WorkspaceDetail({
+          legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+          response,
         });
-
-        const runLegacy = () => {
-          const item = (options?.legacyWorkspaceList?.workspaces ?? []).find((workspace) => workspace.id === workspaceId);
-          if (!item) {
-            throw new Error(`Workspace not found in legacy cache: ${workspaceId}`);
-          }
-          return item;
-        };
-
-        const runServerV2 = async () => {
-          const response = await fetchServerV2WorkspaceDetail(target, workspaceId);
-          return normalizeServerV2WorkspaceDetail({
-            legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
-            response,
-          });
-        };
-
-        if (route.primary === "legacy") {
-          return runLegacy();
-        }
-
-        try {
-          return await runServerV2();
-        } catch (error) {
-          if (route.fallback !== "legacy" || !shouldFallbackToLegacy(error)) {
-            throw error;
-          }
-          return runLegacy();
-        }
       },
       list: async (options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
         const target = resolveTarget(input.serverId, input.explicitTarget);
-        const route = resolveServerVersionRoute({
-          contractHint: target.contractHint,
-          feature: "workspace-read",
-          rolloutEnabled: rolloutEnabled(),
-          targetKind: target.kind,
+        const response = await fetchServerV2WorkspaceList(target);
+        return normalizeServerV2WorkspaceList({
+          legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+          response,
         });
-
-        const runLegacy = () => options?.legacyWorkspaceList ?? { selectedId: "", watchedId: null, workspaces: [] };
-
-        const runServerV2 = async () => {
-          const response = await fetchServerV2WorkspaceList(target);
-          return normalizeServerV2WorkspaceList({
-            legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
-            response,
-          });
-        };
-
-        if (route.primary === "legacy") {
-          return runLegacy();
-        }
-
-        try {
-          return await runServerV2();
-        } catch (error) {
-          if (route.fallback !== "legacy" || !shouldFallbackToLegacy(error)) {
-            throw error;
-          }
-          return runLegacy();
-        }
       },
     },
     target: () => resolveTarget(input.serverId, input.explicitTarget),
@@ -463,7 +304,7 @@ export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
 
   return {
     createSdk,
-    isServerV2Enabled: rolloutEnabled,
+    isServerV2Enabled: () => true,
     listTargets,
     probeHealth,
     probeStatus,

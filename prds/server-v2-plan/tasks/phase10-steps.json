@@ -22,7 +22,7 @@
         "The command matches the watch model in `local-dev.md`.",
         "Developers can edit routes, schemas, SDK helpers, and app code without hand-sync work."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-002",
@@ -33,7 +33,7 @@
         "Regeneration only writes changed output.",
         "Developers can leave the watch graph running continuously."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-003",
@@ -44,7 +44,7 @@
         "TypeScript and Vite pick up changes without extra packaging steps.",
         "Any required build step is reserved for packaging, not normal iteration."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-004",
@@ -55,7 +55,7 @@
         "The build process is scriptable and repeatable.",
         "Build-time metadata and manifests can be injected cleanly."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-005",
@@ -66,7 +66,7 @@
         "The embedding approach is deterministic and inspectable.",
         "The packaging matches the model described in `distribution.md`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-006",
@@ -77,7 +77,7 @@
         "Executable bits or platform-specific launch requirements are handled.",
         "Repeated runs reuse existing verified assets."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-007",
@@ -88,7 +88,7 @@
         "Interrupted extraction can recover safely.",
         "Runtime startup behavior remains predictable under race conditions."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-008",
@@ -99,7 +99,7 @@
         "The cleanup strategy does not break rollback or currently running versions.",
         "The behavior is documented in code or operational notes."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-009",
@@ -110,7 +110,7 @@
         "Gatekeeper or notarization behavior is understood well enough for release planning.",
         "Any unresolved macOS packaging risk is recorded in `open-questions.md`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-010",
@@ -121,7 +121,7 @@
         "The final server executable and embedded sidecars have a clear signing flow.",
         "Required secrets and verification steps are documented."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-011",
@@ -132,7 +132,7 @@
         "Stable runtime-directory extraction is validated against AV or SmartScreen concerns.",
         "Any packaging adjustments needed for Windows are captured explicitly."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-012",
@@ -143,7 +143,7 @@
         "The app launches only that bundled server for the default path.",
         "Desktop no longer launches `opencode` or router directly in the target path."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-013",
@@ -154,7 +154,7 @@
         "A temporary escape hatch exists only if still needed for rollback.",
         "The default path aligns with the thin-client/server-first architecture."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-014",
@@ -165,7 +165,7 @@
         "Legacy mode is no longer the primary path.",
         "Any remaining fallback is clearly temporary and narrowly scoped."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-015",
@@ -176,7 +176,7 @@
         "The app and server codepaths become simpler after cutover.",
         "Deletion happens only after the replacement path is verified."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-016",
@@ -209,7 +209,7 @@
         "Contract drift, runtime behavior, and app integrations are all covered.",
         "Any failing area is visible with exact commands and results."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-019",
@@ -220,7 +220,7 @@
         "Evidence for the final working product path is captured when possible.",
         "If some end-to-end step cannot run, the exact gap and reproduction commands are recorded."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P10-020",
@@ -231,7 +231,7 @@
         "Remaining debt or manual steps are explicit rather than hidden.",
         "Phase 10 ends with a shippable, supportable Server V2 runtime story."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }
