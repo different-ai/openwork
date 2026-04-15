@@ -30,7 +30,6 @@ In progress. This checklist is the honest Phase 10 cutover and release ledger fo
 - Delete legacy `apps/server` codepaths once no active caller needs them.
 - Delete or archive obsolete orchestrator control-plane code once no active caller needs it.
 - Commit or otherwise land the regenerated Server V2 contract so `pnpm contract:check` passes on a clean tree.
-- Resolve the Docker stack session-creation `bad_gateway` failure found during end-to-end validation.
 - Validate macOS signing + notarization with real signed artifacts.
 - Validate Windows SmartScreen / Defender / AV behavior with real Windows artifacts.
 - Capture Chrome MCP success evidence once the Docker stack session flow is fixed.
@@ -46,7 +45,7 @@ In progress. This checklist is the honest Phase 10 cutover and release ledger fo
 - Embedded standalone runtime smoke passed: the compiled Server V2 binary launched from outside the bundle directory extracted and started OpenCode from the managed runtime directory using `source: release`.
 - Docker dev stack now starts on the Server V2 path after moving the stack off orchestrator startup and serializing shared `pnpm install` work across containers.
 - Docker API-level smoke succeeded for `GET /system/health`, `GET /system/opencode/health`, and `GET /workspaces` against the running dev stack.
-- Docker product-flow smoke still has a real gap: `POST /workspaces/:id/sessions` returned `500` / `bad_gateway` during the running stack validation, so session creation in the containerized dev flow still needs follow-up before Phase 10 can claim a clean end-to-end path.
+- Docker product-flow API smoke now succeeds for `POST /workspaces/:id/sessions` after fixing Server V2 compatibility config materialization to emit the OpenCode-compatible `permission.external_directory` object-map format.
 - Chrome MCP validation is not runnable from this environment because the current tool session does not expose Chrome DevTools MCP actions.
 - macOS signing/notarization was not completed here because no signing identity or notary credentials are available in this session.
 - Windows signing workflow was implemented, but end-to-end signing and SmartScreen / AV validation were not completed here because no Windows runner or Windows signing certificate is available in this session.
@@ -147,21 +146,24 @@ Then validate a real UI flow with Chrome MCP:
 
 If Chrome MCP is unavailable in the current environment, record that explicitly and include the exact command above plus the expected manual reviewer steps.
 
-Current gap from this worktree:
+Current state from this worktree:
 
-- `packaging/docker/dev-up.sh` now reaches healthy `server`, `web`, and `share` containers on project `openwork-dev-bbd73be8`.
-- Captured failure evidence for the remaining session-flow gap:
-  - `curl -X POST -H "Authorization: Bearer $OPENWORK_TOKEN" -H "Content-Type: application/json" --data '{"title":"Docker E2E"}' http://127.0.0.1:<OPENWORK_PORT>/workspaces/<WORKSPACE_ID>/sessions`
-  - `docker compose -p openwork-dev-bbd73be8 -f packaging/docker/docker-compose.dev.yml logs server`
-  - server log shows `RouteError` from `apps/server-v2/src/services/workspace-session-service.ts` remapping a backend session mutation failure to `bad_gateway`
-- A reviewer should rerun:
+- `packaging/docker/dev-up.sh` now reaches healthy `server`, `web`, and `share` containers on the Server V2 path.
+- Docker API smoke including session creation now succeeds:
+
+```bash
+source tmp/.dev-env-<id>
+curl -H "Authorization: Bearer $OPENWORK_TOKEN" http://127.0.0.1:<OPENWORK_PORT>/workspaces
+curl -X POST -H "Authorization: Bearer $OPENWORK_TOKEN" -H "Content-Type: application/json" --data '{"title":"Docker E2E"}' http://127.0.0.1:<OPENWORK_PORT>/workspaces/<WORKSPACE_ID>/sessions
+```
+
+- Remaining manual reviewer work:
 
 ```bash
 packaging/docker/dev-up.sh
 source tmp/.dev-env-<id>
 curl -H "Authorization: Bearer $OPENWORK_TOKEN" http://127.0.0.1:<OPENWORK_PORT>/workspaces
 curl -X POST -H "Authorization: Bearer $OPENWORK_TOKEN" -H "Content-Type: application/json" --data '{"title":"Docker E2E"}' http://127.0.0.1:<OPENWORK_PORT>/workspaces/<WORKSPACE_ID>/sessions
-docker compose -p <printed-project> -f packaging/docker/docker-compose.dev.yml logs server
 ```
 
-and then complete the Chrome MCP UI flow once session creation succeeds in the running stack.
+and then complete the Chrome MCP UI flow in the running stack.

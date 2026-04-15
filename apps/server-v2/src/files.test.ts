@@ -63,21 +63,21 @@ test("local workspace creation and config routes use server-owned config directo
   const configBody = await configResponse.json();
   expect(configResponse.status).toBe(200);
   expect(configBody.data.stored.openwork.authorizedRoots).toContain(workspaceRoot);
-  expect(configBody.data.effective.opencode.permission.external_directory).toContain(workspaceRoot);
+  expect(configBody.data.effective.opencode.permission.external_directory[`${workspaceRoot}/*`]).toBe("allow");
 
   const patchResponse = await app.request(`http://openwork.local/workspaces/${workspaceId}/config`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       openwork: { reload: { auto: true } },
-      opencode: { permission: { external_directory: [path.join(root, "shared-data")] } },
+      opencode: { permission: { external_directory: { [`${path.join(root, "shared-data")}/*`]: "allow" } } },
     }),
   });
   const patched = await patchResponse.json();
   expect(patchResponse.status).toBe(200);
   expect(patched.data.stored.openwork.reload.auto).toBe(true);
-  expect(patched.data.effective.opencode.permission.external_directory).toContain(workspaceRoot);
-  expect(patched.data.effective.opencode.permission.external_directory).toContain(path.join(root, "shared-data"));
+  expect(patched.data.effective.opencode.permission.external_directory[`${workspaceRoot}/*`]).toBe("allow");
+  expect(patched.data.effective.opencode.permission.external_directory[`${path.join(root, "shared-data")}/*`]).toBe("allow");
 
   const rawResponse = await app.request(`http://openwork.local/workspaces/${workspaceId}/config/opencode-raw?scope=project`);
   const rawBody = await rawResponse.json();
@@ -219,7 +219,7 @@ test("remote workspace config and file routes proxy through the local server", a
         return Response.json({
           ok: true,
           data: {
-            effective: { opencode: { permission: { external_directory: ["/srv/alpha"] } }, openwork: {} },
+            effective: { opencode: { permission: { external_directory: { "/srv/alpha/*": "allow" } } }, openwork: {} },
             materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.opencode/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
             stored: { openwork: { reload: { auto: true } }, opencode: {} },
             updatedAt: new Date().toISOString(),
@@ -232,7 +232,7 @@ test("remote workspace config and file routes proxy through the local server", a
         return Response.json({
           ok: true,
           data: {
-            effective: { opencode: { permission: { external_directory: ["/srv/alpha", "/srv/shared"] } }, openwork: {} },
+            effective: { opencode: { permission: { external_directory: { "/srv/alpha/*": "allow", "/srv/shared/*": "allow" } } }, openwork: {} },
             materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.opencode/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
             stored: { openwork: { reload: { auto: true } }, opencode: {} },
             updatedAt: new Date().toISOString(),
@@ -279,7 +279,7 @@ test("remote workspace config and file routes proxy through the local server", a
     const patched = await app.request(`http://openwork.local/workspaces/${workspace.id}/config`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ opencode: { permission: { external_directory: ["/srv/shared"] } } }),
+      body: JSON.stringify({ opencode: { permission: { external_directory: { "/srv/shared/*": "allow" } } } }),
     });
     expect(patched.status).toBe(200);
 

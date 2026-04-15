@@ -78,7 +78,7 @@ test("server-v2 client routes workspace lifecycle and config/file calls to root-
         ok: true,
         data: {
           stored: { openwork: { reload: { auto: true } }, opencode: {} },
-          effective: { openwork: { reload: { auto: true } }, opencode: { permission: { external_directory: ["/tmp/local"] } } },
+          effective: { openwork: { reload: { auto: true } }, opencode: { permission: { external_directory: { "/tmp/local/*": "allow" } } } },
           materialized: { configDir: "/tmp/config", configOpencodePath: "/tmp/config/opencode.jsonc", configOpenworkPath: "/tmp/config/.opencode/openwork.json", compatibilityOpencodePath: "/tmp/local/opencode.jsonc", compatibilityOpenworkPath: "/tmp/local/.opencode/openwork.json" },
           updatedAt: new Date().toISOString(),
           workspaceId: "ws_local",
@@ -128,7 +128,7 @@ test("server-v2 client routes workspace lifecycle and config/file calls to root-
 
   const config = await client.getConfig("ws_local");
   expect(config.openwork.reload.auto).toBe(true);
-  expect(config.opencode.permission.external_directory).toContain("/tmp/local");
+  expect(config.opencode.permission.external_directory["/tmp/local/*"]).toBe("allow");
 
   const raw = await client.readOpencodeConfigFile("ws_local", "project");
   expect(raw.path).toBe("/tmp/config/opencode.jsonc");

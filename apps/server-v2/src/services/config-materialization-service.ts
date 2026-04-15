@@ -42,6 +42,65 @@ function normalizeStringArray(value: unknown) {
   return Array.from(new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)));
 }
 
+function normalizeAuthorizedFolderPath(input: string | null | undefined) {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/[\\/]\*+$/, "");
+}
+
+function authorizedFolderToExternalDirectoryKey(folder: string) {
+  const normalized = normalizeAuthorizedFolderPath(folder);
+  if (!normalized) return "";
+  return normalized === "/" ? "/*" : `${normalized}/*`;
+}
+
+function externalDirectoryKeyToAuthorizedFolder(key: string, value: unknown) {
+  if (value !== "allow") return null;
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  if (trimmed === "/*") return "/";
+  if (!trimmed.endsWith("/*")) return null;
+  return normalizeAuthorizedFolderPath(trimmed.slice(0, -2));
+}
+
+function normalizeExternalDirectory(value: unknown) {
+  const folders = new Set<string>();
+  const hiddenEntries: JsonObject = {};
+
+  for (const folder of normalizeStringArray(value)) {
+    const normalized = normalizeAuthorizedFolderPath(folder);
+    if (normalized) {
+      folders.add(normalized);
+    }
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [key, entryValue] of Object.entries(value as JsonObject)) {
+      const folder = externalDirectoryKeyToAuthorizedFolder(key, entryValue);
+      if (folder) {
+        folders.add(folder);
+      } else {
+        hiddenEntries[key] = entryValue;
+      }
+    }
+  }
+
+  return {
+    folders: Array.from(folders),
+    hiddenEntries,
+  };
+}
+
+function buildExternalDirectory(folders: string[], hiddenEntries: JsonObject) {
+  const next: JsonObject = { ...hiddenEntries };
+  for (const folder of folders) {
+    const key = authorizedFolderToExternalDirectoryKey(folder);
+    if (!key) continue;
+    next[key] = "allow";
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
 function mergeObjects(base: JsonObject, patch: JsonObject): JsonObject {
   const next: JsonObject = { ...base };
   for (const [key, value] of Object.entries(patch)) {
@@ -467,12 +526,18 @@ export function createConfigMaterializationService(input: {
     }
 
     const permission = asObject(effectiveOpencode.permission);
+    const externalDirectory = normalizeExternalDirectory(permission.external_directory);
     const authorizedRoots = normalizeStringArray([
       ...(workspace.dataDir ? [workspace.dataDir] : []),
       ...normalizeStringArray(effectiveOpenwork.authorizedRoots),
-      ...normalizeStringArray(permission.external_directory),
+      ...externalDirectory.folders,
     ]);
-    permission.external_directory = authorizedRoots;
+    const nextExternalDirectory = buildExternalDirectory(authorizedRoots, externalDirectory.hiddenEntries);
+    if (nextExternalDirectory) {
+      permission.external_directory = nextExternalDirectory;
+    } else {
+      delete permission.external_directory;
+    }
     effectiveOpencode.permission = permission;
     effectiveOpenwork.authorizedRoots = authorizedRoots;
 
