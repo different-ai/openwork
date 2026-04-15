@@ -45,6 +45,14 @@ export type OpenworkServerCapabilities = {
       workspaceDetail: boolean;
       workspaceList: boolean;
     };
+    sessions?: {
+      events: boolean;
+      list: boolean;
+      messages: boolean;
+      mutations: boolean;
+      promptAsync: boolean;
+      revertHistory: boolean;
+    };
     transport: {
       rootMounted: boolean;
       v2: boolean;

@@ -7,6 +7,7 @@ import type { RuntimeAssetService } from "../runtime/assets.js";
 import type { RegistryService } from "../services/registry-service.js";
 import { createServerRegistryService, type ServerRegistryService } from "../services/server-registry-service.js";
 import { createRuntimeService, type RuntimeService } from "../services/runtime-service.js";
+import { createWorkspaceSessionService, type WorkspaceSessionService } from "../services/workspace-session-service.js";
 import { createSystemService, type SystemService } from "../services/system-service.js";
 import { createWorkspaceRegistryService, type WorkspaceRegistryService } from "../services/workspace-registry-service.js";
 
@@ -20,6 +21,7 @@ export type AppDependencies = {
     capabilities: CapabilitiesService;
     registry: RegistryService;
     runtime: RuntimeService;
+    sessions: WorkspaceSessionService;
     serverRegistry: ServerRegistryService;
     system: SystemService;
     workspaceRegistry: WorkspaceRegistryService;
@@ -121,6 +123,10 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     auth,
     runtime,
   });
+  const sessions = createWorkspaceSessionService({
+    repositories: persistence.repositories,
+    runtime,
+  });
 
   return {
     database,
@@ -132,6 +138,7 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
       capabilities,
       registry: persistence.registry,
       runtime,
+      sessions,
       serverRegistry,
       system: createSystemService({
         auth,

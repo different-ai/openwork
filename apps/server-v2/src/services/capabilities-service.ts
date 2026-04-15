@@ -11,6 +11,14 @@ export type CapabilitiesData = {
     workspaceDetail: true;
     workspaceList: true;
   };
+  sessions: {
+    events: true;
+    list: true;
+    messages: true;
+    mutations: true;
+    promptAsync: true;
+    revertHistory: true;
+  };
   runtime: {
     opencodeHealth: true;
     routerHealth: true;
@@ -42,6 +50,14 @@ export function createCapabilitiesService(input: {
           serverInventory: true,
           workspaceDetail: true,
           workspaceList: true,
+        },
+        sessions: {
+          events: true,
+          list: true,
+          messages: true,
+          mutations: true,
+          promptAsync: true,
+          revertHistory: true,
         },
         runtime: {
           opencodeHealth: true,

@@ -24,7 +24,7 @@ function createOpenApiDocumentation(version: string) {
         description: [
           "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.",
           "",
-          "Phase 5 adds server-owned capabilities, normalized /system/status, workspace registry reads, and canonical workspace serialization.",
+          "Phase 6 adds workspace-first sessions, messages, and typed SSE streaming surfaces over local and remote backends.",
         ].join("\n"),
     },
     servers: [{ url: "/" }],
@@ -40,6 +40,14 @@ function createOpenApiDocumentation(version: string) {
       {
         name: "Runtime",
         description: "Server-owned runtime supervision, versions, and child process health.",
+      },
+      {
+        name: "Sessions",
+        description: "Workspace-first session and streaming primitives backed by OpenCode or remote OpenWork servers.",
+      },
+      {
+        name: "Messages",
+        description: "Workspace-first message history and mutation primitives nested under sessions.",
       },
     ],
   };

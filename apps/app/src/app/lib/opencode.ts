@@ -1,7 +1,8 @@
-import { createOpencodeClient, type Message, type Part, type Session, type Todo } from "@opencode-ai/sdk/v2/client";
+import { createOpencodeClient, type Message, type Part, type Session, type SessionStatus, type Todo } from "@opencode-ai/sdk/v2/client";
+import { createOpenWorkServerWorkspaceEventStream } from "@openwork/server-sdk";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
-import { createOpenworkServerClient, OpenworkServerError } from "./openwork-server";
+import { OpenworkServerError } from "./openwork-server";
 import { isTauriRuntime } from "../utils";
 
 type FieldsResult<T> =
@@ -55,10 +56,17 @@ type SessionMessagesParameters = {
 };
 
 export type OpencodeAuth = {
+  hostToken?: string;
   username?: string;
   password?: string;
   token?: string;
   mode?: "basic" | "openwork";
+  sessionRouting?: {
+    baseUrl: string;
+    hostToken?: string;
+    token: string;
+    workspaceId: string;
+  };
 };
 
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
@@ -132,12 +140,116 @@ async function postSessionRequest<T>(
   return { error, request, response };
 }
 
+async function getLegacySessionStatus(
+  fetchImpl: typeof globalThis.fetch,
+  baseUrl: string,
+  sessionId: string,
+  options?: { headers?: Record<string, string>; directory?: string; throwOnError?: boolean },
+): Promise<FieldsResult<SessionStatus>> {
+  const headers = new Headers(options?.headers);
+  const directoryHeader = buildDirectoryHeader(options?.directory);
+  if (directoryHeader) {
+    headers.set("x-opencode-directory", directoryHeader);
+  }
+
+  const url = `${baseUrl}/session/status`;
+  const response = await fetchImpl(url, {
+    method: "GET",
+    headers,
+  });
+  const request = new Request(url, { method: "GET", headers });
+
+  const text = await response.text();
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!response.ok) {
+    const error = new Error(`Failed to read session status: ${response.status} ${response.statusText}`);
+    if (options?.throwOnError) throw error;
+    return { error, request, response };
+  }
+
+  const record = json && typeof json === "object" ? json as Record<string, SessionStatus> : {};
+  return { data: record[sessionId] ?? ({ type: "idle" } as SessionStatus), request, response };
+}
+
+async function requestOpenworkRoute<T>(
+  fetchImpl: typeof globalThis.fetch,
+  routing: NonNullable<OpencodeAuth["sessionRouting"]>,
+  path: string,
+  options?: {
+    body?: unknown;
+    method?: string;
+    throwOnError?: boolean;
+  },
+): Promise<FieldsResult<T>> {
+  const headers = new Headers();
+  headers.set("Accept", "application/json");
+  headers.set("Authorization", `Bearer ${routing.token}`);
+  if (routing.hostToken) {
+    headers.set("X-OpenWork-Host-Token", routing.hostToken);
+  }
+  if (options?.body !== undefined) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const url = `${routing.baseUrl.replace(/\/+$/, "")}${path}`;
+  const response = await fetchImpl(url, {
+    method: options?.method ?? "GET",
+    headers,
+    body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+  });
+
+  const request = new Request(url, {
+    method: options?.method ?? "GET",
+    headers,
+    body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+  });
+
+  const text = await response.text();
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+
+  if (!response.ok) {
+    const errorRecord = json && typeof json === "object" ? json as Record<string, unknown> : null;
+    const code = typeof errorRecord?.error === "object" && errorRecord.error && typeof (errorRecord.error as any).code === "string"
+      ? String((errorRecord.error as any).code)
+      : typeof errorRecord?.code === "string"
+        ? errorRecord.code
+        : "request_failed";
+    const message = typeof errorRecord?.error === "object" && errorRecord.error && typeof (errorRecord.error as any).message === "string"
+      ? String((errorRecord.error as any).message)
+      : typeof errorRecord?.message === "string"
+        ? errorRecord.message
+        : response.statusText;
+    const details = typeof errorRecord?.error === "object" && errorRecord.error
+      ? (errorRecord.error as any).details
+      : errorRecord?.details;
+    const error = new OpenworkServerError(response.status, code, message, details);
+    if (options?.throwOnError) throw error;
+    return { error, request, response };
+  }
+
+  const data = json && typeof json === "object" && (json as Record<string, unknown>).ok === true
+    ? (json as { data: T }).data
+    : (json as T);
+  return { data, request, response };
+}
+
 function resolveOpenworkWorkspaceMount(baseUrl: string): { baseUrl: string; workspaceId: string } | null {
   try {
     const url = new URL(baseUrl);
-    const match = url.pathname.replace(/\/+$/, "").match(/^(.*\/w\/([^/]+))\/opencode$/);
-    if (!match?.[1] || !match[2]) return null;
-    url.pathname = match[1];
+    const match = url.pathname.replace(/\/+$/, "").match(/^(.*)\/w\/([^/]+)\/opencode$/);
+    if (!match || !match[2]) return null;
+    url.pathname = match[1] || "/";
     url.search = "";
     return {
       baseUrl: url.toString().replace(/\/+$/, ""),
@@ -186,6 +298,51 @@ async function wrapOpenworkRead<T>(
 function shouldFallbackToLegacySessionRead(error: unknown): boolean {
   if (!(error instanceof OpenworkServerError)) return false;
   return error.status === 404 || error.status === 405 || error.status === 501;
+}
+
+async function wrapOpenworkRouteWithFallback<T>(
+  url: string,
+  method: string,
+  run: () => Promise<T>,
+  fallback: () => Promise<FieldsResult<T>>,
+  options?: { throwOnError?: boolean },
+): Promise<FieldsResult<T>> {
+  try {
+    return createSyntheticResult(url, method, { ok: true, data: await run() });
+  } catch (error) {
+    if (!shouldFallbackToLegacySessionRead(error)) {
+      if (options?.throwOnError) throw error;
+      return createSyntheticResult(url, method, {
+        ok: false,
+        error,
+        status: error instanceof OpenworkServerError ? error.status : 500,
+      });
+    }
+    return fallback();
+  }
+}
+
+function resolveSessionRouting(baseUrl: string, auth?: OpencodeAuth): NonNullable<OpencodeAuth["sessionRouting"]> | null {
+  if (auth?.sessionRouting?.baseUrl?.trim() && auth.sessionRouting.workspaceId?.trim() && auth.sessionRouting.token?.trim()) {
+    return {
+      baseUrl: auth.sessionRouting.baseUrl.trim().replace(/\/+$/, ""),
+      hostToken: auth.sessionRouting.hostToken?.trim() || undefined,
+      token: auth.sessionRouting.token.trim(),
+      workspaceId: auth.sessionRouting.workspaceId.trim(),
+    };
+  }
+
+  const openworkMount = auth?.mode === "openwork" ? resolveOpenworkWorkspaceMount(baseUrl) : null;
+  if (!openworkMount || !auth?.token?.trim()) {
+    return null;
+  }
+
+  return {
+    baseUrl: openworkMount.baseUrl,
+    hostToken: auth.hostToken?.trim() || undefined,
+    token: auth.token.trim(),
+    workspaceId: openworkMount.workspaceId,
+  };
 }
 
 async function wrapOpenworkReadWithFallback<T>(
@@ -334,25 +491,30 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   });
 
   const session = client.session as typeof client.session;
-  const openworkMount = auth?.mode === "openwork" ? resolveOpenworkWorkspaceMount(baseUrl) : null;
-  const openworkSessionClient =
-    openworkMount && auth?.token
-      ? createOpenworkServerClient({ baseUrl: openworkMount.baseUrl, token: auth.token })
-      : null;
+  const openworkRouting = resolveSessionRouting(baseUrl, auth);
   // TODO(2026-04-12): remove the old-server compatibility path here once all
   // OpenWork servers expose the workspace-scoped session read APIs.
   const sessionOverrides = session as any as {
+    abort: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+    create: (parameters?: { directory?: string }, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session>>;
+    delete: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
     list: (parameters?: SessionListParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session[]>>;
     get: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session>>;
     messages: (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Array<{ info: Message; parts: Part[] }>>>;
+    status: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<SessionStatus>>;
     todo: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Todo[]>>;
+    revert: (parameters: { messageID: string; sessionID: string }, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session>>;
+    shell: (parameters: { command: string; sessionID: string }, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+    summarize: (parameters: { directory?: string; modelID: string; providerID: string; sessionID: string }, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+    unrevert: (parameters: { sessionID: string }, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session>>;
+    update: (parameters: { archived?: boolean; sessionID: string; title?: string }, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session>>;
     promptAsync: (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
     command: (parameters: CommandParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
   };
 
   const listOriginal = sessionOverrides.list.bind(session);
   sessionOverrides.list = (parameters?: SessionListParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!openworkRouting) {
       return listOriginal(parameters, options);
     }
     const query = new URLSearchParams();
@@ -360,10 +522,12 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     if (typeof parameters?.start === "number") query.set("start", String(parameters.start));
     if (parameters?.search?.trim()) query.set("search", parameters.search.trim());
     if (typeof parameters?.limit === "number") query.set("limit", String(parameters.limit));
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions${query.size ? `?${query.toString()}` : ""}`;
-    return wrapOpenworkReadWithFallback(
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions${query.size ? `?${query.toString()}` : ""}`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
       url,
-      async () => (await openworkSessionClient.listSessions(openworkMount.workspaceId, parameters)).items,
+      "GET",
+      async () => (unwrap(await requestOpenworkRoute<{ items: Session[] }>(fetchImpl, openworkRouting, path, { throwOnError: true })).items),
       () => listOriginal(parameters, options),
       options,
     );
@@ -371,13 +535,15 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const getOriginal = sessionOverrides.get.bind(session);
   sessionOverrides.get = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!openworkRouting) {
       return getOriginal(parameters, options);
     }
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}`;
-    return wrapOpenworkReadWithFallback(
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
       url,
-      async () => (await openworkSessionClient.getSession(openworkMount.workspaceId, parameters.sessionID)).item,
+      "GET",
+      async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, { throwOnError: true })),
       () => getOriginal(parameters, options),
       options,
     );
@@ -385,18 +551,17 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const messagesOriginal = sessionOverrides.messages.bind(session);
   sessionOverrides.messages = (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!openworkRouting) {
       return messagesOriginal(parameters, options);
     }
     const query = new URLSearchParams();
     if (typeof parameters.limit === "number") query.set("limit", String(parameters.limit));
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/messages${query.size ? `?${query.toString()}` : ""}`;
-    return wrapOpenworkReadWithFallback(
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/messages${query.size ? `?${query.toString()}` : ""}`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
       url,
-      async () =>
-        (await openworkSessionClient.getSessionMessages(openworkMount.workspaceId, parameters.sessionID, {
-          limit: parameters.limit,
-        })).items,
+      "GET",
+      async () => (unwrap(await requestOpenworkRoute<{ items: Array<{ info: Message; parts: Part[] }> }>(fetchImpl, openworkRouting, path, { throwOnError: true })).items),
       () => messagesOriginal(parameters, options),
       options,
     );
@@ -404,20 +569,206 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const todoOriginal = sessionOverrides.todo.bind(session);
   sessionOverrides.todo = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!openworkRouting) {
       return todoOriginal(parameters, options);
     }
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/snapshot`;
-    return wrapOpenworkReadWithFallback(
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/todo`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
       url,
-      async () => (await openworkSessionClient.getSessionSnapshot(openworkMount.workspaceId, parameters.sessionID)).item.todos,
+      "GET",
+      async () => (unwrap(await requestOpenworkRoute<{ items: Todo[] }>(fetchImpl, openworkRouting, path, { throwOnError: true })).items),
       () => todoOriginal(parameters, options),
+      options,
+    );
+  };
+
+  sessionOverrides.status = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
+    const fallback = () => getLegacySessionStatus(fetchImpl, baseUrl, parameters.sessionID, {
+      directory: parameters.directory ?? directory,
+      headers: Object.keys(headers).length ? headers : undefined,
+      throwOnError: options?.throwOnError,
+    });
+    if (!openworkRouting) {
+      return fallback();
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/status`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "GET",
+      async () => unwrap(await requestOpenworkRoute<SessionStatus>(fetchImpl, openworkRouting, path, { throwOnError: true })),
+      fallback,
+      options,
+    );
+  };
+
+  const createOriginal = sessionOverrides.create.bind(session);
+  sessionOverrides.create = (parameters?: { directory?: string }, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return createOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "POST",
+      async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, { method: "POST", throwOnError: true })),
+      () => createOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const updateOriginal = sessionOverrides.update.bind(session);
+  sessionOverrides.update = (parameters: { archived?: boolean; sessionID: string; title?: string }, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return updateOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "PATCH",
+      async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, {
+        body: {
+          archived: parameters.archived,
+          title: parameters.title,
+        },
+        method: "PATCH",
+        throwOnError: true,
+      })),
+      () => updateOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const deleteOriginal = sessionOverrides.delete.bind(session);
+  sessionOverrides.delete = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return deleteOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "DELETE",
+      async () => unwrap(await requestOpenworkRoute<{ deleted: true }>(fetchImpl, openworkRouting, path, { method: "DELETE", throwOnError: true })) && {},
+      () => deleteOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const abortOriginal = sessionOverrides.abort.bind(session);
+  sessionOverrides.abort = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return abortOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/abort`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "POST",
+      async () => unwrap(await requestOpenworkRoute<{ accepted: true }>(fetchImpl, openworkRouting, path, { method: "POST", throwOnError: true })) && {},
+      () => abortOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const revertOriginal = sessionOverrides.revert.bind(session);
+  sessionOverrides.revert = (parameters: { messageID: string; sessionID: string }, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return revertOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/revert`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "POST",
+      async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, {
+        body: { messageID: parameters.messageID },
+        method: "POST",
+        throwOnError: true,
+      })),
+      () => revertOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const unrevertOriginal = sessionOverrides.unrevert.bind(session);
+  sessionOverrides.unrevert = (parameters: { sessionID: string }, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return unrevertOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/unrevert`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "POST",
+      async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, { method: "POST", throwOnError: true })),
+      () => unrevertOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const summarizeOriginal = sessionOverrides.summarize.bind(session);
+  sessionOverrides.summarize = (parameters: { directory?: string; modelID: string; providerID: string; sessionID: string }, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return summarizeOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/summarize`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "POST",
+      async () => unwrap(await requestOpenworkRoute<{ accepted: true }>(fetchImpl, openworkRouting, path, {
+        body: { modelID: parameters.modelID, providerID: parameters.providerID },
+        method: "POST",
+        throwOnError: true,
+      })) && {},
+      () => summarizeOriginal(parameters, options),
+      options,
+    );
+  };
+
+  const shellOriginal = sessionOverrides.shell.bind(session);
+  sessionOverrides.shell = (parameters: { command: string; sessionID: string }, options?: { throwOnError?: boolean }) => {
+    if (!openworkRouting) {
+      return shellOriginal(parameters, options);
+    }
+    const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/shell`;
+    const url = `${openworkRouting.baseUrl}${path}`;
+    return wrapOpenworkRouteWithFallback(
+      url,
+      "POST",
+      async () => unwrap(await requestOpenworkRoute<{ accepted: true }>(fetchImpl, openworkRouting, path, {
+        body: { command: parameters.command },
+        method: "POST",
+        throwOnError: true,
+      })) && {},
+      () => shellOriginal(parameters, options),
       options,
     );
   };
 
   const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);
   sessionOverrides.promptAsync = (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
+    if (openworkRouting) {
+      const { sessionID, directory: _requestDirectory, ...body } = parameters;
+      const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(sessionID)}/prompt_async`;
+      const url = `${openworkRouting.baseUrl}${path}`;
+      return wrapOpenworkRouteWithFallback(
+        url,
+        "POST",
+        async () => unwrap(await requestOpenworkRoute<{}>(fetchImpl, openworkRouting, path, {
+          body,
+          method: "POST",
+          throwOnError: true,
+        })),
+        () => promptAsyncOriginal(parameters, options),
+        options,
+      );
+    }
+
     if (!("reasoning_effort" in parameters)) {
       return promptAsyncOriginal(parameters, options);
     }
@@ -431,6 +782,23 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const commandOriginal = sessionOverrides.command.bind(session);
   sessionOverrides.command = (parameters: CommandParameters, options?: { throwOnError?: boolean }) => {
+    if (openworkRouting) {
+      const { sessionID, directory: _requestDirectory, ...body } = parameters;
+      const path = `/workspaces/${encodeURIComponent(openworkRouting.workspaceId)}/sessions/${encodeURIComponent(sessionID)}/command`;
+      const url = `${openworkRouting.baseUrl}${path}`;
+      return wrapOpenworkRouteWithFallback(
+        url,
+        "POST",
+        async () => unwrap(await requestOpenworkRoute<{}>(fetchImpl, openworkRouting, path, {
+          body,
+          method: "POST",
+          throwOnError: true,
+        })),
+        () => commandOriginal(parameters, options),
+        options,
+      );
+    }
+
     if (!("reasoning_effort" in parameters)) {
       return commandOriginal(parameters, options);
     }
@@ -440,6 +808,34 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       directory: requestDirectory ?? directory,
       throwOnError: options?.throwOnError,
     });
+  };
+
+  const eventOverrides = client.event as typeof client.event & {
+    subscribe: (parameters?: unknown, options?: { signal?: AbortSignal }) => Promise<{ stream: AsyncGenerator<unknown, void, unknown> }>;
+  };
+  const subscribeOriginal = eventOverrides.subscribe.bind(client.event);
+  eventOverrides.subscribe = async (parameters?: unknown, options?: { signal?: AbortSignal }) => {
+    if (!openworkRouting) {
+      return subscribeOriginal(parameters as never, options as never);
+    }
+
+    try {
+      return createOpenWorkServerWorkspaceEventStream({
+        baseUrl: openworkRouting.baseUrl,
+        headers: {
+          Authorization: `Bearer ${openworkRouting.token}`,
+          ...(openworkRouting.hostToken ? { "X-OpenWork-Host-Token": openworkRouting.hostToken } : {}),
+        },
+        signal: options?.signal,
+        workspaceId: openworkRouting.workspaceId,
+        fetch: fetchImpl,
+      }) as any;
+    } catch (error) {
+      if (!shouldFallbackToLegacySessionRead(error)) {
+        throw error;
+      }
+      return subscribeOriginal(parameters as never, options as never);
+    }
   };
 
   return client;

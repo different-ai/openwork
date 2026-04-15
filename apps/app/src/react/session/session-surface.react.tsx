@@ -130,7 +130,25 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
-    queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+    queryFn: async () => {
+      const sessionApi = opencodeClient.session as typeof opencodeClient.session & {
+        status?: (parameters: { sessionID: string }, options?: { throwOnError?: boolean }) => Promise<{ data?: OpenworkSessionSnapshot["status"]; error?: unknown }>;
+      };
+
+      const [sessionResult, messagesResult, todoResult, statusResult] = await Promise.all([
+        sessionApi.get({ sessionID: props.sessionId }),
+        sessionApi.messages({ sessionID: props.sessionId, limit: 140 }),
+        sessionApi.todo({ sessionID: props.sessionId }),
+        sessionApi.status ? sessionApi.status({ sessionID: props.sessionId }) : Promise.resolve({ data: { type: "idle" as const } }),
+      ]);
+
+      return {
+        session: sessionResult.data!,
+        messages: messagesResult.data!,
+        todos: todoResult.data!,
+        status: statusResult.data ?? { type: "idle" as const },
+      } satisfies OpenworkSessionSnapshot;
+    },
     staleTime: 500,
   });
 

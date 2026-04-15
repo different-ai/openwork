@@ -322,6 +322,14 @@ export type OpenWorkServerV2CapabilitiesData = {
         workspaceDetail: true;
         workspaceList: true;
     };
+    sessions: {
+        events: true;
+        list: true;
+        messages: true;
+        mutations: true;
+        promptAsync: true;
+        revertHistory: true;
+    };
     runtime: {
         opencodeHealth: true;
         routerHealth: true;
@@ -581,6 +589,184 @@ export type OpenWorkServerV2NotFoundError = {
         details?: Array<OpenWorkServerV2ErrorDetail>;
         code: 'not_found';
     };
+};
+
+export type OpenWorkServerV2SessionSummary = {
+    additions?: number;
+    deletions?: number;
+    files?: number;
+    [key: string]: unknown;
+};
+
+export type OpenWorkServerV2SessionTime = {
+    archived?: number;
+    completed?: number;
+    created?: number;
+    updated?: number;
+    [key: string]: unknown;
+};
+
+export type OpenWorkServerV2Session = {
+    directory?: string | null;
+    id: OpenWorkServerV2Identifier;
+    parentID?: string | null;
+    revert?: {
+        messageID?: OpenWorkServerV2Identifier;
+    } | null;
+    slug?: string | null;
+    summary?: OpenWorkServerV2SessionSummary;
+    time?: OpenWorkServerV2SessionTime;
+    title?: string | null;
+    [key: string]: unknown;
+};
+
+export type OpenWorkServerV2SessionListData = {
+    items: Array<OpenWorkServerV2Session>;
+};
+
+export type OpenWorkServerV2SessionListResponse = {
+    ok: true;
+    data: OpenWorkServerV2SessionListData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2InvalidRequestError = {
+    ok: false;
+    error: {
+        message: string;
+        requestId: OpenWorkServerV2RequestId;
+        details?: Array<OpenWorkServerV2ErrorDetail>;
+        code: 'invalid_request';
+    };
+};
+
+export type OpenWorkServerV2SessionStatus = {
+    type: 'idle';
+} | {
+    type: 'busy';
+} | {
+    type: 'retry';
+    attempt: number;
+    message: string;
+    next: number;
+};
+
+export type OpenWorkServerV2SessionStatusesData = {
+    items: {
+        [key: string]: OpenWorkServerV2SessionStatus;
+    };
+};
+
+export type OpenWorkServerV2SessionStatusesResponse = {
+    ok: true;
+    data: OpenWorkServerV2SessionStatusesData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2SessionResponse = {
+    ok: true;
+    data: OpenWorkServerV2Session;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2DeletedActionData = {
+    deleted: true;
+};
+
+export type OpenWorkServerV2DeletedActionResponse = {
+    ok: true;
+    data: OpenWorkServerV2DeletedActionData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2SessionStatusResponse = {
+    ok: true;
+    data: OpenWorkServerV2SessionStatus;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2SessionTodo = {
+    content: string;
+    priority: string;
+    status: string;
+    [key: string]: unknown;
+};
+
+export type OpenWorkServerV2SessionTodoListData = {
+    items: Array<OpenWorkServerV2SessionTodo>;
+};
+
+export type OpenWorkServerV2SessionTodoListResponse = {
+    ok: true;
+    data: OpenWorkServerV2SessionTodoListData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2SessionMessageInfo = {
+    id: OpenWorkServerV2Identifier;
+    parentID?: string | null;
+    role: string;
+    sessionID: OpenWorkServerV2Identifier;
+    time?: OpenWorkServerV2SessionTime;
+    [key: string]: unknown;
+};
+
+export type OpenWorkServerV2SessionMessagePart = {
+    id: OpenWorkServerV2Identifier;
+    messageID: OpenWorkServerV2Identifier;
+    sessionID: OpenWorkServerV2Identifier;
+    type?: string;
+    [key: string]: unknown;
+};
+
+export type OpenWorkServerV2SessionMessage = {
+    info: OpenWorkServerV2SessionMessageInfo;
+    parts: Array<OpenWorkServerV2SessionMessagePart>;
+    [key: string]: unknown;
+};
+
+export type OpenWorkServerV2SessionSnapshot = {
+    messages: Array<OpenWorkServerV2SessionMessage>;
+    session: OpenWorkServerV2Session;
+    status: OpenWorkServerV2SessionStatus;
+    todos: Array<OpenWorkServerV2SessionTodo>;
+};
+
+export type OpenWorkServerV2SessionSnapshotResponse = {
+    ok: true;
+    data: OpenWorkServerV2SessionSnapshot;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2MessageListData = {
+    items: Array<OpenWorkServerV2SessionMessage>;
+};
+
+export type OpenWorkServerV2MessageListResponse = {
+    ok: true;
+    data: OpenWorkServerV2MessageListData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2MessageResponse = {
+    ok: true;
+    data: OpenWorkServerV2SessionMessage;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2AcceptedActionData = {
+    accepted: true;
+};
+
+export type OpenWorkServerV2AcceptedActionResponse = {
+    ok: true;
+    data: OpenWorkServerV2AcceptedActionData;
+    meta: OpenWorkServerV2ResponseMeta;
+};
+
+export type OpenWorkServerV2WorkspaceEvent = {
+    properties?: unknown;
+    type: string;
 };
 
 export type GetIndexData = {
@@ -936,3 +1122,1029 @@ export type GetWorkspacesByWorkspaceIdResponses = {
 };
 
 export type GetWorkspacesByWorkspaceIdResponse = GetWorkspacesByWorkspaceIdResponses[keyof GetWorkspacesByWorkspaceIdResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsError = GetWorkspacesByWorkspaceIdSessionsErrors[keyof GetWorkspacesByWorkspaceIdSessionsErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsResponses = {
+    /**
+     * Workspace sessions returned successfully.
+     */
+    200: OpenWorkServerV2SessionListResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsResponse = GetWorkspacesByWorkspaceIdSessionsResponses[keyof GetWorkspacesByWorkspaceIdSessionsResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsError = PostWorkspacesByWorkspaceIdSessionsErrors[keyof PostWorkspacesByWorkspaceIdSessionsErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsResponses = {
+    /**
+     * Workspace session created successfully.
+     */
+    200: OpenWorkServerV2SessionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsResponse = PostWorkspacesByWorkspaceIdSessionsResponses[keyof PostWorkspacesByWorkspaceIdSessionsResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsStatusData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/status';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsStatusErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsStatusError = GetWorkspacesByWorkspaceIdSessionsStatusErrors[keyof GetWorkspacesByWorkspaceIdSessionsStatusErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsStatusResponses = {
+    /**
+     * Workspace session statuses returned successfully.
+     */
+    200: OpenWorkServerV2SessionStatusesResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsStatusResponse = GetWorkspacesByWorkspaceIdSessionsStatusResponses[keyof GetWorkspacesByWorkspaceIdSessionsStatusResponses];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}';
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdError = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdErrors[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdErrors];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponses = {
+    /**
+     * Workspace session deleted successfully.
+     */
+    200: OpenWorkServerV2DeletedActionResponse;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponse = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponses[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdError = GetWorkspacesByWorkspaceIdSessionsBySessionIdErrors[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdResponses = {
+    /**
+     * Workspace session returned successfully.
+     */
+    200: OpenWorkServerV2SessionResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdResponse = GetWorkspacesByWorkspaceIdSessionsBySessionIdResponses[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdResponses];
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}';
+};
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdError = PatchWorkspacesByWorkspaceIdSessionsBySessionIdErrors[keyof PatchWorkspacesByWorkspaceIdSessionsBySessionIdErrors];
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponses = {
+    /**
+     * Workspace session updated successfully.
+     */
+    200: OpenWorkServerV2SessionResponse;
+};
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponse = PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponses[keyof PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/status';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusError = GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusErrors[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponses = {
+    /**
+     * Workspace session status returned successfully.
+     */
+    200: OpenWorkServerV2SessionStatusResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponse = GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponses[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/todo';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoError = GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoErrors[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponses = {
+    /**
+     * Workspace session todos returned successfully.
+     */
+    200: OpenWorkServerV2SessionTodoListResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponse = GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponses[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/snapshot';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotError = GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotErrors[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponses = {
+    /**
+     * Workspace session snapshot returned successfully.
+     */
+    200: OpenWorkServerV2SessionSnapshotResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponse = GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponses[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesError = GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses = {
+    /**
+     * Workspace session messages returned successfully.
+     */
+    200: OpenWorkServerV2MessageListResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponse = GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesError = PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses = {
+    /**
+     * Workspace session message accepted successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+        messageId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}';
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdError = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses = {
+    /**
+     * Workspace session message deleted successfully.
+     */
+    200: OpenWorkServerV2DeletedActionResponse;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponse = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+        messageId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}';
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdError = GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors];
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses = {
+    /**
+     * Workspace session message returned successfully.
+     */
+    200: OpenWorkServerV2MessageResponse;
+};
+
+export type GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponse = GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses[keyof GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+        messageId: string;
+        partId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}/parts/{partId}';
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdError = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses = {
+    /**
+     * Workspace session message part deleted successfully.
+     */
+    200: OpenWorkServerV2DeletedActionResponse;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponse = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses];
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+        messageId: string;
+        partId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}/parts/{partId}';
+};
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdError = PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors[keyof PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors];
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses = {
+    /**
+     * Workspace session message part updated successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponse = PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses[keyof PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdInitData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/init';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdInitErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdInitError = PostWorkspacesByWorkspaceIdSessionsBySessionIdInitErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdInitErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponses = {
+    /**
+     * Initialize a session completed successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdForkData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/fork';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdForkErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdForkError = PostWorkspacesByWorkspaceIdSessionsBySessionIdForkErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdForkErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponses = {
+    /**
+     * Fork a session completed successfully.
+     */
+    200: OpenWorkServerV2SessionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/abort';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortError = PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponses = {
+    /**
+     * Abort a session completed successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponses];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/share';
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareError = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors];
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses = {
+    /**
+     * Session unshared successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponse = DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses[keyof DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShareData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/share';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShareError = PostWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses = {
+    /**
+     * Share a session completed successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/summarize';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeError = PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponses = {
+    /**
+     * Summarize a session completed successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/prompt_async';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncError = PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponses = {
+    /**
+     * Send an async prompt completed successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/command';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandError = PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponses = {
+    /**
+     * Run a session command completed successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShellData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/shell';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShellErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShellError = PostWorkspacesByWorkspaceIdSessionsBySessionIdShellErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdShellErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponses = {
+    /**
+     * Run a session shell command completed successfully.
+     */
+    200: OpenWorkServerV2AcceptedActionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/revert';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertError = PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponses = {
+    /**
+     * Revert session history completed successfully.
+     */
+    200: OpenWorkServerV2SessionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponses];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+        sessionId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/sessions/{sessionId}/unrevert';
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertErrors = {
+    /**
+     * Request validation failed.
+     */
+    400: OpenWorkServerV2InvalidRequestError;
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The requested route was not found.
+     */
+    404: OpenWorkServerV2NotFoundError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertError = PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertErrors[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertErrors];
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponses = {
+    /**
+     * Restore reverted session history completed successfully.
+     */
+    200: OpenWorkServerV2SessionResponse;
+};
+
+export type PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponse = PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponses[keyof PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponses];
+
+export type GetWorkspacesByWorkspaceIdEventsData = {
+    body?: never;
+    path: {
+        workspaceId: string;
+    };
+    query?: never;
+    url: '/workspaces/{workspaceId}/events';
+};
+
+export type GetWorkspacesByWorkspaceIdEventsErrors = {
+    /**
+     * Authentication is required for this route.
+     */
+    401: OpenWorkServerV2UnauthorizedError;
+    /**
+     * The server failed to complete the request.
+     */
+    500: OpenWorkServerV2InternalError;
+};
+
+export type GetWorkspacesByWorkspaceIdEventsError = GetWorkspacesByWorkspaceIdEventsErrors[keyof GetWorkspacesByWorkspaceIdEventsErrors];
+
+export type GetWorkspacesByWorkspaceIdEventsResponses = {
+    /**
+     * Workspace events streamed successfully.
+     */
+    200: OpenWorkServerV2WorkspaceEvent;
+};
+
+export type GetWorkspacesByWorkspaceIdEventsResponse = GetWorkspacesByWorkspaceIdEventsResponses[keyof GetWorkspacesByWorkspaceIdEventsResponses];

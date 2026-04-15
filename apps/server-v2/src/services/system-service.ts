@@ -91,9 +91,9 @@ export function createSystemService(input: {
     },
 
     getMetadata(actor: RequestActor) {
-      return {
-        foundation: {
-          phase: 5 as const,
+        return {
+          foundation: {
+          phase: 6 as const,
           middlewareOrder: [
             "request-id",
             "request-context",

@@ -1957,7 +1957,24 @@ export function createWorkspaceStore(options: {
           targetRoot: context?.targetRoot,
           workspaceType: context?.workspaceType ?? "local",
         });
-        let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
+        const hostInfo = options.openworkServer.openworkServerHostInfo();
+        const routedAuth: OpencodeAuth | undefined =
+          context?.workspaceType === "local" &&
+          context.workspaceId?.trim() &&
+          hostInfo?.startupMode === "server-v2" &&
+          hostInfo.baseUrl?.trim() &&
+          hostInfo.clientToken?.trim()
+            ? {
+                ...(auth ?? {}),
+                sessionRouting: {
+                  baseUrl: hostInfo.baseUrl.trim(),
+                  hostToken: hostInfo.hostToken?.trim() || undefined,
+                  token: hostInfo.clientToken.trim(),
+                  workspaceId: context.workspaceId.trim(),
+                },
+              }
+            : auth;
+        let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, routedAuth);
         const healthTimeoutMs = resolveConnectHealthTimeoutMs(context?.reason);
         const health = await waitForHealthy(nextClient, { timeoutMs: healthTimeoutMs });
         connectMetrics.healthyMs = Date.now() - connectStart;
@@ -1987,7 +2004,7 @@ export function createWorkspaceStore(options: {
                 );
               }
               setProjectDir(resolvedDirectory);
-              nextClient = createClient(nextBaseUrl, resolvedDirectory, auth);
+              nextClient = createClient(nextBaseUrl, resolvedDirectory, routedAuth);
             }
           } catch (error) {
             console.log("[workspace] remote directory lookup failed", error);

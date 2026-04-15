@@ -9,7 +9,15 @@ export type SuccessResponse<TData> = {
   meta: ResponseMeta;
 };
 
-export type ErrorCode = "forbidden" | "internal_error" | "invalid_request" | "not_found" | "unauthorized";
+export type ErrorCode =
+  | "bad_gateway"
+  | "forbidden"
+  | "internal_error"
+  | "invalid_request"
+  | "not_found"
+  | "not_implemented"
+  | "service_unavailable"
+  | "unauthorized";
 
 export type ErrorDetail = {
   message: string;
@@ -25,6 +33,18 @@ export type ErrorResponse = {
     details?: Array<ErrorDetail>;
   };
 };
+
+export class RouteError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: ErrorCode,
+    message: string,
+    readonly details?: Array<ErrorDetail>,
+  ) {
+    super(message);
+    this.name = "RouteError";
+  }
+}
 
 export function createResponseMeta(requestId: string, now: Date = new Date()): ResponseMeta {
   return {

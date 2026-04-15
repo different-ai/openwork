@@ -129,6 +129,14 @@ export function buildSyntheticDiagnostics(input: {
 
 export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatusResponse): OpenworkServerCapabilities {
   const auth = input.data.auth;
+  const sessions = input.data.capabilities.sessions ?? {
+    events: false,
+    list: false,
+    messages: false,
+    mutations: false,
+    promptAsync: false,
+    revertHistory: false,
+  };
   return {
     commands: { read: false, write: false },
     config: { read: false, write: false },
@@ -146,6 +154,14 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
         serverInventory: input.data.capabilities.registry.serverInventory,
         workspaceDetail: input.data.capabilities.registry.workspaceDetail,
         workspaceList: input.data.capabilities.registry.workspaceList,
+      },
+      sessions: {
+        events: sessions.events,
+        list: sessions.list,
+        messages: sessions.messages,
+        mutations: sessions.mutations,
+        promptAsync: sessions.promptAsync,
+        revertHistory: sessions.revertHistory,
       },
       transport: {
         rootMounted: input.data.capabilities.transport.rootMounted,

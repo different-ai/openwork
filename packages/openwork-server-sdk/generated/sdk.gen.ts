@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemCapabilitiesData, GetSystemCapabilitiesErrors, GetSystemCapabilitiesResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses, GetSystemOpencodeHealthData, GetSystemOpencodeHealthErrors, GetSystemOpencodeHealthResponses, GetSystemRouterHealthData, GetSystemRouterHealthErrors, GetSystemRouterHealthResponses, GetSystemRuntimeSummaryData, GetSystemRuntimeSummaryErrors, GetSystemRuntimeSummaryResponses, GetSystemRuntimeVersionsData, GetSystemRuntimeVersionsErrors, GetSystemRuntimeVersionsResponses, GetSystemServersData, GetSystemServersErrors, GetSystemServersResponses, GetSystemStatusData, GetSystemStatusErrors, GetSystemStatusResponses, GetWorkspacesByWorkspaceIdData, GetWorkspacesByWorkspaceIdErrors, GetWorkspacesByWorkspaceIdResponses, GetWorkspacesData, GetWorkspacesErrors, GetWorkspacesResponses } from './types.gen';
+import type { DeleteWorkspacesByWorkspaceIdSessionsBySessionIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemCapabilitiesData, GetSystemCapabilitiesErrors, GetSystemCapabilitiesResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses, GetSystemOpencodeHealthData, GetSystemOpencodeHealthErrors, GetSystemOpencodeHealthResponses, GetSystemRouterHealthData, GetSystemRouterHealthErrors, GetSystemRouterHealthResponses, GetSystemRuntimeSummaryData, GetSystemRuntimeSummaryErrors, GetSystemRuntimeSummaryResponses, GetSystemRuntimeVersionsData, GetSystemRuntimeVersionsErrors, GetSystemRuntimeVersionsResponses, GetSystemServersData, GetSystemServersErrors, GetSystemServersResponses, GetSystemStatusData, GetSystemStatusErrors, GetSystemStatusResponses, GetWorkspacesByWorkspaceIdData, GetWorkspacesByWorkspaceIdErrors, GetWorkspacesByWorkspaceIdEventsData, GetWorkspacesByWorkspaceIdEventsErrors, GetWorkspacesByWorkspaceIdEventsResponse, GetWorkspacesByWorkspaceIdEventsResponses, GetWorkspacesByWorkspaceIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdData, GetWorkspacesByWorkspaceIdSessionsBySessionIdErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotData, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusData, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoData, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponses, GetWorkspacesByWorkspaceIdSessionsData, GetWorkspacesByWorkspaceIdSessionsErrors, GetWorkspacesByWorkspaceIdSessionsResponses, GetWorkspacesByWorkspaceIdSessionsStatusData, GetWorkspacesByWorkspaceIdSessionsStatusErrors, GetWorkspacesByWorkspaceIdSessionsStatusResponses, GetWorkspacesData, GetWorkspacesErrors, GetWorkspacesResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdData, PatchWorkspacesByWorkspaceIdSessionsBySessionIdErrors, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortData, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandData, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkData, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitData, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncData, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertData, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareData, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellData, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeData, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertData, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponses, PostWorkspacesByWorkspaceIdSessionsData, PostWorkspacesByWorkspaceIdSessionsErrors, PostWorkspacesByWorkspaceIdSessionsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -101,3 +101,192 @@ export const getWorkspaces = <ThrowOnError extends boolean = false>(options?: Op
  * Returns the canonical workspace detail shape for a single workspace, including backend resolution and runtime summary fields.
  */
 export const getWorkspacesByWorkspaceId = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdResponses, GetWorkspacesByWorkspaceIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}', ...options });
+
+/**
+ * List workspace sessions
+ *
+ * Returns the normalized session inventory for the resolved local OpenCode or remote OpenWork workspace backend.
+ */
+export const getWorkspacesByWorkspaceIdSessions = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsResponses, GetWorkspacesByWorkspaceIdSessionsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions', ...options });
+
+/**
+ * Create a workspace session
+ *
+ * Creates a new session inside the resolved workspace backend.
+ */
+export const postWorkspacesByWorkspaceIdSessions = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsResponses, PostWorkspacesByWorkspaceIdSessionsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions', ...options });
+
+/**
+ * List workspace session statuses
+ *
+ * Returns the latest normalized session status map for the resolved workspace backend.
+ */
+export const getWorkspacesByWorkspaceIdSessionsStatus = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsStatusData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsStatusResponses, GetWorkspacesByWorkspaceIdSessionsStatusErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/status', ...options });
+
+/**
+ * Delete a workspace session
+ *
+ * Deletes a session inside the resolved workspace backend.
+ */
+export const deleteWorkspacesByWorkspaceIdSessionsBySessionId = <ThrowOnError extends boolean = false>(options: Options<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}', ...options });
+
+/**
+ * Get workspace session detail
+ *
+ * Returns one normalized session by workspace and session identifier.
+ */
+export const getWorkspacesByWorkspaceIdSessionsBySessionId = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsBySessionIdData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsBySessionIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}', ...options });
+
+/**
+ * Update a workspace session
+ *
+ * Updates a normalized session inside the resolved workspace backend.
+ */
+export const patchWorkspacesByWorkspaceIdSessionsBySessionId = <ThrowOnError extends boolean = false>(options: Options<PatchWorkspacesByWorkspaceIdSessionsBySessionIdData, ThrowOnError>) => (options.client ?? client).patch<PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}', ...options });
+
+/**
+ * Get one session status
+ *
+ * Returns the normalized status for a single session.
+ */
+export const getWorkspacesByWorkspaceIdSessionsBySessionIdStatus = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/status', ...options });
+
+/**
+ * List one session todos
+ *
+ * Returns the normalized todo list for a single session.
+ */
+export const getWorkspacesByWorkspaceIdSessionsBySessionIdTodo = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/todo', ...options });
+
+/**
+ * Get one session snapshot
+ *
+ * Returns session detail, messages, todos, and status in one normalized payload for detail surfaces.
+ */
+export const getWorkspacesByWorkspaceIdSessionsBySessionIdSnapshot = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/snapshot', ...options });
+
+/**
+ * List session messages
+ *
+ * Returns the normalized message list for a single session.
+ */
+export const getWorkspacesByWorkspaceIdSessionsBySessionIdMessages = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages', ...options });
+
+/**
+ * Send a session message
+ *
+ * Sends a normalized message payload to the resolved workspace backend.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdMessages = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages', ...options });
+
+/**
+ * Delete a session message
+ *
+ * Deletes one message inside the resolved session backend.
+ */
+export const deleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageId = <ThrowOnError extends boolean = false>(options: Options<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}', ...options });
+
+/**
+ * Get one session message
+ *
+ * Returns one normalized message by workspace, session, and message identifier.
+ */
+export const getWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageId = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}', ...options });
+
+/**
+ * Delete a session message part
+ *
+ * Deletes one message part inside the resolved session backend where the upstream backend supports it.
+ */
+export const deleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartId = <ThrowOnError extends boolean = false>(options: Options<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}/parts/{partId}', ...options });
+
+/**
+ * Update a session message part
+ *
+ * Updates one message part inside the resolved session backend where the upstream backend supports it.
+ */
+export const patchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartId = <ThrowOnError extends boolean = false>(options: Options<PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, ThrowOnError>) => (options.client ?? client).patch<PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}/parts/{partId}', ...options });
+
+/**
+ * Initialize a session
+ *
+ * Runs the upstream session init primitive through the workspace-first API.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdInit = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdInitData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/init', ...options });
+
+/**
+ * Fork a session
+ *
+ * Forks a session inside the resolved workspace backend.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdFork = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdForkData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/fork', ...options });
+
+/**
+ * Abort a session
+ *
+ * Aborts an in-flight session run through the workspace-first API.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdAbort = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/abort', ...options });
+
+/**
+ * Unshare a session
+ *
+ * Calls the upstream unshare primitive when the resolved backend supports it.
+ */
+export const deleteWorkspacesByWorkspaceIdSessionsBySessionIdShare = <ThrowOnError extends boolean = false>(options: Options<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareData, ThrowOnError>) => (options.client ?? client).delete<DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/share', ...options });
+
+/**
+ * Share a session
+ *
+ * Calls the upstream share primitive when the resolved backend supports it.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdShare = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdShareData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/share', ...options });
+
+/**
+ * Summarize a session
+ *
+ * Runs the upstream summarize or compact primitive for the selected session.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdSummarize = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/summarize', ...options });
+
+/**
+ * Send an async prompt
+ *
+ * Sends a prompt_async request to the resolved session backend for composer flows.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsync = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/prompt_async', ...options });
+
+/**
+ * Run a session command
+ *
+ * Runs a slash-command style session command through the workspace-first API.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdCommand = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/command', ...options });
+
+/**
+ * Run a session shell command
+ *
+ * Runs a shell command inside the resolved session backend.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdShell = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdShellData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/shell', ...options });
+
+/**
+ * Revert session history
+ *
+ * Reverts a session to the requested message boundary.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdRevert = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/revert', ...options });
+
+/**
+ * Restore reverted session history
+ *
+ * Restores previously reverted session history.
+ */
+export const postWorkspacesByWorkspaceIdSessionsBySessionIdUnrevert = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/sessions/{sessionId}/unrevert', ...options });
+
+/**
+ * Stream workspace events
+ *
+ * Streams normalized session and message events for one workspace over Server-Sent Events.
+ */
+export const getWorkspacesByWorkspaceIdEvents = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdEventsData, ThrowOnError, GetWorkspacesByWorkspaceIdEventsResponse>) => (options.client ?? client).sse.get<GetWorkspacesByWorkspaceIdEventsResponses, GetWorkspacesByWorkspaceIdEventsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/events', ...options });

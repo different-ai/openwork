@@ -98,7 +98,7 @@ test("system metadata includes phase 5 registry and runtime migration state", as
   const body = await response.json();
 
   expect(response.status).toBe(200);
-  expect(body.data.foundation.phase).toBe(5);
+  expect(body.data.foundation.phase).toBe(6);
   expect(body.data.foundation.startup.registry.localServerId).toBe("srv_local");
   expect(body.data.foundation.startup.registry.hiddenWorkspaceIds).toHaveLength(2);
   expect(body.data.runtimeSupervisor.bootstrapPolicy).toBe("disabled");
@@ -119,6 +119,8 @@ test("openapi route is generated from the live Hono app", async () => {
   expect(document.paths["/system/opencode/health"].get.operationId).toBe("getSystemOpencodeHealth");
   expect(document.paths["/system/runtime/versions"].get.operationId).toBe("getSystemRuntimeVersions");
   expect(document.paths["/workspaces"].get.operationId).toBe("getWorkspaces");
+  expect(document.paths["/workspaces/{workspaceId}/sessions"].get.operationId).toBe("getWorkspacesByWorkspaceIdSessions");
+  expect(document.paths["/workspaces/{workspaceId}/events"].get.operationId).toBe("getWorkspacesByWorkspaceIdEvents");
 });
 
 test("runtime routes expose the initial server-owned status surfaces", async () => {

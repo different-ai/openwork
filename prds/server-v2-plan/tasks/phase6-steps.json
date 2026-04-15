@@ -22,7 +22,7 @@
         "OpenCode-specific transport details stay server-internal.",
         "The adapter is reusable across list, detail, message, and mutation routes."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-002",
@@ -33,7 +33,7 @@
         "The adapter can normalize remote responses into local server shapes.",
         "Backend routing stays behind the server boundary."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-003",
@@ -44,7 +44,7 @@
         "The routing logic is reusable across all session endpoints.",
         "Errors for unsupported or misconfigured backends are explicit."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-004",
@@ -55,7 +55,7 @@
         "Local and remote workspaces both work through the same public route.",
         "The response shape is typed and stable."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-005",
@@ -66,7 +66,7 @@
         "The payloads hide raw OpenCode transport details.",
         "The routes are ready for app detail views and status chips."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-006",
@@ -77,7 +77,7 @@
         "The server stores or resolves the backend mapping correctly.",
         "The route is ready for optimistic app session creation flows."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-007",
@@ -88,7 +88,7 @@
         "Local and remote backend calls map correctly.",
         "Errors use the shared error and request-ID conventions."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-008",
@@ -99,7 +99,7 @@
         "The server returns normalized message data regardless of backend.",
         "The route contract is documented in OpenAPI."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-009",
@@ -110,7 +110,7 @@
         "The server can forward to local OpenCode or remote OpenWork correctly.",
         "Response handling works with optimistic UI flows."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-010",
@@ -121,7 +121,7 @@
         "Unsupported backend cases are handled predictably.",
         "The contract does not leak upstream path design."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-011",
@@ -132,7 +132,7 @@
         "The server maps each control action to the correct backend call.",
         "Route names stay consistent with the workspace-first model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-012",
@@ -143,7 +143,7 @@
         "These routes remain workspace-first and typed.",
         "The app no longer needs to reach directly toward raw OpenCode session endpoints for them."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-013",
@@ -154,7 +154,7 @@
         "The app does not need special transport cases for revert operations.",
         "Response shapes are consistent with other session mutations."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-014",
@@ -165,7 +165,7 @@
         "Event payload types are generated or shared from contract output.",
         "The design matches the limited-SSE guidance in the planning docs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-015",
@@ -176,7 +176,7 @@
         "The server can proxy, normalize, or adapt backend stream events as needed.",
         "Streaming failures are handled cleanly and visibly."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-016",
@@ -187,7 +187,7 @@
         "Event payload typing comes from generated or shared contract types.",
         "The app can call streaming through `createSdk({ serverId })`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-017",
@@ -198,7 +198,7 @@
         "Legacy fallback remains isolated.",
         "The UI no longer needs raw OpenCode session path knowledge for those surfaces."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-018",
@@ -209,7 +209,7 @@
         "Optimistic UI behavior still works with the new transport.",
         "Temporary normalization or fallback logic is limited to the migration boundary."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-019",
@@ -220,7 +220,7 @@
         "Local and remote backend behaviors are both exercised.",
         "Common failure shapes are asserted."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P6-020",
@@ -231,7 +231,7 @@
         "Typed event shapes are validated.",
         "The app does not connect directly to underlying OpenCode SSE routes."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

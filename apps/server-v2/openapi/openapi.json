@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenWork Server V2",
-    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 5 adds server-owned capabilities, normalized /system/status, workspace registry reads, and canonical workspace serialization.",
+    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 6 adds workspace-first sessions, messages, and typed SSE streaming surfaces over local and remote backends.",
     "version": "0.0.0"
   },
   "servers": [
@@ -22,6 +22,14 @@
     {
       "name": "Runtime",
       "description": "Server-owned runtime supervision, versions, and child process health."
+    },
+    {
+      "name": "Sessions",
+      "description": "Workspace-first session and streaming primitives backed by OpenCode or remote OpenWork servers."
+    },
+    {
+      "name": "Messages",
+      "description": "Workspace-first message history and mutation primitives nested under sessions."
     }
   ],
   "paths": {
@@ -522,6 +530,2028 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessions",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List workspace sessions",
+        "description": "Returns the normalized session inventory for the resolved local OpenCode or remote OpenWork workspace backend.",
+        "responses": {
+          "200": {
+            "description": "Workspace sessions returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessions",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create a workspace session",
+        "description": "Creates a new session inside the resolved workspace backend.",
+        "responses": {
+          "200": {
+            "description": "Workspace session created successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/status": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessionsStatus",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List workspace session statuses",
+        "description": "Returns the latest normalized session status map for the resolved workspace backend.",
+        "responses": {
+          "200": {
+            "description": "Workspace session statuses returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionStatusesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessionsBySessionId",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get workspace session detail",
+        "description": "Returns one normalized session by workspace and session identifier.",
+        "responses": {
+          "200": {
+            "description": "Workspace session returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "patchWorkspacesByWorkspaceIdSessionsBySessionId",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Update a workspace session",
+        "description": "Updates a normalized session inside the resolved workspace backend.",
+        "responses": {
+          "200": {
+            "description": "Workspace session updated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWorkspacesByWorkspaceIdSessionsBySessionId",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Delete a workspace session",
+        "description": "Deletes a session inside the resolved workspace backend.",
+        "responses": {
+          "200": {
+            "description": "Workspace session deleted successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2DeletedActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/status": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessionsBySessionIdStatus",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get one session status",
+        "description": "Returns the normalized status for a single session.",
+        "responses": {
+          "200": {
+            "description": "Workspace session status returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/todo": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessionsBySessionIdTodo",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List one session todos",
+        "description": "Returns the normalized todo list for a single session.",
+        "responses": {
+          "200": {
+            "description": "Workspace session todos returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionTodoListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/snapshot": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessionsBySessionIdSnapshot",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get one session snapshot",
+        "description": "Returns session detail, messages, todos, and status in one normalized payload for detail surfaces.",
+        "responses": {
+          "200": {
+            "description": "Workspace session snapshot returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionSnapshotResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/messages": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessionsBySessionIdMessages",
+        "tags": [
+          "Messages"
+        ],
+        "summary": "List session messages",
+        "description": "Returns the normalized message list for a single session.",
+        "responses": {
+          "200": {
+            "description": "Workspace session messages returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2MessageListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdMessages",
+        "tags": [
+          "Messages"
+        ],
+        "summary": "Send a session message",
+        "description": "Sends a normalized message payload to the resolved workspace backend.",
+        "responses": {
+          "200": {
+            "description": "Workspace session message accepted successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageId",
+        "tags": [
+          "Messages"
+        ],
+        "summary": "Get one session message",
+        "description": "Returns one normalized message by workspace, session, and message identifier.",
+        "responses": {
+          "200": {
+            "description": "Workspace session message returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2MessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "messageId",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageId",
+        "tags": [
+          "Messages"
+        ],
+        "summary": "Delete a session message",
+        "description": "Deletes one message inside the resolved session backend.",
+        "responses": {
+          "200": {
+            "description": "Workspace session message deleted successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2DeletedActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "messageId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/messages/{messageId}/parts/{partId}": {
+      "patch": {
+        "operationId": "patchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartId",
+        "tags": [
+          "Messages"
+        ],
+        "summary": "Update a session message part",
+        "description": "Updates one message part inside the resolved session backend where the upstream backend supports it.",
+        "responses": {
+          "200": {
+            "description": "Workspace session message part updated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "messageId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "partId",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartId",
+        "tags": [
+          "Messages"
+        ],
+        "summary": "Delete a session message part",
+        "description": "Deletes one message part inside the resolved session backend where the upstream backend supports it.",
+        "responses": {
+          "200": {
+            "description": "Workspace session message part deleted successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2DeletedActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "messageId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "partId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/init": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdInit",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Initialize a session",
+        "description": "Runs the upstream session init primitive through the workspace-first API.",
+        "responses": {
+          "200": {
+            "description": "Initialize a session completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/fork": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdFork",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Fork a session",
+        "description": "Forks a session inside the resolved workspace backend.",
+        "responses": {
+          "200": {
+            "description": "Fork a session completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/abort": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdAbort",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Abort a session",
+        "description": "Aborts an in-flight session run through the workspace-first API.",
+        "responses": {
+          "200": {
+            "description": "Abort a session completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/share": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdShare",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Share a session",
+        "description": "Calls the upstream share primitive when the resolved backend supports it.",
+        "responses": {
+          "200": {
+            "description": "Share a session completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWorkspacesByWorkspaceIdSessionsBySessionIdShare",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Unshare a session",
+        "description": "Calls the upstream unshare primitive when the resolved backend supports it.",
+        "responses": {
+          "200": {
+            "description": "Session unshared successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/summarize": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdSummarize",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Summarize a session",
+        "description": "Runs the upstream summarize or compact primitive for the selected session.",
+        "responses": {
+          "200": {
+            "description": "Summarize a session completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/prompt_async": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsync",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Send an async prompt",
+        "description": "Sends a prompt_async request to the resolved session backend for composer flows.",
+        "responses": {
+          "200": {
+            "description": "Send an async prompt completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/command": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdCommand",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Run a session command",
+        "description": "Runs a slash-command style session command through the workspace-first API.",
+        "responses": {
+          "200": {
+            "description": "Run a session command completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/shell": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdShell",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Run a session shell command",
+        "description": "Runs a shell command inside the resolved session backend.",
+        "responses": {
+          "200": {
+            "description": "Run a session shell command completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/revert": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdRevert",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Revert session history",
+        "description": "Reverts a session to the requested message boundary.",
+        "responses": {
+          "200": {
+            "description": "Revert session history completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/unrevert": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdSessionsBySessionIdUnrevert",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Restore reverted session history",
+        "description": "Restores previously reverted session history.",
+        "responses": {
+          "200": {
+            "description": "Restore reverted session history completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested route was not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/events": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdEvents",
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Stream workspace events",
+        "description": "Streams normalized session and message events for one workspace over Server-Sent Events.",
+        "responses": {
+          "200": {
+            "description": "Workspace events streamed successfully.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
                 }
               }
             }
@@ -2013,6 +4043,43 @@
               "workspaceList"
             ]
           },
+          "sessions": {
+            "type": "object",
+            "properties": {
+              "events": {
+                "type": "boolean",
+                "const": true
+              },
+              "list": {
+                "type": "boolean",
+                "const": true
+              },
+              "messages": {
+                "type": "boolean",
+                "const": true
+              },
+              "mutations": {
+                "type": "boolean",
+                "const": true
+              },
+              "promptAsync": {
+                "type": "boolean",
+                "const": true
+              },
+              "revertHistory": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "events",
+              "list",
+              "messages",
+              "mutations",
+              "promptAsync",
+              "revertHistory"
+            ]
+          },
           "runtime": {
             "type": "object",
             "properties": {
@@ -2066,6 +4133,7 @@
         "required": [
           "auth",
           "registry",
+          "sessions",
           "runtime",
           "transport"
         ]
@@ -3239,6 +5307,622 @@
         "required": [
           "ok",
           "error"
+        ]
+      },
+      "OpenWorkServerV2SessionSummary": {
+        "type": "object",
+        "properties": {
+          "additions": {
+            "type": "number"
+          },
+          "deletions": {
+            "type": "number"
+          },
+          "files": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2SessionTime": {
+        "type": "object",
+        "properties": {
+          "archived": {
+            "type": "number"
+          },
+          "completed": {
+            "type": "number"
+          },
+          "created": {
+            "type": "number"
+          },
+          "updated": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2Session": {
+        "type": "object",
+        "properties": {
+          "directory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "parentID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revert": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "messageID": {
+                    "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionSummary"
+          },
+          "time": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionTime"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2SessionListData": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2Session"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "OpenWorkServerV2SessionListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionListData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2InvalidRequestError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ErrorDetail"
+                }
+              },
+              "code": {
+                "type": "string",
+                "const": "invalid_request"
+              }
+            },
+            "required": [
+              "message",
+              "requestId",
+              "code"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      },
+      "OpenWorkServerV2SessionStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "idle"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "busy"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "retry"
+              },
+              "attempt": {
+                "type": "number"
+              },
+              "message": {
+                "type": "string"
+              },
+              "next": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "attempt",
+              "message",
+              "next"
+            ]
+          }
+        ]
+      },
+      "OpenWorkServerV2SessionStatusesData": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OpenWorkServerV2SessionStatus"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "OpenWorkServerV2SessionStatusesResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionStatusesData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2SessionResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Session"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2DeletedActionData": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "OpenWorkServerV2DeletedActionResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2DeletedActionData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2SessionStatusResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionStatus"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2SessionTodo": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "priority",
+          "status"
+        ],
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2SessionTodoListData": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2SessionTodo"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "OpenWorkServerV2SessionTodoListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionTodoListData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2SessionMessageInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "parentID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "type": "string"
+          },
+          "sessionID": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "time": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionTime"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "sessionID"
+        ],
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2SessionMessagePart": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "messageID": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "sessionID": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "messageID",
+          "sessionID"
+        ],
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2SessionMessage": {
+        "type": "object",
+        "properties": {
+          "info": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionMessageInfo"
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2SessionMessagePart"
+            }
+          }
+        },
+        "required": [
+          "info",
+          "parts"
+        ],
+        "additionalProperties": {}
+      },
+      "OpenWorkServerV2SessionSnapshot": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2SessionMessage"
+            }
+          },
+          "session": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Session"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionStatus"
+          },
+          "todos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2SessionTodo"
+            }
+          }
+        },
+        "required": [
+          "messages",
+          "session",
+          "status",
+          "todos"
+        ]
+      },
+      "OpenWorkServerV2SessionSnapshotResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionSnapshot"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2MessageListData": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2SessionMessage"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "OpenWorkServerV2MessageListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2MessageListData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2MessageResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SessionMessage"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2AcceptedActionData": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "accepted"
+        ]
+      },
+      "OpenWorkServerV2AcceptedActionResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2AcceptedActionData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceEvent": {
+        "type": "object",
+        "properties": {
+          "properties": {},
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
         ]
       }
     }

@@ -33,6 +33,8 @@ test("openapi generation writes the committed server-v2 contract", async () => {
   expect(openApiContents).toContain('"getSystemHealth"');
   expect(openApiContents).toContain('"/system/status"');
   expect(openApiContents).toContain('"/workspaces"');
+  expect(openApiContents).toContain('"/workspaces/{workspaceId}/sessions"');
+  expect(openApiContents).toContain('"/workspaces/{workspaceId}/events"');
   expect(openApiContents).toContain('"/system/opencode/health"');
   expect(openApiContents).toContain('"/system/runtime/versions"');
 });
@@ -46,6 +48,8 @@ test("sdk generation succeeds from the server-v2 openapi document", async () => 
   expect(sdkIndex).toContain("getSystemHealth");
   expect(sdkIndex).toContain("getSystemStatus");
   expect(sdkIndex).toContain("getWorkspaces");
+  expect(sdkIndex).toContain("getWorkspacesByWorkspaceIdSessions");
+  expect(sdkIndex).toContain("getWorkspacesByWorkspaceIdEvents");
   expect(sdkIndex).toContain("GetSystemHealthResponse");
   expect(sdkIndex).toContain("getSystemOpencodeHealth");
   expect(sdkIndex).toContain("getSystemRuntimeVersions");

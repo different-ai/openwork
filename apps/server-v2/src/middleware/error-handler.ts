@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { ZodError } from "zod";
-import { buildErrorResponse } from "../http.js";
+import { buildErrorResponse, RouteError } from "../http.js";
 import type { AppBindings } from "../context/request-context.js";
 
 export const errorHandlingMiddleware: MiddlewareHandler<AppBindings> = async (c, next) => {
@@ -25,6 +25,18 @@ export const errorHandlingMiddleware: MiddlewareHandler<AppBindings> = async (c,
         message: error.message || (code === "not_found" ? "Route not found." : "Request failed."),
       });
       return c.json(body, status);
+    }
+
+    if (error instanceof RouteError) {
+      return c.json(
+        buildErrorResponse({
+          requestId,
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        }),
+        { status: error.status as never },
+      );
     }
 
     if (error instanceof ZodError) {

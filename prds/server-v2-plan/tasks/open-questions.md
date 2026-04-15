@@ -24,6 +24,15 @@ Agents should use this file when something needs human clarification but work ca
 
 ## Open Items
 
+### Q-20260414-02 - Legacy direct-opencode remote workspaces still lack a full server-side credential import path
+- Phase: 6
+- Problem: Phase 6 now routes remote workspace sessions through Server V2 for `remoteType: openwork` and best-effort `remoteType: opencode`, but the Phase 2 registry import only persists bearer-style remote auth fields. Legacy direct-opencode remotes that relied on browser-held or non-imported credentials still cannot be driven fully through Server V2 without a server-readable auth handoff.
+- Best guess used now: Server V2 treats `remoteType: openwork` as the supported remote session path for full Phase 6 migration, and supports `remoteType: opencode` only when the server registry already has usable bearer/basic auth material. The existing app-side direct remote connection path remains the compatibility fallback for any legacy direct-opencode workspace that still depends on missing credentials.
+- Impact if guess is wrong: A later phase may need an explicit server-side import or handoff for additional remote auth material before every historical remote workspace can move fully behind Server V2.
+- Requested human input: Confirm whether later phases should import more legacy remote-opencode auth material into the server DB, or whether direct-opencode remotes should be deprecated in favor of remote OpenWork workspaces.
+- Status: open
+- Resolution:
+
 ### Q-20260414-01 - Cloud signin state still lives in browser localStorage
 - Phase: 2
 - Problem: The current desktop app persists OpenWork Cloud signin state in browser localStorage (`apps/app/src/app/lib/den.ts`), which the standalone/server bootstrap path cannot read directly on disk in a portable way.

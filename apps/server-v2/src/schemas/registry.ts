@@ -56,6 +56,14 @@ export const capabilitiesDataSchema = z.object({
     workspaceDetail: z.literal(true),
     workspaceList: z.literal(true),
   }),
+  sessions: z.object({
+    events: z.literal(true),
+    list: z.literal(true),
+    messages: z.literal(true),
+    mutations: z.literal(true),
+    promptAsync: z.literal(true),
+    revertHistory: z.literal(true),
+  }),
   runtime: z.object({
     opencodeHealth: z.literal(true),
     routerHealth: z.literal(true),

@@ -19,6 +19,11 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-14 - Phase 6 - Keep session routing separate from baseline OpenCode connectivity during migration
+- Context: Phase 6 moves session and streaming traffic behind Server V2, but the app still depends on direct OpenCode health, provider, and config calls while connect-time migration remains in progress.
+- Learning: Attaching workspace-scoped Server V2 session routing as explicit client metadata lets migrated session flows use the server boundary without breaking the existing direct OpenCode probes that still gate connection bootstrap.
+- Action for later phases: When moving additional OpenCode-backed slices behind Server V2, prefer explicit per-slice routing metadata over forcing every OpenCode call through one temporary compatibility proxy.
+
 ### 2026-04-14 - Phase 5 - Keep partial remote-workspace compatibility inside the server-version boundary
 - Context: Server V2 now owns the canonical workspace registry and the app boot/switcher reads from it, but remote workspace execution still uses legacy direct-connect behavior in the app.
 - Learning: During read-slice migration, the safest place to merge Server V2 workspace summaries with legacy-only remote connection fields is the `server-version` normalization boundary keyed by stable workspace IDs, rather than leaking compatibility branches throughout UI feature code or re-exposing every secret in the public server payload.
