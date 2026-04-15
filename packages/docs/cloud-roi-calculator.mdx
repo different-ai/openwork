@@ -1,0 +1,50 @@
+---
+title: "ROI Calculator"
+description: "Estimate enterprise model cost savings when routing steady-state work to lower-cost models in OpenWork."
+---
+
+If it helps you assess the value of using OpenWork as part of a larger enterprise deployment, this page gives you a simple ROI-calculator-style way to compare premium-model spend against a lower-cost, more open alternative at the same token volume.
+
+The practical framing for engineering and platform teams is straightforward: keep premium models for the highest-stakes work, and use OpenWork to route repeatable, background, or high-volume tasks to cheaper models where the quality bar still holds.
+
+## Assumptions
+
+- Token mix: `70%` input and `30%` output. Blended cost is a weighted average.
+- Low estimate token volume: the amount bought with `$100 / month` on Opus 4.6 = `9.09M` tokens.
+- High estimate token volume: the amount bought with `$1,000 / month` on Opus 4.6 = `90.91M` tokens.
+- Opus 4.6 pricing: input `$5.00 / 1M tokens`, output `$25.00 / 1M tokens`.
+- Kimi K2.5 pricing: input `$0.60 / 1M tokens`, output `$2.75 / 1M tokens`.
+- Org size assumption: `2,500` employees.
+
+## Blended cost per 1M tokens
+
+- Opus 4.6: `(0.7 x $5.00) + (0.3 x $25.00) = $11.00`
+- Kimi K2.5: `(0.7 x $0.60) + (0.3 x $2.75) = $1.245`
+
+At the same token volume, Kimi K2.5 is about `8.83x` cheaper than Opus 4.6.
+
+## Cost comparison
+
+The yearly numbers below use the assumptions above and round to two decimals where needed.
+
+| Model | Lower cost estimate | Higher cost estimate | Lower estimate yearly price | Higher estimate yearly price |
+| --- | --- | --- | --- | --- |
+| Opus 4.6 | `$100.00 / (month * employee)` | `$1,000.00 / (month * employee)` | `$3.00M` | `$30.00M` |
+| Kimi K2.5 | `$11.32 / (month * employee)` | `$113.18 / (month * employee)` | `$0.34M` | `$3.40M` |
+| Savings with Kimi K2.5 | `$88.68 / (month * employee)` | `$886.82 / (month * employee)` | `$2.66M` | `$26.60M` |
+
+## Formulas
+
+- Blended model cost: `(input share x input price) + (output share x output price)`
+- Monthly cost per employee: `token volume in millions x blended cost per 1M tokens`
+- Yearly price: `2,500 employees x 12 months x monthly cost`
+
+## What this means for an enterprise rollout
+
+If a team is already budgeting for Opus-level usage, moving steady-state workloads to a lower-cost model keeps the same token volume while reducing model spend by roughly `88.7%`.
+
+That creates room to:
+
+- keep premium models available for the hardest or most sensitive tasks,
+- scale OpenWork usage to more teams without a linear model-cost increase,
+- and justify broader deployment by tying platform adoption to measurable infrastructure savings.
