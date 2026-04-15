@@ -126,6 +126,7 @@ export type SessionViewProps = {
   selectedWorkspaceDisplay: WorkspaceDisplay;
   selectedWorkspaceRoot: string;
   activeWorkspaceConfig: WorkspaceOpenworkConfig | null;
+  starterBootstrapEnabled: boolean;
   workspaces: WorkspaceInfo[];
   selectedWorkspaceId: string;
   connectingWorkspaceId: string | null;
@@ -2177,12 +2178,14 @@ export default function SessionView(props: SessionViewProps) {
     return props.sessionLoadingById(sessionId);
   });
   const showStartupSkeleton = createMemo(() => {
+    if (!props.starterBootstrapEnabled) return false;
     if (props.messages.length > 0) return false;
     if (props.clientConnected) return false;
     const phase = props.startupPhase;
     return phase !== "sessionIndexReady" && phase !== "firstSessionReady" && phase !== "ready";
   });
   const showSidebarInitialLoading = createMemo(() => {
+    if (!props.starterBootstrapEnabled) return false;
     if (props.workspaceSessionGroups.some((group) => group.sessions.length > 0)) {
       return false;
     }
@@ -2878,11 +2881,13 @@ export default function SessionView(props: SessionViewProps) {
   const emptyStateTitle = createMemo(() => {
     const configured = blueprintEmptyState()?.title?.trim();
     if (configured) return configured;
+    if (!props.starterBootstrapEnabled) return "";
     return defaultBlueprintCopyForPreset(emptyStatePreset()).title;
   });
   const emptyStateBody = createMemo(() => {
     const configured = blueprintEmptyState()?.body?.trim();
     if (configured) return configured;
+    if (!props.starterBootstrapEnabled) return "";
     return defaultBlueprintCopyForPreset(emptyStatePreset()).body;
   });
   const emptyStateStarters = createMemo<ResolvedEmptyStateStarter[]>(() => {
@@ -2890,7 +2895,9 @@ export default function SessionView(props: SessionViewProps) {
     const source =
       Array.isArray(configured)
         ? configured
-        : defaultBlueprintStartersForPreset(emptyStatePreset());
+        : props.starterBootstrapEnabled
+          ? defaultBlueprintStartersForPreset(emptyStatePreset())
+          : [];
 
     const resolved: ResolvedEmptyStateStarter[] = [];
 
@@ -3322,7 +3329,8 @@ export default function SessionView(props: SessionViewProps) {
                       !showStartupSkeleton() &&
                       !showSessionLoadingState() &&
                       !deferSessionRender() &&
-                      !showReactSessionSurface()
+                      !showReactSessionSurface() &&
+                      (!!emptyStateTitle() || !!emptyStateBody() || emptyStateStarters().length > 0)
                     }
                   >
                     <div class="text-center px-6 space-y-6">

@@ -968,7 +968,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     opencodeRouterSlackIdentities: () =>
       requestJsonRaw<OpenworkOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/opencode-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
-    createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
+    createLocalWorkspace: (payload: {
+      folderPath: string;
+      name: string;
+      preset: string;
+      starterBootstrapEnabled?: boolean;
+    }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
         token,
         hostToken,

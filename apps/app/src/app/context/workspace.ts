@@ -170,6 +170,7 @@ export function createWorkspaceStore(options: {
   onStartupTrace?: (event: string, detail?: Record<string, unknown>) => void;
   engineRuntime?: () => EngineRuntime;
   developerMode: () => boolean;
+  starterBootstrapEnabled?: () => boolean;
   pendingInitialSessionSelection?: () => { workspaceId: string; title: string | null; readyAt: number } | null;
   setPendingInitialSessionSelection?: (input: { workspaceId: string; title: string | null; readyAt: number } | null) => void;
 }) {
@@ -213,6 +214,11 @@ export function createWorkspaceStore(options: {
   const LONG_BOOT_CONNECT_REASONS = new Set(["host-start", "bootstrap-local"]);
   const DEFAULT_WORKSPACE_HOME_FOLDER_NAME = "OpenWork";
   const FIRST_RUN_WELCOME_WORKSPACE_NAME = "Welcome";
+  const starterBootstrapEnabled = () => options.starterBootstrapEnabled?.() ?? true;
+  const effectivePreset = (preset: WorkspacePreset): WorkspacePreset => {
+    if (starterBootstrapEnabled()) return preset;
+    return preset === "starter" ? "minimal" : preset;
+  };
   const preferredInitialSessionTitleForPreset = (preset: WorkspacePreset) => {
     const trimmed = defaultBlueprintSessionsForPreset(preset)
       .find((session) => session.openOnFirstLoad === true)?.title?.trim();
@@ -220,6 +226,10 @@ export function createWorkspaceStore(options: {
   };
 
   const queuePendingInitialSessionSelection = (workspaceId: string | null, preset: WorkspacePreset) => {
+    if (!starterBootstrapEnabled()) {
+      options.setPendingInitialSessionSelection?.(null);
+      return;
+    }
     const preferredInitialSessionTitle = preferredInitialSessionTitleForPreset(preset);
     if (!workspaceId) {
       options.setPendingInitialSessionSelection?.(null);
@@ -703,6 +713,8 @@ export function createWorkspaceStore(options: {
   });
 
   createEffect(() => {
+    if (!starterBootstrapEnabled()) return;
+
     const workspaceId = (runtimeWorkspaceId() ?? "").trim();
     const client = options.openworkServer.openworkServerClient();
     const connected = options.openworkServer.openworkServerStatus() === "connected";
@@ -1038,7 +1050,7 @@ export function createWorkspaceStore(options: {
         config.openwork as WorkspaceOpenworkConfig | null | undefined,
         workspace?.preset ?? "starter",
       );
-      const next = normalized.blueprint
+      const next = normalized.blueprint || !starterBootstrapEnabled()
         ? normalized
         : {
             ...normalized,
@@ -1128,6 +1140,7 @@ export function createWorkspaceStore(options: {
     name: string,
     preset: WorkspacePreset,
   ) => {
+    if (!starterBootstrapEnabled()) return null;
     if (preset !== "starter") return null;
     const localWorkspace = await ensureBackendWorkspaceReady(workspacePath, name, preset);
     return await localWorkspace.client.materializeBlueprintSessions(localWorkspace.workspaceId);
@@ -2194,17 +2207,33 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      const name = deriveWorkspaceName(resolvedFolder, preset);
+      const nextPreset = effectivePreset(preset);
+      const name = deriveWorkspaceName(resolvedFolder, nextPreset);
       const openworkServer = await resolveLocalOpenworkServer();
       const ws = openworkServer
-        ? await openworkServer.createLocalWorkspace({ folderPath: resolvedFolder, name, preset })
-        : await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+        ? await openworkServer.createLocalWorkspace({
+            folderPath: resolvedFolder,
+            name,
+            preset: nextPreset,
+            starterBootstrapEnabled: starterBootstrapEnabled(),
+          })
+        : await workspaceCreate({
+            folderPath: resolvedFolder,
+            name,
+            preset: nextPreset,
+            starterBootstrapEnabled: starterBootstrapEnabled(),
+          });
 
       const createdWorkspaceId = pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws);
 
       if (openworkServer && isTauriRuntime()) {
         try {
-          await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+          await workspaceCreate({
+            folderPath: resolvedFolder,
+            name,
+            preset: nextPreset,
+            starterBootstrapEnabled: starterBootstrapEnabled(),
+          });
         } catch {
           // keep the server result as the source of truth for this run
         }
@@ -2222,7 +2251,7 @@ export function createWorkspaceStore(options: {
         updateWorkspaceConnectionState(nextSelectedId, { status: "connected", message: null });
       }
 
-      queuePendingInitialSessionSelection(nextSelectedId || null, preset);
+      queuePendingInitialSessionSelection(nextSelectedId || null, nextPreset);
 
       setCreateWorkspaceOpen(false);
 
@@ -2232,8 +2261,8 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      if (preset === "starter") {
-        const materialized = await materializeStarterSessions(resolvedFolder, name, preset);
+      if (nextPreset === "starter") {
+        const materialized = await materializeStarterSessions(resolvedFolder, name, nextPreset);
         const sessionsReady = await waitForWorkspaceSessionsReady(resolvedFolder);
         if (!sessionsReady) {
           throw new Error("Starter sessions did not finish loading for the new workspace.");
@@ -2352,7 +2381,8 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      const name = deriveWorkspaceName(resolvedFolder, preset);
+      const nextPreset = effectivePreset(preset);
+      const name = deriveWorkspaceName(resolvedFolder, nextPreset);
 
       setSandboxStep("workspace", { status: "active", detail: name });
       pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
@@ -2360,11 +2390,26 @@ export function createWorkspaceStore(options: {
       // Ensure the workspace folder has baseline OpenWork/OpenCode files.
       const openworkServer = await resolveLocalOpenworkServer();
       const created = openworkServer
-        ? await openworkServer.createLocalWorkspace({ folderPath: resolvedFolder, name, preset })
-        : await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+        ? await openworkServer.createLocalWorkspace({
+            folderPath: resolvedFolder,
+            name,
+            preset: nextPreset,
+            starterBootstrapEnabled: starterBootstrapEnabled(),
+          })
+        : await workspaceCreate({
+            folderPath: resolvedFolder,
+            name,
+            preset: nextPreset,
+            starterBootstrapEnabled: starterBootstrapEnabled(),
+          });
       if (openworkServer && isTauriRuntime()) {
         try {
-          await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+          await workspaceCreate({
+            folderPath: resolvedFolder,
+            name,
+            preset: nextPreset,
+            starterBootstrapEnabled: starterBootstrapEnabled(),
+          });
         } catch {
           // ignore desktop mirror failures here
         }
@@ -3833,11 +3878,16 @@ export function createWorkspaceStore(options: {
 
     if (isTauriRuntime() && workspaces().length === 0) {
       markBranch("firstRunNoWorkspace", { startupPref });
-      options.setStartupPreference("local");
-      const welcomeFolder = await resolveFirstRunWelcomeFolder();
-      const ok = await createWorkspaceFlow("starter", welcomeFolder);
-      if (!ok) {
-        options.setOnboardingStep("local");
+      if (!starterBootstrapEnabled()) {
+        options.setStartupPreference(startupPref);
+        options.setOnboardingStep(startupPref === "server" ? "server" : startupPref === "local" ? "local" : "welcome");
+      } else {
+        options.setStartupPreference("local");
+        const welcomeFolder = await resolveFirstRunWelcomeFolder();
+        const ok = await createWorkspaceFlow("starter", welcomeFolder);
+        if (!ok) {
+          options.setOnboardingStep("local");
+        }
       }
       enterPhase("ready", { reason: "first-run-no-workspace" });
       return;

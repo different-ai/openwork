@@ -199,6 +199,8 @@ export type SettingsShellProps = {
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  starterBootstrapEnabled: boolean;
+  toggleStarterBootstrapEnabled: () => void;
   opencodeEnableExa: boolean;
   toggleOpencodeEnableExa: () => void;
   language: Language;
@@ -1199,6 +1201,8 @@ export default function SettingsShell(props: SettingsShellProps) {
                   isWindows={props.isWindows}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
+                  starterBootstrapEnabled={props.starterBootstrapEnabled}
+                  toggleStarterBootstrapEnabled={props.toggleStarterBootstrapEnabled}
                   language={props.language}
                   setLanguage={props.setLanguage}
                   updateAutoCheck={props.updateAutoCheck}

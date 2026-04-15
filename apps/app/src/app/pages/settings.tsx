@@ -145,6 +145,8 @@ export type SettingsViewProps = {
   isWindows: boolean;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  starterBootstrapEnabled: boolean;
+  toggleStarterBootstrapEnabled: () => void;
   language: Language;
   setLanguage: (value: Language) => void;
   themeMode: "light" | "dark" | "system";
@@ -1973,6 +1975,34 @@ export default function SettingsView(props: SettingsViewProps) {
                     {openworkStatusLabel()}
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div class={`${settingsPanelClass} space-y-3`}>
+              <div>
+                <div class="text-sm font-medium text-gray-12">
+                  {t("settings.starter_bootstrap_title")}
+                </div>
+                <div class="text-xs text-gray-9">
+                  {t("settings.starter_bootstrap_desc")}
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">{t("settings.starter_bootstrap_toggle")}</div>
+                  <div class="text-xs text-gray-7">
+                    {t("settings.starter_bootstrap_toggle_desc")}
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={props.toggleStarterBootstrapEnabled}
+                  disabled={props.busy}
+                >
+                  {props.starterBootstrapEnabled ? t("settings.on") : t("settings.off")}
+                </Button>
               </div>
             </div>
 

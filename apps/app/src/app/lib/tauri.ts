@@ -189,11 +189,13 @@ export async function workspaceCreate(input: {
   folderPath: string;
   name: string;
   preset: string;
+  starterBootstrapEnabled?: boolean;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create", {
     folderPath: input.folderPath,
     name: input.name,
     preset: input.preset,
+    starterBootstrapEnabled: input.starterBootstrapEnabled ?? true,
   });
 }
 

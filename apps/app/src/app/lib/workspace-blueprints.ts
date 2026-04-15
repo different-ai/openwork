@@ -24,30 +24,35 @@ const defaultWelcomeBlueprintMessages = (): WorkspaceBlueprintSessionMessage[] =
   },
 ];
 
-export function defaultBlueprintSessionsForPreset(_preset: string): WorkspaceBlueprintSessionTemplate[] {
-  return [
-    {
-      id: "welcome-to-openwork",
-      title: t("blueprint.welcome_title"),
-      messages: defaultWelcomeBlueprintMessages(),
-      openOnFirstLoad: true,
-    },
-    {
-      id: "csv-playbook",
-      title: t("blueprint.csv_session_title"),
-      messages: [
+export function defaultBlueprintSessionsForPreset(preset: string): WorkspaceBlueprintSessionTemplate[] {
+  switch (preset.trim().toLowerCase()) {
+    case "starter":
+      return [
         {
-          role: "assistant",
-          text: t("blueprint.csv_session_assistant"),
+          id: "welcome-to-openwork",
+          title: t("blueprint.welcome_title"),
+          messages: defaultWelcomeBlueprintMessages(),
+          openOnFirstLoad: true,
         },
         {
-          role: "user",
-          text: t("blueprint.csv_session_user"),
+          id: "csv-playbook",
+          title: t("blueprint.csv_session_title"),
+          messages: [
+            {
+              role: "assistant",
+              text: t("blueprint.csv_session_assistant"),
+            },
+            {
+              role: "user",
+              text: t("blueprint.csv_session_user"),
+            },
+          ],
+          openOnFirstLoad: false,
         },
-      ],
-      openOnFirstLoad: false,
-    },
-  ];
+      ];
+    default:
+      return [];
+  }
 }
 
 function normalizeSessionMessage(value: unknown): WorkspaceBlueprintSessionMessage | null {
