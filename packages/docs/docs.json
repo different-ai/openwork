@@ -39,6 +39,18 @@
             ]
           },
           {
+            "group": "Roadmap",
+            "pages": [
+              "roadmap"
+            ]
+          },
+          {
+            "group": "Changelog",
+            "pages": [
+              "changelog"
+            ]
+          },
+          {
             "group": "Improve this doc",
             "pages": [
               "missing-docs"
