@@ -11,6 +11,7 @@ export type SuccessResponse<TData> = {
 
 export type ErrorCode =
   | "bad_gateway"
+  | "conflict"
   | "forbidden"
   | "internal_error"
   | "invalid_request"

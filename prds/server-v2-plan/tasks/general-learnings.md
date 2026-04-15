@@ -19,6 +19,16 @@ Read this file before starting any phase.
 
 ## Entries
 
+### 2026-04-14 - Phase 7 - Canonical config can move before the runtime path does
+- Context: Phase 7 stores local workspace config in the server DB/config-dir, but still rematerializes compatibility copies into each workspace data dir so the current local OpenCode/runtime path keeps seeing project config during migration.
+- Learning: Moving the source of truth first is safe as long as the server also projects compatibility files into the legacy runtime locations that still gate execution.
+- Action for later phases: Keep server-owned config canonical, preserve compatibility projection until every local runtime consumer reads from the new config-dir path, then remove the duplicate materialization in one cleanup step.
+
+### 2026-04-14 - Phase 7 - Capability-gated slice migration works better than all-at-once workspace migration
+- Context: Phase 7 moves local workspace config, file sessions, simple content, inbox, artifacts, and reload reads onto Server V2 while remote file/config mutation still stays on the legacy direct path.
+- Learning: Routing each migrated slice through the server-version and capability boundary lets the app adopt Server V2 incrementally without pretending remote parity exists before the server truly owns it.
+- Action for later phases: Keep migrating by capability-backed slices, and do not mark cross-workspace or remote ownership complete until the server path replaces the remaining direct fallback flows.
+
 ### 2026-04-14 - Phase 6 - Keep session routing separate from baseline OpenCode connectivity during migration
 - Context: Phase 6 moves session and streaming traffic behind Server V2, but the app still depends on direct OpenCode health, provider, and config calls while connect-time migration remains in progress.
 - Learning: Attaching workspace-scoped Server V2 session routing as explicit client metadata lets migrated session flows use the server boundary without breaking the existing direct OpenCode probes that still gate connection bootstrap.

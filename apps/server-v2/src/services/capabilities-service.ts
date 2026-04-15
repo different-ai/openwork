@@ -4,6 +4,26 @@ import type { AuthService } from "./auth-service.js";
 
 export type CapabilitiesData = {
   auth: ReturnType<AuthService["getSummary"]>;
+  config: {
+    projection: true;
+    rawRead: true;
+    rawWrite: true;
+    read: true;
+    write: true;
+  };
+  files: {
+    artifacts: true;
+    contentRoutes: true;
+    fileSessions: true;
+    inbox: true;
+    mutations: true;
+  };
+  reload: {
+    manualEngineReload: true;
+    reconciliation: true;
+    watch: true;
+    workspaceEvents: true;
+  };
   registry: {
     backendResolution: true;
     hiddenWorkspaceFiltering: true;
@@ -25,6 +45,10 @@ export type CapabilitiesData = {
     runtimeSummary: true;
     runtimeVersions: true;
   };
+  workspaces: {
+    activate: true;
+    createLocal: true;
+  };
   transport: {
     rootMounted: true;
     sdkPackage: "@openwork/server-sdk";
@@ -44,6 +68,26 @@ export function createCapabilitiesService(input: {
       void runtimeSummary;
       return {
         auth: input.auth.getSummary(actor),
+        config: {
+          projection: true,
+          rawRead: true,
+          rawWrite: true,
+          read: true,
+          write: true,
+        },
+        files: {
+          artifacts: true,
+          contentRoutes: true,
+          fileSessions: true,
+          inbox: true,
+          mutations: true,
+        },
+        reload: {
+          manualEngineReload: true,
+          reconciliation: true,
+          watch: true,
+          workspaceEvents: true,
+        },
         registry: {
           backendResolution: true,
           hiddenWorkspaceFiltering: true,
@@ -64,6 +108,10 @@ export function createCapabilitiesService(input: {
           routerHealth: true,
           runtimeSummary: true,
           runtimeVersions: true,
+        },
+        workspaces: {
+          activate: true,
+          createLocal: true,
         },
         transport: {
           rootMounted: true,

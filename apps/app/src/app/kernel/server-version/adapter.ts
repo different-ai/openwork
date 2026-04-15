@@ -304,7 +304,7 @@ export function createServerVersionAdapter(accessors: ServerVersionAccessors) {
         capabilities: normalizeServerV2Capabilities(status.status),
         contract: "server-v2" as const,
         diagnostics: normalizeServerV2Diagnostics({ status: status.status, target }),
-        status: "limited" as const,
+        status: "connected" as const,
       } satisfies ServerStatusProbe;
     };
 

@@ -25,9 +25,9 @@ test("normalizeServerV2Capabilities exposes the migrated registry surface", () =
           visibleRead: "client_or_host",
         },
       },
-      capabilities: {
-        auth: {
-          actorKind: "client",
+        capabilities: {
+          auth: {
+            actorKind: "client",
           configured: {
             clientToken: true,
             hostToken: true,
@@ -42,6 +42,26 @@ test("normalizeServerV2Capabilities exposes the migrated registry surface", () =
             serverInventory: "host",
             visibleRead: "client_or_host",
           },
+        },
+        config: {
+          projection: true,
+          rawRead: true,
+          rawWrite: true,
+          read: true,
+          write: true,
+        },
+        files: {
+          artifacts: true,
+          contentRoutes: true,
+          fileSessions: true,
+          inbox: true,
+          mutations: true,
+        },
+        reload: {
+          manualEngineReload: true,
+          reconciliation: true,
+          watch: true,
+          workspaceEvents: true,
         },
         registry: {
           backendResolution: true,
@@ -60,6 +80,10 @@ test("normalizeServerV2Capabilities exposes the migrated registry surface", () =
           rootMounted: true,
           sdkPackage: "@openwork/server-sdk",
           v2: true,
+        },
+        workspaces: {
+          activate: true,
+          createLocal: true,
         },
       },
       database: {
@@ -106,9 +130,17 @@ test("normalizeServerV2Capabilities exposes the migrated registry surface", () =
       hostTokenConfigured: true,
       required: true,
     },
+    config: {
+      read: true,
+      write: true,
+    },
     registry: {
       workspaceList: true,
       workspaceDetail: true,
+    },
+    files: {
+      contentRoutes: true,
+      inbox: true,
     },
     transport: {
       rootMounted: true,

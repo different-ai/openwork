@@ -67,7 +67,7 @@ test("migration runner upgrades an existing database from the first migration", 
   const persistence = createPersistence({ workingDirectory: rootDir });
 
   expect(persistence.diagnostics.mode).toBe("existing");
-  expect(persistence.diagnostics.migrations.applied).toEqual(["0002"]);
+  expect(persistence.diagnostics.migrations.applied).toEqual(["0002", "0003"]);
   expect(persistence.repositories.providerConfigs.list()).toEqual([]);
 
   persistence.close();

@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { DeleteWorkspacesByWorkspaceIdSessionsBySessionIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemCapabilitiesData, GetSystemCapabilitiesErrors, GetSystemCapabilitiesResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses, GetSystemOpencodeHealthData, GetSystemOpencodeHealthErrors, GetSystemOpencodeHealthResponses, GetSystemRouterHealthData, GetSystemRouterHealthErrors, GetSystemRouterHealthResponses, GetSystemRuntimeSummaryData, GetSystemRuntimeSummaryErrors, GetSystemRuntimeSummaryResponses, GetSystemRuntimeVersionsData, GetSystemRuntimeVersionsErrors, GetSystemRuntimeVersionsResponses, GetSystemServersData, GetSystemServersErrors, GetSystemServersResponses, GetSystemStatusData, GetSystemStatusErrors, GetSystemStatusResponses, GetWorkspacesByWorkspaceIdData, GetWorkspacesByWorkspaceIdErrors, GetWorkspacesByWorkspaceIdEventsData, GetWorkspacesByWorkspaceIdEventsErrors, GetWorkspacesByWorkspaceIdEventsResponse, GetWorkspacesByWorkspaceIdEventsResponses, GetWorkspacesByWorkspaceIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdData, GetWorkspacesByWorkspaceIdSessionsBySessionIdErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotData, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusData, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoData, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponses, GetWorkspacesByWorkspaceIdSessionsData, GetWorkspacesByWorkspaceIdSessionsErrors, GetWorkspacesByWorkspaceIdSessionsResponses, GetWorkspacesByWorkspaceIdSessionsStatusData, GetWorkspacesByWorkspaceIdSessionsStatusErrors, GetWorkspacesByWorkspaceIdSessionsStatusResponses, GetWorkspacesData, GetWorkspacesErrors, GetWorkspacesResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdData, PatchWorkspacesByWorkspaceIdSessionsBySessionIdErrors, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortData, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandData, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkData, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitData, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncData, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertData, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareData, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellData, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeData, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertData, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponses, PostWorkspacesByWorkspaceIdSessionsData, PostWorkspacesByWorkspaceIdSessionsErrors, PostWorkspacesByWorkspaceIdSessionsResponses } from './types.gen';
+import type { DeleteWorkspacesByWorkspaceIdData, DeleteWorkspacesByWorkspaceIdErrors, DeleteWorkspacesByWorkspaceIdFileSessionsByFileSessionIdData, DeleteWorkspacesByWorkspaceIdFileSessionsByFileSessionIdErrors, DeleteWorkspacesByWorkspaceIdFileSessionsByFileSessionIdResponses, DeleteWorkspacesByWorkspaceIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdResponses, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareData, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, DeleteWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, GetIndexData, GetIndexErrors, GetIndexResponses, GetSystemCapabilitiesData, GetSystemCapabilitiesErrors, GetSystemCapabilitiesResponses, GetSystemHealthData, GetSystemHealthErrors, GetSystemHealthResponses, GetSystemMetaData, GetSystemMetaErrors, GetSystemMetaResponses, GetSystemOpencodeHealthData, GetSystemOpencodeHealthErrors, GetSystemOpencodeHealthResponses, GetSystemRouterHealthData, GetSystemRouterHealthErrors, GetSystemRouterHealthResponses, GetSystemRuntimeSummaryData, GetSystemRuntimeSummaryErrors, GetSystemRuntimeSummaryResponses, GetSystemRuntimeVersionsData, GetSystemRuntimeVersionsErrors, GetSystemRuntimeVersionsResponses, GetSystemServersData, GetSystemServersErrors, GetSystemServersResponses, GetSystemStatusData, GetSystemStatusErrors, GetSystemStatusResponses, GetWorkspacesByWorkspaceIdArtifactsByArtifactIdData, GetWorkspacesByWorkspaceIdArtifactsByArtifactIdErrors, GetWorkspacesByWorkspaceIdArtifactsByArtifactIdResponses, GetWorkspacesByWorkspaceIdArtifactsData, GetWorkspacesByWorkspaceIdArtifactsErrors, GetWorkspacesByWorkspaceIdArtifactsResponses, GetWorkspacesByWorkspaceIdConfigData, GetWorkspacesByWorkspaceIdConfigErrors, GetWorkspacesByWorkspaceIdConfigOpencodeRawData, GetWorkspacesByWorkspaceIdConfigOpencodeRawErrors, GetWorkspacesByWorkspaceIdConfigOpencodeRawResponses, GetWorkspacesByWorkspaceIdConfigResponses, GetWorkspacesByWorkspaceIdData, GetWorkspacesByWorkspaceIdErrors, GetWorkspacesByWorkspaceIdEventsData, GetWorkspacesByWorkspaceIdEventsErrors, GetWorkspacesByWorkspaceIdEventsResponse, GetWorkspacesByWorkspaceIdEventsResponses, GetWorkspacesByWorkspaceIdFilesContentData, GetWorkspacesByWorkspaceIdFilesContentErrors, GetWorkspacesByWorkspaceIdFilesContentResponses, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEventsData, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEventsErrors, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEventsResponses, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshotData, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshotErrors, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshotResponses, GetWorkspacesByWorkspaceIdInboxByInboxIdData, GetWorkspacesByWorkspaceIdInboxByInboxIdErrors, GetWorkspacesByWorkspaceIdInboxByInboxIdResponses, GetWorkspacesByWorkspaceIdInboxData, GetWorkspacesByWorkspaceIdInboxErrors, GetWorkspacesByWorkspaceIdInboxResponses, GetWorkspacesByWorkspaceIdReloadEventsData, GetWorkspacesByWorkspaceIdReloadEventsErrors, GetWorkspacesByWorkspaceIdReloadEventsResponses, GetWorkspacesByWorkspaceIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdData, GetWorkspacesByWorkspaceIdSessionsBySessionIdErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdData, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotData, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdSnapshotResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusData, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdStatusResponses, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoData, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoErrors, GetWorkspacesByWorkspaceIdSessionsBySessionIdTodoResponses, GetWorkspacesByWorkspaceIdSessionsData, GetWorkspacesByWorkspaceIdSessionsErrors, GetWorkspacesByWorkspaceIdSessionsResponses, GetWorkspacesByWorkspaceIdSessionsStatusData, GetWorkspacesByWorkspaceIdSessionsStatusErrors, GetWorkspacesByWorkspaceIdSessionsStatusResponses, GetWorkspacesData, GetWorkspacesErrors, GetWorkspacesResponses, PatchWorkspacesByWorkspaceIdConfigData, PatchWorkspacesByWorkspaceIdConfigErrors, PatchWorkspacesByWorkspaceIdConfigResponses, PatchWorkspacesByWorkspaceIdDisplayNameData, PatchWorkspacesByWorkspaceIdDisplayNameErrors, PatchWorkspacesByWorkspaceIdDisplayNameResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdData, PatchWorkspacesByWorkspaceIdSessionsBySessionIdErrors, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdData, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdErrors, PatchWorkspacesByWorkspaceIdSessionsBySessionIdMessagesByMessageIdPartsByPartIdResponses, PatchWorkspacesByWorkspaceIdSessionsBySessionIdResponses, PostWorkspacesByWorkspaceIdActivateData, PostWorkspacesByWorkspaceIdActivateErrors, PostWorkspacesByWorkspaceIdActivateResponses, PostWorkspacesByWorkspaceIdConfigOpencodeRawData, PostWorkspacesByWorkspaceIdConfigOpencodeRawErrors, PostWorkspacesByWorkspaceIdConfigOpencodeRawResponses, PostWorkspacesByWorkspaceIdEngineReloadData, PostWorkspacesByWorkspaceIdEngineReloadErrors, PostWorkspacesByWorkspaceIdEngineReloadResponses, PostWorkspacesByWorkspaceIdFilesContentData, PostWorkspacesByWorkspaceIdFilesContentErrors, PostWorkspacesByWorkspaceIdFilesContentResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperationsData, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperationsErrors, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperationsResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatchData, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatchErrors, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatchResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenewData, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenewErrors, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenewResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatchData, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatchErrors, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatchResponses, PostWorkspacesByWorkspaceIdFileSessionsData, PostWorkspacesByWorkspaceIdFileSessionsErrors, PostWorkspacesByWorkspaceIdFileSessionsResponses, PostWorkspacesByWorkspaceIdInboxData, PostWorkspacesByWorkspaceIdInboxErrors, PostWorkspacesByWorkspaceIdInboxResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortData, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdAbortResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandData, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdCommandResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkData, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdForkResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitData, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdInitResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesData, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdMessagesResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncData, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdPromptAsyncResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertData, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdRevertResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareData, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdShareResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellData, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdShellResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeData, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdSummarizeResponses, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertData, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertErrors, PostWorkspacesByWorkspaceIdSessionsBySessionIdUnrevertResponses, PostWorkspacesByWorkspaceIdSessionsData, PostWorkspacesByWorkspaceIdSessionsErrors, PostWorkspacesByWorkspaceIdSessionsResponses, PostWorkspacesLocalData, PostWorkspacesLocalErrors, PostWorkspacesLocalResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -96,11 +96,186 @@ export const getSystemRuntimeVersions = <ThrowOnError extends boolean = false>(o
 export const getWorkspaces = <ThrowOnError extends boolean = false>(options?: Options<GetWorkspacesData, ThrowOnError>) => (options?.client ?? client).get<GetWorkspacesResponses, GetWorkspacesErrors, ThrowOnError>({ url: '/workspaces', ...options });
 
 /**
+ * Delete workspace
+ *
+ * Deletes a workspace record from the local Server V2 registry during migration-era host flows.
+ */
+export const deleteWorkspacesByWorkspaceId = <ThrowOnError extends boolean = false>(options: Options<DeleteWorkspacesByWorkspaceIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteWorkspacesByWorkspaceIdResponses, DeleteWorkspacesByWorkspaceIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}', ...options });
+
+/**
  * Get workspace detail
  *
  * Returns the canonical workspace detail shape for a single workspace, including backend resolution and runtime summary fields.
  */
 export const getWorkspacesByWorkspaceId = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdResponses, GetWorkspacesByWorkspaceIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}', ...options });
+
+/**
+ * Create a local workspace
+ *
+ * Creates a local workspace, initializes starter files, creates the Server V2 config directory, and reconciles the new workspace into managed config state.
+ */
+export const postWorkspacesLocal = <ThrowOnError extends boolean = false>(options?: Options<PostWorkspacesLocalData, ThrowOnError>) => (options?.client ?? client).post<PostWorkspacesLocalResponses, PostWorkspacesLocalErrors, ThrowOnError>({ url: '/workspaces/local', ...options });
+
+/**
+ * Activate a workspace
+ *
+ * Marks a workspace as the active local workspace for migration-era host flows that still expect an active workspace concept.
+ */
+export const postWorkspacesByWorkspaceIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdActivateResponses, PostWorkspacesByWorkspaceIdActivateErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/activate', ...options });
+
+/**
+ * Update workspace display name
+ *
+ * Updates the persisted display name for a workspace record during migration.
+ */
+export const patchWorkspacesByWorkspaceIdDisplayName = <ThrowOnError extends boolean = false>(options: Options<PatchWorkspacesByWorkspaceIdDisplayNameData, ThrowOnError>) => (options.client ?? client).patch<PatchWorkspacesByWorkspaceIdDisplayNameResponses, PatchWorkspacesByWorkspaceIdDisplayNameErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/display-name', ...options });
+
+/**
+ * Read workspace config
+ *
+ * Returns stored and effective workspace config along with the materialized config paths managed by Server V2.
+ */
+export const getWorkspacesByWorkspaceIdConfig = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdConfigData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdConfigResponses, GetWorkspacesByWorkspaceIdConfigErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/config', ...options });
+
+/**
+ * Patch workspace config
+ *
+ * Updates stored workspace OpenWork/OpenCode config, absorbs recognized managed sections into the database, and rematerializes the effective config files.
+ */
+export const patchWorkspacesByWorkspaceIdConfig = <ThrowOnError extends boolean = false>(options: Options<PatchWorkspacesByWorkspaceIdConfigData, ThrowOnError>) => (options.client ?? client).patch<PatchWorkspacesByWorkspaceIdConfigResponses, PatchWorkspacesByWorkspaceIdConfigErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/config', ...options });
+
+/**
+ * Read raw OpenCode config text
+ *
+ * Returns the editable raw OpenCode config text for project or global scope, generated from the server-owned config state.
+ */
+export const getWorkspacesByWorkspaceIdConfigOpencodeRaw = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdConfigOpencodeRawData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdConfigOpencodeRawResponses, GetWorkspacesByWorkspaceIdConfigOpencodeRawErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/config/opencode-raw', ...options });
+
+/**
+ * Write raw OpenCode config text
+ *
+ * Parses raw OpenCode config text, absorbs recognized managed sections into the database, and rematerializes the effective config files.
+ */
+export const postWorkspacesByWorkspaceIdConfigOpencodeRaw = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdConfigOpencodeRawData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdConfigOpencodeRawResponses, PostWorkspacesByWorkspaceIdConfigOpencodeRawErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/config/opencode-raw', ...options });
+
+/**
+ * List reload events
+ *
+ * Returns workspace-scoped reload events emitted by Server V2 after config/file mutations, watched changes, or reconciliation work.
+ */
+export const getWorkspacesByWorkspaceIdReloadEvents = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdReloadEventsData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdReloadEventsResponses, GetWorkspacesByWorkspaceIdReloadEventsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/reload-events', ...options });
+
+/**
+ * Reload the local engine
+ *
+ * Restarts the local OpenCode runtime through the Server V2 runtime supervisor for the selected local workspace.
+ */
+export const postWorkspacesByWorkspaceIdEngineReload = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdEngineReloadData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdEngineReloadResponses, PostWorkspacesByWorkspaceIdEngineReloadErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/engine/reload', ...options });
+
+/**
+ * Create a workspace file session
+ *
+ * Creates a server-owned file session for a local workspace and returns the session metadata used for file catalog and mutation routes.
+ */
+export const postWorkspacesByWorkspaceIdFileSessions = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdFileSessionsData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdFileSessionsResponses, PostWorkspacesByWorkspaceIdFileSessionsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions', ...options });
+
+/**
+ * Renew a workspace file session
+ *
+ * Extends the lifetime of an existing workspace file session.
+ */
+export const postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenew = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenewData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenewResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenewErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions/{fileSessionId}/renew', ...options });
+
+/**
+ * Close a workspace file session
+ *
+ * Closes a workspace file session and releases its temporary server-side catalog state.
+ */
+export const deleteWorkspacesByWorkspaceIdFileSessionsByFileSessionId = <ThrowOnError extends boolean = false>(options: Options<DeleteWorkspacesByWorkspaceIdFileSessionsByFileSessionIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteWorkspacesByWorkspaceIdFileSessionsByFileSessionIdResponses, DeleteWorkspacesByWorkspaceIdFileSessionsByFileSessionIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions/{fileSessionId}', ...options });
+
+/**
+ * Get a file catalog snapshot
+ *
+ * Returns the file catalog snapshot for a workspace file session.
+ */
+export const getWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshot = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshotData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshotResponses, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshotErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions/{fileSessionId}/catalog/snapshot', ...options });
+
+/**
+ * List file session catalog events
+ *
+ * Returns file mutation events recorded for a workspace file session since the requested cursor.
+ */
+export const getWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEvents = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEventsData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEventsResponses, GetWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEventsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions/{fileSessionId}/catalog/events', ...options });
+
+/**
+ * Read a batch of files
+ *
+ * Reads a batch of files through the server-owned file session model.
+ */
+export const postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatch = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatchData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatchResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatchErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions/{fileSessionId}/read-batch', ...options });
+
+/**
+ * Write a batch of files
+ *
+ * Writes a batch of files with revision-aware conflict handling through the server-owned file session model.
+ */
+export const postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatch = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatchData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatchResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatchErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions/{fileSessionId}/write-batch', ...options });
+
+/**
+ * Run file operations
+ *
+ * Runs mkdir, rename, and delete operations through the server-owned file session model.
+ */
+export const postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperations = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperationsData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperationsResponses, PostWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperationsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/file-sessions/{fileSessionId}/operations', ...options });
+
+/**
+ * Read simple content
+ *
+ * Reads markdown-oriented content for lighter file flows without using the full file session model.
+ */
+export const getWorkspacesByWorkspaceIdFilesContent = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdFilesContentData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdFilesContentResponses, GetWorkspacesByWorkspaceIdFilesContentErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/files/content', ...options });
+
+/**
+ * Write simple content
+ *
+ * Writes markdown-oriented content with basic conflict handling for lighter file flows.
+ */
+export const postWorkspacesByWorkspaceIdFilesContent = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdFilesContentData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdFilesContentResponses, PostWorkspacesByWorkspaceIdFilesContentErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/files/content', ...options });
+
+/**
+ * List inbox items
+ *
+ * Returns uploadable inbox items for the selected workspace.
+ */
+export const getWorkspacesByWorkspaceIdInbox = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdInboxData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdInboxResponses, GetWorkspacesByWorkspaceIdInboxErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/inbox', ...options });
+
+/**
+ * Upload inbox item
+ *
+ * Uploads one file into the managed inbox area for the selected workspace.
+ */
+export const postWorkspacesByWorkspaceIdInbox = <ThrowOnError extends boolean = false>(options: Options<PostWorkspacesByWorkspaceIdInboxData, ThrowOnError>) => (options.client ?? client).post<PostWorkspacesByWorkspaceIdInboxResponses, PostWorkspacesByWorkspaceIdInboxErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/inbox', ...options });
+
+/**
+ * Download inbox item
+ *
+ * Downloads one inbox file for the selected workspace.
+ */
+export const getWorkspacesByWorkspaceIdInboxByInboxId = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdInboxByInboxIdData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdInboxByInboxIdResponses, GetWorkspacesByWorkspaceIdInboxByInboxIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/inbox/{inboxId}', ...options });
+
+/**
+ * List artifacts
+ *
+ * Returns downloadable artifact items for the selected workspace.
+ */
+export const getWorkspacesByWorkspaceIdArtifacts = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdArtifactsData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdArtifactsResponses, GetWorkspacesByWorkspaceIdArtifactsErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/artifacts', ...options });
+
+/**
+ * Download artifact
+ *
+ * Downloads one artifact file for the selected workspace.
+ */
+export const getWorkspacesByWorkspaceIdArtifactsByArtifactId = <ThrowOnError extends boolean = false>(options: Options<GetWorkspacesByWorkspaceIdArtifactsByArtifactIdData, ThrowOnError>) => (options.client ?? client).get<GetWorkspacesByWorkspaceIdArtifactsByArtifactIdResponses, GetWorkspacesByWorkspaceIdArtifactsByArtifactIdErrors, ThrowOnError>({ url: '/workspaces/{workspaceId}/artifacts/{artifactId}', ...options });
 
 /**
  * List workspace sessions

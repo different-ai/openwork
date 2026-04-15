@@ -139,7 +139,10 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
   };
   return {
     commands: { read: false, write: false },
-    config: { read: false, write: false },
+    config: {
+      read: input.data.capabilities.config.read,
+      write: input.data.capabilities.config.write,
+    },
     mcp: { read: false, write: false },
     plugins: { read: false, write: false },
     serverV2: {
@@ -147,6 +150,26 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
         actorKind: auth.actorKind,
         hostTokenConfigured: auth.configured.hostToken,
         required: auth.required,
+      },
+      config: {
+        projection: input.data.capabilities.config.projection,
+        rawRead: input.data.capabilities.config.rawRead,
+        rawWrite: input.data.capabilities.config.rawWrite,
+        read: input.data.capabilities.config.read,
+        write: input.data.capabilities.config.write,
+      },
+      files: {
+        artifacts: input.data.capabilities.files.artifacts,
+        contentRoutes: input.data.capabilities.files.contentRoutes,
+        fileSessions: input.data.capabilities.files.fileSessions,
+        inbox: input.data.capabilities.files.inbox,
+        mutations: input.data.capabilities.files.mutations,
+      },
+      reload: {
+        manualEngineReload: input.data.capabilities.reload.manualEngineReload,
+        reconciliation: input.data.capabilities.reload.reconciliation,
+        watch: input.data.capabilities.reload.watch,
+        workspaceEvents: input.data.capabilities.reload.workspaceEvents,
       },
       registry: {
         backendResolution: input.data.capabilities.registry.backendResolution,
@@ -167,8 +190,21 @@ export function normalizeServerV2Capabilities(input: OpenWorkServerV2SystemStatu
         rootMounted: input.data.capabilities.transport.rootMounted,
         v2: input.data.capabilities.transport.v2,
       },
+      workspaces: {
+        activate: input.data.capabilities.workspaces.activate,
+        createLocal: input.data.capabilities.workspaces.createLocal,
+      },
     },
     skills: { read: false, source: "openwork", write: false },
+    toolProviders: {
+      files: {
+        inboxPath: ".opencode/openwork/inbox/",
+        injection: input.data.capabilities.files.inbox,
+        maxBytes: 5_000_000,
+        outbox: input.data.capabilities.files.artifacts,
+        outboxPath: ".opencode/openwork/outbox/",
+      },
+    },
   } satisfies OpenworkServerCapabilities;
 }
 

@@ -38,6 +38,26 @@ export type OpenworkServerCapabilities = {
       hostTokenConfigured: boolean;
       required: boolean;
     };
+    config?: {
+      projection: boolean;
+      rawRead: boolean;
+      rawWrite: boolean;
+      read: boolean;
+      write: boolean;
+    };
+    files?: {
+      artifacts: boolean;
+      contentRoutes: boolean;
+      fileSessions: boolean;
+      inbox: boolean;
+      mutations: boolean;
+    };
+    reload?: {
+      manualEngineReload: boolean;
+      reconciliation: boolean;
+      watch: boolean;
+      workspaceEvents: boolean;
+    };
     registry: {
       backendResolution: boolean;
       hiddenWorkspaceFiltering: boolean;
@@ -56,6 +76,10 @@ export type OpenworkServerCapabilities = {
     transport: {
       rootMounted: boolean;
       v2: boolean;
+    };
+    workspaces?: {
+      activate: boolean;
+      createLocal: boolean;
     };
   };
 };
@@ -942,10 +966,20 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
-export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
+export function createOpenworkServerClient(options: {
+  baseUrl: string;
+  hostToken?: string;
+  serverV2?: {
+    capabilities?: OpenworkServerCapabilities["serverV2"] | null;
+    enabled?: boolean;
+  };
+  token?: string;
+}) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
   const hostToken = options.hostToken;
+  const serverV2 = options.serverV2?.enabled === true;
+  const serverV2Capabilities = options.serverV2?.capabilities ?? null;
 
   const timeouts = {
     health: 3_000,
@@ -964,15 +998,160 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     binary: 60_000,
   };
 
+  const canUseServerV2Config = Boolean(serverV2 && serverV2Capabilities?.config?.read && serverV2Capabilities?.config?.write);
+  const canUseServerV2Files = Boolean(serverV2 && serverV2Capabilities?.files?.contentRoutes);
+  const canUseServerV2Inbox = Boolean(serverV2 && serverV2Capabilities?.files?.inbox);
+  const canUseServerV2Artifacts = Boolean(serverV2 && serverV2Capabilities?.files?.artifacts);
+  const canUseServerV2WorkspaceLifecycle = Boolean(serverV2 && serverV2Capabilities?.workspaces?.createLocal);
+  const canUseServerV2Reload = Boolean(serverV2 && serverV2Capabilities?.reload?.workspaceEvents);
+
+  const mapServerV2Workspace = (item: any): OpenworkWorkspaceInfo => {
+    if (item.backend?.kind === "remote_openwork") {
+      return {
+        id: item.id,
+        name: item.displayName,
+        path: "",
+        preset: item.preset,
+        workspaceType: "remote",
+        remoteType: item.backend?.remote?.remoteType ?? "openwork",
+        baseUrl: item.backend?.remote?.hostUrl ?? null,
+        directory: item.backend?.remote?.directory ?? null,
+        displayName: item.displayName,
+        openworkHostUrl: item.backend?.remote?.hostUrl ?? null,
+        openworkToken: null,
+        openworkClientToken: null,
+        openworkHostToken: null,
+        openworkWorkspaceId: item.backend?.remote?.remoteWorkspaceId ?? null,
+        openworkWorkspaceName: item.backend?.remote?.workspaceName ?? null,
+        opencode: {
+          baseUrl: item.backend?.remote?.hostUrl ?? undefined,
+          directory: item.backend?.remote?.directory ?? undefined,
+        },
+      };
+    }
+
+    return {
+      id: item.id,
+      name: item.displayName,
+      path: item.backend?.local?.dataDir ?? "",
+      preset: item.preset,
+      workspaceType: "local",
+      displayName: item.displayName,
+      remoteType: null,
+      baseUrl: null,
+      directory: null,
+      openworkHostUrl: null,
+      openworkToken: null,
+      openworkClientToken: null,
+      openworkHostToken: null,
+      openworkWorkspaceId: null,
+      openworkWorkspaceName: null,
+      opencode: {
+        directory: item.backend?.local?.dataDir ?? undefined,
+      },
+    };
+  };
+
   return {
     baseUrl,
     token,
     health: () =>
-      requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
+      serverV2
+        ? requestJson<{ ok: true; data: { service: string; status: string; startedAt: string; uptimeMs: number; database: unknown }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            "/system/health",
+            { token, hostToken, timeoutMs: timeouts.health },
+          ).then((response) => ({ ok: response.ok, uptimeMs: response.data.uptimeMs, version: "server-v2" }))
+        : requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
     runtimeVersions: () =>
-      requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
-    status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
-    capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+      serverV2
+        ? requestJson<{ ok: true; data: { active: { opencodeVersion: string | null; routerVersion: string | null; serverVersion: string }; pinned: { opencodeVersion: string | null; routerVersion: string | null; serverVersion: string } }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            "/system/runtime/versions",
+            { token, hostToken, timeoutMs: timeouts.status },
+          ).then((response) => ({
+            ok: true,
+            services: [
+              {
+                actualVersion: response.data.active.serverVersion,
+                enabled: true,
+                name: "openwork-server",
+                running: true,
+                targetVersion: response.data.pinned.serverVersion,
+                upgradeAvailable: response.data.active.serverVersion !== response.data.pinned.serverVersion,
+              },
+              {
+                actualVersion: response.data.active.opencodeVersion,
+                enabled: true,
+                name: "opencode",
+                running: true,
+                targetVersion: response.data.pinned.opencodeVersion,
+                upgradeAvailable: response.data.active.opencodeVersion !== response.data.pinned.opencodeVersion,
+              },
+              {
+                actualVersion: response.data.active.routerVersion,
+                enabled: Boolean(response.data.active.routerVersion || response.data.pinned.routerVersion),
+                name: "opencode-router",
+                running: Boolean(response.data.active.routerVersion),
+                targetVersion: response.data.pinned.routerVersion,
+                upgradeAvailable: response.data.active.routerVersion !== response.data.pinned.routerVersion,
+              },
+            ],
+          } satisfies OpenworkRuntimeSnapshot))
+        : requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
+    status: () =>
+      serverV2
+        ? requestJson<{ ok: true; data: any; meta: { requestId: string; timestamp: string } }>(baseUrl, "/system/status", {
+            token,
+            hostToken,
+            timeoutMs: timeouts.status,
+          }).then((response) => ({
+            ok: true,
+            version: response.data.version,
+            uptimeMs: response.data.uptimeMs,
+            readOnly: false,
+            approval: { mode: "manual", timeoutMs: 0 },
+            corsOrigins: [],
+            workspaceCount: response.data.registry.visibleWorkspaceCount,
+            activeWorkspaceId: null,
+            selectedWorkspaceId: null,
+            workspace: null,
+            authorizedRoots: [],
+            server: {
+              host: new URL(baseUrl).hostname,
+              port: Number(new URL(baseUrl).port || (new URL(baseUrl).protocol === "https:" ? "443" : "80")),
+              configPath: null,
+            },
+            tokenSource: {
+              client: token ? "app-target" : "none",
+              host: hostToken ? "app-target" : "none",
+            },
+          } satisfies OpenworkServerDiagnostics))
+        : requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
+    capabilities: () =>
+      serverV2
+        ? requestJson<{ ok: true; data: any; meta: { requestId: string; timestamp: string } }>(baseUrl, "/system/capabilities", {
+            token,
+            hostToken,
+            timeoutMs: timeouts.capabilities,
+          }).then((response) => ({
+            commands: { read: false, write: false },
+            config: { read: response.data.config.read, write: response.data.config.write },
+            mcp: { read: false, write: false },
+            plugins: { read: false, write: false },
+            serverV2: response.data,
+            skills: { read: false, source: "openwork", write: false },
+            toolProviders: {
+              files: {
+                inboxPath: ".opencode/openwork/inbox/",
+                injection: response.data.files.inbox,
+                maxBytes: 5_000_000,
+                outbox: response.data.files.artifacts,
+                outboxPath: ".opencode/openwork/outbox/",
+              },
+            },
+          } satisfies OpenworkServerCapabilities))
+        : requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     opencodeRouterHealth: () =>
       requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(baseUrl, "/opencode-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     getOpenCodeRouterHealth: (workspaceId: string) =>
@@ -993,35 +1172,92 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJsonRaw<OpenworkOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/opencode-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     opencodeRouterSlackIdentities: () =>
       requestJsonRaw<OpenworkOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/opencode-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    listWorkspaces: () =>
+      serverV2
+        ? requestJson<{ ok: true; data: { items: any[] }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces", {
+            token,
+            hostToken,
+            timeoutMs: timeouts.listWorkspaces,
+          }).then((response): OpenworkWorkspaceList => ({ items: response.data.items.map(mapServerV2Workspace), activeId: response.data.items[0]?.id ?? null }))
+        : requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
-      requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-        timeoutMs: timeouts.activateWorkspace,
-      }),
+      canUseServerV2WorkspaceLifecycle
+        ? requestJson<{ ok: true; data: any; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces/local", {
+            token,
+            hostToken,
+            method: "POST",
+            body: payload,
+            timeoutMs: timeouts.activateWorkspace,
+          }).then(async () => {
+            const list = await requestJson<{ ok: true; data: { items: any[] }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces", {
+              token,
+              hostToken,
+              timeoutMs: timeouts.listWorkspaces,
+            });
+            return { workspaces: list.data.items.map(mapServerV2Workspace), activeId: list.data.items[0]?.id ?? null } satisfies WorkspaceList;
+          })
+        : requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
+            token,
+            hostToken,
+            method: "POST",
+            body: payload,
+            timeoutMs: timeouts.activateWorkspace,
+          }),
     updateWorkspaceDisplayName: (workspaceId: string, displayName: string | null) =>
-      requestJson<WorkspaceList>(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/display-name`, {
-        token,
-        hostToken,
-        method: "PATCH",
-        body: { displayName },
-        timeoutMs: timeouts.activateWorkspace,
-      }),
+      canUseServerV2WorkspaceLifecycle
+        ? requestJson<{ ok: true; data: any; meta: { requestId: string; timestamp: string } }>(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/display-name`, {
+            token,
+            hostToken,
+            method: "PATCH",
+            body: { displayName },
+            timeoutMs: timeouts.activateWorkspace,
+          }).then(async () => {
+            const list = await requestJson<{ ok: true; data: { items: any[] }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces", {
+              token,
+              hostToken,
+              timeoutMs: timeouts.listWorkspaces,
+            });
+            return { workspaces: list.data.items.map(mapServerV2Workspace), activeId: workspaceId } satisfies WorkspaceList;
+          })
+        : requestJson<WorkspaceList>(baseUrl, `/workspaces/${encodeURIComponent(workspaceId)}/display-name`, {
+            token,
+            hostToken,
+            method: "PATCH",
+            body: { displayName },
+            timeoutMs: timeouts.activateWorkspace,
+          }),
     activateWorkspace: (workspaceId: string) =>
-      requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo }>(
-        baseUrl,
-        `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
-        { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
-      ),
+      canUseServerV2WorkspaceLifecycle
+        ? requestJson<{ ok: true; data: { activeWorkspaceId: string }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
+            { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
+          ).then(() => ({ activeId: workspaceId, workspace: { id: workspaceId } as OpenworkWorkspaceInfo }))
+        : requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
+            { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
+          ),
     deleteWorkspace: (workspaceId: string) =>
-      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[]; workspaces?: WorkspaceInfo[] }>(
-        baseUrl,
-        `/workspaces/${encodeURIComponent(workspaceId)}`,
-        { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
-      ),
+      canUseServerV2WorkspaceLifecycle
+        ? requestJson<{ ok: true; data: { deleted: boolean; workspaceId: string }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}`,
+            { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
+          ).then(async () => {
+            const list = await requestJson<{ ok: true; data: { items: any[] }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces", {
+              token,
+              hostToken,
+              timeoutMs: timeouts.listWorkspaces,
+            });
+            const items = list.data.items.map(mapServerV2Workspace);
+            return { ok: true, deleted: true, persisted: true, activeId: items[0]?.id ?? null, items, workspaces: items };
+          })
+        : requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[]; workspaces?: WorkspaceInfo[] }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}`,
+            { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
+          ),
     deleteSession: (workspaceId: string, sessionId: string) =>
       requestJson<{ ok: boolean }>(
         baseUrl,
@@ -1129,11 +1365,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
       }),
     getConfig: (workspaceId: string) =>
-      requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
-        baseUrl,
-        `/workspace/${workspaceId}/config`,
-        { token, hostToken, timeoutMs: timeouts.config },
-      ),
+      canUseServerV2Config
+        ? requestJson<{ ok: true; data: { stored: { openwork: Record<string, unknown> }; effective: { opencode: Record<string, unknown> }; updatedAt: string }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/config`,
+            { token, hostToken, timeoutMs: timeouts.config },
+          ).then((response) => ({
+            opencode: response.data.effective.opencode,
+            openwork: response.data.stored.openwork,
+            updatedAt: Date.parse(response.data.updatedAt),
+          }))
+        : requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
+            baseUrl,
+            `/workspace/${workspaceId}/config`,
+            { token, hostToken, timeoutMs: timeouts.config },
+          ),
     setOpenCodeRouterTelegramToken: (
       workspaceId: string,
       tokenValue: string,
@@ -1329,40 +1575,80 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
-      requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
-        token,
-        hostToken,
-        method: "PATCH",
-        body: payload,
-      }),
+      canUseServerV2Config
+        ? requestJson<{ ok: true; data: { updatedAt: string }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/config`,
+            {
+              token,
+              hostToken,
+              method: "PATCH",
+              body: payload,
+            },
+          ).then((response) => ({ updatedAt: Date.parse(response.data.updatedAt) }))
+        : requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
+            token,
+            hostToken,
+            method: "PATCH",
+            body: payload,
+          }),
     readOpencodeConfigFile: (workspaceId: string, scope: "project" | "global" = "project") => {
       const query = `?scope=${scope}`;
-      return requestJson<OpencodeConfigFile>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-config${query}`, {
-        token,
-        hostToken,
-      });
+      return canUseServerV2Config
+        ? requestJson<{ ok: true; data: { content: string; exists: boolean; path: string | null }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/config/opencode-raw${query}`,
+            { token, hostToken },
+          ).then((response) => ({ content: response.data.content, exists: response.data.exists, path: response.data.path ?? "" }))
+        : requestJson<OpencodeConfigFile>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-config${query}`, {
+            token,
+            hostToken,
+          });
     },
     writeOpencodeConfigFile: (workspaceId: string, scope: "project" | "global", content: string) =>
-      requestJson<ExecResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-config`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: { scope, content },
-      }),
+      canUseServerV2Config
+        ? requestJson<{ ok: true; data: { path: string | null }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/config/opencode-raw`,
+            {
+              token,
+              hostToken,
+              method: "POST",
+              body: { scope, content },
+            },
+          ).then((response) => ({ ok: true, status: 0, stdout: response.data.path ? `Wrote ${response.data.path}` : "Wrote config", stderr: "" }))
+        : requestJson<ExecResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-config`, {
+            token,
+            hostToken,
+            method: "POST",
+            body: { scope, content },
+          }),
     listReloadEvents: (workspaceId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${options.since}` : "";
-      return requestJson<{ items: OpenworkReloadEvent[]; cursor?: number }>(
-        baseUrl,
-        `/workspace/${workspaceId}/events${query}`,
-        { token, hostToken },
-      );
+      return canUseServerV2Reload
+        ? requestJson<{ ok: true; data: { items: OpenworkReloadEvent[]; cursor: number }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/reload-events${query}`,
+            { token, hostToken },
+          ).then((response) => response.data)
+        : requestJson<{ items: OpenworkReloadEvent[]; cursor?: number }>(
+            baseUrl,
+            `/workspace/${workspaceId}/events${query}`,
+            { token, hostToken },
+          );
     },
     reloadEngine: (workspaceId: string) =>
-      requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `/workspace/${workspaceId}/engine/reload`, {
-        token,
-        hostToken,
-        method: "POST",
-      }),
+      (serverV2 && serverV2Capabilities?.reload?.manualEngineReload)
+        ? requestJson<{ ok: true; data: { reloadedAt: number }; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/engine/reload`,
+            { token, hostToken, method: "POST" },
+          ).then((response) => ({ ok: true, reloadedAt: response.data.reloadedAt }))
+        : requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `/workspace/${workspaceId}/engine/reload`, {
+            token,
+            hostToken,
+            method: "POST",
+          }),
     listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
@@ -1520,7 +1806,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         form.append("path", options.path.trim());
       }
 
-      const result = await requestMultipartRaw(baseUrl, `/workspace/${encodeURIComponent(id)}/inbox`, {
+      const inboxPath = canUseServerV2Inbox
+        ? `/workspaces/${encodeURIComponent(id)}/inbox`
+        : `/workspace/${encodeURIComponent(id)}/inbox`;
+
+      const result = await requestMultipartRaw(baseUrl, inboxPath, {
         token,
         hostToken,
         method: "POST",
@@ -1569,50 +1859,79 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     },
 
     listInbox: (workspaceId: string) =>
-      requestJson<OpenworkInboxList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/inbox`, {
-        token,
-        hostToken,
-      }),
+      canUseServerV2Inbox
+        ? requestJson<{ ok: true; data: OpenworkInboxList; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/inbox`,
+            { token, hostToken },
+          ).then((response) => response.data)
+        : requestJson<OpenworkInboxList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/inbox`, {
+            token,
+            hostToken,
+          }),
 
     downloadInboxItem: (workspaceId: string, inboxId: string) =>
       requestBinary(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/inbox/${encodeURIComponent(inboxId)}`,
+        `${canUseServerV2Inbox ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/inbox/${encodeURIComponent(inboxId)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
     readWorkspaceFile: (workspaceId: string, path: string) =>
-      requestJson<OpenworkWorkspaceFileContent>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}`,
-        { token, hostToken },
-      ),
+      canUseServerV2Files
+        ? requestJson<{ ok: true; data: OpenworkWorkspaceFileContent; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}`,
+            { token, hostToken },
+          ).then((response) => response.data)
+        : requestJson<OpenworkWorkspaceFileContent>(
+            baseUrl,
+            `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}`,
+            { token, hostToken },
+          ),
 
     writeWorkspaceFile: (
       workspaceId: string,
       payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean },
     ) =>
-      requestJson<OpenworkWorkspaceFileWriteResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/content`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: payload,
-        },
-      ),
+      canUseServerV2Files
+        ? requestJson<{ ok: true; data: OpenworkWorkspaceFileWriteResult; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/files/content`,
+            {
+              token,
+              hostToken,
+              method: "POST",
+              body: payload,
+            },
+          ).then((response) => response.data)
+        : requestJson<OpenworkWorkspaceFileWriteResult>(
+            baseUrl,
+            `/workspace/${encodeURIComponent(workspaceId)}/files/content`,
+            {
+              token,
+              hostToken,
+              method: "POST",
+              body: payload,
+            },
+          ),
 
     listArtifacts: (workspaceId: string) =>
-      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
-        token,
-        hostToken,
-      }),
+      canUseServerV2Artifacts
+        ? requestJson<{ ok: true; data: OpenworkArtifactList; meta: { requestId: string; timestamp: string } }>(
+            baseUrl,
+            `/workspaces/${encodeURIComponent(workspaceId)}/artifacts`,
+            { token, hostToken },
+          ).then((response) => response.data)
+        : requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
+            token,
+            hostToken,
+          }),
 
     downloadArtifact: (workspaceId: string, artifactId: string) =>
       requestBinary(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
+        `${canUseServerV2Artifacts ? "/workspaces" : "/workspace"}/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
   };

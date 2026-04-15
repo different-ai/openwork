@@ -24,7 +24,7 @@ function createOpenApiDocumentation(version: string) {
         description: [
           "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.",
           "",
-          "Phase 6 adds workspace-first sessions, messages, and typed SSE streaming surfaces over local and remote backends.",
+          "Phase 7 adds workspace-scoped config projection, file mutation routes, reload events, file watching, and reconciliation behind Server V2.",
         ].join("\n"),
     },
     servers: [{ url: "/" }],
@@ -48,6 +48,18 @@ function createOpenApiDocumentation(version: string) {
       {
         name: "Messages",
         description: "Workspace-first message history and mutation primitives nested under sessions.",
+      },
+      {
+        name: "Config",
+        description: "Workspace-scoped config projection, raw config editing, and materialization owned by Server V2.",
+      },
+      {
+        name: "Files",
+        description: "Workspace-scoped file sessions, simple content routes, inbox, and artifact surfaces owned by Server V2.",
+      },
+      {
+        name: "Reload",
+        description: "Workspace-scoped reload events, reconciliation, and explicit runtime reload controls.",
       },
     ],
   };

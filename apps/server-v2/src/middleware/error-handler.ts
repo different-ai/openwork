@@ -35,7 +35,7 @@ export const errorHandlingMiddleware: MiddlewareHandler<AppBindings> = async (c,
           message: error.message,
           details: error.details,
         }),
-        { status: error.status as never },
+        error.status as any,
       );
     }
 

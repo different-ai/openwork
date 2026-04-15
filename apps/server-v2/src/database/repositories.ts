@@ -5,9 +5,11 @@ import type {
   ManagedConfigRecord,
   RouterBindingRecord,
   RouterIdentityRecord,
+  ServerConfigStateRecord,
   ServerRecord,
   ServerRuntimeStateRecord,
   WorkspaceAssignmentRecord,
+  WorkspaceConfigStateRecord,
   WorkspaceRecord,
   WorkspaceRuntimeStateRecord,
   WorkspaceShareRecord,
@@ -80,6 +82,19 @@ type RawWorkspaceRuntimeStateRow = {
   last_error_json: string | null;
   last_session_refresh_at: string | null;
   last_sync_at: string | null;
+  updated_at: string;
+  workspace_id: string;
+};
+
+type RawServerConfigStateRow = {
+  opencode_json: string;
+  server_id: string;
+  updated_at: string;
+};
+
+type RawWorkspaceConfigStateRow = {
+  openwork_json: string;
+  opencode_json: string;
   updated_at: string;
   workspace_id: string;
 };
@@ -223,6 +238,31 @@ function mapWorkspaceRuntimeState(row: RawWorkspaceRuntimeStateRow | null | unde
     lastError: parseJsonValue(row.last_error_json, null),
     lastSessionRefreshAt: row.last_session_refresh_at,
     lastSyncAt: row.last_sync_at,
+    updatedAt: row.updated_at,
+    workspaceId: row.workspace_id,
+  };
+}
+
+function mapServerConfigState(row: RawServerConfigStateRow | null | undefined): ServerConfigStateRecord | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    opencode: parseJsonValue(row.opencode_json, {}),
+    serverId: row.server_id,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapWorkspaceConfigState(row: RawWorkspaceConfigStateRow | null | undefined): WorkspaceConfigStateRecord | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    openwork: parseJsonValue(row.openwork_json, {}),
+    opencode: parseJsonValue(row.opencode_json, {}),
     updatedAt: row.updated_at,
     workspaceId: row.workspace_id,
   };
@@ -384,6 +424,15 @@ export class ServersRepository {
 
 export class WorkspacesRepository {
   constructor(private readonly database: Database) {}
+
+  deleteById(id: string) {
+    const existing = this.getById(id);
+    if (!existing) {
+      return false;
+    }
+    this.database.query("DELETE FROM workspaces WHERE id = ?1").run(id);
+    return true;
+  }
 
   getById(id: string) {
     return mapWorkspace(this.database.query("SELECT * FROM workspaces WHERE id = ?1").get(id) as RawWorkspaceRow | null);
@@ -554,6 +603,64 @@ export class WorkspaceRuntimeStateRepository {
   }
 }
 
+export class ServerConfigStateRepository {
+  constructor(private readonly database: Database) {}
+
+  getByServerId(serverId: string) {
+    return mapServerConfigState(
+      this.database.query("SELECT * FROM server_config_state WHERE server_id = ?1").get(serverId) as RawServerConfigStateRow | null,
+    );
+  }
+
+  upsert(input: Omit<ServerConfigStateRecord, "updatedAt"> & { updatedAt?: string }) {
+    const updatedAt = input.updatedAt ?? nowIso();
+    this.database
+      .query(
+        `
+          INSERT INTO server_config_state (server_id, opencode_json, updated_at)
+          VALUES (?1, ?2, ?3)
+          ON CONFLICT(server_id) DO UPDATE SET
+            opencode_json = excluded.opencode_json,
+            updated_at = excluded.updated_at
+        `,
+      )
+      .run(input.serverId, stringifyJsonValue(input.opencode), updatedAt);
+    return this.getByServerId(input.serverId)!;
+  }
+}
+
+export class WorkspaceConfigStateRepository {
+  constructor(private readonly database: Database) {}
+
+  getByWorkspaceId(workspaceId: string) {
+    return mapWorkspaceConfigState(
+      this.database.query("SELECT * FROM workspace_config_state WHERE workspace_id = ?1").get(workspaceId) as RawWorkspaceConfigStateRow | null,
+    );
+  }
+
+  upsert(input: Omit<WorkspaceConfigStateRecord, "updatedAt"> & { updatedAt?: string }) {
+    const updatedAt = input.updatedAt ?? nowIso();
+    this.database
+      .query(
+        `
+          INSERT INTO workspace_config_state (workspace_id, openwork_json, opencode_json, updated_at)
+          VALUES (?1, ?2, ?3, ?4)
+          ON CONFLICT(workspace_id) DO UPDATE SET
+            openwork_json = excluded.openwork_json,
+            opencode_json = excluded.opencode_json,
+            updated_at = excluded.updated_at
+        `,
+      )
+      .run(
+        input.workspaceId,
+        stringifyJsonValue(input.openwork),
+        stringifyJsonValue(input.opencode),
+        updatedAt,
+      );
+    return this.getByWorkspaceId(input.workspaceId)!;
+  }
+}
+
 export class ManagedConfigRepository {
   constructor(
     private readonly database: Database,
@@ -575,15 +682,23 @@ export class ManagedConfigRepository {
   upsert(input: Omit<ManagedConfigRecord, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string }) {
     const createdAt = input.createdAt ?? nowIso();
     const updatedAt = input.updatedAt ?? nowIso();
+    const itemKind = this.tableName === "mcps"
+      ? "mcp"
+      : this.tableName === "plugins"
+        ? "plugin"
+        : this.tableName === "provider_configs"
+          ? "provider"
+          : "skill";
     this.database
       .query(
         `
           INSERT INTO ${this.tableName} (
-            id, display_name, item_key, config_json, auth_json, metadata_json,
+            id, item_kind, display_name, item_key, config_json, auth_json, metadata_json,
             source, cloud_item_id, created_at, updated_at
           )
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
           ON CONFLICT(id) DO UPDATE SET
+            item_kind = excluded.item_kind,
             display_name = excluded.display_name,
             item_key = excluded.item_key,
             config_json = excluded.config_json,
@@ -596,6 +711,7 @@ export class ManagedConfigRepository {
       )
       .run(
         input.id,
+        itemKind,
         input.displayName,
         input.key,
         stringifyJsonValue(input.config),
@@ -835,9 +951,11 @@ export type ServerRepositories = {
   providerConfigs: ManagedConfigRepository;
   routerBindings: RouterBindingsRepository;
   routerIdentities: RouterIdentitiesRepository;
+  serverConfigState: ServerConfigStateRepository;
   serverRuntimeState: ServerRuntimeStateRepository;
   servers: ServersRepository;
   skills: ManagedConfigRepository;
+  workspaceConfigState: WorkspaceConfigStateRepository;
   workspaceMcps: WorkspaceAssignmentRepository;
   workspacePlugins: WorkspaceAssignmentRepository;
   workspaceProviderConfigs: WorkspaceAssignmentRepository;
@@ -855,9 +973,11 @@ export function createRepositories(database: Database): ServerRepositories {
     providerConfigs: new ManagedConfigRepository(database, "provider_configs"),
     routerBindings: new RouterBindingsRepository(database),
     routerIdentities: new RouterIdentitiesRepository(database),
+    serverConfigState: new ServerConfigStateRepository(database),
     serverRuntimeState: new ServerRuntimeStateRepository(database),
     servers: new ServersRepository(database),
     skills: new ManagedConfigRepository(database, "skills"),
+    workspaceConfigState: new WorkspaceConfigStateRepository(database),
     workspaceMcps: new WorkspaceAssignmentRepository(database, "workspace_mcps"),
     workspacePlugins: new WorkspaceAssignmentRepository(database, "workspace_plugins"),
     workspaceProviderConfigs: new WorkspaceAssignmentRepository(database, "workspace_provider_configs"),

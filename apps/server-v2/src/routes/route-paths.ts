@@ -23,6 +23,14 @@ function workspaceSessionMessagesPath(sessionId: string = ":sessionId", workspac
   return `${workspaceSessionPath(sessionId, workspaceId)}/messages`;
 }
 
+function workspaceFileSessionsBasePath(workspaceId: string = WORKSPACE_ID_PARAMETER) {
+  return `${workspaceRoutePath(workspaceId)}/file-sessions`;
+}
+
+function workspaceFileSessionPath(fileSessionId: string = ":fileSessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) {
+  return `${workspaceFileSessionsBasePath(workspaceId)}/${fileSessionId}`;
+}
+
 function workspaceSessionMessagePath(
   messageId: string = ":messageId",
   sessionId: string = ":sessionId",
@@ -52,8 +60,41 @@ export const routePaths = {
   },
   workspaces: {
     base: routeNamespaces.workspaces,
+    createLocal: `${routeNamespaces.workspaces}/local`,
     byId: workspaceRoutePath,
     events: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/events`,
+    activate: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/activate`,
+    displayName: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/display-name`,
+    artifacts: {
+      base: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/artifacts`,
+      byId: (artifactId: string = ":artifactId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceRoutePath(workspaceId)}/artifacts/${artifactId}`,
+    },
+    config: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/config`,
+    engineReload: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/engine/reload`,
+    fileSessions: {
+      base: workspaceFileSessionsBasePath,
+      byId: workspaceFileSessionPath,
+      renew: (fileSessionId: string = ":fileSessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceFileSessionPath(fileSessionId, workspaceId)}/renew`,
+      catalogSnapshot: (fileSessionId: string = ":fileSessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceFileSessionPath(fileSessionId, workspaceId)}/catalog/snapshot`,
+      catalogEvents: (fileSessionId: string = ":fileSessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceFileSessionPath(fileSessionId, workspaceId)}/catalog/events`,
+      readBatch: (fileSessionId: string = ":fileSessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceFileSessionPath(fileSessionId, workspaceId)}/read-batch`,
+      writeBatch: (fileSessionId: string = ":fileSessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceFileSessionPath(fileSessionId, workspaceId)}/write-batch`,
+      operations: (fileSessionId: string = ":fileSessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceFileSessionPath(fileSessionId, workspaceId)}/operations`,
+    },
+    inbox: {
+      base: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/inbox`,
+      byId: (inboxId: string = ":inboxId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
+        `${workspaceRoutePath(workspaceId)}/inbox/${inboxId}`,
+    },
+    rawOpencodeConfig: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/config/opencode-raw`,
+    reloadEvents: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/reload-events`,
     sessions: {
       base: workspaceSessionsBasePath,
       byId: workspaceSessionPath,
@@ -95,5 +136,6 @@ export const routePaths = {
       unrevert: (sessionId: string = ":sessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
         `${workspaceSessionPath(sessionId, workspaceId)}/unrevert`,
     },
+    simpleContent: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/files/content`,
   },
 } as const;

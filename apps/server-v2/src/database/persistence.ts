@@ -333,10 +333,13 @@ export function createServerPersistence(options: CreateServerPersistenceOptions)
   const repositories = createRepositories(database);
   const registry = createRegistryService({
     localServerCapabilities: {
+      configRoutes: true,
       capabilitiesRoutes: true,
       contractLoop: true,
+      fileRoutes: true,
       managedConfigTables: true,
-      phase: 5,
+      phase: 7,
+      reloadOwnership: true,
       rootMounted: true,
       runtimeRoutes: true,
       runtimeSupervision: true,

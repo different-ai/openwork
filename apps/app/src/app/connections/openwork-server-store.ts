@@ -121,11 +121,18 @@ export function createOpenworkServerStore(options: {
   );
 
   const openworkServerClient = createMemo(() => {
-    if (openworkServerContractMode() === "server-v2") return null;
     const baseUrl = openworkServerBaseUrl().trim();
     if (!baseUrl) return null;
     const auth = openworkServerAuth();
-    return createOpenworkServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
+    return createOpenworkServerClient({
+      baseUrl,
+      hostToken: auth.hostToken,
+      serverV2: {
+        capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+        enabled: openworkServerContractMode() === "server-v2",
+      },
+      token: auth.token,
+    });
   });
 
   const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
@@ -588,12 +595,13 @@ export function createOpenworkServerStore(options: {
 
   async function ensureLocalOpenworkServerClient(): Promise<OpenworkServerClient | null> {
     let hostInfo = openworkServerHostInfo();
-    if (hostInfo?.startupMode === "server-v2") {
-      return null;
-    }
     if (hostInfo?.baseUrl?.trim() && hostInfo.clientToken?.trim()) {
       const existing = createOpenworkServerClient({
         baseUrl: hostInfo.baseUrl.trim(),
+        serverV2: {
+          capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+          enabled: hostInfo.startupMode === "server-v2",
+        },
         token: hostInfo.clientToken.trim(),
         hostToken: hostInfo.hostToken?.trim() || undefined,
       });
@@ -634,6 +642,10 @@ export function createOpenworkServerStore(options: {
 
     return createOpenworkServerClient({
       baseUrl,
+      serverV2: {
+        capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+        enabled: hostInfo?.startupMode === "server-v2",
+      },
       token,
       hostToken: hostToken || undefined,
     });

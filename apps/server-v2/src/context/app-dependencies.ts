@@ -1,5 +1,6 @@
 import { createAuthService, type AuthService } from "../services/auth-service.js";
 import { createCapabilitiesService, type CapabilitiesService } from "../services/capabilities-service.js";
+import { createConfigMaterializationService, type ConfigMaterializationService } from "../services/config-materialization-service.js";
 import { createProcessInfoAdapter, type ProcessInfoAdapter } from "../adapters/process-info.js";
 import { createServerPersistence, type ServerPersistence } from "../database/persistence.js";
 import { createSqliteDatabaseStatusProvider, type DatabaseStatusProvider } from "../database/status-provider.js";
@@ -7,6 +8,7 @@ import type { RuntimeAssetService } from "../runtime/assets.js";
 import type { RegistryService } from "../services/registry-service.js";
 import { createServerRegistryService, type ServerRegistryService } from "../services/server-registry-service.js";
 import { createRuntimeService, type RuntimeService } from "../services/runtime-service.js";
+import { createWorkspaceFileService, type WorkspaceFileService } from "../services/workspace-file-service.js";
 import { createWorkspaceSessionService, type WorkspaceSessionService } from "../services/workspace-session-service.js";
 import { createSystemService, type SystemService } from "../services/system-service.js";
 import { createWorkspaceRegistryService, type WorkspaceRegistryService } from "../services/workspace-registry-service.js";
@@ -19,6 +21,8 @@ export type AppDependencies = {
   services: {
     auth: AuthService;
     capabilities: CapabilitiesService;
+    config: ConfigMaterializationService;
+    files: WorkspaceFileService;
     registry: RegistryService;
     runtime: RuntimeService;
     sessions: WorkspaceSessionService;
@@ -123,9 +127,21 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     auth,
     runtime,
   });
+  const config = createConfigMaterializationService({
+    repositories: persistence.repositories,
+    serverId: persistence.registry.localServerId,
+    workingDirectory: persistence.workingDirectory,
+  });
   const sessions = createWorkspaceSessionService({
     repositories: persistence.repositories,
     runtime,
+  });
+  const files = createWorkspaceFileService({
+    config,
+    registry: persistence.registry,
+    repositories: persistence.repositories,
+    runtime,
+    serverId: persistence.registry.localServerId,
   });
 
   return {
@@ -136,6 +152,8 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     services: {
       auth,
       capabilities,
+      config,
+      files,
       registry: persistence.registry,
       runtime,
       sessions,
@@ -157,6 +175,7 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
     startedAt,
     version,
     async close() {
+      await files.dispose();
       await runtime.dispose();
       persistence.close();
     },

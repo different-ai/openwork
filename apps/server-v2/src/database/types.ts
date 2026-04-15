@@ -66,6 +66,19 @@ export type WorkspaceRuntimeStateRecord = {
   workspaceId: string;
 };
 
+export type ServerConfigStateRecord = {
+  opencode: JsonObject;
+  serverId: string;
+  updatedAt: string;
+};
+
+export type WorkspaceConfigStateRecord = {
+  openwork: JsonObject;
+  opencode: JsonObject;
+  updatedAt: string;
+  workspaceId: string;
+};
+
 export type ManagedSource = "cloud_synced" | "discovered" | "imported" | "openwork_managed";
 
 export type ManagedConfigRecord = {

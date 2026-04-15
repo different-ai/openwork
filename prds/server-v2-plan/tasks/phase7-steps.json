@@ -23,7 +23,7 @@
         "Later routes can ask for effective workspace config without duplicating logic.",
         "The service reflects the ownership model in `ideal-flow.md` and `schema.md`."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-002",
@@ -34,7 +34,7 @@
         "The path shape aligns with `workspaces/<workspaceId>/config` or the chosen equivalent.",
         "Later config projection can write into a predictable location."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-003",
@@ -45,7 +45,7 @@
         "Workspace creation updates the registry and filesystem consistently.",
         "The app or Tauri layer no longer needs to own the durable creation logic."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-004",
@@ -56,7 +56,7 @@
         "Workspace data and config paths are reflected correctly in materialized config.",
         "The rules do not require direct Tauri file editing to stay consistent."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-005",
@@ -67,7 +67,7 @@
         "The server can return effective config and raw/editable config where needed.",
         "Response shapes make it clear what is materialized versus stored."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-006",
@@ -78,7 +78,7 @@
         "Writes go through one audit-aware server path.",
         "Resulting config state is reflected in the DB and materialized files consistently."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-007",
@@ -89,7 +89,7 @@
         "The server DB remains the source of truth for managed concepts.",
         "Projection logic supports later managed-item phases without redesign."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-008",
@@ -100,7 +100,7 @@
         "The model supports conflict detection and incremental events.",
         "The implementation is isolated from legacy server globals."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-009",
@@ -111,7 +111,7 @@
         "Catalog responses include the data needed by migrated editors.",
         "The routes follow the shared auth and error model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-010",
@@ -122,7 +122,7 @@
         "Writes detect stale revisions or conflicting edits where required.",
         "The resulting mutations trigger the correct audit and reload flows."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-011",
@@ -133,7 +133,7 @@
         "Operation failures use consistent typed errors.",
         "The file-event or reload model sees these changes too."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-012",
@@ -144,7 +144,7 @@
         "The routes are consistent with the rest of the server-owned file model.",
         "The app can migrate lighter file flows without needing the full file-session API."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-013",
@@ -155,7 +155,7 @@
         "Artifact download flows are served by Server V2.",
         "The routes respect workspace scoping and auth rules."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-014",
@@ -166,7 +166,7 @@
         "Server-caused mutations emit explicit reload signals.",
         "The behavior matches the queueing and workspace isolation principles in the broader docs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-015",
@@ -177,7 +177,7 @@
         "Watcher output feeds reload or reconciliation logic cleanly.",
         "Watch behavior does not recreate the old app-owned watcher model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-016",
@@ -188,7 +188,7 @@
         "Startup repair is idempotent and observable.",
         "Disk and DB state can be brought back into alignment safely."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-017",
@@ -199,7 +199,7 @@
         "Unknown manual files are left alone.",
         "Absorption behavior is explicit and testable."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-018",
@@ -210,7 +210,7 @@
         "The route is not a thin proxy to legacy server internals.",
         "Reload semantics are consistent with the runtime supervisor."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-019",
@@ -221,7 +221,7 @@
         "Direct Tauri or app-local file mutation is reduced for covered slices.",
         "Legacy fallbacks remain quarantined and deletable."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "P7-020",
@@ -232,7 +232,7 @@
         "Conflict and reload edge cases are asserted explicitly.",
         "The tests prove the server, not the UI, owns the migrated workspace mutation paths."
       ],
-      "completed": false
+      "completed": true
     }
   ]
 }

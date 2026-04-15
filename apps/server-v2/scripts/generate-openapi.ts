@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAppDependencies } from "../src/context/app-dependencies.js";
-import { createApp } from "../src/app.js";
+import { createApp } from "../src/app-factory.js";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const packageDir = resolve(scriptDir, "..");
@@ -25,18 +25,22 @@ async function writeIfChanged(filePath: string, contents: string) {
 
 async function main() {
   const dependencies = createAppDependencies({ inMemory: true, version: "0.0.0" });
-  const app = createApp({ dependencies });
-  const response = await app.request("http://openwork.local/openapi.json");
+  try {
+    const app = createApp({ dependencies });
+    const response = await app.request("http://openwork.local/openapi.json");
 
-  if (!response.ok) {
-    throw new Error(`Failed to generate OpenAPI document: ${response.status} ${response.statusText}`);
+    if (!response.ok) {
+      throw new Error(`Failed to generate OpenAPI document: ${response.status} ${response.statusText}`);
+    }
+
+    const document = await response.json();
+    const contents = `${JSON.stringify(document, null, 2)}\n`;
+    const changed = await writeIfChanged(outputPath, contents);
+
+    process.stdout.write(`[openwork-server-v2] ${changed ? "wrote" : "verified"} ${outputPath}\n`);
+  } finally {
+    await dependencies.close();
   }
-
-  const document = await response.json();
-  const contents = `${JSON.stringify(document, null, 2)}\n`;
-  const changed = await writeIfChanged(outputPath, contents);
-
-  process.stdout.write(`[openwork-server-v2] ${changed ? "wrote" : "verified"} ${outputPath}\n`);
 }
 
 main().catch((error) => {

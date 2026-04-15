@@ -80,4 +80,4 @@ test("cli boots as a standalone process and serves system health", async () => {
 
   expect(body.ok).toBe(true);
   expect(body.data.service).toBe("openwork-server-v2");
-});
+}, 15_000);

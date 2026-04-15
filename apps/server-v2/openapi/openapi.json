@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "OpenWork Server V2",
-    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 6 adds workspace-first sessions, messages, and typed SSE streaming surfaces over local and remote backends.",
+    "description": "OpenAPI contract for the standalone OpenWork Server V2 runtime and durable registry state.\n\nPhase 7 adds workspace-scoped config projection, file mutation routes, reload events, file watching, and reconciliation behind Server V2.",
     "version": "0.0.0"
   },
   "servers": [
@@ -30,6 +30,18 @@
     {
       "name": "Messages",
       "description": "Workspace-first message history and mutation primitives nested under sessions."
+    },
+    {
+      "name": "Config",
+      "description": "Workspace-scoped config projection, raw config editing, and materialization owned by Server V2."
+    },
+    {
+      "name": "Files",
+      "description": "Workspace-scoped file sessions, simple content routes, inbox, and artifact surfaces owned by Server V2."
+    },
+    {
+      "name": "Reload",
+      "description": "Workspace-scoped reload events, reconciliation, and explicit runtime reload controls."
     }
   ],
   "paths": {
@@ -552,6 +564,1498 @@
             },
             "in": "path",
             "name": "workspaceId",
+            "required": true
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWorkspacesByWorkspaceId",
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Delete workspace",
+        "description": "Deletes a workspace record from the local Server V2 registry during migration-era host flows.",
+        "responses": {
+          "200": {
+            "description": "Workspace deleted successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceDeleteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/local": {
+      "post": {
+        "operationId": "postWorkspacesLocal",
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Create a local workspace",
+        "description": "Creates a local workspace, initializes starter files, creates the Server V2 config directory, and reconciles the new workspace into managed config state.",
+        "responses": {
+          "200": {
+            "description": "Local workspace created successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated actor does not have access to this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ForbiddenError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/activate": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdActivate",
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Activate a workspace",
+        "description": "Marks a workspace as the active local workspace for migration-era host flows that still expect an active workspace concept.",
+        "responses": {
+          "200": {
+            "description": "Workspace activated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceActivationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated actor does not have access to this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ForbiddenError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/display-name": {
+      "patch": {
+        "operationId": "patchWorkspacesByWorkspaceIdDisplayName",
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Update workspace display name",
+        "description": "Updates the persisted display name for a workspace record during migration.",
+        "responses": {
+          "200": {
+            "description": "Workspace detail returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/config": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdConfig",
+        "tags": [
+          "Config"
+        ],
+        "summary": "Read workspace config",
+        "description": "Returns stored and effective workspace config along with the materialized config paths managed by Server V2.",
+        "responses": {
+          "200": {
+            "description": "Workspace config returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceConfigResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "patchWorkspacesByWorkspaceIdConfig",
+        "tags": [
+          "Config"
+        ],
+        "summary": "Patch workspace config",
+        "description": "Updates stored workspace OpenWork/OpenCode config, absorbs recognized managed sections into the database, and rematerializes the effective config files.",
+        "responses": {
+          "200": {
+            "description": "Workspace config updated successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/config/opencode-raw": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdConfigOpencodeRaw",
+        "tags": [
+          "Config"
+        ],
+        "summary": "Read raw OpenCode config text",
+        "description": "Returns the editable raw OpenCode config text for project or global scope, generated from the server-owned config state.",
+        "responses": {
+          "200": {
+            "description": "Raw OpenCode config returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2RawOpencodeConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdConfigOpencodeRaw",
+        "tags": [
+          "Config"
+        ],
+        "summary": "Write raw OpenCode config text",
+        "description": "Parses raw OpenCode config text, absorbs recognized managed sections into the database, and rematerializes the effective config files.",
+        "responses": {
+          "200": {
+            "description": "Raw OpenCode config written successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2RawOpencodeConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/reload-events": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdReloadEvents",
+        "tags": [
+          "Reload"
+        ],
+        "summary": "List reload events",
+        "description": "Returns workspace-scoped reload events emitted by Server V2 after config/file mutations, watched changes, or reconciliation work.",
+        "responses": {
+          "200": {
+            "description": "Reload events returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ReloadEventsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/engine/reload": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdEngineReload",
+        "tags": [
+          "Reload"
+        ],
+        "summary": "Reload the local engine",
+        "description": "Restarts the local OpenCode runtime through the Server V2 runtime supervisor for the selected local workspace.",
+        "responses": {
+          "200": {
+            "description": "Workspace engine reloaded successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2EngineReloadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdFileSessions",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Create a workspace file session",
+        "description": "Creates a server-owned file session for a local workspace and returns the session metadata used for file catalog and mutation routes.",
+        "responses": {
+          "200": {
+            "description": "Workspace file session created successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2FileSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions/{fileSessionId}/renew": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdRenew",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Renew a workspace file session",
+        "description": "Extends the lifetime of an existing workspace file session.",
+        "responses": {
+          "200": {
+            "description": "Workspace file session renewed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2FileSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileSessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions/{fileSessionId}": {
+      "delete": {
+        "operationId": "deleteWorkspacesByWorkspaceIdFileSessionsByFileSessionId",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Close a workspace file session",
+        "description": "Closes a workspace file session and releases its temporary server-side catalog state.",
+        "responses": {
+          "200": {
+            "description": "Workspace file session closed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceActivationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileSessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions/{fileSessionId}/catalog/snapshot": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogSnapshot",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Get a file catalog snapshot",
+        "description": "Returns the file catalog snapshot for a workspace file session.",
+        "responses": {
+          "200": {
+            "description": "Workspace file catalog returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2FileCatalogSnapshotResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileSessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions/{fileSessionId}/catalog/events": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdFileSessionsByFileSessionIdCatalogEvents",
+        "tags": [
+          "Files"
+        ],
+        "summary": "List file session catalog events",
+        "description": "Returns file mutation events recorded for a workspace file session since the requested cursor.",
+        "responses": {
+          "200": {
+            "description": "Workspace file session events returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2FileMutationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileSessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions/{fileSessionId}/read-batch": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdReadBatch",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Read a batch of files",
+        "description": "Reads a batch of files through the server-owned file session model.",
+        "responses": {
+          "200": {
+            "description": "Workspace files read successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2FileBatchReadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileSessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions/{fileSessionId}/write-batch": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdWriteBatch",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Write a batch of files",
+        "description": "Writes a batch of files with revision-aware conflict handling through the server-owned file session model.",
+        "responses": {
+          "200": {
+            "description": "Workspace files written successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2FileMutationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileSessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/file-sessions/{fileSessionId}/operations": {
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdFileSessionsByFileSessionIdOperations",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Run file operations",
+        "description": "Runs mkdir, rename, and delete operations through the server-owned file session model.",
+        "responses": {
+          "200": {
+            "description": "Workspace file operations applied successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2FileMutationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "fileSessionId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/files/content": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdFilesContent",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Read simple content",
+        "description": "Reads markdown-oriented content for lighter file flows without using the full file session model.",
+        "responses": {
+          "200": {
+            "description": "Workspace content returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SimpleContentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdFilesContent",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Write simple content",
+        "description": "Writes markdown-oriented content with basic conflict handling for lighter file flows.",
+        "responses": {
+          "200": {
+            "description": "Workspace content written successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SimpleContentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request validation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/inbox": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdInbox",
+        "tags": [
+          "Files"
+        ],
+        "summary": "List inbox items",
+        "description": "Returns uploadable inbox items for the selected workspace.",
+        "responses": {
+          "200": {
+            "description": "Workspace inbox returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2BinaryListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postWorkspacesByWorkspaceIdInbox",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Upload inbox item",
+        "description": "Uploads one file into the managed inbox area for the selected workspace.",
+        "responses": {
+          "200": {
+            "description": "Workspace inbox item uploaded successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2BinaryUploadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/inbox/{inboxId}": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdInboxByInboxId",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Download inbox item",
+        "description": "Downloads one inbox file for the selected workspace.",
+        "responses": {
+          "200": {
+            "description": "Inbox item downloaded successfully.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SimpleContentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "inboxId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/artifacts": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdArtifacts",
+        "tags": [
+          "Files"
+        ],
+        "summary": "List artifacts",
+        "description": "Returns downloadable artifact items for the selected workspace.",
+        "responses": {
+          "200": {
+            "description": "Workspace artifacts returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2BinaryListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          }
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/artifacts/{artifactId}": {
+      "get": {
+        "operationId": "getWorkspacesByWorkspaceIdArtifactsByArtifactId",
+        "tags": [
+          "Files"
+        ],
+        "summary": "Download artifact",
+        "description": "Downloads one artifact file for the selected workspace.",
+        "responses": {
+          "200": {
+            "description": "Artifact downloaded successfully.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2SimpleContentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication is required for this route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2UnauthorizedError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server failed to complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2InternalError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "workspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "artifactId",
             "required": true
           }
         ]
@@ -4011,6 +5515,97 @@
           "auth": {
             "$ref": "#/components/schemas/OpenWorkServerV2AuthSummary"
           },
+          "config": {
+            "type": "object",
+            "properties": {
+              "projection": {
+                "type": "boolean",
+                "const": true
+              },
+              "rawRead": {
+                "type": "boolean",
+                "const": true
+              },
+              "rawWrite": {
+                "type": "boolean",
+                "const": true
+              },
+              "read": {
+                "type": "boolean",
+                "const": true
+              },
+              "write": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "projection",
+              "rawRead",
+              "rawWrite",
+              "read",
+              "write"
+            ]
+          },
+          "files": {
+            "type": "object",
+            "properties": {
+              "artifacts": {
+                "type": "boolean",
+                "const": true
+              },
+              "contentRoutes": {
+                "type": "boolean",
+                "const": true
+              },
+              "fileSessions": {
+                "type": "boolean",
+                "const": true
+              },
+              "inbox": {
+                "type": "boolean",
+                "const": true
+              },
+              "mutations": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "artifacts",
+              "contentRoutes",
+              "fileSessions",
+              "inbox",
+              "mutations"
+            ]
+          },
+          "reload": {
+            "type": "object",
+            "properties": {
+              "manualEngineReload": {
+                "type": "boolean",
+                "const": true
+              },
+              "reconciliation": {
+                "type": "boolean",
+                "const": true
+              },
+              "watch": {
+                "type": "boolean",
+                "const": true
+              },
+              "workspaceEvents": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "manualEngineReload",
+              "reconciliation",
+              "watch",
+              "workspaceEvents"
+            ]
+          },
           "registry": {
             "type": "object",
             "properties": {
@@ -4107,6 +5702,23 @@
               "runtimeVersions"
             ]
           },
+          "workspaces": {
+            "type": "object",
+            "properties": {
+              "activate": {
+                "type": "boolean",
+                "const": true
+              },
+              "createLocal": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "activate",
+              "createLocal"
+            ]
+          },
           "transport": {
             "type": "object",
             "properties": {
@@ -4132,9 +5744,13 @@
         },
         "required": [
           "auth",
+          "config",
+          "files",
+          "reload",
           "registry",
           "sessions",
           "runtime",
+          "workspaces",
           "transport"
         ]
       },
@@ -5309,6 +6925,826 @@
           "error"
         ]
       },
+      "OpenWorkServerV2InvalidRequestError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2ErrorDetail"
+                }
+              },
+              "code": {
+                "type": "string",
+                "const": "invalid_request"
+              }
+            },
+            "required": [
+              "message",
+              "requestId",
+              "code"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceActivationData": {
+        "type": "object",
+        "properties": {
+          "activeWorkspaceId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          }
+        },
+        "required": [
+          "activeWorkspaceId"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceActivationResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceActivationData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceDeleteData": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          }
+        },
+        "required": [
+          "deleted",
+          "workspaceId"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceDeleteData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceConfigSnapshot": {
+        "type": "object",
+        "properties": {
+          "effective": {
+            "type": "object",
+            "properties": {
+              "opencode": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "openwork": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "opencode",
+              "openwork"
+            ]
+          },
+          "materialized": {
+            "type": "object",
+            "properties": {
+              "compatibilityOpencodePath": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "compatibilityOpenworkPath": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "configDir": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "configOpencodePath": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "configOpenworkPath": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "compatibilityOpencodePath",
+              "compatibilityOpenworkPath",
+              "configDir",
+              "configOpencodePath",
+              "configOpenworkPath"
+            ]
+          },
+          "stored": {
+            "type": "object",
+            "properties": {
+              "opencode": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "openwork": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "opencode",
+              "openwork"
+            ]
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          }
+        },
+        "required": [
+          "effective",
+          "materialized",
+          "stored",
+          "updatedAt",
+          "workspaceId"
+        ]
+      },
+      "OpenWorkServerV2WorkspaceConfigResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2WorkspaceConfigSnapshot"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2RawOpencodeConfigData": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "exists": {
+            "type": "boolean"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "exists",
+          "path",
+          "updatedAt"
+        ]
+      },
+      "OpenWorkServerV2RawOpencodeConfigResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2RawOpencodeConfigData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2ReloadEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "agents",
+              "commands",
+              "config",
+              "mcp",
+              "plugins",
+              "skills"
+            ]
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "timestamp": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "trigger": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "added",
+                  "removed",
+                  "updated"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "command",
+                  "config",
+                  "mcp",
+                  "plugin",
+                  "skill"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "seq",
+          "timestamp",
+          "workspaceId"
+        ]
+      },
+      "OpenWorkServerV2ReloadEventsData": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenWorkServerV2ReloadEvent"
+            }
+          }
+        },
+        "required": [
+          "cursor",
+          "items"
+        ]
+      },
+      "OpenWorkServerV2ReloadEventsResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ReloadEventsData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2EngineReloadData": {
+        "type": "object",
+        "properties": {
+          "reloadedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "reloadedAt"
+        ]
+      },
+      "OpenWorkServerV2EngineReloadResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2EngineReloadData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2FileSessionData": {
+        "type": "object",
+        "properties": {
+          "canWrite": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "expiresAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "id": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "ttlMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          }
+        },
+        "required": [
+          "canWrite",
+          "createdAt",
+          "expiresAt",
+          "id",
+          "ttlMs",
+          "workspaceId"
+        ]
+      },
+      "OpenWorkServerV2FileSessionResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2FileSessionData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2FileCatalogSnapshot": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "generatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "dir",
+                    "file"
+                  ]
+                },
+                "mtimeMs": {
+                  "type": "number"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "kind",
+                "mtimeMs",
+                "path",
+                "revision",
+                "size"
+              ]
+            }
+          },
+          "nextAfter": {
+            "type": "string"
+          },
+          "sessionId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "workspaceId": {
+            "$ref": "#/components/schemas/OpenWorkServerV2Identifier"
+          }
+        },
+        "required": [
+          "cursor",
+          "generatedAt",
+          "items",
+          "sessionId",
+          "total",
+          "truncated",
+          "workspaceId"
+        ]
+      },
+      "OpenWorkServerV2FileCatalogSnapshotResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2FileCatalogSnapshot"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2FileMutationResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "required": [
+              "cursor",
+              "items"
+            ]
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2FileBatchReadResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2SimpleContentData": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "content": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "bytes",
+          "content",
+          "path",
+          "updatedAt"
+        ]
+      },
+      "OpenWorkServerV2SimpleContentResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2SimpleContentData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2BinaryItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "size",
+          "updatedAt"
+        ]
+      },
+      "OpenWorkServerV2BinaryListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OpenWorkServerV2BinaryItem"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ]
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
+      "OpenWorkServerV2BinaryUploadData": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bytes",
+          "path"
+        ]
+      },
+      "OpenWorkServerV2BinaryUploadResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/OpenWorkServerV2BinaryUploadData"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OpenWorkServerV2ResponseMeta"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "meta"
+        ]
+      },
       "OpenWorkServerV2SessionSummary": {
         "type": "object",
         "properties": {
@@ -5447,45 +7883,6 @@
           "ok",
           "data",
           "meta"
-        ]
-      },
-      "OpenWorkServerV2InvalidRequestError": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "const": false
-          },
-          "error": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "string"
-              },
-              "requestId": {
-                "$ref": "#/components/schemas/OpenWorkServerV2RequestId"
-              },
-              "details": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/OpenWorkServerV2ErrorDetail"
-                }
-              },
-              "code": {
-                "type": "string",
-                "const": "invalid_request"
-              }
-            },
-            "required": [
-              "message",
-              "requestId",
-              "code"
-            ]
-          }
-        },
-        "required": [
-          "ok",
-          "error"
         ]
       },
       "OpenWorkServerV2SessionStatus": {

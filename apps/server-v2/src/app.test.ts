@@ -92,13 +92,13 @@ test("system health returns a consistent envelope", async () => {
   expect(["ready", "warning"]).toContain(body.data.database.status);
 });
 
-test("system metadata includes phase 5 registry and runtime migration state", async () => {
+test("system metadata includes phase 7 registry, config, and runtime migration state", async () => {
   const { app } = createTestApp();
   const response = await app.request("http://openwork.local/system/meta");
   const body = await response.json();
 
   expect(response.status).toBe(200);
-  expect(body.data.foundation.phase).toBe(6);
+  expect(body.data.foundation.phase).toBe(7);
   expect(body.data.foundation.startup.registry.localServerId).toBe("srv_local");
   expect(body.data.foundation.startup.registry.hiddenWorkspaceIds).toHaveLength(2);
   expect(body.data.runtimeSupervisor.bootstrapPolicy).toBe("disabled");
@@ -119,6 +119,9 @@ test("openapi route is generated from the live Hono app", async () => {
   expect(document.paths["/system/opencode/health"].get.operationId).toBe("getSystemOpencodeHealth");
   expect(document.paths["/system/runtime/versions"].get.operationId).toBe("getSystemRuntimeVersions");
   expect(document.paths["/workspaces"].get.operationId).toBe("getWorkspaces");
+  expect(document.paths["/workspaces/local"].post.operationId).toBe("postWorkspacesLocal");
+  expect(document.paths["/workspaces/{workspaceId}/config"].get.operationId).toBe("getWorkspacesByWorkspaceIdConfig");
+  expect(document.paths["/workspaces/{workspaceId}/reload-events"].get.operationId).toBe("getWorkspacesByWorkspaceIdReloadEvents");
   expect(document.paths["/workspaces/{workspaceId}/sessions"].get.operationId).toBe("getWorkspacesByWorkspaceIdSessions");
   expect(document.paths["/workspaces/{workspaceId}/events"].get.operationId).toBe("getWorkspacesByWorkspaceIdEvents");
 });

@@ -3,8 +3,9 @@ import type { Database } from "bun:sqlite";
 import type { MigrationResult } from "../types.js";
 import { phase2RegistryRuntimeMigration } from "./0001-registry-runtime.js";
 import { phase2ManagedStateMigration } from "./0002-managed-state.js";
+import { phase7FilesConfigMigration } from "./0003-files-config.js";
 
-const migrations = [phase2RegistryRuntimeMigration, phase2ManagedStateMigration].map((migration) => ({
+const migrations = [phase2RegistryRuntimeMigration, phase2ManagedStateMigration, phase7FilesConfigMigration].map((migration) => ({
   ...migration,
   checksum: createHash("sha256").update(migration.sql).digest("hex"),
 }));
