@@ -154,6 +154,7 @@ export type SessionViewProps = {
   orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
   appVersion: string | null;
+  feedbackUiEnabled: boolean;
   booting: boolean;
   startupPhase: BootPhase;
   startupBranch: StartupBranch;
@@ -3653,6 +3654,7 @@ export default function SessionView(props: SessionViewProps) {
             developerMode={props.developerMode}
             settingsOpen={false}
             onSendFeedback={openFeedback}
+            showFeedbackButton={props.feedbackUiEnabled}
             showSettingsButton={true}
             onOpenSettings={props.toggleSettings}
             providerConnectedIds={props.providerConnectedIds}

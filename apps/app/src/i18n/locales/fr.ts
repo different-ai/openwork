@@ -1493,6 +1493,8 @@ export default {
   "settings.feedback_badge": "Nous lisons chaque message",
   "settings.feedback_desc": "Dites-nous ce qui vous plaît et ce qui vous semble difficile. Les retours vont directement à l'équipe et nous aident à prioriser ce qui sera livré ensuite.",
   "settings.feedback_title": "Aidez à façonner OpenWork",
+  "settings.feedback_ui_toggle": "Afficher les boutons de retour dans l'interface",
+  "settings.feedback_ui_toggle_desc": "Affiche ou masque les entrées de feedback comme le bouton du footer et les actions de feedback dans les paramètres.",
   "settings.group_global": "Global",
   "settings.group_workspace": "Espace de travail",
   "settings.hide_titlebar": "Masquer la barre de titre",

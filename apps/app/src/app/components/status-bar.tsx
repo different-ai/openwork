@@ -19,6 +19,7 @@ type StatusBarProps = {
   statusPingClass?: string;
   statusPulse?: boolean;
   showSettingsButton?: boolean;
+  showFeedbackButton?: boolean;
 };
 
 export default function StatusBar(props: StatusBarProps) {
@@ -102,16 +103,18 @@ export default function StatusBar(props: StatusBarProps) {
         </div>
 
         <div class="flex items-center gap-1.5">
-          <button
-            type="button"
-            class="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-            onClick={props.onSendFeedback}
-            title={t("status.send_feedback")}
-            aria-label={t("status.send_feedback")}
-          >
-            <MessageCircle class="h-4 w-4" />
-            <span class="text-[11px] font-medium">{t("status.feedback")}</span>
-          </button>
+          <Show when={props.showFeedbackButton !== false}>
+            <button
+              type="button"
+              class="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              onClick={props.onSendFeedback}
+              title={t("status.send_feedback")}
+              aria-label={t("status.send_feedback")}
+            >
+              <MessageCircle class="h-4 w-4" />
+              <span class="text-[11px] font-medium">{t("status.feedback")}</span>
+            </button>
+          </Show>
           <Show when={props.showSettingsButton !== false}>
             <button
               type="button"

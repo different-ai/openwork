@@ -1493,6 +1493,8 @@ export default {
   "settings.feedback_badge": "We read every message",
   "settings.feedback_desc": "Tell us what feels great and what feels rough. Feedback goes straight to the team and helps us prioritize what ships next.",
   "settings.feedback_title": "Help shape OpenWork",
+  "settings.feedback_ui_toggle": "Display feedback buttons in UI",
+  "settings.feedback_ui_toggle_desc": "Show or hide feedback entry points like the footer button and the feedback actions in settings.",
   "settings.group_global": "Global",
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Hide titlebar",

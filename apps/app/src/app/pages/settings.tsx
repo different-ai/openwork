@@ -145,6 +145,8 @@ export type SettingsViewProps = {
   isWindows: boolean;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  feedbackUiEnabled: boolean;
+  toggleFeedbackUiEnabled: () => void;
   language: Language;
   setLanguage: (value: Language) => void;
   themeMode: "light" | "dark" | "system";
@@ -1673,17 +1675,32 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="pointer-events-none absolute -bottom-12 left-6 h-24 w-24 rounded-full bg-cyan-6/20 blur-2xl" />
 
               <div class="relative space-y-4">
-                <div class="space-y-2">
-                  <div class="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-11">
-                    <LifeBuoy size={12} />
-                    {t("settings.feedback_badge")}
+                <div class="flex items-start justify-between gap-3">
+                  <div class="space-y-2 min-w-0">
+                    <div class="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-11">
+                      <LifeBuoy size={12} />
+                      {t("settings.feedback_badge")}
+                    </div>
+                    <div class="text-sm font-semibold text-gray-12">
+                      {t("settings.feedback_title")}
+                    </div>
+                    <div class="max-w-[58ch] text-xs text-gray-10">
+                      {t("settings.feedback_desc")}
+                    </div>
                   </div>
-                  <div class="text-sm font-semibold text-gray-12">
-                    {t("settings.feedback_title")}
-                  </div>
-                  <div class="max-w-[58ch] text-xs text-gray-10">
-                    {t("settings.feedback_desc")}
-                  </div>
+
+                  <button
+                    type="button"
+                    class="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-blue-7/30 bg-gray-1/70 px-2.5 py-1.5 text-[11px] font-medium text-gray-11 transition-colors hover:border-blue-7/50 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-7/30"
+                    onClick={props.toggleFeedbackUiEnabled}
+                    disabled={props.busy}
+                    title={t("settings.feedback_ui_toggle_desc")}
+                    aria-label={t("settings.feedback_ui_toggle")}
+                  >
+                    <MessageCircle size={12} />
+                    <span>{t("status.feedback")}</span>
+                    <span class="text-gray-8">{props.feedbackUiEnabled ? t("settings.on") : t("settings.off")}</span>
+                  </button>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">

@@ -199,6 +199,8 @@ export type SettingsShellProps = {
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  feedbackUiEnabled: boolean;
+  toggleFeedbackUiEnabled: () => void;
   opencodeEnableExa: boolean;
   toggleOpencodeEnableExa: () => void;
   language: Language;
@@ -1199,6 +1201,8 @@ export default function SettingsShell(props: SettingsShellProps) {
                   isWindows={props.isWindows}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
+                  feedbackUiEnabled={props.feedbackUiEnabled}
+                  toggleFeedbackUiEnabled={props.toggleFeedbackUiEnabled}
                   language={props.language}
                   setLanguage={props.setLanguage}
                   updateAutoCheck={props.updateAutoCheck}
@@ -1366,6 +1370,7 @@ export default function SettingsShell(props: SettingsShellProps) {
           settingsOpen={true}
           showSettingsButton={true}
           onSendFeedback={openFeedback}
+          showFeedbackButton={props.feedbackUiEnabled}
           onOpenSettings={props.toggleSettings}
           providerConnectedIds={props.providerConnectedIds}
         />

@@ -42,6 +42,7 @@ import { clearDevLogs } from "./lib/dev-log";
 import { clearPerfLogs } from "./lib/perf-log";
 import { deepLinkBridgeEvent, drainPendingDeepLinks, type DeepLinkBridgeDetail } from "./lib/deep-link-bridge";
 import {
+  FEEDBACK_UI_PREF_KEY,
   HIDE_TITLEBAR_PREF_KEY,
   SUGGESTED_PLUGINS,
 } from "./constants";
@@ -236,6 +237,7 @@ export default function App() {
     createSignal<OnboardingStep>("welcome");
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
+  const [feedbackUiEnabled, setFeedbackUiEnabled] = createSignal(true);
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar" | "custom">(
     isTauriRuntime() ? "sidecar" : "path"
@@ -1716,6 +1718,11 @@ export default function App() {
           }
         }
 
+        const storedFeedbackUi = window.localStorage.getItem(FEEDBACK_UI_PREF_KEY);
+        if (storedFeedbackUi === "0" || storedFeedbackUi === "1") {
+          setFeedbackUiEnabled(storedFeedbackUi === "1");
+        }
+
         const storedUpdateAutoCheck = window.localStorage.getItem(
           "openwork.updateAutoCheck"
         );
@@ -1904,6 +1911,18 @@ export default function App() {
       setWindowDecorations(!hide).catch(() => {
         // ignore errors (e.g., window not ready)
       });
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        FEEDBACK_UI_PREF_KEY,
+        feedbackUiEnabled() ? "1" : "0",
+      );
+    } catch {
+      // ignore
     }
   });
 
@@ -2146,6 +2165,8 @@ export default function App() {
       createSessionAndOpen,
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
+      feedbackUiEnabled: feedbackUiEnabled(),
+      toggleFeedbackUiEnabled: () => setFeedbackUiEnabled((v) => !v),
       updateAutoCheck: updateAutoCheck(),
       toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
       updateAutoDownload: updateAutoDownload(),
@@ -2244,6 +2265,7 @@ export default function App() {
     orchestratorStatus: orchestratorStatusState(),
     opencodeRouterInfo: opencodeRouterInfoState(),
     appVersion: appVersion(),
+    feedbackUiEnabled: feedbackUiEnabled(),
     booting: booting(),
     startupPhase: bootPhase(),
     startupBranch: startupBranch(),
