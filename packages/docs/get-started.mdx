@@ -20,47 +20,13 @@ Run agents on your own machine or infra. Bring your own model, your own MCPs, yo
 
 [OpenWork Cloud →](/get-started-cloud) — shared workspaces, org skill hubs, managed providers, RBAC.
 
-Prefer your own infra? Self-host with `openwork-orchestrator` (see below), or [book a call](https://cal.com/team/openwork/enterprise) for enterprise rollouts with SSO and audit.
+Prefer your own infra? [Self-host with openwork-orchestrator](/self-host), or [book a call](https://cal.com/team/openwork/enterprise) for enterprise rollouts with SSO and audit.
 
 ## For developers
 
 OpenWork speaks the [OpenCode](https://opencode.ai) protocol.
 
 See what shipped this week in the [changelog](/changelog), and what's coming next on the [roadmap](/roadmap).
-
----
-
-## Self-host with openwork-orchestrator
-
-Run OpenWork on your own server and connect the desktop app to it remotely.
-
-Install:
-
-```bash
-npm install -g openwork-orchestrator
-```
-
-Start it where your code lives:
-
-```bash
-openwork start --workspace /path/to/your/workspace --approval auto
-```
-
-<Frame>
-  ![OpenWork CLI terminal output showing URL and owner token](/images/get-started-cli-output.png)
-</Frame>
-
-Copy the `OpenWork URL` and `OpenWork Owner Token`, then in the desktop app:
-
-- Click `+ Add workspace` (bottom left)
-- Click `+ Connect Remote workspace`
-- Paste the URL and token
-
-<Frame>
-  ![Add Remote Workspace dialog in OpenWork desktop app](/images/get-started-add-remote-workspace.png)
-</Frame>
-
-Your code and services stay on the remote machine; your local machine stays light.
 
 ---
 

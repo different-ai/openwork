@@ -1,0 +1,58 @@
+---
+title: "Self-host OpenWork"
+description: "Run OpenWork on your own server with openwork-orchestrator."
+---
+
+Run OpenWork on a machine you own and connect the desktop app to it remotely. Your code, data, models, and credentials never leave your network.
+
+## Install
+
+```bash
+npm install -g openwork-orchestrator
+```
+
+## Start the server
+
+Run it where your code lives:
+
+```bash
+openwork start --workspace /path/to/your/workspace --approval auto
+```
+
+<Frame>
+  ![OpenWork CLI terminal output showing URL and owner token](/images/get-started-cli-output.png)
+</Frame>
+
+Copy the `OpenWork URL` and `OpenWork Owner Token`.
+
+## Connect the desktop app
+
+- Click `+ Add workspace` (bottom left)
+- Click `+ Connect Remote workspace`
+- Paste the URL and token
+
+<Frame>
+  ![Add Remote Workspace dialog in OpenWork desktop app](/images/get-started-add-remote-workspace.png)
+</Frame>
+
+Your code and services stay on the remote machine; your local machine stays light.
+
+---
+
+## Don't want to run infra?
+
+Skip the server. [**OpenWork Cloud**](/get-started-cloud) runs hosted workers for you, keeps your workspaces online for long tasks and Slack connectors, and handles updates and monitoring. Same app, no ops.
+
+Cloud also gives you org-wide primitives you'd otherwise have to build: [team skill hubs](/cloud-skill-hubs), [shared LLM providers](/cloud-llm-providers), [RBAC](/cloud-members-and-rbac), and [shared workspaces](/cloud-shared-workspaces).
+
+## Need more than one machine can give you?
+
+If you're rolling OpenWork out across a team or a company, the orchestrator on a single box will stop being enough. At that scale you typically want:
+
+- **SSO (SAML/OIDC)** so people sign in with the identity your company already uses
+- **Audit logs** across sessions, tool calls, and model usage
+- **Model and tool allowlists** enforced centrally, not per-workspace
+- **VPC / on-prem deployment** with your own networking and compliance constraints
+- **Support and rollout help** from our team, not just GitHub issues
+
+That's what [**Enterprise**](/cloud-enterprise) is for. [Book a 30-minute call](https://cal.com/team/openwork/enterprise) and we'll scope it with you.

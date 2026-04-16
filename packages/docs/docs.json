@@ -18,6 +18,7 @@
         "tab": "Start here",
         "pages": [
           "get-started",
+          "self-host",
           {
             "group": "Connect your stack",
             "pages": [
