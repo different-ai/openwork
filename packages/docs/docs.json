@@ -55,7 +55,8 @@
           "cloud-shared-workspaces",
           "cloud-llm-providers",
           "cloud-custom-llm-providers",
-          "cloud-members-and-rbac"
+          "cloud-members-and-rbac",
+          "cloud-enterprise"
         ]
       },
       {
