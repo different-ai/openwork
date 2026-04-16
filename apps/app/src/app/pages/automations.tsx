@@ -441,6 +441,12 @@ export default function AutomationsView(props: AutomationsViewProps) {
     onCleanup(() => window.clearInterval(interval));
   });
 
+  createEffect(() => {
+    if (props.schedulerInstalled) {
+      setSchedulerInstallRequested(false);
+    }
+  });
+
   const showToast = (title: string, tone: AppStatusToastTone = "info") => {
     statusToasts.showToast({ title, tone });
   };
@@ -551,6 +557,12 @@ export default function AutomationsView(props: AutomationsViewProps) {
     try {
       await Promise.resolve(props.addPlugin("opencode-scheduler"));
       showToast(t("scheduled.scheduler_install_requested"), "success");
+    } catch (error) {
+      setSchedulerInstallRequested(false);
+      showToast(
+        error instanceof Error ? error.message : t("scheduled.prepare_error_fallback"),
+        "error",
+      );
     } finally {
       setInstallingScheduler(false);
     }
