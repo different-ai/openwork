@@ -27,7 +27,9 @@ if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const reactFiles = /\.react\.[tj]sx?$/;
+// React-owned files: anything ending in `.react.tsx`, anything inside the
+// `react-app/` tree, and the React entry point itself.
+const reactFiles = /(?:\.react\.[tj]sx?$|\/src\/react-app\/|\/src\/index\.react\.tsx$)/;
 
 export default defineConfig({
   plugins: [
@@ -51,7 +53,7 @@ export default defineConfig({
         componentLocation: true,
       },
     }),
-    solid({ exclude: [reactFiles] }),
+    solid({ exclude: reactFiles }),
   ],
   server: {
     port: devPort,
