@@ -17,62 +17,52 @@
       {
         "tab": "Start here",
         "pages": [
-          "get-started",
+          "start-here/get-started",
           {
             "group": "Connect your stack",
             "pages": [
-              "how-to-connect-chat-gpt",
-              "how-to-get-an-anthropic-api-key",
-              "how-to-connect-a-custom-provider",
-              "how-to-connect-mcps",
-              "enable-advanced-search-with-exa"
+              "start-here/connect-your-stack/sign-in-with-chatgpt",
+              "start-here/connect-your-stack/add-anthropic-api-key",
+              "start-here/connect-your-stack/add-a-custom-llm",
+              "start-here/connect-your-stack/add-an-mcp-server",
+              "start-here/connect-your-stack/enable-exa-search"
             ]
           },
           {
             "group": "Do work with it",
             "pages": [
-              "computer-use",
-              "automating-tasks",
-              "importing-a-skill",
-              "sharing-ow-setup"
+              "start-here/do-work-with-it/control-the-browser",
+              "start-here/do-work-with-it/automate-tasks",
+              "start-here/do-work-with-it/import-a-skill",
+              "start-here/do-work-with-it/share-your-setup"
             ]
           },
-          "self-host",
-          {
-            "group": "Improve this doc",
-            "pages": [
-              "missing-docs"
-            ]
-          }
+          "start-here/self-host",
+          "start-here/missing-docs"
         ]
       },
       {
         "tab": "Cloud",
         "pages": [
-          "get-started-cloud",
+          "cloud/get-started",
           {
             "group": "Share with your team",
             "pages": [
-              "team-provisioning",
-              "cloud-skill-hubs",
-              "cloud-llm-providers",
-              "cloud-custom-llm-providers"
+              "cloud/share-with-your-team/team-templates",
+              "cloud/share-with-your-team/skill-hubs",
+              "cloud/share-with-your-team/managed-llm-provider",
+              "cloud/share-with-your-team/custom-llm-provider"
             ]
           },
           {
             "group": "Run in the cloud",
             "pages": [
-              "cloud-shared-workspaces",
-              "accessing-ow-from-slack"
+              "cloud/run-in-the-cloud/shared-workspace",
+              "cloud/run-in-the-cloud/connect-slack"
             ]
           },
-          {
-            "group": "Manage access",
-            "pages": [
-              "cloud-members-and-rbac"
-            ]
-          },
-          "cloud-enterprise"
+          "cloud/members-and-rbac",
+          "cloud/enterprise"
         ]
       },
       {
@@ -96,15 +86,15 @@
   "redirects": [
     {
       "source": "/",
-      "destination": "/get-started"
+      "destination": "/start-here/get-started"
     },
     {
       "source": "/quickstart",
-      "destination": "/get-started"
+      "destination": "/start-here/get-started"
     },
     {
       "source": "/introduction",
-      "destination": "/get-started-cloud"
+      "destination": "/cloud/get-started"
     }
   ],
   "errors": {
