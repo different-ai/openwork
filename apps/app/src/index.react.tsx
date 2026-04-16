@@ -10,6 +10,7 @@ import {
   createDefaultPlatform,
   PlatformProvider,
 } from "./react-app/kernel/platform";
+import { AppProviders } from "./react-app/shell/providers";
 import { AppRoot } from "./react-app/shell/app-root";
 import "./app/index.css";
 
@@ -29,7 +30,9 @@ ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <PlatformProvider value={platform}>
-        <AppRoot />
+        <AppProviders>
+          <AppRoot />
+        </AppProviders>
       </PlatformProvider>
     </QueryClientProvider>
   </React.StrictMode>,
