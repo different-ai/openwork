@@ -15,6 +15,7 @@ pub fn openwork_server_info(
     app: AppHandle,
     manager: State<OpenworkServerManager>,
 ) -> OpenworkServerInfo {
+    eprintln!("[openwork-server][command] info requested");
     let mut state = manager
         .inner
         .lock()
@@ -23,13 +24,22 @@ pub fn openwork_server_info(
     drop(state);
 
     if snapshot.running || snapshot.base_url.is_some() {
+        eprintln!(
+            "[openwork-server][command] info returning live snapshot running={} base_url={:?} startup_mode={:?}",
+            snapshot.running, snapshot.base_url, snapshot.startup_mode
+        );
         return snapshot;
     }
 
-    probe_server_v2_snapshot(&app, &manager)
+    let probed = probe_server_v2_snapshot(&app, &manager)
         .ok()
         .flatten()
-        .unwrap_or(snapshot)
+        .unwrap_or(snapshot);
+    eprintln!(
+        "[openwork-server][command] info returning probed snapshot running={} base_url={:?} startup_mode={:?}",
+        probed.running, probed.base_url, probed.startup_mode
+    );
+    probed
 }
 
 #[tauri::command]
@@ -40,8 +50,17 @@ pub fn openwork_server_restart(
     opencode_router_manager: State<OpenCodeRouterManager>,
     remote_access_enabled: Option<bool>,
 ) -> Result<OpenworkServerInfo, String> {
+    eprintln!(
+        "[openwork-server][command] restart requested remote_access_enabled={:?} startup_mode={:?}",
+        remote_access_enabled,
+        resolve_server_startup_mode()
+    );
     if resolve_server_startup_mode() == ServerStartupMode::ServerV2 {
         if let Some(existing) = probe_server_v2_snapshot(&app, &manager)? {
+            eprintln!(
+                "[openwork-server][command] restart reused existing Server V2 instance base_url={:?} pid={:?}",
+                existing.base_url, existing.pid
+            );
             return Ok(existing);
         }
     }
@@ -80,23 +99,32 @@ pub fn openwork_server_restart(
             workspace_paths.push(trimmed);
         }
     }
-
     let opencode_router_health_port = opencode_router_manager
         .inner
         .lock()
         .ok()
         .and_then(|state| state.health_port);
 
+    eprintln!(
+        "[openwork-server][command] restart resolved workspace_paths={:?} opencode_url={:?} router_health_port={:?}",
+        workspace_paths, opencode_url, opencode_router_health_port
+    );
+
     if resolve_server_startup_mode() == ServerStartupMode::ServerV2 {
-        return start_openwork_server_v2(
+        let info = start_openwork_server_v2(
             &app,
             &manager,
             &workspace_paths,
             remote_access_enabled.unwrap_or(false),
+        )?;
+        eprintln!(
+            "[openwork-server][command] restart started Server V2 base_url={:?} pid={:?}",
+            info.base_url, info.pid
         );
+        return Ok(info);
     }
 
-    start_openwork_server(
+    let info = start_openwork_server(
         &app,
         &manager,
         &workspace_paths,
@@ -105,5 +133,10 @@ pub fn openwork_server_restart(
         opencode_password.as_deref(),
         opencode_router_health_port,
         remote_access_enabled.unwrap_or(false),
-    )
+    )?;
+    eprintln!(
+        "[openwork-server][command] restart started legacy server base_url={:?} pid={:?}",
+        info.base_url, info.pid
+    );
+    Ok(info)
 }

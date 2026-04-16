@@ -123,4 +123,43 @@ describe("createClient Server V2 session routing", () => {
     expect(calls).toContain("/workspaces/alpha/sessions");
     expect(calls).toContain("/w/alpha/opencode/session");
   });
+
+  test("does not fall back to direct OpenCode routes when explicit Server V2 routing is required", async () => {
+    const calls: string[] = [];
+
+    const opencodeBaseUrl = startServer((request) => {
+      const url = new URL(request.url);
+      calls.push(`opencode:${url.pathname}`);
+      if (url.pathname === "/session") {
+        return Response.json([
+          {
+            id: "ses_direct",
+            title: "Direct Session",
+            directory: "/tmp/local",
+          },
+        ]);
+      }
+      return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+    });
+
+    const openworkBaseUrl = startServer((request) => {
+      const url = new URL(request.url);
+      calls.push(`openwork:${url.pathname}`);
+      return Response.json({ ok: false, error: { code: "not_found", message: "Not found", requestId: "owreq_4" } }, { status: 404 });
+    });
+
+    const client = createClient(opencodeBaseUrl, "/tmp/local", {
+      sessionRouting: {
+        baseUrl: openworkBaseUrl,
+        required: true,
+        token: "client-token",
+        workspaceId: "ws_local",
+      },
+    });
+
+    const result = await client.session.list({ roots: true });
+    expect(result.error).toBeDefined();
+    expect(calls).toContain("openwork:/workspaces/ws_local/sessions");
+    expect(calls).not.toContain("opencode:/session");
+  });
 });

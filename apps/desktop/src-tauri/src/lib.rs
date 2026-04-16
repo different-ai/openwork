@@ -52,6 +52,7 @@ use commands::workspace::{
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use openwork_server::manager::OpenworkServerManager;
+use openwork_server::startup_mode::resolve_server_startup_mode;
 use orchestrator::manager::OrchestratorManager;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
@@ -121,6 +122,7 @@ fn hide_main_window(app_handle: &AppHandle) {
 }
 
 fn stop_managed_services(app_handle: &tauri::AppHandle) {
+    eprintln!("[app] stopping managed services");
     if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
         EngineManager::stop_locked(&mut engine);
     }
@@ -155,6 +157,11 @@ pub fn run() {
     let app = builder
         .setup(|_| {
             set_dev_app_name();
+            eprintln!(
+                "[app] setup complete openwork_server_startup_mode={:?} dev_mode={}",
+                resolve_server_startup_mode(),
+                std::env::var("OPENWORK_DEV_MODE").ok().as_deref() == Some("1")
+            );
             Ok(())
         })
         .manage(EngineManager::default())
@@ -226,18 +233,23 @@ pub fn run() {
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/opencode/openwork-server processes and stale ports.
     app.run(|app_handle, event| match event {
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
+        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+            eprintln!("[app] exit requested");
+            stop_managed_services(&app_handle)
+        }
         #[cfg(target_os = "macos")]
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::CloseRequested { api, .. },
             ..
         } if label == "main" => {
+            eprintln!("[app] main window close requested; hiding instead");
             api.prevent_close();
             hide_main_window(&app_handle);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
+            eprintln!("[app] received deep-link open event count={}", urls.len());
             let urls = urls
                 .into_iter()
                 .map(|url| url.to_string())
@@ -250,6 +262,7 @@ pub fn run() {
             has_visible_windows,
             ..
         } => {
+            eprintln!("[app] reopen event has_visible_windows={has_visible_windows}");
             if !has_visible_windows {
                 show_main_window(&app_handle);
             }

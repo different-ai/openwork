@@ -305,6 +305,21 @@ function mergeReportWarnings(report: ImportSourceReport, warnings: string[]) {
   return report;
 }
 
+function asJsonObject(value: unknown): JsonObject | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as JsonObject;
+}
+
+function readLegacyWorkspaceImportCompletedAt(value: JsonObject | null | undefined) {
+  const startup = asJsonObject(value?.startup);
+  const legacyWorkspaceImport = asJsonObject(startup?.legacyWorkspaceImport);
+  const completedAt = legacyWorkspaceImport?.completedAt;
+  return typeof completedAt === "string" && completedAt.trim() ? completedAt.trim() : null;
+}
+
 function summarizeMode(inMemory: boolean, databasePath: string) {
   if (inMemory) {
     return "fresh" as const;
@@ -366,15 +381,24 @@ export function createServerPersistence(options: CreateServerPersistenceOptions)
   const controlWorkspace = registry.ensureHiddenWorkspace("control");
   const helpWorkspace = registry.ensureHiddenWorkspace("help");
 
+  const existingRuntimeState = repositories.serverRuntimeState.getByServerId(registry.localServerId);
+  const priorLegacyWorkspaceImportCompletedAt = readLegacyWorkspaceImportCompletedAt(existingRuntimeState?.health);
+  const shouldImportLegacyWorkspaceState = !priorLegacyWorkspaceImportCompletedAt;
+
   const desktopWorkspaceFile = resolveExistingFile(
     legacyDesktopDataDirCandidates(options.legacy?.desktopDataDir),
     "openwork-workspaces.json",
   );
-  const desktopWorkspaceReport = desktopWorkspaceFile
-    ? createEmptyReport("imported", desktopWorkspaceFile)
-    : createEmptyReport("unavailable", null, { reason: "No legacy desktop workspace registry file was found." });
+  const desktopWorkspaceReport = !shouldImportLegacyWorkspaceState
+    ? createEmptyReport("skipped", desktopWorkspaceFile, {
+        completedAt: priorLegacyWorkspaceImportCompletedAt,
+        reason: "Legacy workspace import already completed on an earlier Server V2 startup.",
+      })
+    : desktopWorkspaceFile
+      ? createEmptyReport("imported", desktopWorkspaceFile)
+      : createEmptyReport("unavailable", null, { reason: "No legacy desktop workspace registry file was found." });
 
-  if (desktopWorkspaceFile) {
+  if (shouldImportLegacyWorkspaceState && desktopWorkspaceFile) {
     try {
       const parsed = legacyWorkspaceStateSchema.parse(JSON.parse(readTextIfExists(desktopWorkspaceFile) ?? "{}"));
       let localImported = 0;
@@ -473,11 +497,16 @@ export function createServerPersistence(options: CreateServerPersistenceOptions)
     legacyOrchestratorDirCandidates(options.legacy?.orchestratorDataDir),
     "openwork-orchestrator-state.json",
   );
-  const orchestratorStateReport = orchestratorStateFile
-    ? createEmptyReport("imported", orchestratorStateFile)
-    : createEmptyReport("unavailable", null, { reason: "No legacy orchestrator state snapshot was found." });
+  const orchestratorStateReport = !shouldImportLegacyWorkspaceState
+    ? createEmptyReport("skipped", orchestratorStateFile, {
+        completedAt: priorLegacyWorkspaceImportCompletedAt,
+        reason: "Legacy workspace import already completed on an earlier Server V2 startup.",
+      })
+    : orchestratorStateFile
+      ? createEmptyReport("imported", orchestratorStateFile)
+      : createEmptyReport("unavailable", null, { reason: "No legacy orchestrator state snapshot was found." });
 
-  if (orchestratorStateFile) {
+  if (shouldImportLegacyWorkspaceState && orchestratorStateFile) {
     try {
       const parsed = orchestratorStateSchema.parse(JSON.parse(readTextIfExists(orchestratorStateFile) ?? "{}"));
       let importedWorkspaceCount = 0;
@@ -632,7 +661,10 @@ export function createServerPersistence(options: CreateServerPersistenceOptions)
     }
   }
 
-  const existingRuntimeState = repositories.serverRuntimeState.getByServerId(registry.localServerId);
+  const legacyWorkspaceImportCompletedAt = priorLegacyWorkspaceImportCompletedAt
+    ?? (desktopWorkspaceReport.status !== "error" && orchestratorStateReport.status !== "error"
+      ? new Date().toISOString()
+      : null);
   const diagnostics: StartupDiagnostics = {
     completedAt: new Date().toISOString(),
     importReports: {
@@ -640,6 +672,10 @@ export function createServerPersistence(options: CreateServerPersistenceOptions)
       desktopWorkspaceState: desktopWorkspaceReport,
       orchestratorAuth: orchestratorAuthReport,
       orchestratorState: orchestratorStateReport,
+    },
+    legacyWorkspaceImport: {
+      completedAt: legacyWorkspaceImportCompletedAt,
+      skipped: !shouldImportLegacyWorkspaceState,
     },
     mode,
     migrations,

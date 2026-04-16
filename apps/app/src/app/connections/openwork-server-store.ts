@@ -585,13 +585,65 @@ export function createOpenworkServerStore(options: {
     }
   };
 
+  const resolveLocalServerHostInfo = async () => {
+    const cached = openworkServerHostInfo();
+    if (cached?.baseUrl?.trim() && cached.clientToken?.trim()) {
+      return cached;
+    }
+
+    if (isTauriRuntime()) {
+      try {
+        const live = await openworkServerInfo();
+        setOpenworkServerHostInfo(live);
+        setOpenworkServerHostInfoReady(true);
+        if (live?.baseUrl?.trim() && live.clientToken?.trim()) {
+          return live;
+        }
+      } catch {
+        // ignore and try restart-backed recovery below
+      }
+    }
+
+    const client = await ensureLocalOpenworkServerClient();
+    if (!client) {
+      return null;
+    }
+    return openworkServerHostInfo();
+  };
+
+  const ensureLocalServerV2Target = async () => {
+    const hostInfo = await resolveLocalServerHostInfo();
+    return Boolean(hostInfo?.baseUrl?.trim());
+  };
+
   const listLocalServerWorkspaces = async (options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+    const hostInfo = await resolveLocalServerHostInfo();
+    if (hostInfo?.startupMode === "server-v2" && hostInfo.baseUrl?.trim() && hostInfo.clientToken?.trim()) {
+      const list = await createOpenworkServerClient({
+        baseUrl: hostInfo.baseUrl.trim(),
+        hostToken: hostInfo.hostToken?.trim() || undefined,
+        serverV2: {
+          capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+          enabled: true,
+        },
+        token: hostInfo.clientToken.trim(),
+      }).listWorkspaces();
+      return {
+        activeId: list.activeId ?? list.items[0]?.id ?? null,
+        selectedId: list.activeId ?? list.items[0]?.id ?? "",
+        watchedId: list.activeId ?? list.items[0]?.id ?? null,
+        workspaces: list.items,
+      } satisfies WorkspaceList;
+    }
+
+    await ensureLocalServerV2Target();
     return serverVersionAdapter.createSdk({ serverId: LOCAL_SERVER_ID }).workspaces.list({
       legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
     });
   };
 
   const getLocalServerWorkspace = async (workspaceId: string, options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+    await ensureLocalServerV2Target();
     return serverVersionAdapter.createSdk({ serverId: LOCAL_SERVER_ID }).workspaces.detail(workspaceId, {
       legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
     });

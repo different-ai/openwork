@@ -73,7 +73,7 @@ test("migration runner upgrades an existing database from the first migration", 
   persistence.close();
 });
 
-test("legacy import is idempotent across repeated boots", () => {
+test("legacy workspace import only runs once across repeated boots", () => {
   const rootDir = makeTempDir("openwork-server-v2-phase2-idempotent");
   const desktopDataDir = makeTempDir("openwork-server-v2-phase2-desktop");
   const orchestratorDataDir = makeTempDir("openwork-server-v2-phase2-orchestrator");
@@ -181,9 +181,72 @@ test("legacy import is idempotent across repeated boots", () => {
   expect(second.repositories.servers.list()).toHaveLength(2);
   expect(second.repositories.workspaces.list()).toHaveLength(3);
   expect(second.repositories.workspaces.list({ includeHidden: true })).toHaveLength(5);
-  expect(second.diagnostics.importReports.desktopWorkspaceState.status).toBe("imported");
-  expect(second.diagnostics.importReports.orchestratorState.status).toBe("imported");
+  expect(second.diagnostics.importReports.desktopWorkspaceState.status).toBe("skipped");
+  expect(second.diagnostics.importReports.orchestratorState.status).toBe("skipped");
+  expect(second.diagnostics.legacyWorkspaceImport.completedAt).toBeTruthy();
+  expect(second.diagnostics.legacyWorkspaceImport.skipped).toBe(true);
   second.close();
+});
+
+test("deleted legacy-imported workspace stays deleted after restart", () => {
+  const rootDir = makeTempDir("openwork-server-v2-phase2-delete-persist");
+  const desktopDataDir = makeTempDir("openwork-server-v2-phase2-delete-desktop");
+  const localWorkspaceDir = makeTempDir("openwork-server-v2-phase2-delete-workspace");
+
+  fs.writeFileSync(
+    path.join(desktopDataDir, "openwork-workspaces.json"),
+    JSON.stringify(
+      {
+        selectedWorkspaceId: "ws_legacy_selected",
+        workspaces: [
+          {
+            id: "ws_legacy_selected",
+            name: "Local Test",
+            path: localWorkspaceDir,
+            preset: "starter",
+            workspaceType: "local",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const first = createPersistence({
+    legacy: {
+      desktopDataDir,
+    },
+    workingDirectory: rootDir,
+  });
+
+  const normalizedWorkspaceDir = fs.realpathSync.native(localWorkspaceDir);
+  const importedWorkspace = first.repositories.workspaces
+    .list()
+    .find((workspace) => workspace.dataDir === normalizedWorkspaceDir);
+  expect(importedWorkspace).not.toBeUndefined();
+  first.close();
+
+  const second = createPersistence({
+    legacy: {
+      desktopDataDir,
+    },
+    workingDirectory: rootDir,
+  });
+  expect(second.diagnostics.importReports.desktopWorkspaceState.status).toBe("skipped");
+  expect(second.repositories.workspaces.deleteById(importedWorkspace!.id)).toBe(true);
+  expect(second.repositories.workspaces.list().some((workspace) => workspace.id === importedWorkspace!.id)).toBe(false);
+  second.close();
+
+  const third = createPersistence({
+    legacy: {
+      desktopDataDir,
+    },
+    workingDirectory: rootDir,
+  });
+  expect(third.diagnostics.importReports.desktopWorkspaceState.status).toBe("skipped");
+  expect(third.repositories.workspaces.list().some((workspace) => workspace.id === importedWorkspace!.id)).toBe(false);
+  third.close();
 });
 
 test("corrupt legacy workspace state is surfaced without blocking bootstrap", () => {

@@ -177,6 +177,10 @@ export type StartupDiagnostics = {
     orchestratorAuth: ImportSourceReport;
     orchestratorState: ImportSourceReport;
   };
+  legacyWorkspaceImport: {
+    completedAt: string | null;
+    skipped: boolean;
+  };
   mode: "fresh" | "existing";
   migrations: MigrationResult;
   registry: {

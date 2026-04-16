@@ -73,6 +73,11 @@ impl OpenworkServerManager {
 
     pub fn stop_locked(state: &mut OpenworkServerState) {
         if let Some(child) = state.child.take() {
+            eprintln!(
+                "[openwork-server][manager] stopping child pid={} startup_mode={:?}",
+                child.pid(),
+                state.startup_mode
+            );
             let _ = child.kill();
         }
         state.child_exited = true;

@@ -771,6 +771,35 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
   }
 }
 
+export function sanitizeDesktopServerV2StartupSettings(input: {
+  settings: OpenworkServerSettings;
+  startupPreference: "local" | "server" | null;
+  tauriRuntime: boolean;
+  serverV2Enabled: boolean;
+}) {
+  const urlOverride = normalizeOpenworkServerUrl(input.settings.urlOverride ?? "");
+  const shouldClearRemoteOverride = input.tauriRuntime && input.serverV2Enabled && Boolean(urlOverride);
+
+  if (!shouldClearRemoteOverride) {
+    return {
+      changed: false,
+      removedUrlOverride: null,
+      settings: input.settings,
+      startupPreference: input.startupPreference,
+    };
+  }
+
+  return {
+    changed: true,
+    removedUrlOverride: urlOverride,
+    settings: {
+      ...input.settings,
+      urlOverride: undefined,
+    },
+    startupPreference: input.startupPreference === "server" ? null : input.startupPreference,
+  };
+}
+
 export function hydrateOpenworkServerSettingsFromEnv() {
   if (typeof window === "undefined") return;
 
@@ -1073,16 +1102,21 @@ export function createOpenworkServerClient(options: {
     binary: 60_000,
   };
 
-  const canUseServerV2Config = Boolean(serverV2 && serverV2Capabilities?.config?.read && serverV2Capabilities?.config?.write);
-  const canUseServerV2Files = Boolean(serverV2 && serverV2Capabilities?.files?.contentRoutes);
-  const canUseServerV2Inbox = Boolean(serverV2 && serverV2Capabilities?.files?.inbox);
-  const canUseServerV2Artifacts = Boolean(serverV2 && serverV2Capabilities?.files?.artifacts);
-  const canUseServerV2Sessions = Boolean(serverV2 && serverV2Capabilities?.sessions?.list);
-  const canUseServerV2Managed = Boolean(serverV2 && serverV2Capabilities?.managed?.skills && serverV2Capabilities?.managed?.plugins && serverV2Capabilities?.managed?.mcps);
-  const canUseServerV2Router = Boolean(serverV2 && serverV2Capabilities?.router?.productRoutes);
-  const canUseServerV2WorkspaceLifecycle = Boolean(serverV2 && serverV2Capabilities?.workspaces?.createLocal);
-  const canUseServerV2Reload = Boolean(serverV2 && serverV2Capabilities?.reload?.workspaceEvents);
-  const canUseServerV2RemoteRegistry = Boolean(serverV2 && serverV2Capabilities?.registry?.remoteServerConnections && serverV2Capabilities?.registry?.remoteWorkspaceSync);
+  const useServerV2Route = (enabled?: boolean | null) => serverV2 && (enabled ?? true);
+  const canUseServerV2Config = useServerV2Route(serverV2Capabilities?.config?.read && serverV2Capabilities?.config?.write);
+  const canUseServerV2Files = useServerV2Route(serverV2Capabilities?.files?.contentRoutes);
+  const canUseServerV2Inbox = useServerV2Route(serverV2Capabilities?.files?.inbox);
+  const canUseServerV2Artifacts = useServerV2Route(serverV2Capabilities?.files?.artifacts);
+  const canUseServerV2Sessions = useServerV2Route(serverV2Capabilities?.sessions?.list);
+  const canUseServerV2Managed = useServerV2Route(
+    serverV2Capabilities?.managed?.skills && serverV2Capabilities?.managed?.plugins && serverV2Capabilities?.managed?.mcps,
+  );
+  const canUseServerV2Router = useServerV2Route(serverV2Capabilities?.router?.productRoutes);
+  const canUseServerV2WorkspaceLifecycle = useServerV2Route(serverV2Capabilities?.workspaces?.createLocal);
+  const canUseServerV2Reload = useServerV2Route(serverV2Capabilities?.reload?.workspaceEvents);
+  const canUseServerV2RemoteRegistry = useServerV2Route(
+    serverV2Capabilities?.registry?.remoteServerConnections && serverV2Capabilities?.registry?.remoteWorkspaceSync,
+  );
 
   const mapServerV2Workspace = (item: any): OpenworkWorkspaceInfo => {
     if (item.backend?.kind === "remote_openwork") {
@@ -1300,19 +1334,22 @@ export function createOpenworkServerClient(options: {
         : Promise.reject(new Error("Server V2 remote workspace sync is unavailable.")),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       canUseServerV2WorkspaceLifecycle
-        ? requestJson<{ ok: true; data: any; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces/local", {
+        ? requestJson<{ ok: true; data: { id?: string | null }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces/local", {
             token,
             hostToken,
             method: "POST",
             body: payload,
             timeoutMs: timeouts.activateWorkspace,
-          }).then(async () => {
+          }).then(async (created) => {
             const list = await requestJson<{ ok: true; data: { items: any[] }; meta: { requestId: string; timestamp: string } }>(baseUrl, "/workspaces", {
               token,
               hostToken,
               timeoutMs: timeouts.listWorkspaces,
             });
-            return { workspaces: list.data.items.map(mapServerV2Workspace), activeId: list.data.items[0]?.id ?? null } satisfies WorkspaceList;
+            return {
+              workspaces: list.data.items.map(mapServerV2Workspace),
+              activeId: created.data.id?.trim() || (list.data.items[0]?.id ?? null),
+            } satisfies WorkspaceList;
           })
         : requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
             token,

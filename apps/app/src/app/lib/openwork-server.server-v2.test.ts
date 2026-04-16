@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { afterEach, expect, test } from "bun:test";
-import { createOpenworkServerClient } from "./openwork-server";
+import { createOpenworkServerClient, sanitizeDesktopServerV2StartupSettings } from "./openwork-server";
 
 type Served = {
   port: number;
@@ -52,6 +52,21 @@ test("server-v2 client routes workspace lifecycle and config/file calls to root-
         ok: true,
         data: {
           items: [
+            {
+              id: "ws_welcome",
+              displayName: "Welcome",
+              preset: "starter",
+              kind: "local",
+              status: "ready",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              hidden: false,
+              slug: "welcome",
+              notes: null,
+              runtime: { backendKind: "local_opencode", health: null, lastError: null, lastSessionRefreshAt: null, lastSyncAt: null, updatedAt: null },
+              server: { id: "srv_local", auth: { configured: false, scheme: "none" }, baseUrl: null, capabilities: {}, hostingKind: "desktop", isEnabled: true, isLocal: true, kind: "local", label: "Local", lastSeenAt: null, source: "seeded", updatedAt: new Date().toISOString() },
+              backend: { kind: "local_opencode", serverId: "srv_local", local: { dataDir: "/tmp/welcome", configDir: "/tmp/welcome-config", opencodeProjectId: null }, remote: null },
+            },
             {
               id: "ws_local",
               displayName: "Local",
@@ -121,10 +136,11 @@ test("server-v2 client routes workspace lifecycle and config/file calls to root-
   });
 
   const list = await client.listWorkspaces();
-  expect(list.items[0].opencode?.directory).toBe("/tmp/local");
+  expect(list.items.some((workspace) => workspace.opencode?.directory === "/tmp/local")).toBe(true);
 
   const created = await client.createLocalWorkspace({ folderPath: "/tmp/local", name: "Local", preset: "starter" });
-  expect(created.workspaces[0].id).toBe("ws_local");
+  expect(created.workspaces.some((workspace) => workspace.id === "ws_local")).toBe(true);
+  expect(created.activeId).toBe("ws_local");
 
   const config = await client.getConfig("ws_local");
   expect(config.openwork.reload.auto).toBe(true);
@@ -153,6 +169,141 @@ test("server-v2 client routes workspace lifecycle and config/file calls to root-
   expect(calls).toContain("GET /workspaces/ws_local/config/opencode-raw?scope=project");
   expect(calls).toContain("GET /workspaces/ws_local/reload-events");
   expect(calls).toContain("POST /workspaces/ws_local/files/content");
+});
+
+test("server-v2 workspace lifecycle still uses v2 routes before capabilities hydrate", async () => {
+  const calls: string[] = [];
+  const baseUrl = startServer(async (request) => {
+    const url = new URL(request.url);
+    calls.push(`${request.method} ${url.pathname}${url.search}`);
+
+    if (url.pathname === "/workspaces/local" && request.method === "POST") {
+      return Response.json({ ok: true, data: { id: "ws_local" }, meta: { requestId: "owreq_10", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/workspaces" && request.method === "GET") {
+      return Response.json({
+        ok: true,
+        data: {
+          items: [
+            {
+              id: "ws_welcome",
+              displayName: "Welcome",
+              preset: "starter",
+              kind: "local",
+              status: "ready",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              hidden: false,
+              slug: "welcome",
+              runtime: { backendKind: "local_opencode", health: null, lastError: null, lastSessionRefreshAt: null, lastSyncAt: null, updatedAt: null },
+              server: { id: "srv_local", auth: { configured: false, scheme: "none" }, baseUrl: null, capabilities: {}, hostingKind: "desktop", isEnabled: true, isLocal: true, kind: "local", label: "Local", lastSeenAt: null, source: "seeded", updatedAt: new Date().toISOString() },
+              backend: { kind: "local_opencode", serverId: "srv_local", local: { dataDir: "/tmp/welcome", configDir: "/tmp/welcome-config", opencodeProjectId: null }, remote: null },
+            },
+            {
+              id: "ws_local",
+              displayName: "Local",
+              preset: "starter",
+              kind: "local",
+              status: "ready",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              hidden: false,
+              slug: "local",
+              runtime: { backendKind: "local_opencode", health: null, lastError: null, lastSessionRefreshAt: null, lastSyncAt: null, updatedAt: null },
+              server: { id: "srv_local", auth: { configured: false, scheme: "none" }, baseUrl: null, capabilities: {}, hostingKind: "desktop", isEnabled: true, isLocal: true, kind: "local", label: "Local", lastSeenAt: null, source: "seeded", updatedAt: new Date().toISOString() },
+              backend: { kind: "local_opencode", serverId: "srv_local", local: { dataDir: "/tmp/local", configDir: "/tmp/config", opencodeProjectId: null }, remote: null },
+            },
+          ],
+        },
+        meta: { requestId: "owreq_11", timestamp: new Date().toISOString() },
+      });
+    }
+
+    return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+  });
+
+  const client = createOpenworkServerClient({
+    baseUrl,
+    serverV2: { enabled: true, capabilities: null },
+    token: "client-token",
+  });
+
+  const created = await client.createLocalWorkspace({ folderPath: "/tmp/local", name: "Local", preset: "starter" });
+
+  expect(created.workspaces.some((workspace) => workspace.id === "ws_local")).toBe(true);
+  expect(created.activeId).toBe("ws_local");
+  expect(calls).toEqual(["POST /workspaces/local", "GET /workspaces"]);
+});
+
+test("server-v2 delete still uses v2 routes before capabilities hydrate", async () => {
+  const calls: string[] = [];
+  const baseUrl = startServer(async (request) => {
+    const url = new URL(request.url);
+    calls.push(`${request.method} ${url.pathname}${url.search}`);
+
+    if (url.pathname === "/workspaces/ws_local" && request.method === "DELETE") {
+      return Response.json({ ok: true, data: { deleted: true, workspaceId: "ws_local" }, meta: { requestId: "owreq_12", timestamp: new Date().toISOString() } });
+    }
+
+    if (url.pathname === "/workspaces" && request.method === "GET") {
+      return Response.json({
+        ok: true,
+        data: { items: [] },
+        meta: { requestId: "owreq_13", timestamp: new Date().toISOString() },
+      });
+    }
+
+    return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+  });
+
+  const client = createOpenworkServerClient({
+    baseUrl,
+    serverV2: { enabled: true, capabilities: null },
+    token: "client-token",
+  });
+
+  const deleted = await client.deleteWorkspace("ws_local");
+
+  expect(deleted.deleted).toBe(true);
+  expect(deleted.items).toEqual([]);
+  expect(calls).toEqual(["DELETE /workspaces/ws_local", "GET /workspaces"]);
+});
+
+test("desktop Server V2 startup clears stale remote override state", () => {
+  const sanitized = sanitizeDesktopServerV2StartupSettings({
+    settings: {
+      urlOverride: "https://workers.openworklabs.com/wrk_123/w/ws_456",
+      token: "tok_123",
+      remoteAccessEnabled: true,
+    },
+    startupPreference: "server",
+    tauriRuntime: true,
+    serverV2Enabled: true,
+  });
+
+  expect(sanitized.changed).toBe(true);
+  expect(sanitized.removedUrlOverride).toBe("https://workers.openworklabs.com/wrk_123/w/ws_456");
+  expect(sanitized.settings.urlOverride).toBeUndefined();
+  expect(sanitized.settings.token).toBe("tok_123");
+  expect(sanitized.settings.remoteAccessEnabled).toBe(true);
+  expect(sanitized.startupPreference).toBeNull();
+});
+
+test("desktop startup keeps override state outside Server V2 desktop mode", () => {
+  const sanitized = sanitizeDesktopServerV2StartupSettings({
+    settings: {
+      urlOverride: "https://workers.openworklabs.com/wrk_123/w/ws_456",
+      token: "tok_123",
+    },
+    startupPreference: "server",
+    tauriRuntime: true,
+    serverV2Enabled: false,
+  });
+
+  expect(sanitized.changed).toBe(false);
+  expect(sanitized.settings.urlOverride).toBe("https://workers.openworklabs.com/wrk_123/w/ws_456");
+  expect(sanitized.startupPreference).toBe("server");
 });
 
 test("client parses server-v2 error envelopes and compatibility routes for managed export flows", async () => {

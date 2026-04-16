@@ -50,6 +50,10 @@ export const startupDiagnosticsSchema = z.object({
     orchestratorAuth: importSourceReportSchema,
     orchestratorState: importSourceReportSchema,
   }).meta({ ref: "OpenWorkServerV2ImportReports" }),
+  legacyWorkspaceImport: z.object({
+    completedAt: isoTimestampSchema.nullable(),
+    skipped: z.boolean(),
+  }).meta({ ref: "OpenWorkServerV2LegacyWorkspaceImportState" }),
   mode: z.enum(["fresh", "existing"]),
   migrations: z.object({
     applied: z.array(z.string()),

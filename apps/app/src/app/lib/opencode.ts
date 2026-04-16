@@ -64,6 +64,7 @@ export type OpencodeAuth = {
   sessionRouting?: {
     baseUrl: string;
     hostToken?: string;
+    required?: boolean;
     token: string;
     workspaceId: string;
   };
@@ -305,12 +306,13 @@ async function wrapOpenworkRouteWithFallback<T>(
   method: string,
   run: () => Promise<T>,
   fallback: () => Promise<FieldsResult<T>>,
+  allowLegacyFallback: boolean,
   options?: { throwOnError?: boolean },
 ): Promise<FieldsResult<T>> {
   try {
     return createSyntheticResult(url, method, { ok: true, data: await run() });
   } catch (error) {
-    if (!shouldFallbackToLegacySessionRead(error)) {
+    if (!allowLegacyFallback || !shouldFallbackToLegacySessionRead(error)) {
       if (options?.throwOnError) throw error;
       return createSyntheticResult(url, method, {
         ok: false,
@@ -327,6 +329,7 @@ function resolveSessionRouting(baseUrl: string, auth?: OpencodeAuth): NonNullabl
     return {
       baseUrl: auth.sessionRouting.baseUrl.trim().replace(/\/+$/, ""),
       hostToken: auth.sessionRouting.hostToken?.trim() || undefined,
+      required: auth.sessionRouting.required === true,
       token: auth.sessionRouting.token.trim(),
       workspaceId: auth.sessionRouting.workspaceId.trim(),
     };
@@ -340,6 +343,7 @@ function resolveSessionRouting(baseUrl: string, auth?: OpencodeAuth): NonNullabl
   return {
     baseUrl: openworkMount.baseUrl,
     hostToken: auth.hostToken?.trim() || undefined,
+    required: false,
     token: auth.token.trim(),
     workspaceId: openworkMount.workspaceId,
   };
@@ -492,6 +496,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const session = client.session as typeof client.session;
   const openworkRouting = resolveSessionRouting(baseUrl, auth);
+  const allowOpenworkRouteFallback = openworkRouting?.required !== true;
   // TODO(2026-04-12): remove the old-server compatibility path here once all
   // OpenWork servers expose the workspace-scoped session read APIs.
   const sessionOverrides = session as any as {
@@ -529,6 +534,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "GET",
       async () => (unwrap(await requestOpenworkRoute<{ items: Session[] }>(fetchImpl, openworkRouting, path, { throwOnError: true })).items),
       () => listOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -545,6 +551,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "GET",
       async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, { throwOnError: true })),
       () => getOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -563,6 +570,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "GET",
       async () => (unwrap(await requestOpenworkRoute<{ items: Array<{ info: Message; parts: Part[] }> }>(fetchImpl, openworkRouting, path, { throwOnError: true })).items),
       () => messagesOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -579,6 +587,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "GET",
       async () => (unwrap(await requestOpenworkRoute<{ items: Todo[] }>(fetchImpl, openworkRouting, path, { throwOnError: true })).items),
       () => todoOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -599,6 +608,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "GET",
       async () => unwrap(await requestOpenworkRoute<SessionStatus>(fetchImpl, openworkRouting, path, { throwOnError: true })),
       fallback,
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -615,6 +625,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "POST",
       async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, { method: "POST", throwOnError: true })),
       () => createOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -638,6 +649,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         throwOnError: true,
       })),
       () => updateOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -654,6 +666,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "DELETE",
       async () => unwrap(await requestOpenworkRoute<{ deleted: true }>(fetchImpl, openworkRouting, path, { method: "DELETE", throwOnError: true })) && {},
       () => deleteOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -670,6 +683,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "POST",
       async () => unwrap(await requestOpenworkRoute<{ accepted: true }>(fetchImpl, openworkRouting, path, { method: "POST", throwOnError: true })) && {},
       () => abortOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -690,6 +704,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         throwOnError: true,
       })),
       () => revertOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -706,6 +721,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       "POST",
       async () => unwrap(await requestOpenworkRoute<Session>(fetchImpl, openworkRouting, path, { method: "POST", throwOnError: true })),
       () => unrevertOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -726,6 +742,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         throwOnError: true,
       })) && {},
       () => summarizeOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -746,6 +763,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         throwOnError: true,
       })) && {},
       () => shellOriginal(parameters, options),
+      allowOpenworkRouteFallback,
       options,
     );
   };
@@ -765,6 +783,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
           throwOnError: true,
         })),
         () => promptAsyncOriginal(parameters, options),
+        allowOpenworkRouteFallback,
         options,
       );
     }
@@ -795,6 +814,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
           throwOnError: true,
         })),
         () => commandOriginal(parameters, options),
+        allowOpenworkRouteFallback,
         options,
       );
     }

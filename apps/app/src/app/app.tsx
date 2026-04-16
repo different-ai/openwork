@@ -119,9 +119,11 @@ import {
   hydrateOpenworkServerSettingsFromEnv,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
+  sanitizeDesktopServerV2StartupSettings,
   writeOpenworkServerSettings,
   type OpenworkServerSettings,
 } from "./lib/openwork-server";
+import { isServerV2Enabled } from "./kernel/server-version/flag";
 import { hydrateDenSettingsFromOpenwork, readDenSettings, registerDenCloudSyncClient } from "./lib/den";
 import { dispatchDenSessionUpdated } from "./lib/den-session-events";
 import { ReactIsland } from "../react/island";
@@ -175,6 +177,24 @@ type StartupSessionSnapshot = {
 
 export default function App() {
   const { resetSessionDisplayPreferences } = useSessionDisplayPreferences();
+  const initialStartupPreference = (() => {
+    const currentPreference = readStartupPreference();
+    const sanitized = sanitizeDesktopServerV2StartupSettings({
+      settings: readOpenworkServerSettings(),
+      startupPreference: currentPreference,
+      tauriRuntime: isTauriRuntime(),
+      serverV2Enabled: isServerV2Enabled(),
+    });
+
+    if (sanitized.changed) {
+      writeOpenworkServerSettings(sanitized.settings);
+      if (currentPreference === "server" && sanitized.startupPreference !== "server") {
+        clearStartupPreference();
+      }
+    }
+
+    return sanitized.startupPreference;
+  })();
   const envOpenworkWorkspaceId =
     typeof import.meta.env?.VITE_OPENWORK_WORKSPACE_ID === "string"
       ? import.meta.env.VITE_OPENWORK_WORKSPACE_ID.trim() || null
@@ -232,7 +252,7 @@ export default function App() {
   };
 
   const [startupPreference, setStartupPreference] = createSignal<StartupPreference | null>(
-    readStartupPreference(),
+    initialStartupPreference,
   );
   const [onboardingStep, setOnboardingStep] =
     createSignal<OnboardingStep>("welcome");
