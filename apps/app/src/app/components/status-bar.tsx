@@ -1,9 +1,12 @@
 import { Show, createMemo } from "solid-js";
-import { MessageCircle, Settings } from "lucide-solid";
+import { BookOpen, MessageCircle, Settings } from "lucide-solid";
 
 import { t } from "../../i18n";
 import { useConnections } from "../connections/provider";
+import { usePlatform } from "../context/platform";
 import type { OpenworkServerStatus } from "../lib/openwork-server";
+
+const DOCS_URL = "https://openworklabs.com/docs";
 
 type StatusBarProps = {
   clientConnected: boolean;
@@ -23,6 +26,7 @@ type StatusBarProps = {
 
 export default function StatusBar(props: StatusBarProps) {
   const connections = useConnections();
+  const platform = usePlatform();
   const providerConnectedCount = createMemo(() => props.providerConnectedIds?.length ?? 0);
   const mcpConnectedCount = createMemo(
     () => Object.values(connections.mcpStatuses() ?? {}).filter((status) => status?.status === "connected").length,
@@ -102,6 +106,16 @@ export default function StatusBar(props: StatusBarProps) {
         </div>
 
         <div class="flex items-center gap-1.5">
+          <button
+            type="button"
+            class="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            onClick={() => platform.openLink(DOCS_URL)}
+            title={t("status.open_docs")}
+            aria-label={t("status.open_docs")}
+          >
+            <BookOpen class="h-4 w-4" />
+            <span class="text-[11px] font-medium">{t("status.docs")}</span>
+          </button>
           <button
             type="button"
             class="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
