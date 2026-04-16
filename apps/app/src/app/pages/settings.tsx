@@ -23,6 +23,7 @@ import WebUnavailableSurface from "../components/web-unavailable-surface";
 import DenSettingsPanel from "../components/den-settings-panel";
 import TextInput from "../components/text-input";
 import { useModelControls } from "../app-settings/model-controls-provider";
+import { useFeatureFlagsPreferences } from "../app-settings/feature-flags-preferences";
 import { useSessionDisplayPreferences } from "../app-settings/session-display-preferences";
 import { usePlatform } from "../context/platform";
 import ConfigView from "./config";
@@ -226,6 +227,8 @@ const BUG_REPORT_URL =
 
 export default function SettingsView(props: SettingsViewProps) {
   const modelControls = useModelControls();
+  const { microsandboxCreateSandboxEnabled, toggleMicrosandboxCreateSandbox } =
+    useFeatureFlagsPreferences();
   const { showThinking, toggleShowThinking } = useSessionDisplayPreferences();
   const platform = usePlatform();
   const webDeployment = createMemo(() => getOpenWorkDeployment() === "web");
@@ -2003,6 +2006,33 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="text-[11px] text-gray-7">
                 {t("settings.exa_restart_hint")}
+              </div>
+            </div>
+
+            <div class={`${settingsPanelClass} space-y-3`}>
+              <div>
+                <div class="text-sm font-medium text-gray-12">Feature flags</div>
+                <div class="text-xs text-gray-9">
+                  Experimental controls for sandbox and workspace behaviors.
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">Create Sandbox uses microsandbox image</div>
+                  <div class="text-xs text-gray-7">
+                    When enabled, Create Sandbox launches the detached worker with the microsandbox
+                    image flow instead of the default Docker image flow.
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={toggleMicrosandboxCreateSandbox}
+                  disabled={props.busy || !isTauriRuntime()}
+                >
+                  {microsandboxCreateSandboxEnabled() ? "On" : "Off"}
+                </Button>
               </div>
             </div>
 

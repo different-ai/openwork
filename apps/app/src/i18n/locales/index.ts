@@ -8,3 +8,4 @@ export { default as vi } from "./vi";
 export { default as ptBR } from "./pt-BR";
 export { default as fr } from "./fr";
 export { default as ca } from "./ca";
+export { default as es } from "./es";

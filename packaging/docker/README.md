@@ -109,6 +109,42 @@ This is usually the fastest path for UI/auth/control-plane iteration because it 
 
 ---
 
+## Pre-baked Micro-Sandbox Image
+
+For micro-sandbox work, use the pre-baked image that compiles `openwork` and `openwork-server` from source and downloads the pinned `opencode` binary during `docker build`.
+
+Build it from the repo root:
+
+```bash
+./scripts/build-microsandbox-openwork-image.sh
+```
+
+Run it locally:
+
+```bash
+docker run --rm -p 8787:8787 \
+  -e OPENWORK_CONNECT_HOST=127.0.0.1 \
+  openwork-microsandbox:dev
+```
+
+Defaults:
+- `OPENWORK_TOKEN=microsandbox-token`
+- `OPENWORK_HOST_TOKEN=microsandbox-host-token`
+- `OPENWORK_APPROVAL_MODE=auto`
+
+Verification:
+- Health: `curl http://127.0.0.1:8787/health`
+- Authenticated API call: `curl -H "Authorization: Bearer microsandbox-token" http://127.0.0.1:8787/workspaces`
+- Docker health: `docker inspect --format '{{json .State.Health}}' <container>`
+
+Useful overrides:
+- `OPENWORK_TOKEN` — set your own client bearer token
+- `OPENWORK_HOST_TOKEN` — set your own host/admin token
+- `OPENWORK_CONNECT_HOST` — host name embedded in the printed connect URL
+- `DOCKER_PLATFORM` — optional platform passed to `docker build`
+
+---
+
 ## Production container
 
 This is a minimal packaging template to run the OpenWork Host contract in a single container.

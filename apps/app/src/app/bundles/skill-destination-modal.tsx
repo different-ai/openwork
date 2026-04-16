@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { CheckCircle2, Folder, FolderPlus, Globe, Loader2, Sparkles, X } from "lucide-solid";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { t, currentLocale } from "../../i18n";
+import { isSandboxWorkspace } from "../utils";
 
 import Button from "../components/button";
 
@@ -49,12 +50,7 @@ export default function SkillDestinationModal(props: {
   };
 
   const workspaceBadge = (workspace: WorkspaceInfo) => {
-    if (
-      workspace.workspaceType === "remote" &&
-      (workspace.sandboxBackend === "docker" ||
-        Boolean(workspace.sandboxRunId?.trim()) ||
-        Boolean(workspace.sandboxContainerName?.trim()))
-    ) {
+    if (isSandboxWorkspace(workspace)) {
       return translate("share_skill_destination.sandbox_badge");
     }
     if (workspace.workspaceType === "remote") {
@@ -77,12 +73,6 @@ export default function SkillDestinationModal(props: {
     if (!workspaceId || footerBusy()) return;
     void props.onSubmitWorkspace(workspaceId);
   };
-
-  const isSandboxWorkspace = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote" &&
-    (workspace.sandboxBackend === "docker" ||
-      Boolean(workspace.sandboxRunId?.trim()) ||
-      Boolean(workspace.sandboxContainerName?.trim()));
 
   const workspaceCircleClass = (workspace: WorkspaceInfo, selected: boolean) => {
     if (selected) {

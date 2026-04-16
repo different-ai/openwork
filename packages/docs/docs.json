@@ -63,6 +63,12 @@
         "openapi": "https://api.openworklabs.com/openapi.json"
       },
       {
+        "tab": "Roadmap",
+        "pages": [
+          "roadmap"
+        ]
+      },
+      {
         "tab": "Changelog",
         "pages": [
           "changelog"

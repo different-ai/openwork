@@ -73,6 +73,7 @@ import { t, currentLocale } from "../../i18n";
 import { filterProviderList, mapConfigProvidersToList } from "../utils/providers";
 import { buildDefaultWorkspaceBlueprint, normalizeWorkspaceOpenworkConfig } from "../lib/workspace-blueprints";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
+import { resolveSandboxCreateMode, type SandboxBackendType } from "./sandbox-create-mode";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -172,6 +173,7 @@ export function createWorkspaceStore(options: {
   developerMode: () => boolean;
   pendingInitialSessionSelection?: () => { workspaceId: string; title: string | null; readyAt: number } | null;
   setPendingInitialSessionSelection?: (input: { workspaceId: string; title: string | null; readyAt: number } | null) => void;
+  useMicrosandboxCreateSandbox?: () => boolean;
 }) {
 
   const wsDebugEnabled = () => options.developerMode();
@@ -2286,6 +2288,7 @@ export function createWorkspaceStore(options: {
 
     const runId = makeRunId();
     const startedAt = Date.now();
+    const sandboxMode = resolveSandboxCreateMode(options.useMicrosandboxCreateSandbox?.() === true);
     setSandboxCreatePhase("preflight");
     setSandboxPreflightBusy(true);
     options.setError(null);
@@ -2297,11 +2300,11 @@ export function createWorkspaceStore(options: {
     setSandboxCreateProgress({
       runId,
       startedAt,
-      stage: "Checking Docker...",
+      stage: sandboxMode.runtimeCheckingStage,
       error: null,
       logs: [],
       steps: [
-        { key: "docker", label: "Docker ready", status: "active", detail: null },
+        { key: "docker", label: sandboxMode.runtimeReadyLabel, status: "active", detail: null },
         { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
         { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
         { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
@@ -2471,7 +2474,8 @@ export function createWorkspaceStore(options: {
 
         const host = await orchestratorStartDetached({
           workspacePath: resolvedFolder,
-          sandboxBackend: "docker",
+          sandboxBackend: sandboxMode.backend,
+          sandboxImageRef: sandboxMode.sandboxImageRef,
           runId,
         });
         setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
@@ -2487,7 +2491,7 @@ export function createWorkspaceStore(options: {
           openworkHostToken: host.hostToken,
           directory: resolvedFolder,
           displayName: name,
-          sandboxBackend: host.sandboxBackend ?? "docker",
+          sandboxBackend: host.sandboxBackend ?? sandboxMode.backend,
           sandboxRunId: host.sandboxRunId ?? runId,
           sandboxContainerName: host.sandboxContainerName ?? null,
           manageBusy: false,
@@ -2540,7 +2544,7 @@ export function createWorkspaceStore(options: {
     closeModal?: boolean;
 
     // Sandbox lifecycle metadata (desktop-managed)
-    sandboxBackend?: "docker" | null;
+    sandboxBackend?: SandboxBackendType | null;
     sandboxRunId?: string | null;
     sandboxContainerName?: string | null;
   }) {
@@ -2611,7 +2615,7 @@ export function createWorkspaceStore(options: {
         openworkWorkspace = resolved.workspace;
         resolvedHostUrl = resolved.hostUrl;
         resolvedAuth = resolved.auth;
-      } else if (input.sandboxBackend === "docker") {
+      } else if (input.sandboxBackend === "docker" || input.sandboxBackend === "microsandbox") {
         resolvedHostUrl = hostUrl;
         resolvedBaseUrl = `${hostUrl.replace(/\/+$/, "")}/opencode`;
         resolvedDirectory = directory || resolvedDirectory;
@@ -3011,7 +3015,9 @@ export function createWorkspaceStore(options: {
       }
 
       const isSandboxWorkspace =
-        workspace.sandboxBackend === "docker" || Boolean(workspace.sandboxContainerName?.trim());
+        workspace.sandboxBackend === "docker" ||
+        workspace.sandboxBackend === "microsandbox" ||
+        Boolean(workspace.sandboxContainerName?.trim());
 
       if (!isSandboxWorkspace) {
         return Boolean(await reconnect());

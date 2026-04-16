@@ -11,6 +11,7 @@ import type {
 import {
   formatRelativeTime,
   getWorkspaceTaskLoadErrorDisplay,
+  isSandboxWorkspace,
   isTauriRuntime,
   isWindowsPlatform,
   normalizeDirectoryPath,
@@ -296,9 +297,7 @@ export default function SettingsShell(props: SettingsShellProps) {
     t("share.workspace_fallback");
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
-      ? workspace.sandboxBackend === "docker" ||
-        Boolean(workspace.sandboxRunId?.trim()) ||
-        Boolean(workspace.sandboxContainerName?.trim())
+      ? isSandboxWorkspace(workspace)
         ? t("workspace.sandbox_badge")
         : t("workspace.remote_badge")
       : t("workspace.local_badge");

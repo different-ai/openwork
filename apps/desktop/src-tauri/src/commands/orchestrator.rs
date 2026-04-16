@@ -802,6 +802,7 @@ pub fn orchestrator_start_detached(
     app: AppHandle,
     workspace_path: String,
     sandbox_backend: Option<String>,
+    sandbox_image_ref: Option<String>,
     run_id: Option<String>,
     openwork_token: Option<String>,
     openwork_host_token: Option<String>,
@@ -816,7 +817,14 @@ pub fn orchestrator_start_detached(
         .unwrap_or_else(|| "none".to_string())
         .trim()
         .to_lowercase();
-    let wants_docker_sandbox = sandbox_backend == "docker";
+    if sandbox_backend != "none" && sandbox_backend != "docker" && sandbox_backend != "microsandbox" {
+        return Err("sandboxBackend must be one of: none, docker, microsandbox".to_string());
+    }
+    let wants_docker_sandbox = sandbox_backend == "docker" || sandbox_backend == "microsandbox";
+    let wants_microsandbox = sandbox_backend == "microsandbox";
+    let sandbox_image_ref = sandbox_image_ref
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let sandbox_run_id = run_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -830,7 +838,13 @@ pub fn orchestrator_start_detached(
         "[sandbox-create][at={start_ts}][runId={}][stage=entry] workspacePath={} sandboxBackend={} container={}",
         sandbox_run_id,
         workspace_path,
-        if wants_docker_sandbox { "docker" } else { "none" },
+        if wants_microsandbox {
+            "microsandbox"
+        } else if wants_docker_sandbox {
+            "docker"
+        } else {
+            "none"
+        },
         sandbox_container_name.as_deref().unwrap_or("<none>")
     );
 
@@ -854,7 +868,14 @@ pub fn orchestrator_start_detached(
             "workspacePath": workspace_path,
             "openworkUrl": openwork_url,
             "port": port,
-            "sandboxBackend": if wants_docker_sandbox { "docker" } else { "none" },
+            "sandboxBackend": if wants_microsandbox {
+                "microsandbox"
+            } else if wants_docker_sandbox {
+                "docker"
+            } else {
+                "none"
+            },
+            "sandboxImageRef": sandbox_image_ref.clone(),
             "containerName": sandbox_container_name,
         }),
     );
@@ -906,6 +927,10 @@ pub fn orchestrator_start_detached(
         if wants_docker_sandbox {
             args.push("--sandbox".to_string());
             args.push("docker".to_string());
+            if let Some(image_ref) = sandbox_image_ref.as_deref() {
+                args.push("--sandbox-image".to_string());
+                args.push(image_ref.to_string());
+            }
         }
 
         // Convert to &str for the shell command builder.
@@ -1116,7 +1141,11 @@ pub fn orchestrator_start_detached(
         host_token,
         port,
         sandbox_backend: if wants_docker_sandbox {
-            Some("docker".to_string())
+            Some(if wants_microsandbox {
+                "microsandbox".to_string()
+            } else {
+                "docker".to_string()
+            })
         } else {
             None
         },
@@ -1413,6 +1442,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
             app,
             workspace_path.clone(),
             Some("docker".to_string()),
+            None,
             Some(run_id.clone()),
             None,
             None,

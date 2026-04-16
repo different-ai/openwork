@@ -9,7 +9,7 @@ import type {
 } from "../types";
 import { normalizeOpenworkServerUrl, parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
 import { t } from "../../i18n";
-import { isTauriRuntime, safeStringify, addOpencodeCacheHint } from "../utils";
+import { isSandboxWorkspace, isTauriRuntime, safeStringify, addOpencodeCacheHint } from "../utils";
 import type { WorkspaceStore } from "../context/workspace";
 import type { StartupPreference } from "../types";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
@@ -662,9 +662,7 @@ export function createBundlesStore(options: {
         t("app.worker_fallback");
       const badge =
         workspace.workspaceType === "remote"
-          ? workspace.sandboxBackend === "docker" ||
-            Boolean(workspace.sandboxRunId?.trim()) ||
-            Boolean(workspace.sandboxContainerName?.trim())
+          ? isSandboxWorkspace(workspace)
             ? t("workspace.sandbox_badge")
             : t("workspace.remote_badge")
           : t("workspace.local_badge");

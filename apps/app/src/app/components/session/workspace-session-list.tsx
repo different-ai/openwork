@@ -23,6 +23,7 @@ import type {
 import {
   formatRelativeTime,
   getWorkspaceTaskLoadErrorDisplay,
+  isSandboxWorkspace,
   isWindowsPlatform,
 } from "../../utils";
 import { t } from "../../../i18n";
@@ -165,9 +166,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
-    ? workspace.sandboxBackend === "docker" ||
-      Boolean(workspace.sandboxRunId?.trim()) ||
-      Boolean(workspace.sandboxContainerName?.trim())
+    ? isSandboxWorkspace(workspace)
       ? t("workspace.sandbox_badge")
       : t("workspace.remote_badge")
     : t("workspace.local_badge");

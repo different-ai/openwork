@@ -88,6 +88,7 @@ import {
 import { createProvidersStore } from "./context/providers";
 import { ModelControlsProvider } from "./app-settings/model-controls-provider";
 import { createModelControlsStore } from "./app-settings/model-controls-store";
+import { useFeatureFlagsPreferences } from "./app-settings/feature-flags-preferences";
 import { useSessionDisplayPreferences } from "./app-settings/session-display-preferences";
 import {
   shouldRedirectMissingSessionAfterScopedLoad,
@@ -173,6 +174,7 @@ type StartupSessionSnapshot = {
 
 export default function App() {
   const { resetSessionDisplayPreferences } = useSessionDisplayPreferences();
+  const { microsandboxCreateSandboxEnabled } = useFeatureFlagsPreferences();
   const envOpenworkWorkspaceId =
     typeof import.meta.env?.VITE_OPENWORK_WORKSPACE_ID === "string"
       ? import.meta.env.VITE_OPENWORK_WORKSPACE_ID.trim() || null
@@ -861,6 +863,7 @@ export default function App() {
     developerMode,
     pendingInitialSessionSelection,
     setPendingInitialSessionSelection,
+    useMicrosandboxCreateSandbox: microsandboxCreateSandboxEnabled,
   });
 
   createEffect(() => {
