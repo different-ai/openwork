@@ -121,6 +121,7 @@ export type SettingsViewProps = {
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
   runtimeWorkspaceId: string | null;
+  selectedWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
   activeWorkspaceType: "local" | "remote";
   openworkAuditEntries: OpenworkAuditEntry[];
@@ -1480,7 +1481,9 @@ export default function SettingsView(props: SettingsViewProps) {
               openworkServerClient={props.openworkServerClient}
               openworkServerStatus={props.openworkServerStatus}
               openworkServerCapabilities={props.openworkServerCapabilities}
+              openworkServerHostInfo={props.openworkServerHostInfo}
               runtimeWorkspaceId={props.runtimeWorkspaceId}
+              selectedWorkspaceId={props.selectedWorkspaceId}
               selectedWorkspaceRoot={props.selectedWorkspaceRoot}
               activeWorkspaceType={props.activeWorkspaceType}
               onConfigUpdated={props.markOpencodeConfigReloadRequired}

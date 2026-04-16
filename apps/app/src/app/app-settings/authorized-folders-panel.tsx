@@ -16,7 +16,9 @@ import type {
   OpenworkServerClient,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
+import { createOpenworkServerClient } from "../lib/openwork-server";
 import { pickDirectory } from "../lib/tauri";
+import type { OpenworkServerInfo } from "../lib/tauri";
 import {
   isTauriRuntime,
   normalizeDirectoryQueryPath,
@@ -27,7 +29,9 @@ type AuthorizedFoldersPanelProps = {
   openworkServerClient: OpenworkServerClient | null;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
+  openworkServerHostInfo: OpenworkServerInfo | null;
   runtimeWorkspaceId: string | null;
+  selectedWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
   activeWorkspaceType: "local" | "remote";
   onConfigUpdated: () => void;
@@ -95,6 +99,21 @@ const buildAuthorizedFoldersStatus = (preservedCount: number, action?: string) =
   return action ?? preservedLabel;
 };
 
+const sanitizeAuthorizedFolders = (folders: string[], workspaceRoot: string) => {
+  const normalizedRoot = normalizeAuthorizedFolderPath(workspaceRoot);
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const folder of folders) {
+    const normalized = normalizeAuthorizedFolderPath(folder);
+    if (!normalized || (normalizedRoot && normalized === normalizedRoot) || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  return next;
+};
+
 const mergeAuthorizedFoldersIntoExternalDirectory = (
   folders: string[],
   hiddenEntries: Record<string, unknown>,
@@ -119,23 +138,57 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
   const openworkServerReady = createMemo(
     () => props.openworkServerStatus === "connected",
   );
+  const localServerV2Client = createMemo(() => {
+    if (props.activeWorkspaceType !== "local") return null;
+    const hostInfo = props.openworkServerHostInfo;
+    const baseUrl = hostInfo?.baseUrl?.trim() ?? "";
+    const token = hostInfo?.clientToken?.trim() ?? "";
+    if (hostInfo?.startupMode !== "server-v2" || !baseUrl || !token) {
+      return null;
+    }
+    return createOpenworkServerClient({
+      baseUrl,
+      hostToken: hostInfo.hostToken?.trim() || undefined,
+      serverV2: {
+        capabilities: props.openworkServerCapabilities?.serverV2 ?? null,
+        enabled: true,
+      },
+      token,
+    });
+  });
+  const effectiveOpenworkServerClient = createMemo(
+    () => localServerV2Client() ?? props.openworkServerClient,
+  );
+  const preferredWorkspaceId = createMemo(() => {
+    if (props.activeWorkspaceType === "local" && localServerV2Client()) {
+      return props.selectedWorkspaceId?.trim() || null;
+    }
+    return props.runtimeWorkspaceId?.trim() || null;
+  });
+  const effectiveServerReady = createMemo(
+    () => openworkServerReady() || Boolean(localServerV2Client()),
+  );
   const openworkServerWorkspaceReady = createMemo(
-    () => Boolean(props.runtimeWorkspaceId),
+    () => Boolean(preferredWorkspaceId() || (props.activeWorkspaceType === "local" && localServerV2Client() && props.selectedWorkspaceRoot.trim())),
   );
   const canReadConfig = createMemo(
     () =>
-      openworkServerReady() &&
+      effectiveServerReady() &&
       openworkServerWorkspaceReady() &&
-      (props.openworkServerCapabilities?.config?.read ?? false),
+      (localServerV2Client()
+        ? (props.openworkServerCapabilities?.serverV2?.config?.read ?? true)
+        : (props.openworkServerCapabilities?.config?.read ?? false)),
   );
   const canWriteConfig = createMemo(
     () =>
-      openworkServerReady() &&
+      effectiveServerReady() &&
       openworkServerWorkspaceReady() &&
-      (props.openworkServerCapabilities?.config?.write ?? false),
+      (localServerV2Client()
+        ? (props.openworkServerCapabilities?.serverV2?.config?.write ?? true)
+        : (props.openworkServerCapabilities?.config?.write ?? false)),
   );
   const authorizedFoldersHint = createMemo(() => {
-    if (!openworkServerReady()) return t("context_panel.server_disconnected");
+    if (!effectiveServerReady()) return t("context_panel.server_disconnected");
     if (!openworkServerWorkspaceReady()) return t("context_panel.no_server_workspace");
     if (!canReadConfig()) {
       return t("context_panel.config_access_unavailable");
@@ -151,15 +204,16 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
   const workspaceRootFolder = createMemo(() => props.selectedWorkspaceRoot.trim());
   const visibleAuthorizedFolders = createMemo(() => {
     const root = workspaceRootFolder();
-    return root ? [root, ...authorizedFolders()] : authorizedFolders();
+    const extras = sanitizeAuthorizedFolders(authorizedFolders(), root);
+    return root ? [root, ...extras] : extras;
   });
 
   createEffect(() => {
-    const openworkClient = props.openworkServerClient;
-    const openworkWorkspaceId = props.runtimeWorkspaceId;
+    const openworkClient = effectiveOpenworkServerClient();
+    const preferredId = preferredWorkspaceId();
     const readable = canReadConfig();
 
-    if (!openworkClient || !openworkWorkspaceId || !readable) {
+    if (!openworkClient || !readable) {
       setAuthorizedFolders([]);
       setAuthorizedFolderDraft("");
       setAuthorizedFoldersLoading(false);
@@ -177,10 +231,27 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
 
     const loadAuthorizedFolders = async () => {
       try {
+        let openworkWorkspaceId = preferredId;
+        if (!openworkWorkspaceId && props.activeWorkspaceType === "local" && localServerV2Client()) {
+          const targetRoot = normalizeAuthorizedFolderPath(props.selectedWorkspaceRoot);
+          if (targetRoot) {
+            const response = await openworkClient.listWorkspaces();
+            const items = Array.isArray(response.items) ? response.items : [];
+            const match = items.find((entry) => normalizeAuthorizedFolderPath(entry.path) === targetRoot);
+            openworkWorkspaceId = match?.id?.trim() || null;
+          }
+        }
+        if (!openworkWorkspaceId) {
+          setAuthorizedFolders([]);
+          setAuthorizedFoldersError(null);
+          setAuthorizedFoldersStatus(null);
+          return;
+        }
+
         const config = await openworkClient.getConfig(openworkWorkspaceId);
         if (cancelled) return;
         const next = readAuthorizedFoldersFromConfig(ensureRecord(config.opencode));
-        setAuthorizedFolders(next.folders);
+        setAuthorizedFolders(sanitizeAuthorizedFolders(next.folders, props.selectedWorkspaceRoot));
         setAuthorizedFoldersStatus(
           buildAuthorizedFoldersStatus(Object.keys(next.hiddenEntries).length),
         );
@@ -204,12 +275,27 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
   });
 
   const persistAuthorizedFolders = async (nextFolders: string[]) => {
-    const openworkClient = props.openworkServerClient;
-    const openworkWorkspaceId = props.runtimeWorkspaceId;
-    if (!openworkClient || !openworkWorkspaceId || !canWriteConfig()) {
+    const openworkClient = effectiveOpenworkServerClient();
+    let openworkWorkspaceId = preferredWorkspaceId();
+    if (!openworkClient || !canWriteConfig()) {
       setAuthorizedFoldersError(
         t("context_panel.writable_workspace_required"),
       );
+      return false;
+    }
+
+    if (!openworkWorkspaceId && props.activeWorkspaceType === "local" && localServerV2Client()) {
+      const targetRoot = normalizeAuthorizedFolderPath(props.selectedWorkspaceRoot);
+      if (targetRoot) {
+        const response = await openworkClient.listWorkspaces();
+        const items = Array.isArray(response.items) ? response.items : [];
+        const match = items.find((entry) => normalizeAuthorizedFolderPath(entry.path) === targetRoot);
+        openworkWorkspaceId = match?.id?.trim() || null;
+      }
+    }
+
+    if (!openworkWorkspaceId) {
+      setAuthorizedFoldersError(t("context_panel.writable_workspace_required"));
       return false;
     }
 
@@ -222,8 +308,9 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
       const currentAuthorizedFolders = readAuthorizedFoldersFromConfig(
         ensureRecord(currentConfig.opencode),
       );
+      const sanitizedNextFolders = sanitizeAuthorizedFolders(nextFolders, props.selectedWorkspaceRoot);
       const nextExternalDirectory = mergeAuthorizedFoldersIntoExternalDirectory(
-        nextFolders,
+        sanitizedNextFolders,
         currentAuthorizedFolders.hiddenEntries,
       );
 
@@ -234,7 +321,7 @@ export default function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProp
           },
         },
       });
-      setAuthorizedFolders(nextFolders);
+      setAuthorizedFolders(sanitizedNextFolders);
       setAuthorizedFoldersStatus(
         buildAuthorizedFoldersStatus(
           Object.keys(currentAuthorizedFolders.hiddenEntries).length,

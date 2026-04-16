@@ -101,6 +101,39 @@ function buildExternalDirectory(folders: string[], hiddenEntries: JsonObject) {
   return Object.keys(next).length ? next : undefined;
 }
 
+function withoutWorkspaceRoot(folders: string[], workspace: WorkspaceRecord) {
+  const workspaceRoot = normalizeAuthorizedFolderPath(workspace.dataDir);
+  if (!workspaceRoot) {
+    return folders;
+  }
+  return folders.filter((folder) => normalizeAuthorizedFolderPath(folder) !== workspaceRoot);
+}
+
+function canonicalizeWorkspaceConfigState(workspace: WorkspaceRecord, config: { openwork: JsonObject; opencode: JsonObject }) {
+  const nextOpenwork = asObject(config.openwork);
+  nextOpenwork.authorizedRoots = withoutWorkspaceRoot(normalizeStringArray(nextOpenwork.authorizedRoots), workspace);
+
+  const nextOpencode = asObject(config.opencode);
+  const permission = asObject(nextOpencode.permission);
+  const externalDirectory = normalizeExternalDirectory(permission.external_directory);
+  const nextExternalDirectory = buildExternalDirectory(withoutWorkspaceRoot(externalDirectory.folders, workspace), externalDirectory.hiddenEntries);
+  if (nextExternalDirectory) {
+    permission.external_directory = nextExternalDirectory;
+  } else {
+    delete permission.external_directory;
+  }
+  if (Object.keys(permission).length) {
+    nextOpencode.permission = permission;
+  } else {
+    delete nextOpencode.permission;
+  }
+
+  return {
+    openwork: nextOpenwork,
+    opencode: nextOpencode,
+  };
+}
+
 function mergeObjects(base: JsonObject, patch: JsonObject): JsonObject {
   const next: JsonObject = { ...base };
   for (const [key, value] of Object.entries(patch)) {
@@ -323,7 +356,7 @@ export function createConfigMaterializationService(input: {
 
   function buildDefaultOpenwork(workspace: WorkspaceRecord) {
     return {
-      authorizedRoots: normalizeStringArray(workspace.dataDir ? [workspace.dataDir] : []),
+      authorizedRoots: [],
       blueprint: null,
       reload: null,
       version: OPENWORK_CONFIG_VERSION,
@@ -377,9 +410,10 @@ export function createConfigMaterializationService(input: {
       return existing;
     }
     const legacy = readLegacyWorkspaceState(workspace);
+    const canonical = canonicalizeWorkspaceConfigState(workspace, legacy);
     return input.repositories.workspaceConfigState.upsert({
-      openwork: legacy.openwork,
-      opencode: legacy.opencode,
+      openwork: canonical.openwork,
+      opencode: canonical.opencode,
       workspaceId: workspace.id,
     });
   }
@@ -472,9 +506,13 @@ export function createConfigMaterializationService(input: {
     upsertManagedRecords(workspace.id, "plugins", recognized.plugins);
     upsertManagedRecords(workspace.id, "providerConfigs", recognized.providers);
     absorbManagedSkills(workspace);
-    return input.repositories.workspaceConfigState.upsert({
+    const canonical = canonicalizeWorkspaceConfigState(workspace, {
       openwork: mergeObjects(buildDefaultOpenwork(workspace), legacy.openwork),
       opencode: mergeObjects(buildDefaultOpencode(), recognized.base),
+    });
+    return input.repositories.workspaceConfigState.upsert({
+      openwork: canonical.openwork,
+      opencode: canonical.opencode,
       workspaceId: workspace.id,
     });
   }
@@ -500,8 +538,12 @@ export function createConfigMaterializationService(input: {
   function computeSnapshot(workspace: WorkspaceRecord): WorkspaceConfigSnapshot {
     const workspaceState = ensureWorkspaceConfigState(workspace);
     const serverState = ensureServerConfigState();
-    const storedOpenwork = mergeObjects(buildDefaultOpenwork(workspace), workspaceState.openwork);
-    const storedOpencode = mergeObjects(buildDefaultOpencode(), workspaceState.opencode);
+    const canonicalState = canonicalizeWorkspaceConfigState(workspace, {
+      openwork: workspaceState.openwork,
+      opencode: workspaceState.opencode,
+    });
+    const storedOpenwork = mergeObjects(buildDefaultOpenwork(workspace), canonicalState.openwork);
+    const storedOpencode = mergeObjects(buildDefaultOpencode(), canonicalState.opencode);
     const effectiveOpenwork = mergeObjects(buildDefaultOpenwork(workspace), storedOpenwork);
     const effectiveOpencode = mergeObjects(asObject(serverState.opencode), storedOpencode);
 
@@ -527,11 +569,10 @@ export function createConfigMaterializationService(input: {
 
     const permission = asObject(effectiveOpencode.permission);
     const externalDirectory = normalizeExternalDirectory(permission.external_directory);
-    const authorizedRoots = normalizeStringArray([
-      ...(workspace.dataDir ? [workspace.dataDir] : []),
+    const authorizedRoots = withoutWorkspaceRoot(normalizeStringArray([
       ...normalizeStringArray(effectiveOpenwork.authorizedRoots),
       ...externalDirectory.folders,
-    ]);
+    ]), workspace);
     const nextExternalDirectory = buildExternalDirectory(authorizedRoots, externalDirectory.hiddenEntries);
     if (nextExternalDirectory) {
       permission.external_directory = nextExternalDirectory;
@@ -701,9 +742,13 @@ export function createConfigMaterializationService(input: {
         upsertManagedRecords(workspace.id, "providerConfigs", recognized.providers);
         nextOpencode = recognized.base;
       }
-      input.repositories.workspaceConfigState.upsert({
+      const canonical = canonicalizeWorkspaceConfigState(workspace, {
         openwork: nextOpenwork,
         opencode: nextOpencode,
+      });
+      input.repositories.workspaceConfigState.upsert({
+        openwork: canonical.openwork,
+        opencode: canonical.opencode,
         workspaceId: workspace.id,
       });
       return materializeWorkspaceSnapshot(workspaceId);
@@ -772,9 +817,13 @@ export function createConfigMaterializationService(input: {
       upsertManagedRecords(workspace.id, "mcps", recognized.mcps);
       upsertManagedRecords(workspace.id, "plugins", recognized.plugins);
       upsertManagedRecords(workspace.id, "providerConfigs", recognized.providers);
-      input.repositories.workspaceConfigState.upsert({
+      const canonical = canonicalizeWorkspaceConfigState(workspace, {
         openwork: ensureWorkspaceConfigState(workspace).openwork,
         opencode: recognized.base,
+      });
+      input.repositories.workspaceConfigState.upsert({
+        openwork: canonical.openwork,
+        opencode: canonical.opencode,
         workspaceId: workspace.id,
       });
       return readRawProjectOpencodeConfig(workspaceId);

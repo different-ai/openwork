@@ -155,6 +155,14 @@ fn openwork_server_state_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("openwork-server-state.json"))
 }
 
+fn openwork_server_v2_workdir(app: &AppHandle) -> Result<PathBuf, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    Ok(data_dir.join("server-v2"))
+}
+
 fn normalize_workspace_key(workspace_key: &str) -> String {
     let trimmed = workspace_key.trim();
     if trimmed.is_empty() {
@@ -711,12 +719,14 @@ pub fn start_openwork_server_v2(
         .first()
         .map(|path| Path::new(path))
         .unwrap_or_else(|| Path::new("."));
+    let server_v2_workdir = openwork_server_v2_workdir(app)?;
     log_openwork_server(format!(
-        "Resolved Server V2 startup host={} port={} base_url={} cwd={} active_workspace='{}' sidecar_dir={} manifest_present={}",
+        "Resolved Server V2 startup host={} port={} base_url={} cwd={} workdir={} active_workspace='{}' sidecar_dir={} manifest_present={}",
         host,
         port,
         base_url,
         cwd.display(),
+        server_v2_workdir.display(),
         if active_workspace.is_empty() { "<none>" } else { active_workspace },
         sidecar_dir.display(),
         runtime_manifest_path.is_file()
@@ -730,9 +740,14 @@ pub fn start_openwork_server_v2(
         .env("OPENWORK_HOST_TOKEN", host_token.clone())
         .env("OPENWORK_TOKEN", client_token.clone())
         .env("OPENWORK_SERVER_V2_HOSTING_KIND", "desktop")
+        .env(
+            "OPENWORK_SERVER_V2_WORKDIR",
+            server_v2_workdir.to_string_lossy().to_string(),
+        )
         .env("OPENWORK_SERVER_V2_RUNTIME_BOOTSTRAP", "eager")
         .env("OPENWORK_SERVER_V2_RUNTIME_BUNDLE_DIR", sidecar_dir.to_string_lossy().to_string())
-        .env("OPENWORK_SERVER_V2_RUNTIME_SOURCE", "release");
+        .env("OPENWORK_SERVER_V2_RUNTIME_SOURCE", "release")
+        .env("OPENWORK_DATA_DIR", "");
 
     if runtime_manifest_path.is_file() {
         command = command.env(
@@ -746,10 +761,11 @@ pub fn start_openwork_server_v2(
     }
 
     log_openwork_server(format!(
-        "Launching Server V2 child with args={:?} runtime_source=release tokens(client={}, host={})",
+        "Launching Server V2 child with args={:?} runtime_source=release tokens(client={}, host={}) explicit_workdir={}",
         ["--host", host.as_str(), "--port", port_text.as_str()],
         !workspace_tokens.client_token.is_empty(),
-        !workspace_tokens.host_token.is_empty()
+        !workspace_tokens.host_token.is_empty(),
+        server_v2_workdir.display()
     ));
 
     let (rx, child) = command

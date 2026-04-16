@@ -62,8 +62,9 @@ test("local workspace creation and config routes use server-owned config directo
   const configResponse = await app.request(`http://openwork.local/workspaces/${workspaceId}/config`);
   const configBody = await configResponse.json();
   expect(configResponse.status).toBe(200);
-  expect(configBody.data.stored.openwork.authorizedRoots).toContain(workspaceRoot);
-  expect(configBody.data.effective.opencode.permission.external_directory[`${workspaceRoot}/*`]).toBe("allow");
+  expect(configBody.data.stored.openwork.authorizedRoots).toEqual([]);
+  expect(configBody.data.effective.openwork.authorizedRoots).toEqual([]);
+  expect(configBody.data.effective.opencode.permission?.external_directory).toBeUndefined();
 
   const patchResponse = await app.request(`http://openwork.local/workspaces/${workspaceId}/config`, {
     method: "PATCH",
@@ -76,8 +77,10 @@ test("local workspace creation and config routes use server-owned config directo
   const patched = await patchResponse.json();
   expect(patchResponse.status).toBe(200);
   expect(patched.data.stored.openwork.reload.auto).toBe(true);
-  expect(patched.data.effective.opencode.permission.external_directory[`${workspaceRoot}/*`]).toBe("allow");
+  expect(patched.data.stored.openwork.authorizedRoots).toEqual([]);
+  expect(patched.data.effective.openwork.authorizedRoots).toEqual([path.join(root, "shared-data")]);
   expect(patched.data.effective.opencode.permission.external_directory[`${path.join(root, "shared-data")}/*`]).toBe("allow");
+  expect(patched.data.effective.opencode.permission.external_directory[`${workspaceRoot}/*`]).toBeUndefined();
 
   const rawResponse = await app.request(`http://openwork.local/workspaces/${workspaceId}/config/opencode-raw?scope=project`);
   const rawBody = await rawResponse.json();

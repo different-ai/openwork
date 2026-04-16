@@ -1292,6 +1292,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                   resetOpenworkServerSettings={props.resetOpenworkServerSettings}
                   testOpenworkServerConnection={props.testOpenworkServerConnection}
                   runtimeWorkspaceId={props.runtimeWorkspaceId}
+                  selectedWorkspaceId={props.selectedWorkspaceId}
                   selectedWorkspaceRoot={props.selectedWorkspaceRoot}
                   activeWorkspaceType={props.activeWorkspaceType}
                   openworkAuditEntries={props.openworkAuditEntries}
