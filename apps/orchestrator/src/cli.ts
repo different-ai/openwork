@@ -3063,7 +3063,7 @@ function workspaceIdForRemote(
   return `ws-${createHash("sha1").update(key).digest("hex").slice(0, 12)}`;
 }
 
-function opencodeRouterSendToolSource(): string {
+function opencodeRouterSendToolSource(resolvedPort: number = 3005): string {
   return [
     'import { tool } from "@opencode-ai/plugin"',
     "",
@@ -3107,24 +3107,10 @@ function opencodeRouterSendToolSource(): string {
     '    directory: tool.schema.string().optional().describe("Directory to target for fan-out (default: current session directory)"),',
     '    peerId: tool.schema.string().optional().describe("Direct destination peer id (chat/thread id)"),',
     '    autoBind: tool.schema.boolean().optional().describe("When direct sending, bind peerId to directory if provided"),',
-    "  },",
-    "  async execute(args, context) {",
-     "    const resolveRouterPort = () => {",
-    "      const fromEnv = (process.env.OPENCODE_ROUTER_HEALTH_PORT || '').trim()",
-    "      if (fromEnv) { const p = Number(fromEnv); if (Number.isFinite(p) && p > 0) return p }",
-    "      try {",
-    "        const fs = require('node:fs')",
-    "        const path = require('node:path')",
-    "        const os = require('node:os')",
-    "        const portFile = path.join(os.homedir(), '.openwork', 'opencode-router', 'port')",
-    "        const raw = fs.readFileSync(portFile, 'utf8').trim()",
-    "        const p = Number(raw)",
-    "        if (Number.isFinite(p) && p > 0) return p",
-    "      } catch { /* not running or port file not written yet */ }",
-    "      return 3005",
-    "    }",
-    "    const port = resolveRouterPort()",
-    '    const channel = (args.channel || "telegram").trim()',
+     "  },",
+     "  async execute(args, context) {",
+     `    const port = ${resolvedPort}`,
+     '    const channel = (args.channel || "telegram").trim()',
     '    if (channel !== "telegram" && channel !== "slack") {',
     '      throw new Error("channel must be telegram or slack")',
     "    }",
@@ -3198,7 +3184,7 @@ function opencodeRouterSendToolSource(): string {
   ].join("\n");
 }
 
-function opencodeRouterStatusToolSource(): string {
+function opencodeRouterStatusToolSource(resolvedPort: number = 3005): string {
   return [
     'import { tool } from "@opencode-ai/plugin"',
     "",
@@ -3218,24 +3204,10 @@ function opencodeRouterStatusToolSource(): string {
     '    identityId: tool.schema.string().optional().describe("Identity id to scope checks"),',
     '    directory: tool.schema.string().optional().describe("Directory to inspect bindings for (default: current session directory)"),',
     '    peerId: tool.schema.string().optional().describe("Peer id to inspect bindings for"),',
-    '    includeBindings: tool.schema.boolean().optional().describe("Include binding details (default: false)"),',
-    "  },",
-    "  async execute(args, context) {",
-     "    const resolveRouterPort = () => {",
-    "      const fromEnv = (process.env.OPENCODE_ROUTER_HEALTH_PORT || '').trim()",
-    "      if (fromEnv) { const p = Number(fromEnv); if (Number.isFinite(p) && p > 0) return p }",
-    "      try {",
-    "        const fs = require('node:fs')",
-    "        const path = require('node:path')",
-    "        const os = require('node:os')",
-    "        const portFile = path.join(os.homedir(), '.openwork', 'opencode-router', 'port')",
-    "        const raw = fs.readFileSync(portFile, 'utf8').trim()",
-    "        const p = Number(raw)",
-    "        if (Number.isFinite(p) && p > 0) return p",
-    "      } catch { /* not running or port file not written yet */ }",
-    "      return 3005",
-    "    }",
-    "    const port = resolveRouterPort()",
+     '    includeBindings: tool.schema.boolean().optional().describe("Include binding details (default: false)"),',
+     "  },",
+     "  async execute(args, context) {",
+     `    const port = ${resolvedPort}`,
     '    const channel = (args.channel || "telegram").trim()',
     '    if (channel !== "telegram" && channel !== "slack") {',
     '      throw new Error("channel must be telegram or slack")',
@@ -3370,6 +3342,23 @@ function opencodeRouterStatusToolSource(): string {
   ].join("\n");
 }
 
+async function resolveRouterPortAtStartup(): Promise<number> {
+  const fromEnv = (process.env.OPENCODE_ROUTER_HEALTH_PORT || "").trim();
+  if (fromEnv) {
+    const p = Number(fromEnv);
+    if (Number.isFinite(p) && p > 0) return p;
+  }
+  try {
+    const portFile = join(homedir(), ".openwork", "opencode-router", "port");
+    const raw = (await readFile(portFile, "utf8")).trim();
+    const p = Number(raw);
+    if (Number.isFinite(p) && p > 0) return p;
+  } catch {
+    // not running or port file not written yet
+  }
+  return 3005;
+}
+
 async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
   const toolsDir = join(configDir, "tools");
   await mkdir(toolsDir, { recursive: true });
@@ -3385,13 +3374,15 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
     await writeFile(toolPath, content, "utf8");
   };
 
+  const routerPort = await resolveRouterPortAtStartup();
+
   await writeManagedTool(
     "opencode_router_send.ts",
-    opencodeRouterSendToolSource(),
+    opencodeRouterSendToolSource(routerPort),
   );
   await writeManagedTool(
     "opencode_router_status.ts",
-    opencodeRouterStatusToolSource(),
+    opencodeRouterStatusToolSource(routerPort),
   );
 }
 
