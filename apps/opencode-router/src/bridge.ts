@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { Logger } from "pino";
@@ -735,6 +736,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
   let stopHealthServer: (() => void) | null = null;
   if (!deps.disableHealthServer && config.healthPort) {
+    const portFilePath = join(dirname(config.configPath), "port");
     stopHealthServer = await startHealthServer(
       config.healthPort,
       (): HealthSnapshot => ({
@@ -1524,6 +1526,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           };
         },
       },
+      portFilePath,
     );
   }
 

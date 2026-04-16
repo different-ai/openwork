@@ -1,4 +1,6 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 
 import type { Logger } from "pino";
 
@@ -156,6 +158,7 @@ export async function startHealthServer(
   getStatus: () => HealthSnapshot,
   logger: Logger,
   handlers: HealthHandlers = {},
+  portFilePath?: string,
 ) {
   const server = http.createServer((req, res) => {
     void (async () => {
@@ -691,7 +694,20 @@ export async function startHealthServer(
   const actualPort = typeof address === "object" && address ? address.port : port;
   logger.info({ host, port: actualPort }, "health server listening");
 
+  if (portFilePath) {
+    try {
+      fs.mkdirSync(path.dirname(portFilePath), { recursive: true });
+      fs.writeFileSync(portFilePath, String(actualPort), "utf8");
+      logger.debug({ portFilePath, port: actualPort }, "wrote port file");
+    } catch (err) {
+      logger.warn({ err, portFilePath }, "failed to write port file");
+    }
+  }
+
   return () => {
     server.close();
+    if (portFilePath) {
+      try { fs.unlinkSync(portFilePath); } catch { /* ignore */ }
+    }
   };
 }
