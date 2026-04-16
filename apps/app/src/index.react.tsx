@@ -1,9 +1,11 @@
 /** @jsxImportSource react */
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { QueryClientProvider } from "@tanstack/react-query";
 
 import { bootstrapTheme } from "./app/theme";
 import { initLocale } from "./i18n";
+import { getReactQueryClient } from "./react-app/infra/query-client";
 import {
   createDefaultPlatform,
   PlatformProvider,
@@ -21,11 +23,14 @@ if (!root) {
 }
 
 const platform = createDefaultPlatform();
+const queryClient = getReactQueryClient();
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <PlatformProvider value={platform}>
-      <AppRoot />
-    </PlatformProvider>
+    <QueryClientProvider client={queryClient}>
+      <PlatformProvider value={platform}>
+        <AppRoot />
+      </PlatformProvider>
+    </QueryClientProvider>
   </React.StrictMode>,
 );
