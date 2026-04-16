@@ -55,5 +55,6 @@ impl OpenCodeRouterManager {
         state.health_port = None;
         state.last_stdout = None;
         state.last_stderr = None;
+        crate::opencode_router::spawn::remove_router_port_file();
     }
 }

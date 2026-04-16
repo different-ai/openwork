@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 
 use std::net::TcpListener;
@@ -15,6 +16,24 @@ pub fn resolve_opencode_router_health_port() -> Result<u16, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)
+}
+
+/// Write the router's health port to ~/.openwork/opencode-router/port so that
+/// the orchestrator tool can discover it without needing an env var.
+pub fn write_router_port_file(port: u16) {
+    if let Some(home) = crate::paths::home_dir() {
+        let dir = home.join(".openwork").join("opencode-router");
+        if fs::create_dir_all(&dir).is_ok() {
+            let _ = fs::write(dir.join("port"), port.to_string());
+        }
+    }
+}
+
+/// Remove the port file on router shutdown so stale ports are never read.
+pub fn remove_router_port_file() {
+    if let Some(home) = crate::paths::home_dir() {
+        let _ = fs::remove_file(home.join(".openwork").join("opencode-router").join("port"));
+    }
 }
 
 pub fn build_opencode_router_args(workspace_path: &str, opencode_url: Option<&str>) -> Vec<String> {
@@ -66,6 +85,8 @@ pub fn spawn_opencode_router(
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);
     }
+
+    write_router_port_file(health_port);
 
     command
         .spawn()
