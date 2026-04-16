@@ -409,7 +409,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 </div>
               </div>
             ) : (
-              <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
+              <SessionTranscript
+                messages={renderedMessages}
+                isStreaming={chatStreaming}
+                developerMode={props.developerMode}
+                scrollElement={() => scrollRef.current}
+              />
             )}
           </div>
         </div>

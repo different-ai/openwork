@@ -49,6 +49,7 @@
     "@solid-primitives/storage": "^4.3.3",
     "@solidjs/router": "^0.15.4",
     "@tanstack/react-query": "^5.90.3",
+    "@tanstack/react-virtual": "^3.13.23",
     "@tanstack/solid-virtual": "^3.13.19",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-deep-link": "^2.4.7",

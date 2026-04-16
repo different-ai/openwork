@@ -1,9 +1,11 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Streamdown } from "streamdown";
+
+import { applyTextHighlights } from "./text-highlights";
 
 function MarkdownCodeBlock(props: { className?: string; children: React.ReactNode }) {
   const text = Array.isArray(props.children) ? props.children.join("") : String(props.children ?? "");
@@ -91,12 +93,28 @@ const markdownClassName = `markdown-content max-w-none text-gray-12
   [&_li]:my-1
 `.trim();
 
-export function MarkdownBlock(props: { text: string; streaming?: boolean }) {
+export function MarkdownBlock(props: {
+  text: string;
+  streaming?: boolean;
+  highlightQuery?: string;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    queueMicrotask(() => {
+      if (!rootRef.current || rootRef.current !== root) return;
+      applyTextHighlights(root, props.highlightQuery ?? "");
+    });
+  }, [props.highlightQuery, props.streaming, props.text]);
+
   if (!props.text.trim()) return null;
 
   if (props.streaming) {
     return (
-      <div className={markdownClassName}>
+      <div ref={rootRef} className={markdownClassName}>
         <Streamdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml>
           {props.text}
         </Streamdown>
@@ -105,7 +123,7 @@ export function MarkdownBlock(props: { text: string; streaming?: boolean }) {
   }
 
   return (
-    <div className={markdownClassName}>
+    <div ref={rootRef} className={markdownClassName}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml>
         {props.text}
       </ReactMarkdown>
