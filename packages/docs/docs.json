@@ -18,7 +18,6 @@
         "tab": "Start here",
         "pages": [
           "get-started",
-          "self-host",
           {
             "group": "Connect your stack",
             "pages": [
@@ -38,6 +37,7 @@
               "sharing-ow-setup"
             ]
           },
+          "self-host",
           {
             "group": "Improve this doc",
             "pages": [
