@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
 
@@ -20,13 +20,7 @@ import type { ReactComposerNotice } from "./composer/notice";
 import { SessionDebugPanel } from "./debug-panel";
 import { SessionTranscript } from "./message-list";
 import { deriveSessionRenderModel } from "../sync/transition-controller";
-
-const AUTO_SCROLL_THRESHOLD_PX = 64;
-const scrollPositionBySession = new Map<string, number>();
-
-function isNearBottom(el: HTMLElement) {
-  return el.scrollHeight - el.clientHeight - el.scrollTop <= AUTO_SCROLL_THRESHOLD_PX;
-}
+import { useSessionScrollController } from "./scroll-controller";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
@@ -358,85 +352,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const shouldAutoScrollRef = useRef(true);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const previousSessionIdRef = useRef(props.sessionId);
-  const messageCountRef = useRef(renderedMessages.length);
-
-  // Save scroll position when leaving a session
-  useEffect(() => {
-    const previousId = previousSessionIdRef.current;
-    if (previousId !== props.sessionId) {
-      const el = scrollRef.current;
-      if (el) scrollPositionBySession.set(previousId, el.scrollTop);
-      previousSessionIdRef.current = props.sessionId;
-    }
-  }, [props.sessionId]);
-
-  // Restore scroll position or scroll to bottom on session change
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const saved = scrollPositionBySession.get(props.sessionId);
-    if (saved !== undefined) {
-      el.scrollTop = saved;
-      shouldAutoScrollRef.current = isNearBottom(el);
-    } else {
-      el.scrollTop = el.scrollHeight;
-      shouldAutoScrollRef.current = true;
-    }
-    setShowScrollToBottom(!shouldAutoScrollRef.current);
-  }, [props.sessionId]);
-
-  // Auto-follow during streaming / new messages
-  useLayoutEffect(() => {
-    if (!shouldAutoScrollRef.current) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [renderedMessages.length, chatStreaming]);
-
-  // Also auto-follow when message count changes during streaming
-  useEffect(() => {
-    if (renderedMessages.length !== messageCountRef.current) {
-      messageCountRef.current = renderedMessages.length;
-      if (shouldAutoScrollRef.current) {
-        const el = scrollRef.current;
-        if (el) {
-          requestAnimationFrame(() => {
-            el.scrollTop = el.scrollHeight;
-          });
-        }
-      }
-    }
-  }, [renderedMessages.length]);
-
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const near = isNearBottom(el);
-    if (near && !shouldAutoScrollRef.current) {
-      shouldAutoScrollRef.current = true;
-    } else if (!near && shouldAutoScrollRef.current) {
-      shouldAutoScrollRef.current = false;
-    }
-    setShowScrollToBottom(!shouldAutoScrollRef.current);
-  }, []);
-
-  const handleWheel = useCallback((event: React.WheelEvent) => {
-    if (event.deltaY < 0) {
-      shouldAutoScrollRef.current = false;
-      setShowScrollToBottom(true);
-    }
-  }, []);
-
-  const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    shouldAutoScrollRef.current = true;
-    setShowScrollToBottom(false);
-  }, []);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const sessionScroll = useSessionScrollController({
+    selectedSessionId: props.sessionId,
+    renderedMessages,
+    containerRef: scrollRef,
+    contentRef,
+  });
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -449,41 +371,76 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ) : null}
 
       <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={handleScroll} onWheel={handleWheel} className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain space-y-4 px-3 py-4 sm:px-5">
-      {showDelayedLoading && pendingSessionLoad ? (
-        <div className="px-6 py-16">
-          <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
-            <div className="text-sm text-dls-secondary">Loading React session view...</div>
+        <div
+          ref={scrollRef}
+          onWheel={(event) => {
+            sessionScroll.markScrollGesture(event.target);
+          }}
+          onTouchStart={(event) => {
+            sessionScroll.markScrollGesture(event.target);
+          }}
+          onTouchMove={(event) => {
+            sessionScroll.markScrollGesture(event.target);
+          }}
+          onPointerDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            sessionScroll.markScrollGesture(event.currentTarget);
+          }}
+          onScroll={sessionScroll.handleScroll}
+          className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain space-y-4 px-3 py-4 sm:px-5"
+        >
+          <div ref={contentRef}>
+            {showDelayedLoading && pendingSessionLoad ? (
+              <div className="px-6 py-16">
+                <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
+                  <div className="text-sm text-dls-secondary">Loading React session view...</div>
+                </div>
+              </div>
+            ) : (snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
+              <div className="px-6 py-16">
+                <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
+                  {error || (snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load React session view.")}
+                </div>
+              </div>
+            ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
+              <div className="px-6 py-16">
+                <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
+                  <div className="text-sm text-dls-secondary">No transcript yet.</div>
+                </div>
+              </div>
+            ) : (
+              <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
+            )}
           </div>
         </div>
-      ) : (snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
-        <div className="px-6 py-16">
-          <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
-            {error || (snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load React session view.")}
+        {!sessionScroll.isAtBottom || sessionScroll.topClippedMessageId ? (
+          <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 justify-center">
+            <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
+              {sessionScroll.topClippedMessageId ? (
+                <button
+                  type="button"
+                  className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
+                  onClick={() => {
+                    sessionScroll.jumpToStartOfMessage("smooth");
+                  }}
+                >
+                  Jump to start
+                </button>
+              ) : null}
+              {!sessionScroll.isAtBottom ? (
+                <button
+                  type="button"
+                  className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
+                  onClick={() => {
+                    sessionScroll.jumpToLatest("smooth");
+                  }}
+                >
+                  Jump to latest
+                </button>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
-        <div className="px-6 py-16">
-          <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
-            <div className="text-sm text-dls-secondary">No transcript yet.</div>
-          </div>
-        </div>
-      ) : (
-        <SessionTranscript messages={renderedMessages} isStreaming={chatStreaming} developerMode={props.developerMode} />
-      )}
-      </div>
-      {showScrollToBottom ? (
-        <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 justify-center">
-          <button
-            type="button"
-            onClick={scrollToBottom}
-            className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-dls-border/60 bg-dls-surface px-3 py-1.5 text-xs text-dls-secondary shadow-sm transition-colors hover:border-dls-border hover:text-dls-text"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-            Scroll to bottom
-          </button>
-        </div>
-      ) : null}
+        ) : null}
       </div>
 
       <div className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
