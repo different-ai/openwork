@@ -97,6 +97,9 @@ importers:
       lexical:
         specifier: ^0.35.0
         version: 0.35.0
+      lucide-react:
+        specifier: ^0.577.0
+        version: 0.577.0(react@19.2.4)
       lucide-solid:
         specifier: ^0.562.0
         version: 0.562.0(solid-js@1.9.9)

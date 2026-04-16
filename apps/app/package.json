@@ -61,6 +61,7 @@
     "fuzzysort": "^3.1.0",
     "jsonc-parser": "^3.2.1",
     "lexical": "^0.35.0",
+    "lucide-react": "^0.577.0",
     "lucide-solid": "^0.562.0",
     "marked": "^17.0.1",
     "react": "^19.1.1",
