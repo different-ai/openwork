@@ -102,6 +102,7 @@ import { createSessionScrollController } from "../components/session/scroll-cont
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
+import { useConnections } from "../connections/provider";
 import {
   useStatusToasts,
   type AppStatusToastTone,
@@ -113,9 +114,12 @@ import {
   saveSessionDraft,
   sessionDraftScopeKey,
 } from "../session/draft-store";
+import {
+  buildComposerToolMenuMcpItems,
+  toolMenuSectionToSettingsTab,
+} from "../session/composer-tools";
 import type { BootPhase, StartupBranch, StartupTraceEvent } from "../lib/startup-boot";
 import { ReactIsland } from "../../react/island";
-import { reactSessionEnabled } from "../../react/feature-flag";
 import { SessionSurface } from "../../react/session/session-surface.react";
 
 export type SessionViewProps = {
@@ -306,6 +310,7 @@ function describePermissionRequest(permission: PendingPermission | null) {
 export default function SessionView(props: SessionViewProps) {
   const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
   const { showThinking } = useSessionDisplayPreferences();
+  const connections = useConnections();
   const platform = usePlatform();
   const sessionActions = useSessionActions();
   const modelControls = useModelControls();
@@ -2146,9 +2151,17 @@ export default function SessionView(props: SessionViewProps) {
   const reactSessionToken = createMemo(
     () => props.openworkServerClient?.token?.trim() || props.openworkServerSettings.token?.trim() || "",
   );
+  const composerToolMcpItems = createMemo(() =>
+    buildComposerToolMenuMcpItems(
+      connections.mcpServers(),
+      connections.mcpStatuses(),
+    ),
+  );
+  const openComposerSettings = (
+    section: "commands" | "skills" | "mcps",
+  ) => openSettings(toolMenuSectionToSettingsTab(section));
   const showReactSessionSurface = createMemo(
     () =>
-      reactSessionEnabled() &&
       Boolean(
         props.selectedSessionId?.trim() &&
           props.runtimeWorkspaceId?.trim() &&
@@ -3398,6 +3411,10 @@ export default function SessionView(props: SessionViewProps) {
                             listCommands: sessionActions.listCommands,
                             recentFiles: props.workingFiles,
                             searchFiles: sessionActions.searchWorkspaceFiles,
+                            skills: props.skills,
+                            mcpItems: composerToolMcpItems(),
+                            mcpStatusText: connections.mcpStatus(),
+                            onOpenSettings: openComposerSettings,
                             isRemoteWorkspace: props.selectedWorkspaceDisplay.workspaceType === "remote",
                             isSandboxWorkspace: isSandboxWorkspace(),
                             onUploadInboxFiles: uploadInboxFiles,
@@ -3628,15 +3645,7 @@ export default function SessionView(props: SessionViewProps) {
               searchFiles={sessionActions.searchWorkspaceFiles}
               skills={props.skills}
               listCommands={sessionActions.listCommands}
-              onOpenSettings={(section) =>
-                openSettings(
-                  section === "skills"
-                    ? "skills"
-                    : section === "mcps"
-                      ? "extensions"
-                      : "automations",
-                )
-              }
+              onOpenSettings={openComposerSettings}
               isRemoteWorkspace={
                 props.selectedWorkspaceDisplay.workspaceType === "remote"
               }

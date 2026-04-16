@@ -1,13 +1,12 @@
 import {
-  Match,
-  Show,
-  Switch,
   createEffect,
   createMemo,
   createSignal,
   onCleanup,
   onMount,
+  Show,
   untrack,
+  type JSX,
 } from "solid-js";
 
 import { useLocation, useNavigate } from "@solidjs/router";
@@ -31,6 +30,8 @@ import { SessionActionsProvider } from "./session/actions-provider";
 import { createSessionActionsStore } from "./session/actions-store";
 import { createDeepLinksController } from "./shell/deep-links";
 import SettingsShell from "./shell/settings-shell";
+import ReactShellHost from "./shell/react-shell-host";
+import SolidContextBridge from "./shell/solid-context-bridge";
 import TopRightNotifications from "./shell/top-right-notifications";
 import { createStatusToastsStore, StatusToastsProvider } from "./shell/status-toasts";
 import {
@@ -98,6 +99,10 @@ import { createConnectionsStore } from "./connections/store";
 import { createAutomationsStore } from "./context/automations";
 import { createSidebarSessionsStore } from "./context/sidebar-sessions";
 import { useGlobalSync } from "./context/global-sync";
+import { useGlobalSDK } from "./context/global-sdk";
+import { useLocal } from "./context/local";
+import { usePlatform } from "./context/platform";
+import { useServer } from "./context/server";
 import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
@@ -124,7 +129,6 @@ import {
   type OpenworkServerSettings,
 } from "./lib/openwork-server";
 import { ReactIsland } from "../react/island";
-import { reactSessionEnabled } from "../react/feature-flag";
 import { ReactSessionRuntime } from "../react/session/runtime-sync.react";
 import {
   parseBundleDeepLink,
@@ -175,6 +179,10 @@ type StartupSessionSnapshot = {
 export default function App() {
   const { resetSessionDisplayPreferences } = useSessionDisplayPreferences();
   const { microsandboxCreateSandboxEnabled } = useFeatureFlagsPreferences();
+  const platform = usePlatform();
+  const server = useServer();
+  const globalSDK = useGlobalSDK();
+  const local = useLocal();
   const envOpenworkWorkspaceId =
     typeof import.meta.env?.VITE_OPENWORK_WORKSPACE_ID === "string"
       ? import.meta.env.VITE_OPENWORK_WORKSPACE_ID.trim() || null
@@ -2308,7 +2316,6 @@ export default function App() {
     error: error(),
   });
 
-  const reactSessionRuntimeEnabled = createMemo(() => reactSessionEnabled());
   const reactSessionRuntimeBaseUrl = createMemo(() => {
     const workspaceId = runtimeWorkspaceId()?.trim() ?? "";
     const baseUrl = openworkServerClient()?.baseUrl?.trim() ?? "";
@@ -2321,7 +2328,6 @@ export default function App() {
   );
   const showReactSessionRuntime = createMemo(
     () =>
-      reactSessionRuntimeEnabled() &&
       openworkServerStatus() === "connected" &&
       Boolean(runtimeWorkspaceId()?.trim() && reactSessionRuntimeBaseUrl() && reactSessionRuntimeToken()),
   );
@@ -2420,6 +2426,32 @@ export default function App() {
     navigate("/session", { replace: true });
   });
 
+  const renderReactOwnedSurface = (content: () => JSX.Element) => (
+    <SolidContextBridge
+      platform={platform}
+      server={server}
+      globalSDK={globalSDK}
+      globalSync={globalSync}
+      local={local}
+    >
+      <OpenworkServerProvider store={openworkServerStore}>
+        <ModelControlsProvider store={modelControlsStore}>
+          <SessionActionsProvider store={sessionActionsStore}>
+            <ConnectionsProvider store={connectionsStore}>
+              <ExtensionsProvider store={extensionsStore}>
+                <AutomationsProvider store={automationsStore}>
+                  <StatusToastsProvider store={statusToastsStore}>
+                    {content()}
+                  </StatusToastsProvider>
+                </AutomationsProvider>
+              </ExtensionsProvider>
+            </ConnectionsProvider>
+          </SessionActionsProvider>
+        </ModelControlsProvider>
+      </OpenworkServerProvider>
+    </SolidContextBridge>
+  );
+
   return (
     <OpenworkServerProvider store={openworkServerStore}>
       <ModelControlsProvider store={modelControlsStore}>
@@ -2440,14 +2472,19 @@ export default function App() {
                       }}
                     />
                   </Show>
-            <Switch>
-              <Match when={currentView() === "session"}>
-                <SessionView {...sessionProps()} />
-              </Match>
-              <Match when={true}>
-                <SettingsShell {...settingsShellProps()} />
-              </Match>
-            </Switch>
+                  <ReactShellHost
+                    currentView={currentView()}
+                    renderSession={() =>
+                      renderReactOwnedSurface(() => (
+                        <SessionView {...sessionProps()} />
+                      ))
+                    }
+                    renderSettings={() =>
+                      renderReactOwnedSurface(() => (
+                        <SettingsShell {...settingsShellProps()} />
+                      ))
+                    }
+                  />
 
       <ModelPickerModal
         open={modelPickerOpen()}

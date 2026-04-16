@@ -1,4 +1,3 @@
-import { createSignal, createRoot } from "solid-js";
 import en from "./locales/en";
 import ja from "./locales/ja";
 import zh from "./locales/zh";
@@ -56,12 +55,12 @@ export const isLanguage = (value: unknown): value is Language => {
 /**
  * Create root-level locale signal with persistence
  */
-const [locale, setLocaleSignal] = createRoot(() => createSignal<Language>("en"));
+let locale: Language = "en";
 
 /**
  * Get current locale
  */
-export const currentLocale = (): Language => locale();
+export const currentLocale = (): Language => locale;
 
 /**
  * Set locale and persist to localStorage
@@ -72,7 +71,7 @@ export const setLocale = (newLocale: Language) => {
     newLocale = "en";
   }
 
-  setLocaleSignal(newLocale);
+  locale = newLocale;
 
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("lang", newLocale);
@@ -97,7 +96,7 @@ export const setLocale = (newLocale: Language) => {
  * @returns Translated string or fallback
  */
 export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
-  const loc = localeOverride ?? locale();
+  const loc = localeOverride ?? locale;
 
   // Try target language first
   let result: string;
@@ -133,7 +132,7 @@ export const initLocale = (): Language => {
   try {
     const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
     if (isLanguage(stored)) {
-      setLocaleSignal(stored);
+      locale = stored;
       if (typeof document !== "undefined") {
         document.documentElement.setAttribute("lang", stored);
       }

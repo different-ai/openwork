@@ -1,0 +1,158 @@
+@import "../app/index.css";
+@source "../../../../node_modules/streamdown/dist/*.js";
+
+.ow-page-shell {
+  min-height: 100vh;
+  padding: 1rem;
+  background: var(--dls-app-bg);
+}
+
+@media (min-width: 1024px) {
+  .ow-page-shell {
+    padding: 1.5rem;
+  }
+}
+
+.ow-shell-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 1280px) {
+  .ow-shell-grid {
+    grid-template-columns: 280px 320px minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.ow-kicker,
+.ow-panel-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--dls-text-secondary);
+}
+
+.ow-title-input {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--dls-text-primary);
+  font-size: clamp(1.5rem, 2vw, 1.9rem);
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.ow-title-input::placeholder {
+  color: #9ca3af;
+}
+
+.ow-title-input:focus {
+  outline: none;
+}
+
+.ow-message {
+  max-width: 50rem;
+  border: 1px solid var(--dls-border);
+  border-radius: 1.5rem;
+  padding: 1rem 1.1rem;
+  background: var(--dls-surface);
+  box-shadow: var(--dls-card-shadow);
+}
+
+.ow-message-user {
+  margin-left: auto;
+  background: var(--dls-active);
+  box-shadow: none;
+}
+
+.ow-message-assistant {
+  background: var(--dls-surface);
+}
+
+.ow-session-item,
+.ow-settings-tab,
+.ow-worker-item {
+  width: 100%;
+  border: 1px solid var(--dls-border);
+  border-radius: 1.25rem;
+  background: var(--dls-surface);
+  padding: 0.95rem 1rem;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.ow-session-item:hover,
+.ow-settings-tab:hover,
+.ow-worker-item:hover {
+  background: var(--dls-hover);
+}
+
+.ow-session-item-active,
+.ow-settings-tab-active,
+.ow-worker-item-active {
+  background: var(--dls-active);
+  border-color: #d7dde4;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+}
+
+.ow-markdown,
+.ow-user-markdown {
+  font-size: 0.98rem;
+  line-height: 1.75;
+  color: var(--dls-text-primary);
+}
+
+.ow-markdown :where(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4),
+.ow-user-markdown :where(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4) {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.ow-markdown :where(h1, h2, h3, h4),
+.ow-user-markdown :where(h1, h2, h3, h4) {
+  color: var(--dls-text-primary);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ow-markdown :where(code, pre),
+.ow-user-markdown :where(code, pre) {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+.ow-markdown :where(pre),
+.ow-user-markdown :where(pre) {
+  overflow: auto;
+  border: 1px solid var(--dls-border);
+  border-radius: 1rem;
+  background: #f8fafc;
+  padding: 1rem;
+}
+
+.ow-markdown :where(code):not(pre code),
+.ow-user-markdown :where(code):not(pre code) {
+  border-radius: 0.5rem;
+  background: #f1f5f9;
+  padding: 0.12rem 0.38rem;
+}
+
+.ow-markdown :where(blockquote),
+.ow-user-markdown :where(blockquote) {
+  border-left: 3px solid #d7dde4;
+  padding-left: 1rem;
+  color: var(--dls-text-secondary);
+}
+
+.ow-markdown :where(a),
+.ow-user-markdown :where(a) {
+  color: var(--dls-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+}

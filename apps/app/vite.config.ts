@@ -4,8 +4,6 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import devtools from "solid-devtools/vite";
-import solid from "vite-plugin-solid";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -27,9 +25,9 @@ if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const reactFiles = /\.react\.[tj]sx?$/;
 
 export default defineConfig({
+  cacheDir: "node_modules/.vite-react",
   plugins: [
     {
       name: "openwork-dev-server-id",
@@ -41,22 +39,16 @@ export default defineConfig({
       },
     },
     tailwindcss(),
-    react({ include: reactFiles }),
-    devtools({
-      autoname: true,
-      // jsxLocation is required for in-page locator: map DOM → Solid components (hold Option/Alt while hovering).
-      locator: {
-        targetIDE: "vscode",
-        jsxLocation: true,
-        componentLocation: true,
-      },
-    }),
-    solid({ exclude: [reactFiles] }),
+    react(),
   ],
   server: {
     port: devPort,
     strictPort: true,
     ...(allowedHosts.size > 0 ? { allowedHosts: Array.from(allowedHosts) } : {}),
+  },
+  esbuild: {
+    jsx: "automatic",
+    jsxImportSource: "react",
   },
   build: {
     target: "esnext",

@@ -17,7 +17,7 @@ export function serverDisplayName(url: string) {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
-type ServerContextValue = {
+export type ServerContextValue = {
   url: string;
   name: string;
   list: string[];
@@ -202,6 +202,16 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
   };
 
   return <ServerContext.Provider value={value}>{props.children}</ServerContext.Provider>;
+}
+
+export function ServerValueProvider(
+  props: ParentProps & { value: ServerContextValue },
+) {
+  return (
+    <ServerContext.Provider value={props.value}>
+      {props.children}
+    </ServerContext.Provider>
+  );
 }
 
 export function useServer() {

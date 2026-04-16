@@ -13,7 +13,7 @@ import {
 import { usePlatform } from "./platform";
 import { useServer } from "./server";
 
-type GlobalSDKContextValue = {
+export type GlobalSDKContextValue = {
   url: () => string;
   client: () => ReturnType<typeof createOpencodeClient>;
   event: ReturnType<typeof createGlobalEmitter<{ [key: string]: Event }>>;
@@ -161,6 +161,16 @@ export function GlobalSDKProvider(props: ParentProps) {
   };
 
   return <GlobalSDKContext.Provider value={value}>{props.children}</GlobalSDKContext.Provider>;
+}
+
+export function GlobalSDKValueProvider(
+  props: ParentProps<{ value: GlobalSDKContextValue }>,
+) {
+  return (
+    <GlobalSDKContext.Provider value={props.value}>
+      {props.children}
+    </GlobalSDKContext.Provider>
+  );
 }
 
 export function useGlobalSDK() {
