@@ -1,23 +1,44 @@
 ---
-title: "Get Started"
-description: "OpenWork is the open source alternative to Claude Cowork.  "
+title: "OpenWork"
+description: "Privacy-first, open-source alternative to Claude Cowork."
 ---
 
-Most users use our [desktop app](https://openworklabs.com). This guide helps you setup OpenWork via the CLI so that you can run OpenWork tasks in the background on your infra.
+**Privacy-first, open-source alternative to Claude Cowork.**
 
-If you want OpenWork-hosted shared workspaces, org-managed skill hubs, or shared providers for a team, use the [Cloud docs](/get-started-cloud) instead of self-hosting this flow. If you're an enterprise looking to self-host, please [book a call here](https://cal.com/team/openwork/enterprise)
+Run agents on your own machine or infra. Bring your own model, your own MCPs, your own data. Nothing leaves unless you send it.
 
-## Step 1: Install on your remote server
+## Start
 
-Install the npm package:
+[Download the desktop app →](https://openworklabs.com/download)
+
+- [Connect a provider](/how-to-connect-chat-gpt)
+- [Add an MCP](/how-to-connect-mcps)
+- [Control the browser](/computer-use)
+- [Share a setup](/sharing-ow-setup)
+
+## For teams
+
+[OpenWork Cloud →](/get-started-cloud) — shared workspaces, org skill hubs, managed providers, RBAC.
+
+Prefer your own infra? Self-host with `openwork-orchestrator` (see below), or [book a call](https://cal.com/team/openwork/enterprise) for enterprise rollouts with SSO and audit.
+
+## For developers
+
+OpenWork speaks the [OpenCode](https://opencode.ai) protocol.
+
+---
+
+## Self-host with openwork-orchestrator
+
+Run OpenWork on your own server and connect the desktop app to it remotely.
+
+Install:
 
 ```bash
 npm install -g openwork-orchestrator
 ```
 
-## Step 2: Start OpenWork in your workspace
-
-Run OpenWork where your code lives:
+Start it where your code lives:
 
 ```bash
 openwork start --workspace /path/to/your/workspace --approval auto
@@ -27,25 +48,18 @@ openwork start --workspace /path/to/your/workspace --approval auto
   ![OpenWork CLI terminal output showing URL and owner token](/images/get-started-cli-output.png)
 </Frame>
 
-Copy:
+Copy the `OpenWork URL` and `OpenWork Owner Token`, then in the desktop app:
 
-- `OpenWork URL`
-- `OpenWork Owner Token`
-
-## Step 3: Connect the OpenWork desktop app
-
-On your local machine, open the OpenWork desktop app and connect into a remote workspace with:
-
-- On the bottom left click `+ Add workspace`
-- Then click `+ Connect Remote workspace`
-- Type in the `OpenWork URL and OpenWork Owner Token` from earlier
+- Click `+ Add workspace` (bottom left)
+- Click `+ Connect Remote workspace`
+- Paste the URL and token
 
 <Frame>
   ![Add Remote Workspace dialog in OpenWork desktop app](/images/get-started-add-remote-workspace.png)
 </Frame>
 
-## What this gives you right away
+Your code and services stay on the remote machine; your local machine stays light.
 
-- Your code and services stay on the remote machine.
-- Your local machine stays light.
-- You get a fast path from install to a connected remote OpenWork workspace.
+---
+
+[GitHub](https://github.com/different-ai/openwork) · [Missing docs](/missing-docs)
