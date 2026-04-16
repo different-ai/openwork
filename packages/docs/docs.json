@@ -19,23 +19,22 @@
         "pages": [
           "get-started",
           {
-            "group": "Desktop App",
+            "group": "Connect your stack",
             "pages": [
-              "enable-advanced-search-with-exa",
               "how-to-connect-chat-gpt",
+              "how-to-get-an-anthropic-api-key",
+              "how-to-connect-a-custom-provider",
               "how-to-connect-mcps",
-              "computer-use",
-              "sharing-ow-setup",
-              "accessing-ow-from-slack",
-              "automating-tasks"
+              "enable-advanced-search-with-exa"
             ]
           },
           {
-            "group": "Tutorials",
+            "group": "Do work with it",
             "pages": [
-              "how-to-get-an-anthropic-api-key",
-              "how-to-connect-a-custom-provider",
-              "importing-a-skill"
+              "computer-use",
+              "automating-tasks",
+              "importing-a-skill",
+              "sharing-ow-setup"
             ]
           },
           {
@@ -47,20 +46,36 @@
         ]
       },
       {
-        "tab": "Cloud docs",
+        "tab": "Cloud",
         "pages": [
           "get-started-cloud",
-          "team-provisioning",
-          "cloud-skill-hubs",
-          "cloud-shared-workspaces",
-          "cloud-llm-providers",
-          "cloud-custom-llm-providers",
-          "cloud-members-and-rbac",
+          {
+            "group": "Share with your team",
+            "pages": [
+              "team-provisioning",
+              "cloud-skill-hubs",
+              "cloud-llm-providers",
+              "cloud-custom-llm-providers"
+            ]
+          },
+          {
+            "group": "Run in the cloud",
+            "pages": [
+              "cloud-shared-workspaces",
+              "accessing-ow-from-slack"
+            ]
+          },
+          {
+            "group": "Manage access",
+            "pages": [
+              "cloud-members-and-rbac"
+            ]
+          },
           "cloud-enterprise"
         ]
       },
       {
-        "tab": "Cloud API",
+        "tab": "API",
         "openapi": "https://api.openworklabs.com/openapi.json"
       },
       {
