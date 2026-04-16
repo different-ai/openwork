@@ -23,6 +23,8 @@ type PastedTextChip = {
   lines: number;
 };
 
+type ToolMenuSection = "commands" | "skills" | "mcps";
+
 type ComposerProps = {
   draft: string;
   mentions: Record<string, "agent" | "file">;
@@ -87,7 +89,10 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [variantMenuOpen, setVariantMenuOpen] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
+  const [commandsLoading, setCommandsLoading] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
+  const [toolMenuOpen, setToolMenuOpen] = useState(false);
+  const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -95,6 +100,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
+  const toolMenuRef = useRef<HTMLDivElement | null>(null);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
@@ -114,7 +120,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   useEffect(() => {
     if (!agentMenuOpen) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [agentMenuOpen, props]);
+  }, [agentMenuOpen, props.listAgents]);
 
   useEffect(() => {
     setAgentMenuIndex(0);
@@ -126,9 +132,23 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [agentMenuIndex, agentMenuOpen]);
 
   useEffect(() => {
-    if (!slashOpen) return;
-    void props.listCommands().then(setCommands).catch(() => setCommands([]));
-  }, [slashOpen, props]);
+    if (!slashOpen && !toolMenuOpen) return;
+    let cancelled = false;
+    setCommandsLoading(true);
+    void props.listCommands()
+      .then((next) => {
+        if (!cancelled) setCommands(next);
+      })
+      .catch(() => {
+        if (!cancelled) setCommands([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCommandsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slashOpen, toolMenuOpen, props.listCommands]);
 
   useEffect(() => {
     if (!mentionOpen) return;
@@ -148,7 +168,21 @@ export function ReactSessionComposer(props: ComposerProps) {
     return () => {
       cancelled = true;
     };
-  }, [mentionOpen, mentionQuery, props]);
+  }, [mentionOpen, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
+
+  useEffect(() => {
+    if (!toolMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (toolMenuRef.current?.contains(target)) return;
+      setToolMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [toolMenuOpen]);
 
   const slashFiltered = !slashOpen
     ? []
@@ -163,6 +197,10 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
   const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
+  const toolCommandItems = commands.filter((command) => !command.source || command.source === "command");
+  const toolSkillItems = commands.filter((command) => command.source === "skill");
+  const toolMcpItems = commands.filter((command) => command.source === "mcp");
+  const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
 
   useEffect(() => {
     if (!activeItems.length) {
@@ -176,6 +214,12 @@ export function ReactSessionComposer(props: ComposerProps) {
     const target = menuItemRefs.current[menuIndex];
     target?.scrollIntoView({ block: "nearest" });
   }, [menuIndex, activeItems.length]);
+
+  const applyCommandSelection = (command: SlashCommandOption) => {
+    props.onDraftChange(`/${command.name} `);
+    setSlashOpen(false);
+    setToolMenuOpen(false);
+  };
 
   const acceptActiveItem = () => {
     if (!activeItems.length) return false;
@@ -222,6 +266,12 @@ export function ReactSessionComposer(props: ComposerProps) {
         setVariantMenuOpen(false);
         return;
       }
+    }
+
+    if (toolMenuOpen && event.key === "Escape") {
+      event.preventDefault();
+      setToolMenuOpen(false);
+      return;
     }
 
     if (!activeMenu || !activeItems.length) return;
@@ -355,6 +405,104 @@ export function ReactSessionComposer(props: ComposerProps) {
           >
             Attach files
           </button>
+          <div ref={toolMenuRef} className="relative">
+            <button
+              type="button"
+              className={`rounded-full border border-dls-border px-3 py-1 text-xs font-medium transition-colors ${toolMenuOpen ? "bg-dls-hover text-dls-text" : "bg-dls-hover/60 text-dls-text hover:bg-dls-hover"}`}
+              onClick={() => {
+                setMentionOpen(false);
+                setSlashOpen(false);
+                setToolMenuOpen((value) => !value);
+              }}
+            >
+              Tools
+            </button>
+            {toolMenuOpen ? (
+              <div className="absolute right-0 top-full z-30 mt-2 w-[min(90vw,28rem)] overflow-hidden rounded-2xl border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
+                <div className="flex border-b border-dls-border p-2">
+                  {([
+                    ["commands", "Commands"],
+                    ["skills", "Skills"],
+                    ["mcps", "MCPs"],
+                  ] as const).map(([section, label]) => (
+                    <button
+                      key={section}
+                      type="button"
+                      className={`rounded-xl px-3 py-2 text-xs font-medium transition-colors ${toolMenuSection === section ? "bg-dls-hover text-dls-text" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"}`}
+                      onClick={() => setToolMenuSection(section)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="max-h-72 overflow-y-auto p-2">
+                  {toolMenuSection === "commands" ? (
+                    toolCommandItems.length > 0 ? (
+                      <div className="grid gap-1">
+                        {toolCommandItems.map((command) => (
+                          <button
+                            key={command.id}
+                            type="button"
+                            className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
+                            onClick={() => applyCommandSelection(command)}
+                          >
+                            <div className="text-sm font-medium text-dls-text">/{command.name}</div>
+                            {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-2 text-xs text-dls-secondary">
+                        {commandsLoading ? "Loading commands..." : "No commands available."}
+                      </div>
+                    )
+                  ) : null}
+                  {toolMenuSection === "skills" ? (
+                    toolSkillItems.length > 0 ? (
+                      <div className="grid gap-1">
+                        {toolSkillItems.map((command) => (
+                          <button
+                            key={command.id}
+                            type="button"
+                            className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
+                            onClick={() => applyCommandSelection(command)}
+                          >
+                            <div className="text-sm font-medium text-dls-text">/{command.name}</div>
+                            {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-2 text-xs text-dls-secondary">
+                        {commandsLoading ? "Loading skills..." : "No skills available."}
+                      </div>
+                    )
+                  ) : null}
+                  {toolMenuSection === "mcps" ? (
+                    toolMcpItems.length > 0 ? (
+                      <div className="grid gap-1">
+                        {toolMcpItems.map((command) => (
+                          <button
+                            key={command.id}
+                            type="button"
+                            className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
+                            onClick={() => applyCommandSelection(command)}
+                          >
+                            <div className="text-sm font-medium text-dls-text">/{command.name}</div>
+                            {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-2 text-xs text-dls-secondary">
+                        {commandsLoading ? "Loading MCP tools..." : "No MCP tools detected."}
+                      </div>
+                    )
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
         {props.attachments.length > 0 ? (
           <div className="grid gap-3 border-b border-dls-border px-4 py-3 sm:grid-cols-2">
@@ -531,28 +679,40 @@ export function ReactSessionComposer(props: ComposerProps) {
             }}
           />
         </div>
-        {slashOpen && slashFiltered.length > 0 ? (
+        {slashOpen ? (
           <div className="border-t border-dls-border px-3 py-2">
-            <div className="grid gap-1">
-              {slashFiltered.map((command, index) => (
-                <button
-                  key={command.id}
-                  ref={(element) => {
-                    menuItemRefs.current[index] = element;
-                  }}
-                  type="button"
-                  className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-dls-hover" : ""}`}
-                  onMouseEnter={() => setMenuIndex(index)}
-                  onClick={() => {
-                    props.onDraftChange(`/${command.name} `);
-                    setSlashOpen(false);
-                  }}
-                >
-                  <div className="text-sm font-medium text-dls-text">/{command.name}</div>
-                  {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
-                </button>
-              ))}
-            </div>
+            {slashFiltered.length > 0 ? (
+              <div className="grid gap-1">
+                {slashFiltered.map((command, index) => (
+                  <button
+                    key={command.id}
+                    ref={(element) => {
+                      menuItemRefs.current[index] = element;
+                    }}
+                    type="button"
+                    className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-dls-hover" : ""}`}
+                    onMouseEnter={() => setMenuIndex(index)}
+                    onClick={() => applyCommandSelection(command)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium text-dls-text">/{command.name}</div>
+                        {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
+                      </div>
+                      {command.source && command.source !== "command" ? (
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${command.source === "skill" ? "bg-violet-3/20 text-violet-11" : "bg-cyan-3/20 text-cyan-11"}`}>
+                          {command.source === "skill" ? "Skill" : "MCP"}
+                        </span>
+                      ) : null}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="px-3 py-2 text-xs text-dls-secondary">
+                {commandsLoading ? "Loading commands..." : "No matching commands."}
+              </div>
+            )}
           </div>
         ) : null}
         {mentionOpen && mentionFiltered.length > 0 ? (
@@ -594,7 +754,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               type="button"
               className="rounded-full bg-[var(--dls-accent)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)] disabled:opacity-50"
               onClick={props.onSend}
-              disabled={props.disabled || !props.draft.trim()}
+              disabled={props.disabled || !canSend}
             >
               Run task
             </button>

@@ -238,7 +238,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const handleSend = async () => {
     const text = draft.trim();
-    if (!text || chatStreaming) return;
+    if ((!text && attachments.length === 0) || chatStreaming) return;
     setError(null);
     setSending(true);
     try {
