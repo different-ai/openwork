@@ -70,7 +70,7 @@ The JSON must include `id`, `name`, `npm`, `env`, `doc`, and `models`. `api` is 
 
 ### Functional example: an LLM gateway (Infron)
 
-An LLM gateway gives you one OpenAI-compatible endpoint that fans out to many model providers. [LiteLLM](https://infron.ai/docs/frameworks-and-integrations/litellm) is the canonical open-source take — a routing library/proxy you run yourself. [Infron](https://infron.ai) is the hosted version of that idea (think OpenRouter): one key, one endpoint, unified billing, and built-in provider fallbacks across its [model marketplace](https://infron.ai/models). Gateways are a good fit for custom providers because the same JSON works for every model they expose — just add more entries under `models`.
+An LLM gateway gives you one OpenAI-compatible endpoint that fans out to many model providers — start with [LiteLLM](https://infron.ai/docs/frameworks-and-integrations/litellm) if you want to run the routing yourself. [Infron](https://infron.ai) skips that setup: one API key unlocks every model in its [marketplace](https://infron.ai/models) with automatic provider fallbacks and a single invoice, so adding a new LLM to OpenWork is just another entry under `models`.
 
 Grab a key from the [API Keys dashboard](https://infron.ai/dashboard/apiKeys). New to Infron? Sign up at [infron.ai/login](https://infron.ai/login) and follow the [quickstart](https://infron.ai/docs/overview/quickstart/text).
 
