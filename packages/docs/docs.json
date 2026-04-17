@@ -72,13 +72,13 @@
       {
         "tab": "Roadmap",
         "pages": [
-          "roadmap/roadmap"
+          "roadmap"
         ]
       },
       {
         "tab": "Changelog",
         "pages": [
-          "changelog/changelog"
+          "changelog"
         ]
       }
     ]
@@ -97,12 +97,12 @@
       "destination": "/cloud/get-started"
     },
     {
-      "source": "/roadmap",
-      "destination": "/roadmap/roadmap"
+      "source": "/roadmap/roadmap",
+      "destination": "/roadmap"
     },
     {
-      "source": "/changelog",
-      "destination": "/changelog/changelog"
+      "source": "/changelog/changelog",
+      "destination": "/changelog"
     }
   ],
   "errors": {
