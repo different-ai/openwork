@@ -105,7 +105,7 @@ export type SessionPageProps = {
   onSendFeedback: () => void;
   onOpenSettings: () => void;
   sidebar: SessionPageSidebarProps;
-  surface: SessionPageSurfaceProps;
+  surface?: SessionPageSurfaceProps | null;
   history?: SessionPageHistoryControls | null;
   todos: TodoItem[];
   sessionLoadingById: (sessionId: string | null) => boolean;
@@ -461,7 +461,7 @@ export function SessionPage(props: SessionPageProps) {
                   sessionId={props.selectedSessionId!}
                   opencodeBaseUrl={reactSessionBaseUrl}
                   openworkToken={reactSessionToken}
-                  {...props.surface}
+                  {...props.surface!}
                 />
               ) : null}
 
