@@ -1,0 +1,215 @@
+{
+  "phase": 4,
+  "title": "App And Desktop Migration Boundary",
+  "objective": "Create the app-side and desktop-side migration seams that let the product opt into Server V2 without scattering transport or startup logic across unrelated call sites.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase4-learnings.md",
+    "prds/server-v2-plan/ui-migration.md",
+    "prds/server-v2-plan/sdk-generation.md",
+    "prds/server-v2-plan/app-audit.md",
+    "prds/server-v2-plan/tauri-audit.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P4-001",
+      "name": "Define the logical rollout flag contract",
+      "description": "Choose the single logical flag name and expected behavior for legacy mode versus Server V2 mode so the app and desktop shell share one rollout decision.",
+      "successFactors": [
+        "There is one logical flag for both UI routing and desktop startup.",
+        "Flag semantics match `ui-migration.md`.",
+        "The chosen naming is recorded clearly for later phases and tests."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-002",
+      "name": "Add the shared UI rollout helper",
+      "description": "Implement a single app-side helper such as `checkServerFlag()` or `isServerV2Enabled()` that hides env details from feature code.",
+      "successFactors": [
+        "App call sites use one shared helper instead of reading env vars directly.",
+        "The helper returns a simple boolean and is easy to reuse.",
+        "The helper lives in a clear shell or kernel location."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-003",
+      "name": "Bridge the rollout flag into desktop startup",
+      "description": "Ensure the desktop/native layer can see the same logical flag and make the same startup decision without inventing a second product switch.",
+      "successFactors": [
+        "Tauri startup follows the same logical flag as the frontend.",
+        "Platform-specific env handling is hidden behind one implementation boundary.",
+        "There is no separate hidden desktop-only rollout toggle."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-004",
+      "name": "Add app-side `createSdk({ serverId })`",
+      "description": "Create the app-owned runtime adapter that prepares the generated SDK for a given server target and becomes the stable entrypoint for Server V2 calls.",
+      "successFactors": [
+        "Feature code can call `createSdk({ serverId })` instead of passing raw URLs around.",
+        "The adapter remains thin and transport-focused.",
+        "The generated SDK package stays server-agnostic and reusable."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-005",
+      "name": "Implement server target resolution",
+      "description": "Resolve `serverId` into base URL, token, hosting metadata, and capabilities from the app's current server records without forcing feature code to understand connection details.",
+      "successFactors": [
+        "The adapter can construct a typed client from `serverId`.",
+        "Feature code does not pass `baseUrl` and `token` manually.",
+        "The implementation is cheap enough for per-call client creation."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-006",
+      "name": "Inject auth and capability handling in the adapter",
+      "description": "Teach the adapter to attach auth headers and look at target capabilities so migration logic stays at the transport boundary rather than leaking into product code.",
+      "successFactors": [
+        "Auth header injection is centralized.",
+        "Capability checks are possible without extra feature-level plumbing.",
+        "The adapter remains lightweight and does not become a second app runtime engine."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-007",
+      "name": "Create a quarantined legacy shim area",
+      "description": "Add an app-local place for remaining legacy route helpers so call sites can branch cleanly during migration without preserving the old transport everywhere.",
+      "successFactors": [
+        "Legacy compatibility helpers live in one obvious area.",
+        "The generated SDK package does not mix old and new contracts together.",
+        "Legacy helpers are thin enough to delete quickly once migrated."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-008",
+      "name": "Add response normalization at the migration boundary",
+      "description": "Normalize old and new response shapes close to the adapter or shim boundary so the rest of the UI can consume stable app-facing data during rollout.",
+      "successFactors": [
+        "Feature code does not branch on legacy versus Server V2 payload shape.",
+        "Normalization stays close to the transport layer.",
+        "The approach covers the payload categories called out in `ui-migration.md`."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-009",
+      "name": "Add migration routing helpers",
+      "description": "Provide shared helpers for deciding whether a capability should use the legacy path or the Server V2 path, based on the rollout flag, target capabilities, and temporary rollout rules.",
+      "successFactors": [
+        "Migration branching logic is reusable and easy to remove later.",
+        "Feature code can branch with minimal boilerplate.",
+        "The helpers support per-feature or per-endpoint migration."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-010",
+      "name": "Add request-path observability during rollout",
+      "description": "Implement simple logging or telemetry that shows whether a migrated call used the legacy path or the Server V2 path so rollout debugging is practical.",
+      "successFactors": [
+        "Developers can tell which backend path was used for a request.",
+        "The signal is available in dev without deep manual tracing.",
+        "The instrumentation does not leak into rendering code."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-011",
+      "name": "Add the desktop startup branch",
+      "description": "Teach the Tauri startup boundary to choose between the legacy local runtime startup path and launching Server V2 directly based on the shared rollout flag.",
+      "successFactors": [
+        "Flag-off preserves current behavior.",
+        "Flag-on launches Server V2 instead of assembling the old local stack where feasible.",
+        "The startup branch lives in one native location rather than many commands."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-012",
+      "name": "Add the native Server V2 launch path",
+      "description": "Implement the native launch wiring needed for desktop mode to start the new server binary or dev process and retain minimal connection state for the app.",
+      "successFactors": [
+        "The desktop shell can launch Server V2 reliably.",
+        "Minimal reconnect information is persisted or passed forward cleanly.",
+        "The shell does not resume ownership of workspace behavior just to launch the server."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-013",
+      "name": "Align app boot with the new boundary",
+      "description": "Update app boot code so status probes, connection setup, and startup routing flow through the shared helper and adapter instead of ad hoc local assumptions.",
+      "successFactors": [
+        "Startup code no longer bypasses the migration seam.",
+        "Flag-on and flag-off startup both use explicit boundaries.",
+        "The app boot path becomes easier for later phases to migrate slice by slice."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-014",
+      "name": "Migrate initial system health/status probes",
+      "description": "Move the first low-risk probe paths, such as health and status checks, onto `createSdk({ serverId })` so the new boundary gets real usage before feature-heavy slices begin.",
+      "successFactors": [
+        "The app can fetch basic server health through the new adapter.",
+        "Legacy fallback still works when the flag is off.",
+        "The first migrated calls are easy to verify end to end."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-015",
+      "name": "Mark feature-level migration boundaries",
+      "description": "Identify and update the next feature call sites that should branch through the shared helper so later phases have known integration points instead of rediscovering them.",
+      "successFactors": [
+        "The next migration slices have obvious branch points.",
+        "Raw env parsing is not scattered into new feature code.",
+        "The codebase shows a consistent migration pattern."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-016",
+      "name": "Test flag-off behavior",
+      "description": "Add tests or smoke coverage proving that legacy mode still works after the migration boundary is added.",
+      "successFactors": [
+        "Legacy boot and request routing remain functional.",
+        "The rollout boundary does not break the default path.",
+        "Regression checks exist for future boundary edits."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-017",
+      "name": "Test flag-on behavior",
+      "description": "Add tests or smoke coverage proving that enabling the rollout flag launches Server V2 and routes migrated calls through the new adapter correctly.",
+      "successFactors": [
+        "Server V2 mode is testable, not only a manual hidden mode.",
+        "The startup branch and transport branch agree with each other.",
+        "Developers can tell if Server V2 mode regresses before broader rollout."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P4-018",
+      "name": "Record rollout caveats and cleanup rules",
+      "description": "Document any temporary branch behavior, escape hatches, or known cleanup triggers in learnings or open questions so compatibility code does not fossilize silently.",
+      "successFactors": [
+        "Temporary migration branches have visible deletion criteria.",
+        "Known rollout caveats are written down for later phases.",
+        "Phase 4 leaves a clean seam rather than a second permanent architecture."
+      ],
+      "completed": true
+    }
+  ]
+}

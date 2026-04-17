@@ -1,0 +1,237 @@
+{
+  "phase": 8,
+  "title": "Managed Resources, Sharing, And Settings Surfaces",
+  "objective": "Move managed product metadata and settings-heavy workflows onto Server V2, including MCPs, skills, plugins, providers, router config, workspace shares, cloud signin, and import/export/share flows.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase8-learnings.md",
+    "prds/server-v2-plan/current-server-audit.md",
+    "prds/server-v2-plan/schema.md",
+    "prds/server-v2-plan/ideal-flow.md",
+    "prds/server-v2-plan/app-audit.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P8-001",
+      "name": "Implement MCP CRUD services and routes",
+      "description": "Add Server V2 CRUD for MCP definitions stored in the DB instead of relying on direct config-file mutation in the app or Tauri.",
+      "successFactors": [
+        "MCP definitions can be listed, created, updated, and removed through Server V2.",
+        "The server DB is the source of truth for managed MCP metadata.",
+        "The routes are typed and auth-aware."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-002",
+      "name": "Implement workspace-to-MCP assignment flows",
+      "description": "Use the linking tables to attach MCP definitions to one or many workspaces and project the effective config for affected workspaces.",
+      "successFactors": [
+        "Assignments are explicit and workspace-scoped.",
+        "Later workspace creation can attach existing MCPs cleanly.",
+        "Projection updates are triggered after assignment changes."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-003",
+      "name": "Implement skill metadata CRUD",
+      "description": "Add DB-backed CRUD for skills metadata and body references so skills stop being modeled primarily as app-local file mutations.",
+      "successFactors": [
+        "Skill metadata has stable server-owned records.",
+        "Skill source or ownership status is preserved.",
+        "The public routes are typed and deletable from legacy use later."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-004",
+      "name": "Implement skill materialization and install/import flows",
+      "description": "Add the server-owned logic that installs, imports, or materializes skill files from managed records and trusted remote sources like Skill Hub when needed.",
+      "successFactors": [
+        "Skill installation/import flows run through the server.",
+        "Managed versus imported skill provenance is retained.",
+        "Filesystem projection stays behind the server boundary."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-005",
+      "name": "Implement workspace-to-skill assignment flows",
+      "description": "Use linking tables to attach skills to workspaces and update effective config or projected files accordingly.",
+      "successFactors": [
+        "Skills can be attached to specific workspaces.",
+        "Assignments are reflected in projected workspace config.",
+        "The API makes no global-by-default assumption."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-006",
+      "name": "Implement plugin CRUD",
+      "description": "Move plugin definition and enablement management into Server V2 so plugin config editing is no longer a direct local JSONC mutation in the app.",
+      "successFactors": [
+        "Plugin metadata and config are server-owned.",
+        "Enable/disable behavior can be expressed without direct file edits in the UI.",
+        "Projection or materialization happens through the server."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-007",
+      "name": "Implement workspace-to-plugin assignment flows",
+      "description": "Attach plugins to workspaces explicitly through linking tables and ensure effective config projection updates correctly.",
+      "successFactors": [
+        "Plugin assignment is workspace-scoped.",
+        "Assignments update effective workspace config deterministically.",
+        "The linking model is consistent with other managed concepts."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-008",
+      "name": "Implement provider config CRUD and assignment",
+      "description": "Add DB-backed provider config definitions, auth references, and workspace assignments so provider configuration stops being primarily app-local state or direct config edits.",
+      "successFactors": [
+        "Provider configs have server-owned records.",
+        "Workspace attachments are explicit.",
+        "Later cloud sync or import flows can reuse the same model."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-009",
+      "name": "Implement cloud signin persistence and validation",
+      "description": "Move cloud signin metadata behind the server, including base URL, auth/session metadata, selected org, and validation status, while keeping only transient UI pieces in the app.",
+      "successFactors": [
+        "Durable cloud signin state is server-owned.",
+        "The server can validate or refresh cloud metadata when needed.",
+        "The app no longer treats cloud signin as only local preference state."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-010",
+      "name": "Implement router identity services and routes",
+      "description": "Add Server V2 CRUD for router identities so messaging identity state becomes server-level state instead of app or orchestrator config mutation.",
+      "successFactors": [
+        "Router identities are stored in the server DB.",
+        "Routes exist for listing and mutating identity metadata.",
+        "Identity changes can flow into router config materialization later in this phase."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-011",
+      "name": "Implement router binding services and routes",
+      "description": "Add Server V2 CRUD for router bindings and target metadata so the server can decide whether router startup is required and what effective routing behavior should be.",
+      "successFactors": [
+        "Router bindings are server-owned records.",
+        "Binding state can drive router enablement decisions.",
+        "Routes are typed and easy to validate."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-012",
+      "name": "Materialize effective router config",
+      "description": "Turn router identities and bindings into the effective runtime config consumed by the supervised router process so router product behavior is fed by server-owned data.",
+      "successFactors": [
+        "Router config is generated from server state rather than app-side file edits.",
+        "Config materialization can trigger router apply/reload behavior.",
+        "The implementation matches the server-owned router model from the architecture docs."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-013",
+      "name": "Implement router product routes",
+      "description": "Add the main router health, status, apply, identity, binding, and outbound-send product routes under Server V2 so the UI stops talking to router-adjacent control surfaces directly.",
+      "successFactors": [
+        "The server exposes router product behavior through its own API.",
+        "The UI does not need direct router requests for migrated flows.",
+        "Route behavior matches the runtime supervisor and config materialization model."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-014",
+      "name": "Implement workspace share services and routes",
+      "description": "Add DB-backed workspace share records and routes for exposing or revoking local workspaces with workspace-scoped access keys.",
+      "successFactors": [
+        "Share access is scoped per workspace.",
+        "Share status and audit metadata are persisted.",
+        "The server can expose, revoke, and inspect shares through typed routes."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-015",
+      "name": "Implement portable export on Server V2",
+      "description": "Port the portable workspace export builder into Server V2 so bundle/export behavior becomes a server capability and can use server-owned config state directly.",
+      "successFactors": [
+        "Export runs through Server V2.",
+        "The export model respects portable-file and secret-safety rules.",
+        "The output matches current product expectations where still needed."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-016",
+      "name": "Implement portable import on Server V2",
+      "description": "Port the portable import flow into Server V2 so import and merge behavior update the DB, projected config, and managed files through one server-owned path.",
+      "successFactors": [
+        "Import runs through Server V2.",
+        "Replace and merge semantics are explicit and tested.",
+        "Import triggers the correct projection and reload follow-up."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-017",
+      "name": "Implement shared bundle publish and fetch",
+      "description": "Move bundle publish/fetch behavior to Server V2 so sharing and trusted bundle retrieval become server capabilities rather than app-side orchestration.",
+      "successFactors": [
+        "Shared bundle publish/fetch flows are available through the main server.",
+        "Trusted-origin or publisher rules are enforced server-side.",
+        "The app can consume the server routes instead of building payloads locally for everything."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-018",
+      "name": "Migrate settings and share UI surfaces",
+      "description": "Move the app's settings-heavy flows for MCPs, skills, plugins, providers, router, cloud signin, and sharing/import-export onto Server V2 for the covered areas.",
+      "successFactors": [
+        "The covered settings surfaces talk to Server V2 instead of direct local config mutation.",
+        "Legacy fallbacks remain isolated for anything not yet migrated.",
+        "The app can render managed item state from the server DB-backed model."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-019",
+      "name": "Add managed-resource integration tests",
+      "description": "Write tests for CRUD, workspace assignment, projection, router config, shares, import/export, and cloud signin so settings-heavy product behavior is guarded before final cutover.",
+      "successFactors": [
+        "Managed-resource route families have automated coverage.",
+        "Workspace assignment and projection behavior are asserted.",
+        "Import/export and share safety rules are exercised."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P8-020",
+      "name": "Record cross-phase learnings for settings migration",
+      "description": "Capture any data-model, projection, or UI-migration learnings that later orchestrator-collapse or cutover work will need, and add them to the appropriate learnings files.",
+      "successFactors": [
+        "Important settings migration lessons are not trapped inside one phase.",
+        "Later phases can see what temporary compatibility code still exists.",
+        "Phase 8 leaves settings surfaces much closer to the thin-client target."
+      ],
+      "completed": true
+    }
+  ]
+}

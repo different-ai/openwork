@@ -1,0 +1,237 @@
+{
+  "phase": 6,
+  "title": "Sessions, Messages, And Streaming",
+  "objective": "Wrap OpenCode and remote OpenWork session behavior behind workspace-first Server V2 routes and move the session UI onto those routes, including typed streaming helpers.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase6-learnings.md",
+    "prds/server-v2-plan/ideal-flow.md",
+    "prds/server-v2-plan/architecture.md",
+    "prds/server-v2-plan/current-server-audit.md",
+    "prds/server-v2-plan/schema.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P6-001",
+      "name": "Create the OpenCode session adapter layer",
+      "description": "Add a typed adapter over the OpenCode SDK or HTTP client that Server V2 can use for local workspace session operations without leaking OpenCode route shapes into handlers.",
+      "successFactors": [
+        "Local session operations go through one adapter layer.",
+        "OpenCode-specific transport details stay server-internal.",
+        "The adapter is reusable across list, detail, message, and mutation routes."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-002",
+      "name": "Create the remote OpenWork session adapter layer",
+      "description": "Add the client or proxy layer Server V2 will use when a workspace is backed by a remote OpenWork server so the same workspace-first API can route to remote backends.",
+      "successFactors": [
+        "Remote session operations do not require direct client knowledge of remote backends.",
+        "The adapter can normalize remote responses into local server shapes.",
+        "Backend routing stays behind the server boundary."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-003",
+      "name": "Implement session backend routing service",
+      "description": "Use workspace resolution to choose the local OpenCode adapter or the remote OpenWork adapter for each session operation so route handlers stay backend-agnostic.",
+      "successFactors": [
+        "One service chooses the correct backend for a workspace.",
+        "The routing logic is reusable across all session endpoints.",
+        "Errors for unsupported or misconfigured backends are explicit."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-004",
+      "name": "Implement `GET /workspaces/{workspaceId}/sessions`",
+      "description": "Add the workspace-first session list route that returns sessions for either local or remote workspaces through one normalized API shape.",
+      "successFactors": [
+        "Session listing is workspace-first, not OpenCode session-first.",
+        "Local and remote workspaces both work through the same public route.",
+        "The response shape is typed and stable."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-005",
+      "name": "Implement session detail routes",
+      "description": "Add routes for reading one session, its status, and its todo or summary surfaces in the workspace-first model.",
+      "successFactors": [
+        "Session detail and status routes exist in the normalized namespace.",
+        "The payloads hide raw OpenCode transport details.",
+        "The routes are ready for app detail views and status chips."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-006",
+      "name": "Implement session creation",
+      "description": "Add the route and service logic for creating a session inside a workspace, including the mapping to the correct local or remote backend primitive.",
+      "successFactors": [
+        "Session creation is addressed by workspace ID first.",
+        "The server stores or resolves the backend mapping correctly.",
+        "The route is ready for optimistic app session creation flows."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-007",
+      "name": "Implement session update and delete",
+      "description": "Add workspace-first session mutation routes for update and deletion so the UI can stop depending on legacy session transport paths.",
+      "successFactors": [
+        "Session mutation routes are typed and normalized.",
+        "Local and remote backend calls map correctly.",
+        "Errors use the shared error and request-ID conventions."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-008",
+      "name": "Implement message list and detail routes",
+      "description": "Add routes for listing and reading messages for a session under the workspace-first hierarchy.",
+      "successFactors": [
+        "Message routes nest under workspace and session IDs.",
+        "The server returns normalized message data regardless of backend.",
+        "The route contract is documented in OpenAPI."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-009",
+      "name": "Implement message send routes",
+      "description": "Add the primary message-send route for prompts or user input so the session composer can move onto Server V2.",
+      "successFactors": [
+        "The route supports the message-send shape the app needs.",
+        "The server can forward to local OpenCode or remote OpenWork correctly.",
+        "Response handling works with optimistic UI flows."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-010",
+      "name": "Implement message update and delete routes",
+      "description": "Add routes for deleting messages or message parts and updating message parts where the upstream backend supports it, while keeping the public API workspace-first.",
+      "successFactors": [
+        "The server exposes message mutation primitives intentionally.",
+        "Unsupported backend cases are handled predictably.",
+        "The contract does not leak upstream path design."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-011",
+      "name": "Implement advanced session control routes",
+      "description": "Add workspace-first routes for init, fork, abort, share, unshare, summarize, and any other required session control primitives called out in `ideal-flow.md`.",
+      "successFactors": [
+        "The main advanced session controls are covered in the public API.",
+        "The server maps each control action to the correct backend call.",
+        "Route names stay consistent with the workspace-first model."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-012",
+      "name": "Implement prompt_async, command, and shell routes",
+      "description": "Expose the execution-style session primitives needed by the app while keeping transport and policy inside the server.",
+      "successFactors": [
+        "The server can express async prompt, command, and shell actions through one normalized API family.",
+        "These routes remain workspace-first and typed.",
+        "The app no longer needs to reach directly toward raw OpenCode session endpoints for them."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-013",
+      "name": "Implement revert and unrevert routes",
+      "description": "Add the session history control routes used by undo or restore flows so the server owns these primitives instead of app-side transport code.",
+      "successFactors": [
+        "Undo-style flows have a typed server route.",
+        "The app does not need special transport cases for revert operations.",
+        "Response shapes are consistent with other session mutations."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-014",
+      "name": "Define the SSE contract",
+      "description": "Pick the one or two session-related SSE endpoints, define typed event payloads, and add them to the public contract instead of treating streaming as an undocumented side channel.",
+      "successFactors": [
+        "The chosen SSE route(s) are documented in OpenAPI or companion contract metadata.",
+        "Event payload types are generated or shared from contract output.",
+        "The design matches the limited-SSE guidance in the planning docs."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-015",
+      "name": "Implement server SSE endpoints",
+      "description": "Add the actual SSE streaming route(s) in Server V2 so the app consumes streaming only through the OpenWork server, not directly from OpenCode.",
+      "successFactors": [
+        "The server exposes the chosen SSE route(s) end to end.",
+        "The server can proxy, normalize, or adapt backend stream events as needed.",
+        "Streaming failures are handled cleanly and visibly."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-016",
+      "name": "Implement handwritten SDK stream helpers",
+      "description": "Add the small typed streaming helper(s) in `packages/openwork-server-sdk/src/streams/**` so SSE usage still feels like part of the same SDK surface.",
+      "successFactors": [
+        "The SDK exports ergonomic typed stream helpers.",
+        "Event payload typing comes from generated or shared contract types.",
+        "The app can call streaming through `createSdk({ serverId })`."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-017",
+      "name": "Migrate session list and detail UI",
+      "description": "Move session list, session detail, and message history reads onto Server V2 through the adapter so the UI consumes the normalized routes for its main read surfaces.",
+      "successFactors": [
+        "The session UI uses Server V2 for the migrated reads when the flag is on.",
+        "Legacy fallback remains isolated.",
+        "The UI no longer needs raw OpenCode session path knowledge for those surfaces."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-018",
+      "name": "Migrate composer send and session mutation flows",
+      "description": "Move the composer, prompt send, session creation, and core session mutation paths onto the new routes so the UI is no longer split across old session transports.",
+      "successFactors": [
+        "The app can send prompts and create sessions through Server V2.",
+        "Optimistic UI behavior still works with the new transport.",
+        "Temporary normalization or fallback logic is limited to the migration boundary."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-019",
+      "name": "Add session integration tests",
+      "description": "Write integration coverage for local OpenCode-backed sessions, remote-server-backed sessions, advanced control routes, and error cases so the main product surface is not validated only manually.",
+      "successFactors": [
+        "The core session route family is covered by automated tests.",
+        "Local and remote backend behaviors are both exercised.",
+        "Common failure shapes are asserted."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P6-020",
+      "name": "Add streaming verification",
+      "description": "Add tests or deterministic verification for SSE subscription, typed event handling, reconnect or end-of-stream behavior, and app consumption through the SDK helper.",
+      "successFactors": [
+        "Streaming works from server to SDK helper to app code.",
+        "Typed event shapes are validated.",
+        "The app does not connect directly to underlying OpenCode SSE routes."
+      ],
+      "completed": true
+    }
+  ]
+}

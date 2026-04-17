@@ -1,0 +1,237 @@
+{
+  "phase": 10,
+  "title": "Distribution, Dev Experience, Cutover, And Cleanup",
+  "objective": "Finish the Bun-based distribution path, complete local development ergonomics, flip the product to Server V2 by default, and remove legacy architecture once the new server is credible.",
+  "readBeforeStarting": [
+    "prds/server-v2-plan/tasks/phases.md",
+    "prds/server-v2-plan/tasks/general-learnings.md",
+    "prds/server-v2-plan/tasks/open-questions.md",
+    "prds/server-v2-plan/tasks/phase10-learnings.md",
+    "prds/server-v2-plan/distribution.md",
+    "prds/server-v2-plan/local-dev.md",
+    "prds/server-v2-plan/ui-migration.md",
+    "prds/server-v2-plan/plan.md"
+  ],
+  "steps": [
+    {
+      "serialNumber": "P10-001",
+      "name": "Finalize the composite local dev command graph",
+      "description": "Wire the server runtime watcher, OpenAPI watcher, SDK watcher, and app dev server together behind one practical local command so contributors can iterate without manual restarts.",
+      "successFactors": [
+        "One dev command starts the intended local graph.",
+        "The command matches the watch model in `local-dev.md`.",
+        "Developers can edit routes, schemas, SDK helpers, and app code without hand-sync work."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-002",
+      "name": "Harden OpenAPI and SDK watcher behavior",
+      "description": "Make sure regeneration is debounced, deterministic, and isolated enough that spec or SDK writes do not cause needless server restarts or watch loops.",
+      "successFactors": [
+        "Generated-file changes do not trigger backend restart loops.",
+        "Regeneration only writes changed output.",
+        "Developers can leave the watch graph running continuously."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-003",
+      "name": "Finalize source-consumption SDK dev behavior",
+      "description": "Ensure the app can consume the SDK package source or generated output directly in dev without slow rebuild-to-dist cycles unless packaging explicitly requires them.",
+      "successFactors": [
+        "The app sees SDK changes immediately in local dev.",
+        "TypeScript and Vite pick up changes without extra packaging steps.",
+        "Any required build step is reserved for packaging, not normal iteration."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-004",
+      "name": "Implement the Bun compile build for Server V2",
+      "description": "Create the build pipeline that compiles `apps/server-v2` into the per-platform standalone executable format described in `distribution.md`.",
+      "successFactors": [
+        "A Bun-compiled Server V2 executable can be produced for the supported targets.",
+        "The build process is scriptable and repeatable.",
+        "Build-time metadata and manifests can be injected cleanly."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-005",
+      "name": "Embed sidecars and runtime manifest",
+      "description": "Package `opencode`, `opencode-router`, and the runtime manifest into the compiled Server V2 executable using the chosen Bun embedding approach.",
+      "successFactors": [
+        "The compiled server carries the expected sidecar payloads and manifest.",
+        "The embedding approach is deterministic and inspectable.",
+        "The packaging matches the model described in `distribution.md`."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-006",
+      "name": "Implement first-run extraction",
+      "description": "Extract embedded sidecars into a persistent versioned runtime directory on first run and reuse them on later runs instead of re-extracting into temp-like paths.",
+      "successFactors": [
+        "Runtime extraction uses a persistent versioned directory.",
+        "Executable bits or platform-specific launch requirements are handled.",
+        "Repeated runs reuse existing verified assets."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-007",
+      "name": "Add extraction locking and atomic replace behavior",
+      "description": "Prevent concurrent startup races and partial extraction corruption by implementing locking, atomic replacement, and interrupted-extraction handling.",
+      "successFactors": [
+        "Concurrent launches do not corrupt the runtime directory.",
+        "Interrupted extraction can recover safely.",
+        "Runtime startup behavior remains predictable under race conditions."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-008",
+      "name": "Implement runtime cleanup or garbage collection rules",
+      "description": "Define and implement how old extracted runtime versions are cleaned up safely without deleting an in-use runtime.",
+      "successFactors": [
+        "Old runtimes can be cleaned up deliberately.",
+        "The cleanup strategy does not break rollback or currently running versions.",
+        "The behavior is documented in code or operational notes."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-009",
+      "name": "Validate macOS signing and notarization behavior",
+      "description": "Prototype or validate the codesigning and notarization behavior for the main server executable and extracted sidecars so the preferred packaging model is proven on macOS.",
+      "successFactors": [
+        "There is a clear answer on whether extracted sidecars need separate signing treatment.",
+        "Gatekeeper or notarization behavior is understood well enough for release planning.",
+        "Any unresolved macOS packaging risk is recorded in `open-questions.md`."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-010",
+      "name": "Implement the Windows signing path",
+      "description": "Add the CI or release automation needed to sign the Windows desktop artifact, the standalone server, and the Windows sidecars as described in `distribution.md`.",
+      "successFactors": [
+        "Windows signing is an explicit release capability, not a future assumption.",
+        "The final server executable and embedded sidecars have a clear signing flow.",
+        "Required secrets and verification steps are documented."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-011",
+      "name": "Validate Windows AV and SmartScreen behavior",
+      "description": "Test or prototype first-run extraction and child-process launch on Windows so sidecar extraction does not create avoidable trust or startup problems.",
+      "successFactors": [
+        "Windows startup behavior is understood before broad rollout.",
+        "Stable runtime-directory extraction is validated against AV or SmartScreen concerns.",
+        "Any packaging adjustments needed for Windows are captured explicitly."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-012",
+      "name": "Bundle Server V2 into the desktop app",
+      "description": "Ship the compiled Server V2 runtime with the desktop app and ensure desktop launch paths use that bundled runtime instead of the old multi-process local stack.",
+      "successFactors": [
+        "Desktop builds include the matching Server V2 runtime.",
+        "The app launches only that bundled server for the default path.",
+        "Desktop no longer launches `opencode` or router directly in the target path."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-013",
+      "name": "Flip the desktop default to Server V2",
+      "description": "Once the new path is credible, switch the desktop startup default so normal users boot into Server V2 instead of the legacy local runtime path.",
+      "successFactors": [
+        "Normal desktop startup uses Server V2 by default.",
+        "A temporary escape hatch exists only if still needed for rollback.",
+        "The default path aligns with the thin-client/server-first architecture."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-014",
+      "name": "Flip app default routing to Server V2",
+      "description": "Make Server V2 the default backend path for migrated app features and retain the legacy path only as a temporary fallback if absolutely necessary.",
+      "successFactors": [
+        "Normal product traffic uses Server V2.",
+        "Legacy mode is no longer the primary path.",
+        "Any remaining fallback is clearly temporary and narrowly scoped."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-015",
+      "name": "Remove rollout and migration scaffolding that is no longer needed",
+      "description": "Delete temporary rollout branches, legacy shims, feature flags, or normalization code once the migrated surfaces no longer need them.",
+      "successFactors": [
+        "Migration scaffolding is removed instead of fossilizing.",
+        "The app and server codepaths become simpler after cutover.",
+        "Deletion happens only after the replacement path is verified."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-016",
+      "name": "Delete legacy server codepaths",
+      "description": "Remove the old server implementation once all consumers have moved so Server V2 becomes the only meaningful server implementation in the repo.",
+      "successFactors": [
+        "No active product path depends on the old server.",
+        "Legacy code deletion is explicit and verified.",
+        "The repo no longer implies a permanent dual-server architecture."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P10-017",
+      "name": "Delete or archive obsolete orchestrator control-plane code",
+      "description": "Remove orchestrator behavior that only existed to provide a separate control plane or bootstrap layer once the server has absorbed those responsibilities.",
+      "successFactors": [
+        "Orchestrator is no longer a separate product control plane.",
+        "Residual host-shell code is clearly justified if anything remains.",
+        "The codebase reflects the collapsed architecture described in the docs."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "P10-018",
+      "name": "Run the full automated validation suite",
+      "description": "Execute the full contract, server, SDK, app integration, and any packaging validation commands required to prove the new architecture is healthy before release or PR creation.",
+      "successFactors": [
+        "All major automated checks are run and reported.",
+        "Contract drift, runtime behavior, and app integrations are all covered.",
+        "Any failing area is visible with exact commands and results."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-019",
+      "name": "Run end-to-end product validation",
+      "description": "Validate the real product flow, including Docker or Chrome MCP based checks if available, and capture evidence such as screenshots or video for final review where relevant.",
+      "successFactors": [
+        "The implemented flow is tested end to end, not only by unit or integration tests.",
+        "Evidence for the final working product path is captured when possible.",
+        "If some end-to-end step cannot run, the exact gap and reproduction commands are recorded."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "P10-020",
+      "name": "Publish the final cutover and release checklist",
+      "description": "Capture the final cutover state, release gates, known residual debt, and any manual reviewer or operator steps so Server V2 can stop being a planning concept and become the default runtime architecture.",
+      "successFactors": [
+        "The final rollout state is documented clearly.",
+        "Remaining debt or manual steps are explicit rather than hidden.",
+        "Phase 10 ends with a shippable, supportable Server V2 runtime story."
+      ],
+      "completed": true
+    }
+  ]
+}
