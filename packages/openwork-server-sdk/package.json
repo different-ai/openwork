@@ -17,6 +17,7 @@
   "scripts": {
     "generate": "pnpm exec openapi-ts -f openapi-ts.config.ts",
     "watch": "node ./scripts/watch.mjs",
+    "pretypecheck": "pnpm --dir ../.. run sdk:generate",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
