@@ -70,9 +70,9 @@ The JSON must include `id`, `name`, `npm`, `env`, `doc`, and `models`. `api` is 
 
 ### Functional example: an LLM gateway (Infron)
 
-LLM gateways like [Infron](https://infron.ai), OpenRouter, or LiteLLM give you one OpenAI-compatible endpoint that fans out to many model providers, with a single key, unified billing, and built-in fallbacks. They're a good fit for custom providers because the same JSON works for every model the gateway exposes — just add more entries under `models`.
+An LLM gateway gives you one OpenAI-compatible endpoint that fans out to many model providers. [LiteLLM](https://infron.ai/docs/frameworks-and-integrations/litellm) is the canonical open-source take — a routing library/proxy you run yourself. [Infron](https://infron.ai) is the hosted version of that idea (think OpenRouter): one key, one endpoint, unified billing, and built-in provider fallbacks across its [model marketplace](https://infron.ai/models). Gateways are a good fit for custom providers because the same JSON works for every model they expose — just add more entries under `models`.
 
-Sign in at [infron.ai](https://infron.ai/login) and grab a key from the [API Keys dashboard](https://infron.ai/dashboard/apiKeys). New to Infron? Their [quickstart](https://infron.ai/docs/overview/quickstart/text) covers account creation and a first request in a few lines.
+Grab a key from the [API Keys dashboard](https://infron.ai/dashboard/apiKeys). New to Infron? Sign up at [infron.ai/login](https://infron.ai/login) and follow the [quickstart](https://infron.ai/docs/overview/quickstart/text).
 
 Paste the key into `API key / credential` and use this JSON:
 
