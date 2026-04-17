@@ -29,8 +29,15 @@ import type {
   ModelRef,
 } from "../../../../app/types";
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
-import type { createModelConfigStore } from "../../../../app/context/model-config";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
+
+type SessionModelConfig = {
+  applyPendingSessionChoice: (sessionId: string) => void;
+  setSessionModelById: (
+    updater: (current: Record<string, ModelRef>) => Record<string, ModelRef>,
+  ) => void;
+  clearSessionModelOverride: (sessionId: string) => void;
+};
 
 export type SessionActionsStore = ReturnType<typeof createSessionActionsStore>;
 
@@ -79,7 +86,7 @@ export function createSessionActionsStore(options: {
   selectSession: (id: string, options?: { skipHealthCheck?: boolean; source?: string }) => Promise<void>;
   refreshSidebarWorkspaceSessions: (workspaceId: string) => Promise<void>;
   abortRefreshes: () => void;
-  modelConfig: ReturnType<typeof createModelConfigStore>;
+  modelConfig: SessionModelConfig;
   selectedSessionModel: () => ModelRef;
   modelVariant: () => string | null;
   sanitizeModelVariantForRef: (ref: ModelRef, value: string | null) => string | null;

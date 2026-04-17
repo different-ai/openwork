@@ -1,5 +1,3 @@
-import { createSignal } from "solid-js";
-
 import { createDenClient, type DenTemplate } from "./den";
 
 type DenTemplateCacheKeyInput = {
@@ -17,7 +15,6 @@ type DenTemplateCacheEntry = {
 };
 
 const templateCache = new Map<string, DenTemplateCacheEntry>();
-const [templateCacheVersion, setTemplateCacheVersion] = createSignal(0);
 
 function getCacheKey(input: DenTemplateCacheKeyInput): string | null {
   const baseUrl = input.baseUrl?.trim() ?? "";
@@ -51,7 +48,6 @@ function readEntry(key: string | null): DenTemplateCacheEntry {
 
 function writeEntry(key: string, next: DenTemplateCacheEntry) {
   templateCache.set(key, next);
-  setTemplateCacheVersion((value) => value + 1);
 }
 
 function toMessage(error: unknown, fallback: string) {
@@ -59,7 +55,6 @@ function toMessage(error: unknown, fallback: string) {
 }
 
 export function readDenTemplateCacheSnapshot(input: DenTemplateCacheKeyInput) {
-  templateCacheVersion();
   const key = getCacheKey(input);
   const entry = readEntry(key);
   return {
@@ -127,5 +122,4 @@ export async function loadDenTemplateCache(
 export function clearDenTemplateCache() {
   if (templateCache.size === 0) return;
   templateCache.clear();
-  setTemplateCacheVersion((value) => value + 1);
 }

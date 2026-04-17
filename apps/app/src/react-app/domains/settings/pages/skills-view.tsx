@@ -61,7 +61,7 @@ import {
   pillSecondaryClass,
   surfaceCardClass,
   tagClass,
-} from "../../../../app/workspace/modal-styles";
+} from "../../workspace/modal-styles";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import {

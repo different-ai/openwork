@@ -4,7 +4,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { SessionRoute } from "./session-route";
-import { SolidAppHost } from "./solid-app-host";
+import { SettingsRoute } from "./settings-route";
 
 export function AppRoot() {
   useDesktopFontZoomBehavior();
@@ -13,9 +13,9 @@ export function AppRoot() {
     <Routes>
       <Route path="/session" element={<SessionRoute />} />
       <Route path="/session/:sessionId" element={<SessionRoute />} />
-      <Route path="/settings/*" element={<SolidAppHost />} />
+      <Route path="/settings/*" element={<SettingsRoute />} />
       <Route path="/" element={<Navigate to="/settings/general" replace />} />
-      <Route path="*" element={<SolidAppHost />} />
+      <Route path="*" element={<Navigate to="/settings/general" replace />} />
     </Routes>
   );
 }
