@@ -41,6 +41,7 @@ import { t } from "../../i18n";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
 import { SessionPage } from "../domains/session/chat/session-page";
+import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
@@ -469,6 +470,13 @@ export function SessionRoute() {
 
   return (
     <>
+    {selectedWorkspaceId && opencodeBaseUrl && token ? (
+      <ReactSessionRuntime
+        workspaceId={selectedWorkspaceId}
+        opencodeBaseUrl={opencodeBaseUrl}
+        openworkToken={token}
+      />
+    ) : null}
     <SessionPage
       selectedSessionId={selectedSessionId}
       selectedWorkspaceId={selectedWorkspaceId}
@@ -549,6 +557,31 @@ export function SessionRoute() {
       }}
       todos={[] satisfies TodoItem[]}
       sessionLoadingById={(sessionId) => loading && Boolean(sessionId && sessionId === selectedSessionId)}
+      onRenameSession={
+        opencodeClient
+          ? async (sessionId, nextTitle) => {
+              const trimmed = nextTitle.trim();
+              if (!trimmed) return;
+              await opencodeClient.session.update({
+                sessionID: sessionId,
+                title: trimmed,
+                directory: selectedWorkspaceRoot || undefined,
+              });
+              await refreshRouteState();
+            }
+          : undefined
+      }
+      onDeleteSession={
+        client && selectedWorkspaceId
+          ? async (sessionId) => {
+              await client.deleteSession(selectedWorkspaceId, sessionId);
+              if (selectedSessionId === sessionId) {
+                navigate("/session");
+              }
+              await refreshRouteState();
+            }
+          : undefined
+      }
     />
     <CreateWorkspaceModal
       open={createWorkspaceOpen}

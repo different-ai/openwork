@@ -54,6 +54,8 @@ import {
 } from "../../app/lib/tauri";
 import { isTauriRuntime } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
+import type { ModelOption, ModelRef } from "../../app/types";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -243,6 +245,9 @@ export function SettingsRoute() {
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
   const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelPickerQuery, setModelPickerQuery] = useState("");
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const emptyWorkspaceDisplay = useMemo<WorkspaceDisplay>(
     () => ({
       id: "",
@@ -418,6 +423,51 @@ export function SettingsRoute() {
   useEffect(() => {
     setActiveClient(opencodeClient);
   }, [opencodeClient]);
+
+  useEffect(() => {
+    if (!modelPickerOpen || !opencodeClient) return;
+    let cancelled = false;
+    void providerAuthStore.refreshProviders();
+    void (async () => {
+      try {
+        const res = await opencodeClient.config.providers({
+          directory: selectedWorkspaceRoot || undefined,
+        });
+        const data = (res as { data?: { providers?: Array<{ id: string; name: string; source?: string; models: Record<string, { id: string; name: string }> }> } }).data;
+        if (cancelled || !data?.providers) return;
+        const options: ModelOption[] = [];
+        for (const provider of data.providers) {
+          const modelIds = Object.keys(provider.models);
+          const hasModels = modelIds.length > 0;
+          for (const id of modelIds) {
+            const model = provider.models[id];
+            options.push({
+              providerID: provider.id,
+              modelID: id,
+              title: model.name || id,
+              description: provider.name,
+              behaviorTitle: "Reasoning",
+              behaviorLabel: "Default",
+              behaviorDescription: "",
+              behaviorValue: null,
+              isFree: false,
+              isConnected: hasModels,
+            });
+          }
+        }
+        setModelOptions(options);
+      } catch (error) {
+        setRouteError(
+          error instanceof Error
+            ? error.message
+            : t("app.unknown_error"),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [modelPickerOpen, opencodeClient, providerConnectedIds, selectedWorkspaceRoot]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
@@ -684,7 +734,8 @@ export function SettingsRoute() {
             defaultModelLabel={defaultModelLabel}
             defaultModelRef={defaultModelRef}
             onChangeDefaultModel={() => {
-              setRouteError("Default model picker is not wired into the React settings route yet.");
+              setModelPickerQuery("");
+              setModelPickerOpen(true);
             }}
             showThinking={local.prefs.showThinking}
             onToggleShowThinking={() => {
@@ -1006,6 +1057,32 @@ export function SettingsRoute() {
         submitting={createWorkspaceBusy}
         remoteSubmitting={createWorkspaceRemoteBusy}
         remoteError={createWorkspaceRemoteError}
+      />
+      <ModelPickerModal
+        open={modelPickerOpen}
+        options={modelOptions}
+        filteredOptions={modelOptions.filter((opt) => {
+          const q = modelPickerQuery.trim().toLowerCase();
+          if (!q) return true;
+          return (
+            opt.title.toLowerCase().includes(q) ||
+            opt.providerID.toLowerCase().includes(q) ||
+            opt.modelID.toLowerCase().includes(q)
+          );
+        })}
+        query={modelPickerQuery}
+        setQuery={setModelPickerQuery}
+        target="default"
+        current={
+          local.prefs.defaultModel ?? { providerID: "", modelID: "" }
+        }
+        onSelect={(next: ModelRef) => {
+          local.setPrefs((prev) => ({ ...prev, defaultModel: next }));
+          setModelPickerOpen(false);
+        }}
+        onBehaviorChange={() => {}}
+        onOpenSettings={() => {}}
+        onClose={() => setModelPickerOpen(false)}
       />
     </>
   );
