@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { SessionRoute } from "./session-route";
@@ -8,9 +8,10 @@ import { SettingsRoute } from "./settings-route";
 
 export function AppRoot() {
   useDesktopFontZoomBehavior();
+  const location = useLocation();
 
   return (
-    <Routes>
+    <Routes location={location} key={location.pathname}>
       <Route path="/session" element={<SessionRoute />} />
       <Route path="/session/:sessionId" element={<SessionRoute />} />
       <Route path="/settings/*" element={<SettingsRoute />} />

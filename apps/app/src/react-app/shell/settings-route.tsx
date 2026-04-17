@@ -9,10 +9,11 @@ import {
   createOpenworkServerClient,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
+  type OpenworkServerCapabilities,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
-import type { Client, ProviderListItem, SettingsTab, WorkspaceDisplay, WorkspaceSessionGroup } from "../../app/types";
+import type { Client, ProviderListItem, SettingsTab, WorkspaceDisplay, WorkspacePreset, WorkspaceSessionGroup } from "../../app/types";
 import { isSandboxWorkspace } from "../../app/utils";
 import { currentLocale, t, setLocale, type Language } from "../../i18n";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "../domains/connections/store";
@@ -40,10 +41,60 @@ import {
   MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH,
   useWorkspaceShellLayout,
 } from "./workspace-shell-layout";
+import {
+  openworkServerInfo,
+  pickDirectory,
+  resolveWorkspaceListSelectedId,
+  workspaceBootstrap,
+  workspaceCreate,
+  workspaceCreateRemote,
+  workspaceSetRuntimeActive,
+  workspaceSetSelected,
+  type WorkspaceInfo,
+} from "../../app/lib/tauri";
+import { isTauriRuntime } from "../../app/utils";
+import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
 };
+
+function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
+  return {
+    ...workspace,
+    displayNameResolved:
+      workspace.displayName?.trim() ||
+      workspace.name?.trim() ||
+      workspace.path?.trim() ||
+      t("session.workspace_fallback"),
+  };
+}
+
+function folderNameFromPath(path: string) {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "workspace";
+}
+
+async function resolveRouteOpenworkConnection() {
+  const settings = readOpenworkServerSettings();
+  let normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
+  let resolvedToken = settings.token?.trim() ?? "";
+
+  if ((!normalizedBaseUrl || !resolvedToken) && isTauriRuntime()) {
+    try {
+      const info = await openworkServerInfo();
+      normalizedBaseUrl =
+        normalizeOpenworkServerUrl(info.connectUrl ?? info.baseUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
+        normalizedBaseUrl;
+      resolvedToken = info.ownerToken?.trim() || info.clientToken?.trim() || resolvedToken;
+    } catch {
+      // ignore and fall back to stored settings only
+    }
+  }
+
+  return { normalizedBaseUrl, resolvedToken };
+}
 
 type PersistedThemeMode = "light" | "dark" | "system";
 
@@ -188,6 +239,10 @@ export function SettingsRoute() {
   const [configActionStatus, setConfigActionStatus] = useState<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
   const [resetConfigBusy, setResetConfigBusy] = useState(false);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
+  const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
+  const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
   const emptyWorkspaceDisplay = useMemo<WorkspaceDisplay>(
     () => ({
       id: "",
@@ -387,76 +442,64 @@ export function SettingsRoute() {
     writeStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, updateAutoDownload);
   }, [updateAutoDownload]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refreshRouteState = useMemo(() => async () => {
+    setLoading(true);
+    setRouteError(null);
+    try {
+      const desktopList = isTauriRuntime() ? await workspaceBootstrap().catch(() => null) : null;
+      const desktopWorkspaces = (desktopList?.workspaces ?? []).map(mapDesktopWorkspace);
+      const { normalizedBaseUrl, resolvedToken } = await resolveRouteOpenworkConnection();
 
-    void (async () => {
-      setLoading(true);
-      setRouteError(null);
-      try {
-        const settings = readOpenworkServerSettings();
-        const normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
-        const resolvedToken = settings.token?.trim() ?? "";
-        if (!normalizedBaseUrl || !resolvedToken) {
-          if (!cancelled) {
-            setOpenworkClient(null);
-            setBaseUrl("");
-            setToken("");
-            setWorkspaces([]);
-            setSessionsByWorkspaceId({});
-            setErrorsByWorkspaceId({});
-            setSelectedWorkspaceId("");
-          }
-          return;
-        }
-
-        const client = createOpenworkServerClient({ baseUrl: normalizedBaseUrl, token: resolvedToken });
-        const list = await client.listWorkspaces();
-        const nextWorkspaces = list.items.map((workspace) => ({
-          ...workspace,
-          displayNameResolved: workspaceLabel(workspace),
-        }));
-        const sessionEntries = await Promise.all(
-          nextWorkspaces.map(async (workspace) => {
-            try {
-              const response = await client.listSessions(workspace.id, { limit: 100 });
-              return { workspaceId: workspace.id, sessions: response.items, error: null as string | null };
-            } catch (error) {
-              return {
-                workspaceId: workspace.id,
-                sessions: [],
-                error: error instanceof Error ? error.message : t("app.unknown_error"),
-              };
-            }
-          }),
-        );
-
-        if (cancelled) return;
-
-        setOpenworkClient(client);
-        setBaseUrl(normalizedBaseUrl);
-        setToken(resolvedToken);
-        setWorkspaces(nextWorkspaces);
-        setSessionsByWorkspaceId(
-          Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.sessions])),
-        );
-        setErrorsByWorkspaceId(
-          Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])),
-        );
-        setSelectedWorkspaceId((current) => current || list.activeId?.trim() || nextWorkspaces[0]?.id || "");
-      } catch (error) {
-        if (!cancelled) {
-          setRouteError(error instanceof Error ? error.message : t("app.unknown_error"));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (!normalizedBaseUrl || !resolvedToken) {
+        setOpenworkClient(null);
+        setBaseUrl("");
+        setToken("");
+        setWorkspaces(desktopWorkspaces);
+        setSessionsByWorkspaceId({});
+        setErrorsByWorkspaceId({});
+        setSelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
+        return;
       }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
+      const client = createOpenworkServerClient({ baseUrl: normalizedBaseUrl, token: resolvedToken });
+      const list = await client.listWorkspaces();
+      const serverWorkspaces = list.items.map((workspace) => ({
+        ...workspace,
+        displayNameResolved: workspaceLabel(workspace),
+      }));
+      const nextWorkspaces = desktopWorkspaces.length > 0 ? desktopWorkspaces : serverWorkspaces;
+      const sessionEntries = await Promise.all(
+        nextWorkspaces.map(async (workspace) => {
+          try {
+            const response = await client.listSessions(workspace.id, { limit: 100 });
+            return { workspaceId: workspace.id, sessions: response.items, error: null as string | null };
+          } catch (error) {
+            return {
+              workspaceId: workspace.id,
+              sessions: [],
+              error: error instanceof Error ? error.message : t("app.unknown_error"),
+            };
+          }
+        }),
+      );
+
+      setOpenworkClient(client);
+      setBaseUrl(normalizedBaseUrl);
+      setToken(resolvedToken);
+      setWorkspaces(nextWorkspaces);
+      setSessionsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.sessions])));
+      setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
+      setSelectedWorkspaceId((current) => current || resolveWorkspaceListSelectedId(desktopList) || list.activeId?.trim() || nextWorkspaces[0]?.id || "");
+    } catch (error) {
+      setRouteError(error instanceof Error ? error.message : t("app.unknown_error"));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshRouteState();
+  }, [refreshRouteState]);
 
   useEffect(() => {
     openworkServerStore.start();
@@ -532,6 +575,78 @@ export function SettingsRoute() {
       name: provider.name ?? provider.id,
     }));
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
+  const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
+  const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
+    ? {
+        skills: { read: true, write: true, source: "openwork" },
+        plugins: { read: true, write: true },
+        mcp: { read: true, write: true },
+        commands: { read: true, write: true },
+        config: { read: true, write: true },
+        proxy: { opencode: true, opencodeRouter: false },
+      }
+    : null;
+
+  const handleOpenCreateWorkspace = () => {
+    setCreateWorkspaceRemoteError(null);
+    setCreateWorkspaceOpen(true);
+  };
+
+  const handleCreateWorkspace = async (preset: WorkspacePreset, folder: string | null) => {
+    if (!folder) return;
+    setCreateWorkspaceBusy(true);
+    try {
+      const list = await workspaceCreate({
+        folderPath: folder,
+        name: folderNameFromPath(folder),
+        preset,
+      });
+      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
+      if (createdId) {
+        await workspaceSetSelected(createdId).catch(() => undefined);
+        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
+      }
+      setCreateWorkspaceOpen(false);
+      await refreshRouteState();
+    } finally {
+      setCreateWorkspaceBusy(false);
+    }
+  };
+
+  const handleCreateRemoteWorkspace = async (input: {
+    openworkHostUrl?: string | null;
+    openworkToken?: string | null;
+    directory?: string | null;
+    displayName?: string | null;
+  }) => {
+    const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
+    if (!baseUrlValue) return false;
+    setCreateWorkspaceRemoteBusy(true);
+    setCreateWorkspaceRemoteError(null);
+    try {
+      const list = await workspaceCreateRemote({
+        baseUrl: baseUrlValue,
+        openworkHostUrl: baseUrlValue,
+        openworkToken: input.openworkToken?.trim() || null,
+        displayName: input.displayName?.trim() || null,
+        directory: input.directory?.trim() || null,
+        remoteType: "openwork",
+      });
+      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
+      if (createdId) {
+        await workspaceSetSelected(createdId).catch(() => undefined);
+        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
+      }
+      setCreateWorkspaceOpen(false);
+      await refreshRouteState();
+      return true;
+    } catch (error) {
+      setCreateWorkspaceRemoteError(error instanceof Error ? error.message : t("app.unknown_error"));
+      return false;
+    } finally {
+      setCreateWorkspaceRemoteBusy(false);
+    }
+  };
 
   const settingsView = (() => {
     switch (route.tab) {
@@ -539,9 +654,9 @@ export function SettingsRoute() {
         return (
           <GeneralSettingsView
             authorizedFoldersPanel={{
-              openworkServerClient: openworkServerSnapshot.openworkServerClient,
-              openworkServerStatus: openworkServerSnapshot.openworkServerStatus,
-              openworkServerCapabilities: openworkServerSnapshot.openworkServerCapabilities,
+              openworkServerClient: openworkClient,
+              openworkServerStatus: routeOpenworkStatus,
+              openworkServerCapabilities: routeOpenworkCapabilities,
               runtimeWorkspaceId: selectedWorkspace?.id ?? null,
               selectedWorkspaceRoot,
               activeWorkspaceType: workspaceType,
@@ -832,7 +947,7 @@ export function SettingsRoute() {
         onSelectTab={(tab) => navigate(`/settings/${tab}`)}
         developerMode={developerMode}
         selectedWorkspaceName={selectedWorkspaceName}
-        headerStatus={openworkServerSnapshot.openworkServerStatus}
+        headerStatus={routeOpenworkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
         workspaceSessionListProps={{
           workspaceSessionGroups,
@@ -855,7 +970,7 @@ export function SettingsRoute() {
           onTestWorkspaceConnection: async () => true,
           onEditWorkspaceConnection: () => {},
           onForgetWorkspace: () => {},
-          onOpenCreateWorkspace: () => {},
+          onOpenCreateWorkspace: handleOpenCreateWorkspace,
         }}
         onClose={() => navigate("/session")}
         sidebarWidth={shellLayout.leftSidebarWidth}
@@ -881,6 +996,16 @@ export function SettingsRoute() {
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
+      />
+      <CreateWorkspaceModal
+        open={createWorkspaceOpen}
+        onClose={() => setCreateWorkspaceOpen(false)}
+        onConfirm={handleCreateWorkspace}
+        onConfirmRemote={handleCreateRemoteWorkspace}
+        onPickFolder={() => pickDirectory({ title: t("onboarding.authorize_folder") }) as Promise<string | null>}
+        submitting={createWorkspaceBusy}
+        remoteSubmitting={createWorkspaceRemoteBusy}
+        remoteError={createWorkspaceRemoteError}
       />
     </>
   );
