@@ -276,6 +276,14 @@ export function getNewSkillRoute(orgSlug: string): string {
   return `${getSkillHubsRoute(orgSlug)}/skills/new`;
 }
 
+export function getPluginsRoute(orgSlug: string): string {
+  return `${getOrgDashboardRoute(orgSlug)}/plugins`;
+}
+
+export function getPluginRoute(orgSlug: string, pluginId: string): string {
+  return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
+}
+
 export function parseOrgListPayload(payload: unknown): {
   orgs: DenOrgSummary[];
   activeOrgId: string | null;

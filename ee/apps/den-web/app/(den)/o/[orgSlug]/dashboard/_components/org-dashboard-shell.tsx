@@ -26,6 +26,7 @@ import {
   getOrgAccessFlags,
   getMembersRoute,
   getOrgDashboardRoute,
+  getPluginsRoute,
   getSharedSetupsRoute,
   getSkillHubsRoute,
 } from "../../../../_lib/den-org";
@@ -109,6 +110,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
     return "Skill Hubs";
+  }
+  if (pathname.startsWith(getPluginsRoute(orgSlug))) {
+    return "Plugins";
   }
   if (pathname.startsWith(getBillingRoute(orgSlug)) || pathname === "/checkout") {
     return "Billing";
