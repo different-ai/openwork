@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 tsx watch src/server.ts",
     "dev:local": "sh -lc 'OPENWORK_DEV_MODE=1 PORT=${DEN_API_PORT:-8790} tsx watch src/server.ts'",
-    "build": "pnpm run build:den-db && tsc -p tsconfig.json",
+    "build": "node ./scripts/build.mjs",
     "build:den-db": "pnpm --filter @openwork-ee/den-db build",
     "start": "node dist/server.js"
   },

@@ -158,6 +158,11 @@ export type DenDesktopHandoffExchange = {
   token: string | null;
 };
 
+export type DenAppVersionMetadata = {
+  minAppVersion: string;
+  latestAppVersion: string;
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -180,6 +185,20 @@ export class DenApiError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function getDenAppVersionMetadata(payload: unknown): DenAppVersionMetadata | null {
+  if (!isRecord(payload)) return null;
+
+  const latestAppVersion =
+    typeof payload.latestAppVersion === "string" ? payload.latestAppVersion.trim() : "";
+  if (!latestAppVersion) return null;
+
+  return {
+    minAppVersion:
+      typeof payload.minAppVersion === "string" ? payload.minAppVersion.trim() : "",
+    latestAppVersion,
+  };
 }
 
 export function normalizeDenBaseUrl(input: string | null | undefined): string | null {
@@ -909,6 +928,17 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_session_payload", "Session response did not include a user.");
       }
       return user;
+    },
+
+    async getAppVersionMetadata(): Promise<DenAppVersionMetadata> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/app-version", {
+        method: "GET",
+      });
+      const appVersionMetadata = getDenAppVersionMetadata(payload);
+      if (!appVersionMetadata) {
+        throw new DenApiError(500, "invalid_app_version_payload", "App version response was missing version details.");
+      }
+      return appVersionMetadata;
     },
 
     async exchangeDesktopHandoff(grant: string): Promise<DenDesktopHandoffExchange> {

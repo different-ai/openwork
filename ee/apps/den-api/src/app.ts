@@ -15,6 +15,7 @@ import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
+import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
@@ -106,6 +107,7 @@ registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerMeRoutes(app)
 registerOrgRoutes(app)
+registerVersionRoutes(app)
 registerWorkerRoutes(app)
 
 app.get(
