@@ -2,6 +2,7 @@
 import { type ReactNode } from "react";
 
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
+import { hydrateOpenworkServerSettingsFromEnv } from "../../app/lib/openwork-server";
 import { isTauriRuntime } from "../../app/utils";
 import { GlobalSDKProvider } from "../kernel/global-sdk-provider";
 import { GlobalSyncProvider } from "../kernel/global-sync-provider";
@@ -35,6 +36,8 @@ type AppProvidersProps = {
 };
 
 export function AppProviders({ children }: AppProvidersProps) {
+  hydrateOpenworkServerSettingsFromEnv();
+
   const defaultUrl = resolveDefaultServerUrl();
   return (
     <ServerProvider defaultUrl={defaultUrl}>
