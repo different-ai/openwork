@@ -20,8 +20,10 @@ import {
   workspaceBootstrap,
   workspaceCreate,
   workspaceCreateRemote,
+  workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  workspaceUpdateDisplayName,
   type WorkspaceInfo,
   type WorkspaceList,
 } from "../../app/lib/tauri";
@@ -43,6 +45,9 @@ import { usePlatform } from "../kernel/platform";
 import { SessionPage } from "../domains/session/chat/session-page";
 import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
+import { CommandPalette, type SessionOption as PaletteSessionOption } from "./command-palette";
+import { getDisplaySessionTitle } from "../../app/lib/session-title";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -193,6 +198,10 @@ export function SessionRoute() {
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
   const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
+  const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
+  const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
+  const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   const refreshRouteState = useCallback(async () => {
     setLoading(true);
@@ -271,8 +280,14 @@ export function SessionRoute() {
       }
     })();
 
+    const handleSettingsChange = () => {
+      void refreshRouteState();
+    };
+    window.addEventListener("openwork-server-settings-changed", handleSettingsChange);
+
     return () => {
       cancelled = true;
+      window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
     };
   }, [refreshRouteState]);
 
@@ -409,6 +424,150 @@ export function SessionRoute() {
     setCreateWorkspaceOpen(true);
   }, []);
 
+  const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    setRenameWorkspaceId(workspaceId);
+    setRenameWorkspaceTitle(
+      workspace.displayName?.trim() ||
+        workspace.name?.trim() ||
+        workspace.path?.trim() ||
+        "",
+    );
+  }, [workspaces]);
+
+  const handleSaveRenameWorkspace = useCallback(async () => {
+    if (!renameWorkspaceId) return;
+    const trimmed = renameWorkspaceTitle.trim();
+    if (!trimmed) return;
+    setRenameWorkspaceBusy(true);
+    try {
+      await workspaceUpdateDisplayName({
+        workspaceId: renameWorkspaceId,
+        displayName: trimmed,
+      });
+      setRenameWorkspaceId(null);
+      setRenameWorkspaceTitle("");
+      await refreshRouteState();
+    } finally {
+      setRenameWorkspaceBusy(false);
+    }
+  }, [refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
+
+  const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    const path = workspace?.path?.trim();
+    if (!path || !isTauriRuntime()) return;
+    try {
+      const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      await revealItemInDir(path);
+    } catch {
+      // ignore
+    }
+  }, [workspaces]);
+
+  const handleShareWorkspace = useCallback((workspaceId: string) => {
+    // TODO: re-introduce full ShareWorkspaceModal flow. For now copy the workspace path
+    // to the clipboard so Reveal/inspection still works.
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    const path = workspace?.path?.trim();
+    if (!path) return;
+    try {
+      void navigator.clipboard.writeText(path);
+    } catch {
+      // ignore
+    }
+  }, [workspaces]);
+
+  const handleForgetWorkspace = useCallback(async (workspaceId: string) => {
+    await workspaceForget(workspaceId).catch(() => undefined);
+    await refreshRouteState();
+  }, [refreshRouteState]);
+
+  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (!workspace || !token || !baseUrl) return;
+    const workspaceOpencodeBaseUrl = `${(buildOpenworkWorkspaceBaseUrl(baseUrl, workspace.id) ?? baseUrl).replace(/\/+$|\/+$/g, "")}/opencode`;
+    const workspaceClient = createClient(workspaceOpencodeBaseUrl, undefined, { token, mode: "openwork" });
+    const session = unwrap(
+      await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
+    );
+    navigate(`/session/${session.id}`);
+  }, [baseUrl, navigate, token, workspaces]);
+
+  // Global shortcuts:
+  //   Cmd/Ctrl+N  -> new task in selected workspace
+  //   Cmd/Ctrl+K  -> toggle command palette
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+      const mod = isMac ? event.metaKey : event.ctrlKey;
+      if (!mod) return;
+      if (event.shiftKey || event.altKey) return;
+
+      const target = event.target as HTMLElement | null;
+      const inEditable =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
+      const key = event.key?.toLowerCase();
+      if (key === "n" && !inEditable) {
+        event.preventDefault();
+        if (selectedWorkspaceId) {
+          void handleCreateTaskInWorkspace(selectedWorkspaceId);
+        }
+        return;
+      }
+      if (key === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleCreateTaskInWorkspace, selectedWorkspaceId]);
+
+  const paletteSessionOptions = useMemo<PaletteSessionOption[]>(() => {
+    const out: PaletteSessionOption[] = [];
+    for (const workspace of workspaces) {
+      const workspaceTitle =
+        workspace.displayName?.trim() ||
+        workspace.name?.trim() ||
+        workspace.path?.trim() ||
+        t("session.workspace_fallback");
+      const list = sessionsByWorkspaceId[workspace.id] ?? [];
+      for (const session of list) {
+        const sessionId = (session as { id?: string }).id?.trim() ?? "";
+        if (!sessionId) continue;
+        const title = getDisplaySessionTitle(
+          (session as { title?: string }).title ?? "",
+        );
+        const updatedAt =
+          (session as { time?: { updated?: number; created?: number } }).time
+            ?.updated ??
+          (session as { time?: { updated?: number; created?: number } }).time
+            ?.created ??
+          0;
+        out.push({
+          workspaceId: workspace.id,
+          sessionId,
+          title,
+          workspaceTitle,
+          updatedAt,
+          searchText: `${title} ${workspaceTitle}`.toLowerCase(),
+          isActive: workspace.id === selectedWorkspaceId,
+        });
+      }
+    }
+    out.sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+    return out;
+  }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
+
   const handleCreateWorkspace = useCallback(async (preset: WorkspacePreset, folder: string | null) => {
     if (!folder) return;
     setCreateWorkspaceBusy(true);
@@ -538,13 +697,13 @@ export function SessionRoute() {
           );
           navigate(`/session/${session.id}`);
         },
-        onOpenRenameWorkspace: () => {},
-        onShareWorkspace: () => {},
-        onRevealWorkspace: () => {},
+        onOpenRenameWorkspace: handleOpenRenameWorkspace,
+        onShareWorkspace: handleShareWorkspace,
+        onRevealWorkspace: (id) => void handleRevealWorkspace(id),
         onRecoverWorkspace: async () => false,
         onTestWorkspaceConnection: async () => true,
         onEditWorkspaceConnection: () => {},
-        onForgetWorkspace: () => {},
+        onForgetWorkspace: (id) => void handleForgetWorkspace(id),
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
       }}
       surface={surfaceProps}
@@ -592,6 +751,31 @@ export function SessionRoute() {
       submitting={createWorkspaceBusy}
       remoteSubmitting={createWorkspaceRemoteBusy}
       remoteError={createWorkspaceRemoteError}
+    />
+    <RenameWorkspaceModal
+      open={renameWorkspaceId !== null}
+      title={renameWorkspaceTitle}
+      busy={renameWorkspaceBusy}
+      canSave={!renameWorkspaceBusy && renameWorkspaceTitle.trim().length > 0}
+      onClose={() => {
+        if (renameWorkspaceBusy) return;
+        setRenameWorkspaceId(null);
+        setRenameWorkspaceTitle("");
+      }}
+      onSave={() => void handleSaveRenameWorkspace()}
+      onTitleChange={setRenameWorkspaceTitle}
+    />
+    <CommandPalette
+      open={commandPaletteOpen}
+      onClose={() => setCommandPaletteOpen(false)}
+      onCreateNewSession={() => {
+        if (selectedWorkspaceId) {
+          void handleCreateTaskInWorkspace(selectedWorkspaceId);
+        }
+      }}
+      onOpenSession={(_workspaceId, sessionId) => navigate(`/session/${sessionId}`)}
+      onOpenSettings={() => navigate("/settings/general")}
+      sessions={paletteSessionOptions}
     />
     </>
   );

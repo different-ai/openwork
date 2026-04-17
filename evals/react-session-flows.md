@@ -1,6 +1,6 @@
 # React session flows
 
-Nine end-to-end scenarios that cover the most important UI behaviors introduced
+End-to-end scenarios that cover the most important UI behaviors introduced
 during the React port cutover. Run them before shipping any change that touches:
 
 - `apps/app/src/react-app/shell/session-route.tsx`
@@ -219,6 +219,110 @@ Known regressions this catches:
 
 ---
 
+---
+
+## Flow 10 — Keyboard: Cmd+N creates a new session
+
+**Why**: `Cmd/Ctrl+N` is the direct shortcut to create a session in the
+currently selected workspace (distinct from `Cmd+K` which opens the palette).
+
+Steps:
+1. From the session view with a workspace selected, press `Cmd+N` (macOS) or
+   `Ctrl+N` (elsewhere) while focus is **not** in the composer.
+
+Pass criteria:
+- URL changes to `/session/ses_*`.
+- New "New session" row appears at the top of the sidebar.
+- Composer is visible and ready.
+
+Known regressions this catches:
+- Shortcut handler missing from `session-route.tsx`.
+- Handler short-circuited because focus was on an `<input>` / contentEditable.
+
+---
+
+## Flow 11 — Command palette (Cmd+K)
+
+**Why**: The palette is the cross-surface quick switcher — create sessions,
+jump between workspaces/sessions, and open settings without leaving
+keyboard context.
+
+Steps:
+1. Press `Cmd+K` (or `Ctrl+K`).
+2. Expect: overlay appears with "Create new session", "Search sessions",
+   "Settings", plus an input at the top and the hint
+   "Arrow keys to navigate · Enter to run · Esc to close".
+3. Press `ArrowDown`, then `Enter`, to enter the **Sessions** sub-mode.
+4. Expect: flat list of every session in every workspace, active workspace
+   first. Each row shows session title, workspace title, and a
+   `CURRENT WORKSPACE` / `SWITCH` badge.
+5. Press `Esc`. Expect: sub-mode returns to root (not fully closed).
+6. Press `Esc` again. Expect: overlay closes.
+
+Pass criteria:
+- Palette opens on `Cmd+K`, closes on `Cmd+K` or `Esc`.
+- "Create new session" → creates a session in the selected workspace and
+  closes the palette.
+- "Search sessions" row → swaps to sessions mode.
+- "Settings" row → navigates to `/settings/general` and closes.
+
+Known regressions this catches:
+- Palette missing from the port (we hit this once: the Solid palette in
+  `apps/app/src/app/session/react-session-command-palette*.tsx` had been
+  deleted with the Solid tree and never re-ported).
+- `Cmd+K` bound to the wrong handler (e.g. browser default "search").
+- Sessions list empty because `workspaceSessionGroups` isn't wired.
+
+---
+
+## Flow 12 — Workspace options menu (Edit name / Share / Reveal / Remove)
+
+**Why**: The workspace row in the sidebar has an overflow menu (`…`) for
+renaming, sharing, revealing the folder, and removing the workspace.
+Post-cutover, all four handlers were stubs.
+
+Steps:
+1. In the sidebar, click the `…` button on the selected workspace row.
+2. Expect: popover opens with **Edit name**, **Share…**, **Reveal in Finder**
+   (desktop only), **Remove workspace**.
+3. Click **Edit name** → modal appears with current name selected.
+4. Type a new name and click **Save**.
+   - Pass: sidebar label and main header update immediately.
+5. Open the menu again → **Reveal in Finder**.
+   - Pass: Finder becomes frontmost with the workspace folder highlighted
+     (desktop only; no-op on web).
+6. Open the menu again → **Share…**.
+   - Pass: workspace path is copied to the clipboard. (Full ShareWorkspaceModal
+     flow is still pending a second pass — see change log.)
+7. Open the menu again → **Remove workspace**.
+   - Pass: workspace disappears from the sidebar; `workspace_bootstrap`
+     returns the remaining workspaces.
+
+Known regressions this catches:
+- Handlers stubbed out as `() => {}` in `session-route.tsx` / `settings-route.tsx`.
+- `workspaceUpdateDisplayName` IPC missing from `apps/app/src/app/lib/tauri.ts`.
+- `revealItemInDir` import broken (wrong package or dynamic import failing on web).
+
+---
+
+## Desktop (Tauri) specifics
+
+The same evals run against the Tauri desktop app (`pnpm dev`). Use the shared
+`evals/desktop-runner.md` (companion doc) for the AppleScript + cliclick
+runner. Key differences:
+
+- Focus-within reveals the `+` and `…` buttons on every workspace row, not just
+  on hover. Clicking the row first (or pressing Tab) ensures they're
+  reachable; on the selected workspace they stay visible continuously.
+- The Tauri window chrome offsets screen coords by the window's `(X, Y)` and
+  the OS titlebar. The helper script must re-query `position of first window`
+  on every interaction.
+- macOS screencapture produces a **point-space** PNG (same dimensions as
+  window points), not a Retina 2x image. Don't divide coordinates by 2 when
+  converting image pixels back to screen points.
+
+---
+
 ## Tips for an LLM runner
 
 - Always start with `chrome-devtools_take_snapshot` after each interaction.
@@ -237,3 +341,7 @@ Known regressions this catches:
 
 - 2026-04-16 — initial doc after the React port cutover fixed streaming,
   session CRUD, the model picker, and the settings tab infinite loop.
+- 2026-04-17 — added Flow 10 (Cmd+N new session), Flow 11 (Cmd+K command
+  palette), Flow 12 (workspace options menu). Also added the desktop-runtime
+  boot hook and restored 17 missing i18n keys that were leaking as raw
+  identifiers in the UI.

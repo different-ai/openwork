@@ -526,7 +526,13 @@ export function WorkspaceSessionList(props: Props) {
                         <Loader2 size={14} className="animate-spin text-gray-9" />
                       ) : null}
 
-                      <div className="hidden items-center gap-0.5 group-hover:flex group-focus-within:flex">
+                      <div
+                        className={`items-center gap-0.5 ${
+                          props.selectedWorkspaceId === workspace.id
+                            ? "flex"
+                            : "hidden group-hover:flex group-focus-within:flex"
+                        }`}
+                      >
                         <button
                           type="button"
                           className="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"

@@ -8,6 +8,7 @@ import { GlobalSDKProvider } from "../kernel/global-sdk-provider";
 import { GlobalSyncProvider } from "../kernel/global-sync-provider";
 import { LocalProvider } from "../kernel/local-provider";
 import { ServerProvider } from "../kernel/server-provider";
+import { useDesktopRuntimeBoot } from "./desktop-runtime-boot";
 
 function resolveDefaultServerUrl(): string {
   if (isTauriRuntime()) return "http://127.0.0.1:4096";
@@ -37,6 +38,7 @@ type AppProvidersProps = {
 
 export function AppProviders({ children }: AppProvidersProps) {
   hydrateOpenworkServerSettingsFromEnv();
+  useDesktopRuntimeBoot();
 
   const defaultUrl = resolveDefaultServerUrl();
   return (

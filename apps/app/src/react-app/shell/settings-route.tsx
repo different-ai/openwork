@@ -550,6 +550,13 @@ export function SettingsRoute() {
 
   useEffect(() => {
     void refreshRouteState();
+    const handleSettingsChange = () => {
+      void refreshRouteState();
+    };
+    window.addEventListener("openwork-server-settings-changed", handleSettingsChange);
+    return () => {
+      window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
+    };
   }, [refreshRouteState]);
 
   useEffect(() => {
