@@ -71,7 +71,7 @@ async function createFakeAssetService(opencodePath: string, routerPath: string) 
     },
     generatedAt: new Date().toISOString(),
     manifestVersion: 1,
-    opencodeVersion: "1.2.27",
+    opencodeVersion: "1.4.9",
     rootDir: path.dirname(opencodePath),
     routerVersion: "0.11.206",
     serverVersion: "0.0.0-test",
@@ -87,7 +87,7 @@ async function createFakeAssetService(opencodePath: string, routerPath: string) 
     source: "development" as const,
     stagedRoot: path.dirname(opencodePath),
     target,
-    version: "1.2.27",
+    version: "1.4.9",
   };
   const routerBinary = {
     absolutePath: routerPath,
@@ -104,7 +104,7 @@ async function createFakeAssetService(opencodePath: string, routerPath: string) 
     ensureOpencodeBinary: async () => opencodeBinary,
     ensureRouterBinary: async () => routerBinary,
     getDevelopmentRoot: () => path.dirname(opencodePath),
-    getPinnedOpencodeVersion: async () => "1.2.27",
+    getPinnedOpencodeVersion: async () => "1.4.9",
     getReleaseRoot: () => path.dirname(opencodePath),
     getRouterVersion: async () => "0.11.206",
     getSource: () => "development" as const,

@@ -83,7 +83,7 @@ const getBehaviorTitle = (providerID: string, model: ProviderModel, variantKeys:
     }
     return t("app.model_behavior_title");
   }
-  if (model.reasoning) return t("model_behavior.title_builtin_reasoning");
+  if (model.capabilities?.reasoning) return t("model_behavior.title_builtin_reasoning");
   return t("model_behavior.title_standard_generation");
 };
 
@@ -169,7 +169,7 @@ export const getModelBehaviorSummary = (
     };
   }
 
-  if (model.reasoning) {
+  if (model.capabilities?.reasoning) {
     return {
       title,
       label: t("model_behavior.label_builtin"),

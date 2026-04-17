@@ -1264,7 +1264,7 @@ export function createSessionStore(options: {
         const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
         mark("session.todo done");
         if (abortIfStale("selection changed before todos applied")) return;
-        setStore("todos", sessionID, list);
+        setStore("todos", sessionID, list as TodoItem[]);
       } catch (error) {
         mark("session.todo failed/timeout", {
           error: error instanceof Error ? error.message : safeStringify(error),

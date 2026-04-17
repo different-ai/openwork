@@ -67,7 +67,7 @@ test("release runtime assets use manifest versions without reading repo metadata
   const releaseRoot = makeTempDir("openwork-server-v2-release-assets");
   const opencodePath = path.join(releaseRoot, process.platform === "win32" ? "opencode.exe" : "opencode");
   const routerPath = path.join(releaseRoot, process.platform === "win32" ? "opencode-router.exe" : "opencode-router");
-  writeVersionedBinary(opencodePath, "1.2.27");
+  writeVersionedBinary(opencodePath, "1.4.9");
   writeVersionedBinary(routerPath, "0.11.206");
 
   const manifest: RuntimeManifest = {
@@ -85,7 +85,7 @@ test("release runtime assets use manifest versions without reading repo metadata
     },
     generatedAt: new Date().toISOString(),
     manifestVersion: 1,
-    opencodeVersion: "1.2.27",
+    opencodeVersion: "1.4.9",
     rootDir: releaseRoot,
     routerVersion: "0.11.206",
     serverVersion: "0.0.0-test",
@@ -118,7 +118,7 @@ test("release runtime assets use manifest versions without reading repo metadata
   });
 
   const bundle = await service.resolveRuntimeBundle();
-  expect(bundle.opencode.version).toBe("1.2.27");
+  expect(bundle.opencode.version).toBe("1.4.9");
   expect(bundle.router.version).toBe("0.11.206");
   expect(bundle.manifest.source).toBe("release");
 });
@@ -136,7 +136,7 @@ test("release runtime assets extract into the managed runtime directory and surv
 
   const opencodePath = path.join(bundleRoot, process.platform === "win32" ? "opencode.exe" : "opencode");
   const routerPath = path.join(bundleRoot, process.platform === "win32" ? "opencode-router.exe" : "opencode-router");
-  writeVersionedBinary(opencodePath, "1.2.27");
+  writeVersionedBinary(opencodePath, "1.4.9");
   writeVersionedBinary(routerPath, "0.11.206");
 
   const manifest: RuntimeManifest = {
@@ -154,7 +154,7 @@ test("release runtime assets extract into the managed runtime directory and surv
     },
     generatedAt: new Date().toISOString(),
     manifestVersion: 1,
-    opencodeVersion: "1.2.27",
+    opencodeVersion: "1.4.9",
     rootDir: bundleRoot,
     routerVersion: "0.11.206",
     serverVersion: "0.0.0-test",
@@ -213,7 +213,7 @@ test("release runtime assets can extract from an embedded runtime bundle", async
   const opencodePath = path.join(bundleRoot, process.platform === "win32" ? "opencode.exe" : "opencode");
   const routerPath = path.join(bundleRoot, process.platform === "win32" ? "opencode-router.exe" : "opencode-router");
   const manifestPath = path.join(bundleRoot, "manifest.json");
-  writeVersionedBinary(opencodePath, "1.2.27");
+  writeVersionedBinary(opencodePath, "1.4.9");
   writeVersionedBinary(routerPath, "0.11.206");
 
   const manifest: RuntimeManifest = {
@@ -231,7 +231,7 @@ test("release runtime assets can extract from an embedded runtime bundle", async
     },
     generatedAt: new Date().toISOString(),
     manifestVersion: 1,
-    opencodeVersion: "1.2.27",
+    opencodeVersion: "1.4.9",
     rootDir: bundleRoot,
     routerVersion: "0.11.206",
     serverVersion: "0.0.0-test",

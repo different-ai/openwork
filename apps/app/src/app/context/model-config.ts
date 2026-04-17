@@ -639,7 +639,7 @@ export function createModelConfigStore(options: {
         if (defaultModelID === model.id || isDefault) {
           footerBits.push(t("settings.model_default", currentLocale()));
         }
-        if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
+        if (model.capabilities?.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
 
         next.push({
           providerID: provider.id,
