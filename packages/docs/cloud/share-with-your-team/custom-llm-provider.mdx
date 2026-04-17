@@ -70,9 +70,9 @@ The JSON must include `id`, `name`, `npm`, `env`, `doc`, and `models`. `api` is 
 
 ### Functional example: an LLM gateway (Infron)
 
-An LLM gateway gives you one OpenAI-compatible endpoint that fans out to many model providers — start with [LiteLLM](https://infron.ai/docs/frameworks-and-integrations/litellm) if you want to run the routing yourself. [Infron](https://infron.ai) skips that setup: one API key unlocks every model in its [marketplace](https://infron.ai/models) with automatic provider fallbacks and a single invoice, so adding a new LLM to OpenWork is just another entry under `models`.
+An LLM gateway is one OpenAI-compatible endpoint that fans out to many model providers. If you want to run the routing yourself, [LiteLLM](https://infron.ai/docs/frameworks-and-integrations/litellm) is a good starting point. [Infron](https://infron.ai) is the hosted option: one API key gets you every model in its [marketplace](https://infron.ai/models) with automatic provider fallbacks and a single invoice, so adding a new LLM to OpenWork is just another entry under `models`.
 
-Grab a key from the [API Keys dashboard](https://infron.ai/dashboard/apiKeys). New to Infron? Sign up at [infron.ai/login](https://infron.ai/login) and follow the [quickstart](https://infron.ai/docs/overview/quickstart/text).
+Grab a key from the [API Keys dashboard](https://infron.ai/dashboard/apiKeys). If you don't have an account yet, sign up at [infron.ai/login](https://infron.ai/login) and their [quickstart](https://infron.ai/docs/overview/quickstart/text) walks you through your first request.
 
 Paste the key into `API key / credential` and use this JSON:
 
