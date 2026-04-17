@@ -2105,6 +2105,7 @@ export default {
   "workspace_list.import_config": "Import config",
   "workspace_list.new_workspace": "New workspace",
   "workspace_list.recover": "Recover",
+  "workspace_list.remove_confirm": "Remove this workspace from the sidebar? Sessions and files on disk are preserved.",
   "workspace_list.remove_workspace": "Remove workspace",
   "workspace_list.rename_session": "Rename session",
   "workspace_list.reveal_explorer": "Reveal in Explorer",

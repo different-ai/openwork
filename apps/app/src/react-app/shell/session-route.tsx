@@ -53,6 +53,7 @@ import { CommandPalette, type SessionOption as PaletteSessionOption } from "./co
 import { getDisplaySessionTitle } from "../../app/lib/session-title";
 import { useBootState } from "./boot-state";
 import {
+  forgetWorkspaceMemory,
   readActiveWorkspaceId,
   readLastSessionFor,
   writeActiveWorkspaceId,
@@ -252,15 +253,43 @@ export function SessionRoute() {
         token: resolvedToken,
       });
       const list = await openworkClient.listWorkspaces();
-      const routeWorkspaces = list.items.map((workspace) => ({
-        ...workspace,
-        displayNameResolved: workspaceLabel(workspace),
-      }));
-      // Mirror the Solid `applyServerLocalWorkspaces` behavior: when the
-      // openwork server is reachable its `listWorkspaces()` response carries
-      // the correct workspace IDs for subsequent API calls, so prefer those
-      // for local workspaces. Keep any "remote" entries from the desktop list
-      // since the server doesn't track those.
+      const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
+      const desktopByPath = new Map(
+        desktopWorkspaces
+          .map((workspace) => [normalizeDirectoryPath(workspace.path ?? ""), workspace] as const)
+          .filter(([path]) => path.length > 0),
+      );
+
+      const baseRouteWorkspaces = list.items.map((workspace) => {
+        const match =
+          desktopById.get(workspace.id) ??
+          desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
+        const merged = match
+          ? {
+              ...workspace,
+              displayName: match.displayName?.trim()
+                ? match.displayName
+                : workspace.displayName,
+              name: match.name?.trim() ? match.name : workspace.name,
+            }
+          : workspace;
+        return {
+          ...merged,
+          displayNameResolved: workspaceLabel(merged),
+        };
+      });
+
+      // If the user removed a workspace locally, the server may still know
+      // about it until its --workspace list gets reconciled. Hide rows that
+      // the desktop has forgotten so rename/delete feel instant.
+      const routeWorkspaces = desktopWorkspaces.length === 0
+        ? baseRouteWorkspaces
+        : baseRouteWorkspaces.filter((workspace) => {
+            if (desktopById.has(workspace.id)) return true;
+            const normalized = normalizeDirectoryPath(workspace.path ?? "");
+            return normalized.length > 0 && desktopByPath.has(normalized);
+          });
+
       const desktopRemotes = desktopWorkspaces.filter(
         (workspace) => workspace.workspaceType === "remote",
       );
@@ -585,17 +614,29 @@ export function SessionRoute() {
     if (!trimmed) return;
     setRenameWorkspaceBusy(true);
     try {
-      await workspaceUpdateDisplayName({
-        workspaceId: renameWorkspaceId,
-        displayName: trimmed,
-      });
+      // Rename on both ends so the sidebar reflects the change regardless of
+      // which list wins the next refresh (server-provided routeWorkspaces or
+      // desktop-provided workspaceBootstrap results). Either call failing on
+      // its own should NOT block the other — the user's intent was "rename
+      // this workspace" and a soft failure in one store is recoverable.
+      if (isTauriRuntime()) {
+        await workspaceUpdateDisplayName({
+          workspaceId: renameWorkspaceId,
+          displayName: trimmed,
+        }).catch(() => undefined);
+      }
+      if (client) {
+        await client
+          .updateWorkspaceDisplayName(renameWorkspaceId, trimmed)
+          .catch(() => undefined);
+      }
       setRenameWorkspaceId(null);
       setRenameWorkspaceTitle("");
       await refreshRouteState();
     } finally {
       setRenameWorkspaceBusy(false);
     }
-  }, [refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
+  }, [client, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
 
   const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -622,10 +663,32 @@ export function SessionRoute() {
     }
   }, [workspaces]);
 
-  const handleForgetWorkspace = useCallback(async (workspaceId: string) => {
-    await workspaceForget(workspaceId).catch(() => undefined);
-    await refreshRouteState();
-  }, [refreshRouteState]);
+  const handleForgetWorkspace = useCallback(
+    async (workspaceId: string) => {
+      if (typeof window !== "undefined") {
+        const message =
+          t("workspace_list.remove_confirm") ||
+          "Remove this workspace from the sidebar?";
+        if (!window.confirm(message)) return;
+      }
+      // Remove from both stores so the next refresh can't resurrect the row
+      // from whichever list wins the merge.
+      if (isTauriRuntime()) {
+        await workspaceForget(workspaceId).catch(() => undefined);
+      }
+      if (client) {
+        await client.deleteWorkspace(workspaceId).catch(() => undefined);
+      }
+      if (selectedWorkspaceId === workspaceId) {
+        setSelectedWorkspaceId("");
+        writeActiveWorkspaceId(null);
+        navigate("/session");
+      }
+      forgetWorkspaceMemory(workspaceId);
+      await refreshRouteState();
+    },
+    [client, navigate, refreshRouteState, selectedWorkspaceId],
+  );
 
   const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
