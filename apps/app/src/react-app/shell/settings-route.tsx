@@ -24,12 +24,14 @@ import { GeneralSettingsView } from "../domains/settings/pages/general-view";
 import { AdvancedView } from "../domains/settings/pages/advanced-view";
 import { AppearanceView } from "../domains/settings/pages/appearance-view";
 import { AutomationsView } from "../domains/settings/pages/automations-view";
+import { DebugView } from "../domains/settings/pages/debug-view";
 import { DenView } from "../domains/settings/pages/den-view";
 import { ExtensionsView } from "../domains/settings/pages/extensions-view";
 import { McpView } from "../domains/settings/pages/mcp-view";
 import { RecoveryView } from "../domains/settings/pages/recovery-view";
 import { SkillsView } from "../domains/settings/pages/skills-view";
 import { UpdatesView } from "../domains/settings/pages/updates-view";
+import { useDebugViewModel } from "../domains/settings/state/debug-view-model";
 import { SettingsShell } from "../domains/settings/shell/settings-shell";
 import { createAutomationsStore, useAutomationsStoreSnapshot } from "../domains/settings/state/automations-store";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "../domains/settings/state/extensions-store";
@@ -400,6 +402,15 @@ export function SettingsRoute() {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   useExtensionsStoreSnapshot(extensionsStore);
   useAutomationsStoreSnapshot(automationsStore);
+
+  const debugViewProps = useDebugViewModel({
+    developerMode,
+    openworkServerStore,
+    openworkServerSnapshot,
+    runtimeWorkspaceId: selectedWorkspace?.id ?? null,
+    selectedWorkspaceRoot,
+    setRouteError,
+  });
 
   const workspaceSessionGroups = useMemo(
     () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId),
@@ -988,12 +999,7 @@ export function SettingsRoute() {
           />
         );
       case "debug":
-        return (
-          <PlaceholderSettingsView
-            title="Debug settings are not fully ported"
-            detail="Developer/debug diagnostics still depend on the unported session and runtime stores, so this tab is temporarily a placeholder in the React-native route."
-          />
-        );
+        return <DebugView {...debugViewProps} />;
       default:
         return null;
     }
