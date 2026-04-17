@@ -467,11 +467,12 @@ export function SettingsRoute() {
     return () => {
       cancelled = true;
     };
-  }, [modelPickerOpen, opencodeClient, providerConnectedIds, selectedWorkspaceRoot]);
+  }, [modelPickerOpen, opencodeClient, selectedWorkspaceRoot]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
-  }, [local, route.tab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- local is stable via context
+  }, [route.tab]);
 
   useEffect(() => {
     applyThemeMode(themeMode);
