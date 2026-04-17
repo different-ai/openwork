@@ -28,6 +28,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../../../_components/ui/button";
+import { DenCard } from "../../../../_components/ui/card";
 import { DenInput } from "../../../../_components/ui/input";
 import { DenSelect } from "../../../../_components/ui/select";
 
@@ -275,7 +276,7 @@ export function ManageMembersScreen() {
 
   const inviteForm =
     showInviteForm && access.canInviteMembers ? (
-      <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+      <DenCard className="mb-6">
         <form
           className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_220px_auto] lg:items-end"
           onSubmit={async (event) => {
@@ -326,12 +327,12 @@ export function ManageMembersScreen() {
             </DenButton>
           </div>
         </form>
-      </div>
+      </DenCard>
     ) : null;
 
   const editMemberForm =
     editingMemberId && access.canManageMembers ? (
-      <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+      <DenCard className="mb-6">
         <form
           className="grid gap-4 lg:grid-cols-[240px_auto] lg:items-end"
           onSubmit={async (event) => {
@@ -366,12 +367,12 @@ export function ManageMembersScreen() {
             </DenButton>
           </div>
         </form>
-      </div>
+      </DenCard>
     ) : null;
 
   const teamForm =
     (showTeamForm || editingTeamId) && access.canManageTeams ? (
-      <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+      <DenCard className="mb-6">
         <form
           className="grid gap-6"
           onSubmit={async (event) => {
@@ -471,12 +472,12 @@ export function ManageMembersScreen() {
             </DenButton>
           </div>
         </form>
-      </div>
+      </DenCard>
     ) : null;
 
   const roleForm =
     (showRoleForm || editingRoleId) && access.canManageRoles ? (
-      <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+      <DenCard className="mb-6">
         <form
           className="grid gap-6"
           onSubmit={async (event) => {
@@ -569,7 +570,7 @@ export function ManageMembersScreen() {
             </DenButton>
           </div>
         </form>
-      </div>
+      </DenCard>
     ) : null;
 
   const toolbarAction = (() => {
@@ -640,10 +641,7 @@ export function ManageMembersScreen() {
         </div>
       ) : null}
 
-      <div
-        className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]"
-        data-testid="org-settings-card"
-      >
+      <DenCard className="mb-6" data-testid="org-settings-card">
         {isRenamingOrg && access.isOwner ? (
           <form
             className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"
@@ -741,7 +739,7 @@ export function ManageMembersScreen() {
             ) : null}
           </div>
         )}
-      </div>
+      </DenCard>
 
       <UnderlineTabs
         className="mb-6"

@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../../../_components/ui/button";
+import { DenCard } from "../../../../_components/ui/card";
 import { DenInput } from "../../../../_components/ui/input";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import {
@@ -280,7 +281,7 @@ export function ApiKeysScreen() {
                         </div>
                     ) : null}
 
-                    <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+                    <DenCard className="mb-6">
                         {createdKey ? (
                             <div className="rounded-[24px] bg-[#0f172a] p-6 text-white">
                                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -364,12 +365,12 @@ export function ApiKeysScreen() {
                                         Create a new API key
                                     </p>
                                 </div>
-                                <DenButton onClick={openCreateForm}>
+                                 <DenButton onClick={openCreateForm}>
                                     New key
                                 </DenButton>
                             </div>
                         )}
-                    </div>
+                    </DenCard>
 
                     <div className="overflow-hidden rounded-[28px] border border-gray-100 bg-white">
                         <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
