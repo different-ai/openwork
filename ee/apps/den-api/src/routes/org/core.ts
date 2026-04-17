@@ -9,12 +9,16 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { acceptInvitationForUser, createOrganizationForUser, getInvitationPreview, setSessionActiveOrganization } from "../../orgs.js"
+import { acceptInvitationForUser, createOrganizationForUser, getInvitationPreview, setSessionActiveOrganization, updateOrganizationName } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { orgIdParamSchema } from "./shared.js"
+import { ensureOwner, orgIdParamSchema } from "./shared.js"
 
 const createOrganizationSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+})
+
+const updateOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
 })
 
@@ -227,6 +231,46 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       organizationSlug: orgRows[0]?.slug ?? null,
       invitationId: accepted.invitation.id,
     })
+    },
+  )
+
+  app.patch(
+    "/v1/orgs/:orgId",
+    describeRoute({
+      tags: ["Organizations"],
+      summary: "Update organization",
+      description: "Updates organization fields that workspace owners are allowed to change. Currently limited to the display name; the slug is immutable to avoid breaking dashboard URLs.",
+      responses: {
+        200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
+        400: jsonResponse("The organization update request body was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update an organization.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners can update the organization.", forbiddenSchema),
+        404: jsonResponse("The organization could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgIdParamSchema),
+    resolveOrganizationContextMiddleware,
+    jsonValidator(updateOrganizationSchema),
+    async (c) => {
+      const permission = ensureOwner(c)
+      if (!permission.ok) {
+        return c.json(permission.response, 403)
+      }
+
+      const payload = c.get("organizationContext")
+      const input = c.req.valid("json")
+
+      const updated = await updateOrganizationName({
+        organizationId: payload.organization.id,
+        name: input.name,
+      })
+
+      if (!updated) {
+        return c.json({ error: "organization_not_found" }, 404)
+      }
+
+      return c.json({ organization: updated })
     },
   )
 

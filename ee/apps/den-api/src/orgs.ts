@@ -490,6 +490,29 @@ export async function createOrganizationForUser(input: {
   })
 }
 
+export async function updateOrganizationName(input: {
+  organizationId: OrgId
+  name: string
+}) {
+  const trimmed = input.name.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  await db
+    .update(OrganizationTable)
+    .set({ name: trimmed })
+    .where(eq(OrganizationTable.id, input.organizationId))
+
+  const rows = await db
+    .select()
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, input.organizationId))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
 export async function seedDefaultOrganizationRoles(orgId: OrgId) {
   await ensureDefaultDynamicRoles(orgId)
 }
