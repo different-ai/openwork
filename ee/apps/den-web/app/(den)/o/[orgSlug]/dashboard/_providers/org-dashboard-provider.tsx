@@ -29,6 +29,7 @@ type OrgDashboardContextValue = {
   mutationBusy: string | null;
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
+  updateOrganizationName: (name: string) => Promise<void>;
   switchOrganization: (slug: string) => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
@@ -183,6 +184,28 @@ export function OrgDashboardProvider({
 
   function switchOrganization(nextSlug: string) {
     router.push(getOrgDashboardRoute(nextSlug));
+  }
+
+  async function updateOrganizationName(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new Error("Enter an organization name.");
+    }
+
+    await runMutation("update-organization-name", async () => {
+      const { response, payload } = await requestJson(
+        `/v1/orgs/${encodeURIComponent(getRequiredActiveOrgId())}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ name: trimmed }),
+        },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to update organization (${response.status}).`));
+      }
+    });
   }
 
   async function inviteMember(input: { email: string; role: string }) {
@@ -372,6 +395,7 @@ export function OrgDashboardProvider({
     mutationBusy,
     refreshOrgData,
     createOrganization,
+    updateOrganizationName,
     switchOrganization,
     inviteMember,
     cancelInvitation,
