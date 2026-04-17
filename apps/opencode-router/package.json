@@ -44,7 +44,7 @@
     "test:npx": "bun scripts/test-npx.mjs"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.1.31",
+    "@opencode-ai/sdk": "^1.4.9",
     "@slack/socket-mode": "^2.0.5",
     "@slack/web-api": "^7.13.0",
     "commander": "^12.1.0",

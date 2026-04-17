@@ -41,8 +41,8 @@ importers:
         specifier: ^0.35.0
         version: 0.35.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(yjs@13.6.30)
       '@opencode-ai/sdk':
-        specifier: ^1.1.31
-        version: 1.1.39
+        specifier: ^1.4.9
+        version: 1.4.9
       '@openwork/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -162,8 +162,8 @@ importers:
   apps/opencode-router:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.1.31
-        version: 1.1.39
+        specifier: ^1.4.9
+        version: 1.4.9
       '@slack/socket-mode':
         specifier: ^2.0.5
         version: 2.0.5
@@ -196,8 +196,8 @@ importers:
   apps/orchestrator:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.1.31
-        version: 1.1.39
+        specifier: ^1.4.9
+        version: 1.4.9
       '@opentui/core':
         specifier: 0.1.77
         version: 0.1.77(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
@@ -270,8 +270,8 @@ importers:
   apps/server-v2:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: 1.2.27
-        version: 1.2.27
+        specifier: 1.4.9
+        version: 1.4.9
       hono:
         specifier: 4.12.12
         version: 4.12.12
@@ -362,8 +362,8 @@ importers:
         specifier: ^6.38.0
         version: 6.39.14
       '@opencode-ai/sdk':
-        specifier: ^1.1.31
-        version: 1.1.39
+        specifier: ^1.4.9
+        version: 1.4.9
       '@radix-ui/colors':
         specifier: ^3.0.0
         version: 3.0.0
@@ -2385,11 +2385,8 @@ packages:
   '@nothing-but/utils@0.17.0':
     resolution: {integrity: sha512-TuCHcHLOqDL0SnaAxACfuRHBNRgNJcNn9X0GiH5H3YSDBVquCr3qEIG3FOQAuMyZCbu9w8nk2CHhOsn7IvhIwQ==}
 
-  '@opencode-ai/sdk@1.1.39':
-    resolution: {integrity: sha512-EUYBZAci0bzG9+a7JVINmqAqis71ipG2/D3juvmvvKFyu0YBIT/6b+g3+p82Eb5CU2dujxpPdJJCaexZ1389eQ==}
-
-  '@opencode-ai/sdk@1.2.27':
-    resolution: {integrity: sha512-Wk0o/I+Fo+wE3zgvlJDs8Fb67KlKqX0PrV8dK5adSDkANq6r4Z25zXJg2iOir+a8ntg3rAcpel1OY4FV/TwRUA==}
+  '@opencode-ai/sdk@1.4.9':
+    resolution: {integrity: sha512-S8WQLuBFu2WwvSc1wupsV4qskniBA+JN1VaZZs52BPWwiN2zQFTD5/6dMh6oiYOMDtPjKsTFZ6qLFxDvVPNggQ==}
 
   '@opentelemetry/api-logs@0.207.0':
     resolution: {integrity: sha512-lAb0jQRVyleQQGiuuvCOTDVspc14nx6XJjP4FspJ1sNARo3Regq4ZZbrc3rN4b1TYSuUCvgH+UXUPug4SLOqEQ==}
@@ -8429,9 +8426,9 @@ snapshots:
 
   '@nothing-but/utils@0.17.0': {}
 
-  '@opencode-ai/sdk@1.1.39': {}
-
-  '@opencode-ai/sdk@1.2.27': {}
+  '@opencode-ai/sdk@1.4.9':
+    dependencies:
+      cross-spawn: 7.0.6
 
   '@opentelemetry/api-logs@0.207.0':
     dependencies:

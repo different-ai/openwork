@@ -23,7 +23,7 @@
     "@codemirror/language": "^6.11.0",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.0",
-    "@opencode-ai/sdk": "^1.1.31",
+    "@opencode-ai/sdk": "^1.4.9",
     "@radix-ui/colors": "^3.0.0",
     "@solid-primitives/event-bus": "^1.1.2",
     "@solid-primitives/storage": "^4.3.3",

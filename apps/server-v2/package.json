@@ -27,7 +27,7 @@
     "src"
   ],
   "dependencies": {
-    "@opencode-ai/sdk": "1.2.27",
+    "@opencode-ai/sdk": "1.4.9",
     "hono": "4.12.12",
     "hono-openapi": "1.3.0",
     "jsonc-parser": "^3.3.1",
