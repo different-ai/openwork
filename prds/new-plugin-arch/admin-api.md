@@ -20,6 +20,10 @@ Base prefix:
 - keep connector sync async and observable;
 - keep type-specific convenience endpoints optional but available where UI clarity benefits.
 
+Current implementation note:
+
+- until dedicated org-capability persistence exists, create/manage-account style admin actions are gated by org owner/admin membership in the endpoint layer.
+
 ## Config objects
 
 ### List/search config objects

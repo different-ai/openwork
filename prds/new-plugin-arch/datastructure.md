@@ -158,7 +158,7 @@ Constraints:
 
 Notes:
 
-- keep historical membership rows instead of hard delete if we want auditability;
+- current implementation keeps one logical membership row per (`plugin_id`, `config_object_id`) and uses `removed_at` for soft removal/reactivation rather than append-only history rows;
 - if an object later becomes deleted, the membership row can remain while delivery skips that object.
 
 ## Access and RBAC tables
@@ -208,6 +208,7 @@ RBAC note:
 - sharing with the whole org should be represented as one org-wide grant, not per-user entries.
 - use `org_wide = true` for v1.
 - member and team sharing should continue to use normal explicit grant rows.
+- current implementation also uses one logical grant row per target principal and reactivates it by clearing `removed_at`.
 
 ## Connector tables
 

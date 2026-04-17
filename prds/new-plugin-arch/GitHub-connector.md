@@ -256,6 +256,10 @@ We may also care about some non-content events for connector health, but not for
 
 Those should update connector state, but they should not replace branch-head content sync.
 
+Current implementation note:
+
+- `installation.deleted` updates matching `connector_account` rows to `disconnected` and does not enqueue a content sync job.
+
 ### Events we can ignore for ingestion
 
 For config ingestion, we should ignore or de-prioritize:

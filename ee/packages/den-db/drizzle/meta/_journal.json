@@ -64,6 +64,13 @@
       "when": 1775350000000,
       "tag": "0009_api_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1776427000000,
+      "tag": "0010_plugin_arch",
+      "breakpoints": true
     }
   ]
 }

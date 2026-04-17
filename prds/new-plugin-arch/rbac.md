@@ -177,6 +177,10 @@ Candidate capabilities:
 - `connector_sync.retry`
 - `rbac.manage_org`
 
+Current implementation note:
+
+- until separate org-capability persistence exists, the endpoint layer maps these capabilities to org owner/admin membership only.
+
 Why this matters:
 
 - resource grants alone do not answer "who is allowed to create a new thing?"

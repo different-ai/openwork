@@ -130,6 +130,7 @@ Recommendations:
 - dedupe on `connectorTargetId + headSha`
 - preserve `deliveryId` for observability
 - allow internal retries without requiring webhook redelivery
+- installation lifecycle events may update connector-account health/state without enqueuing a content reconciliation job
 
 ## Worker result contract
 
