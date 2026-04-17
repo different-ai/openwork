@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type RefObject, type UIEventHandler } from "react";
 
 const FOLLOW_LATEST_BOTTOM_GAP_PX = 96;
-const SCROLL_GESTURE_WINDOW_MS = 250;
+// Widened from 250ms so a single wheel or trackpad flick isn't missed between
+// two rapid programmatic scroll-to-bottom frames during streaming.
+const SCROLL_GESTURE_WINDOW_MS = 600;
+// Threshold (px) that counts as a meaningful "scroll upward" gesture. Anything
+// smaller is treated as anchoring jitter and ignored so we don't trip out of
+// follow-latest for pixel-level content growth.
+const MANUAL_BROWSE_UPWARD_THRESHOLD_PX = 16;
 
 type SessionScrollMode = "follow-latest" | "manual-browse";
 
@@ -142,28 +148,51 @@ export function useSessionScrollController(
   const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>(
     (event) => {
       const container = event.currentTarget;
+      const currentTop = container.scrollTop;
+      const previousTop = lastKnownScrollTopRef.current;
+      const delta = currentTop - previousTop;
+      const scrolledUp = delta <= -MANUAL_BROWSE_UPWARD_THRESHOLD_PX;
+      const userGestured = hasScrollGesture();
+
+      // If the user scrolls up meaningfully while a programmatic scroll is
+      // in flight, abandon the programmatic state and switch to manual browse
+      // immediately. Without this the ResizeObserver's auto-scroll during
+      // streaming keeps re-anchoring us to the bottom and the user can never
+      // actually get away from the tail of the transcript.
+      if (programmaticScrollRef.current && (userGestured || scrolledUp)) {
+        programmaticScrollRef.current = false;
+        clearProgrammaticScrollReset();
+        setMode("manual-browse");
+        lastKnownScrollTopRef.current = currentTop;
+        refreshTopClippedMessage();
+        return;
+      }
+
       if (programmaticScrollRef.current) {
-        lastKnownScrollTopRef.current = container.scrollTop;
+        lastKnownScrollTopRef.current = currentTop;
         refreshTopClippedMessage();
         return;
       }
 
-      if (!hasScrollGesture()) {
-        lastKnownScrollTopRef.current = container.scrollTop;
+      // Even without a fresh gesture, a strong upward delta means the user
+      // dragged a scrollbar or triggered a keyboard paging shortcut. Treat it
+      // as a manual browse request.
+      if (!userGestured && !scrolledUp) {
+        lastKnownScrollTopRef.current = currentTop;
         refreshTopClippedMessage();
         return;
       }
 
-      const bottomGap = container.scrollHeight - (container.scrollTop + container.clientHeight);
+      const bottomGap = container.scrollHeight - (currentTop + container.clientHeight);
       if (bottomGap <= FOLLOW_LATEST_BOTTOM_GAP_PX) {
         setMode("follow-latest");
-      } else if (container.scrollTop < lastKnownScrollTopRef.current - 1) {
+      } else if (scrolledUp) {
         setMode("manual-browse");
       }
-      lastKnownScrollTopRef.current = container.scrollTop;
+      lastKnownScrollTopRef.current = currentTop;
       refreshTopClippedMessage();
     },
-    [hasScrollGesture, refreshTopClippedMessage],
+    [clearProgrammaticScrollReset, hasScrollGesture, refreshTopClippedMessage],
   );
 
   const jumpToLatest = useCallback(
@@ -208,7 +237,12 @@ export function useSessionScrollController(
       const grew = nextHeight > observedContentHeightRef.current + 1;
       observedContentHeightRef.current = nextHeight;
 
-      if (grew && isAtBottom) {
+      // Only re-anchor to the bottom when we're already in follow-latest mode
+      // AND the user isn't actively scrolling. If they've touched the wheel,
+      // touchpad, or scrollbar in the last SCROLL_GESTURE_WINDOW_MS, treat
+      // that as intent to break out of autoscroll and leave their position
+      // alone until the next handleScroll tick reclassifies the mode.
+      if (grew && isAtBottom && !hasScrollGesture()) {
         scrollToBottom("auto");
         return;
       }
@@ -218,7 +252,7 @@ export function useSessionScrollController(
 
     observer.observe(content);
     return () => observer.disconnect();
-  }, [isAtBottom, options.contentRef, refreshTopClippedMessage, scrollToBottom]);
+  }, [hasScrollGesture, isAtBottom, options.contentRef, refreshTopClippedMessage, scrollToBottom]);
 
   useEffect(() => {
     if (options.selectedSessionId === previousSessionIdRef.current) return;
