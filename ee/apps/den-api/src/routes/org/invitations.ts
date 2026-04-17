@@ -5,7 +5,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { sendDenOrganizationInvitationEmail } from "../../email.js"
+import { DenEmailSendError, sendDenOrganizationInvitationEmail } from "../../email.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
@@ -25,6 +25,13 @@ const invitationResponseSchema = z.object({
   expiresAt: z.string().datetime(),
 }).meta({ ref: "InvitationResponse" })
 
+const invitationEmailFailedSchema = z.object({
+  error: z.literal("invitation_email_failed"),
+  reason: z.enum(["loops_not_configured", "loops_rejected", "loops_network"]),
+  message: z.string(),
+  invitationId: denTypeIdSchema("invitation"),
+}).meta({ ref: "InvitationEmailFailedError" })
+
 type InvitationId = typeof InvitationTable.$inferSelect.id
 const orgInvitationParamsSchema = orgIdParamSchema.extend(idParamSchema("invitationId", "invitation").shape)
 
@@ -34,7 +41,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Invitations"],
       summary: "Create organization invitation",
-      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email.",
+      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the email provider (Loops) failed to send; the client should surface the error and give the user a retry affordance.",
       responses: {
         200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
         201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
@@ -42,6 +49,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
+        502: jsonResponse("The invitation was saved but the email provider (Loops) rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
       },
     }),
     requireUserMiddleware,
@@ -125,14 +133,40 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       })
     }
 
-    await sendDenOrganizationInvitationEmail({
-      email,
-      inviteLink: buildInvitationLink(invitationId),
-      invitedByName: user.name ?? user.email ?? "OpenWork",
-      invitedByEmail: user.email ?? "",
-      organizationName: payload.organization.name,
-      role,
-    })
+    try {
+      await sendDenOrganizationInvitationEmail({
+        email,
+        inviteLink: buildInvitationLink(invitationId),
+        invitedByName: user.name ?? user.email ?? "OpenWork",
+        invitedByEmail: user.email ?? "",
+        organizationName: payload.organization.name,
+        role,
+      })
+    } catch (error) {
+      if (error instanceof DenEmailSendError) {
+        // The invitation row is already persisted (step above). Log at error
+        // level so operators can grep, and return a 502 so the caller can
+        // render a real failure instead of a silent success. The invitation
+        // id is included so the UI can correlate and offer a direct retry.
+        console.error(
+          `[auth][invite_email_failed] organization=${payload.organization.id} invitation=${invitationId} email=${email} reason=${error.reason}${error.detail ? ` detail=${error.detail}` : ""}`,
+        )
+
+        return c.json({
+          error: "invitation_email_failed" as const,
+          reason: error.reason,
+          message:
+            error.reason === "loops_not_configured"
+              ? "The invitation email provider (Loops) is not configured on this deployment."
+              : error.reason === "loops_network"
+                ? "Could not reach the invitation email provider. The invitation is saved; retry to send again."
+                : `The invitation email provider rejected the send${error.detail ? `: ${error.detail}` : "."}`,
+          invitationId,
+        }, 502)
+      }
+
+      throw error
+    }
 
     return c.json({ invitationId, email, role, expiresAt }, existingInvitation[0] ? 200 : 201)
     },
