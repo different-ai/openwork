@@ -15,6 +15,22 @@ Related: `/o/:slug/dashboard/integrations` (Den), `/o/:slug/dashboard/plugins` (
 - **Installing a bundle into a workspace** means writing each member primitive to its **native `.opencode/` path** via the OpenWork server's existing per-workspace endpoints. The `reload-watcher` then propagates to running sessions.
 - `.opencode/` is the **source of truth** on disk. Our remote DB is an **index** that bundles + surfaces primitives across the org. A future "local DB triggered via a skill" will invert the index relationship locally; the server schema is designed to accommodate that.
 
+### Reader map
+
+| Looking for… | Jump to |
+|---|---|
+| What does OpenCode actually load from disk? | [OpenCode interpretation](#opencode-interpretation--what-opencode-actually-sees) |
+| End-to-end flow (create → index → denominate → install) | [Four-phase lifecycle](#four-phase-lifecycle) |
+| Exact types to implement | [Typed schemas](#typed-schemas) |
+| Every API endpoint | [API endpoints](#api-endpoints) |
+| How each step actually runs over the wire | [Sequence flows](#sequence-flows) |
+| How a user authors a plugin without a repo | [Authoring flow](#authoring-flow-creating-primitives--bundles-in-app) |
+| How we close the loop back to the ecosystem | [Publish / export](#publish--export-sharing-authored-bundles) |
+| From inside an agent / shell | [CLI surface](#cli-surface) |
+| What's shipped when | [Rollout plan](#rollout-plan) |
+| How we know it works | [Test strategy](#test-strategy) |
+| What's still undecided | [Open questions](#open-questions) |
+
 ## Mental model
 
 Three nouns, kept strictly distinct:
@@ -261,6 +277,196 @@ WorkspaceInstallation                Phase 4: projection onto a workspace
 - `WorkspaceInstallation.applied_primitive_digests` gives clean uninstall + drift detection.
 - The future "local DB triggered via a skill" (§ [Local-DB future](#local-db-future)) slots in by adding `{ type: "local_mirror", … }` as a third `origin` variant without touching the rest of the schema.
 
+## Typed schemas
+
+TypeScript-style definitions for the core entities. These are the canonical shapes shared across the DB ORM, the API layer, and (eventually) the Den web SDK. Field names are camelCase in the API and snake_case in the DB per existing Den conventions — listed here in camelCase.
+
+### Shared primitives
+
+```ts
+type Iso8601 = string;                          // "2026-04-17T11:22:33Z"
+type Sha256  = string;                          // lowercased hex
+type UUID    = string;                          // v7
+type KebabCase = string;                        // ^[a-z][a-z0-9-]*$
+
+type PrimitiveKind =
+  | "skill"
+  | "agent"
+  | "command"
+  | "mcp_server"
+  | "plugin_code"
+  | "hook";                                     // claude-json hooks; warn-only in v1
+
+type ConnectorType = "github" | "bitbucket";    // extensible
+
+type InstallScope = "org" | "user" | "workspace";
+
+type ValidationStatus = "ok" | "warn" | "error";
+type ValidationMessage = { code: string; message: string; path?: string };
+
+type Origin =
+  | { type: "connector"; pluginSourceId: UUID; pathInRepo: string; commitSha: string }
+  | { type: "authored";  authorOrgMembershipId: UUID }
+  | { type: "local_mirror"; workspaceId: UUID; localRevision: number };       // future
+```
+
+### Integration + PluginSource
+
+```ts
+type Integration = {
+  id: UUID;
+  orgId: UUID;
+  connectorType: ConnectorType;
+  account: { id: string; name: string; kind: "user" | "org"; avatarUrl?: string };
+  credentialsEncrypted: string;                 // opaque; decrypted server-side only
+  tokenExpiresAt: Iso8601 | null;
+  createdAt: Iso8601;
+  updatedAt: Iso8601;
+};
+
+type PluginSourceLocator =
+  | { kind: "repo";     repo: string; ref?: string; sha?: string }            // "owner/repo"
+  | { kind: "subdir";   repo: string; path: string; ref?: string; sha?: string }
+  | { kind: "npm";      pkg:  string; version?: string; registry?: string };  // future
+
+type SyncStatus = "pending" | "ok" | "error";
+
+type PluginSource = {
+  id: UUID;
+  orgId: UUID;
+  integrationId: UUID;
+  locator: PluginSourceLocator;
+  webhookId: string | null;                     // provider-side webhook identifier
+  lastSyncAt: Iso8601 | null;
+  lastSyncStatus: SyncStatus;
+  lastSyncError: string | null;
+  createdAt: Iso8601;
+  updatedAt: Iso8601;
+};
+```
+
+### Primitive (kind-discriminated)
+
+```ts
+type Primitive = {
+  id: UUID;
+  orgId: UUID;
+  kind: PrimitiveKind;
+  name: KebabCase;                              // unique within (orgId, kind, origin-key)
+  content: string;                              // raw md/ts/json
+  contentHash: Sha256;
+  metadata: PrimitiveMetadata;                  // discriminated on kind
+  origin: Origin;
+  validationStatus: ValidationStatus;
+  validationMessages: ValidationMessage[];
+  deletedAt: Iso8601 | null;                    // soft-delete so re-ingest can restore
+  createdAt: Iso8601;
+  updatedAt: Iso8601;
+};
+
+type PrimitiveMetadata =
+  | { kind: "skill";       description: string; license?: string; tags?: string[] }
+  | { kind: "agent";       description?: string; model?: string; mode?: "primary" | "subagent" | "all"; tools?: Record<string, boolean>; color?: string }
+  | { kind: "command";     description?: string; agent?: string; model?: string; argumentsHint?: string[] }
+  | { kind: "mcp_server";  transport: "local" | "remote"; command?: string[]; url?: string; env?: Record<string, string> }
+  | { kind: "plugin_code"; language: "ts" | "js"; entryFile: string }
+  | { kind: "hook";        event: string; matcher?: string; command: string };           // claude-json shape
+```
+
+### Bundle + BundleMember
+
+```ts
+type Bundle = {
+  id: UUID;
+  orgId: UUID;
+  slug: KebabCase;                              // unique within org
+  name: string;
+  description: string;
+  version: string;                              // semver
+  icon?: string;                                // emoji or https URL
+  category?: string;
+  origin: Origin;
+  publishedAt: Iso8601 | null;
+  deletedAt: Iso8601 | null;
+  createdAt: Iso8601;
+  updatedAt: Iso8601;
+};
+
+type BundleMember = {
+  bundleId: UUID;
+  primitiveId: UUID;
+  ordinal: number;                              // display order
+};
+```
+
+### WorkspaceInstallation
+
+```ts
+type InstallationStatus =
+  | "pending" | "materializing" | "applied" | "error" | "uninstalled";
+
+type AppliedPrimitiveDigest = {
+  primitiveId: UUID;
+  kind: PrimitiveKind;
+  targetPath: string;                           // e.g. ".opencode/skills/release-prep/SKILL.md"
+  contentHashAtWrite: Sha256;                   // for drift detection on read-back
+};
+
+type WorkspaceInstallation = {
+  id: UUID;
+  orgId: UUID;
+  bundleId: UUID;
+  workspaceId: UUID;
+  scope: InstallScope;
+  status: InstallationStatus;
+  bundleVersionAtInstall: string;
+  appliedPrimitiveDigests: AppliedPrimitiveDigest[];
+  installedAt: Iso8601;
+  updatedAt: Iso8601;
+  error: { code: string; message: string } | null;
+};
+```
+
+### API request/response shapes (examples)
+
+```ts
+// POST /v1/orgs/:orgId/integrations/authorize
+type AuthorizeRequest  = { connectorType: ConnectorType; redirectAfter?: string };
+type AuthorizeResponse = { redirectUrl: string; state: string };
+
+// POST /v1/orgs/:orgId/integrations/:id/plugin-sources
+type AttachSourcesRequest  = { sources: PluginSourceLocator[] };
+type AttachSourcesResponse = { sources: PluginSource[] };
+
+// POST /v1/orgs/:orgId/bundles
+type CreateBundleRequest = {
+  slug: KebabCase;
+  name: string;
+  description: string;
+  version: string;
+  icon?: string;
+  category?: string;
+  memberPrimitiveIds: UUID[];                   // primitives must already exist in the org
+};
+type CreateBundleResponse = Bundle & { members: BundleMember[] };
+
+// POST /v1/workspaces/:workspaceId/installations
+type CreateInstallationRequest  = { bundleId: UUID; scope: InstallScope };
+type CreateInstallationResponse = WorkspaceInstallation;
+
+// GET /v1/workspaces/:workspaceId/installations/:id/status
+type InstallationStatusResponse = {
+  status: InstallationStatus;
+  progress: Array<{
+    primitiveId: UUID;
+    name: string;
+    targetPath: string;
+    state: "pending" | "writing" | "ok" | "error";
+    error?: string;
+  }>;
+};
+```
+
 ## Source-of-truth policy
 
 `.opencode/` on a worker's disk is the **canonical** state of what OpenCode actually loads. The remote DB is an **index** that:
@@ -386,6 +592,103 @@ Materialization engine (server-side only — not a public endpoint) maps each pr
 |---|---|---|
 | `GET` | `/v1/orgs/:orgId/integrations/:id/diagnostics` | Token expiry, last webhook time, error stream — powers a "something is wrong" banner. |
 | `GET` | `/v1/workspaces/:workspaceId/installations/:id/drift` | Compares `applied_primitive_digests` to current on-disk hashes via the existing `/workspace/:id/skills` etc. Returns per-primitive drift status. |
+
+## Sequence flows
+
+### A. Connect a source (Phase 1)
+
+```
+ User            Den web             Den API             Provider           OpenWork server
+  │                 │                  │                    │                    │
+  │─ click Connect ─▶                  │                    │                    │
+  │                 │─ POST /integrations/authorize ───────▶│                    │
+  │                 │◀──  { redirectUrl, state }  ──────────│                    │
+  │◀─ window.location = redirectUrl ───│                    │                    │
+  │────────────── OAuth consent ──────────────────▶          │                    │
+  │                                     ◀─ 302 w/ code ─────│                    │
+  │─ GET /v1/oauth/:type/callback?code&state ──▶│           │                    │
+  │                                     │  exchange code    │                    │
+  │                                     │───── POST token ─▶│                    │
+  │                                     │◀─ access_token ───│                    │
+  │                                     │  upsert Integration                    │
+  │◀─ 302 /integrations?success&id=…────│                    │                    │
+  │                 │                  │                    │                    │
+  │─ select repos ──▶                   │                    │                    │
+  │                 │─ POST /integrations/:id/plugin-sources ▶│                  │
+  │                 │  server: attach sources, register webhook                  │
+  │                 │         enqueue initial sync job       │                    │
+  │                 │◀── { sources[], jobId }────────────────│                    │
+  │                 │                  │                    │                    │
+  │                 │         (job runs)                     │                    │
+  │                 │                  │ fetchPluginFS ─────▶│                    │
+  │                 │                  │◀── FileTree ────────│                    │
+  │                 │                  │ ingest → upsert Primitives + Bundles     │
+```
+
+### B. Webhook-driven re-sync
+
+```
+ Provider           Den API                                    DB
+    │                  │                                        │
+    │─ POST /v1/webhooks/github (push event) ────▶              │
+    │                  │ verify HMAC                            │
+    │                  │ find PluginSources w/ matching ref     │
+    │                  │ for each: enqueue sync job             │
+    │                  │           ├─ fetchPluginFS             │
+    │                  │           ├─ ingest → diff             │
+    │                  │           ├─ upsert changed Primitives │
+    │                  │           └─ bump Bundle version if plugin.json version changed
+    │                  │ fan out to WorkspaceInstallation(bundleId)
+    │                  │   for each installation:               │
+    │                  │     mark "update available" (not auto-apply)
+```
+
+### C. Install a bundle into a workspace (Phase 4)
+
+```
+ User            Den web           Den API                         OpenWork server                           Disk
+  │                 │                │                                 │                                      │
+  │─ click Install ▶│                │                                 │                                      │
+  │                 │─ POST /workspaces/:wid/installations ───────────▶│                                      │
+  │                 │  body: { bundleId, scope }                       │                                      │
+  │                 │                │ create WorkspaceInstallation (status=pending)                          │
+  │                 │                │ begin materialize job           │                                      │
+  │                 │◀─ { installationId, status: "materializing" } ───│                                      │
+  │                 │                │                                 │                                      │
+  │                 │                │ for each BundleMember:          │                                      │
+  │                 │                │   switch (primitive.kind):      │                                      │
+  │                 │                │     skill   → POST /workspace/:wid/skills ─────────▶                   │
+  │                 │                │                                 │ write .opencode/skills/<name>/SKILL.md│
+  │                 │                │     command → POST /workspace/:wid/commands ────────▶                  │
+  │                 │                │     mcp     → POST /workspace/:wid/mcp ─────────────▶                  │
+  │                 │                │     plugin_code → POST /workspace/:wid/plugins ─────▶                  │
+  │                 │                │     agent   → POST /workspace/:wid/files/content ───▶                  │
+  │                 │                │   record AppliedPrimitiveDigest (targetPath, contentHashAtWrite)       │
+  │                 │                │                                 │                                      │
+  │                 │                │ reload-watcher emits ReloadEvents per affected subdir                  │
+  │                 │                │ WorkspaceInstallation.status = "applied"                               │
+  │                 │◀─ SSE/poll: status="applied", progress[] ────────│                                      │
+  │                 │                │                                 │                                      │
+  │                 │  OpenCode session:                                                                      │
+  │                 │    auto-reload if openwork.json.reload.auto, else toast "reload available"              │
+```
+
+### D. Uninstall (drift-safe)
+
+```
+ Den API                                                              Disk
+    │                                                                   │
+    │ load WorkspaceInstallation.appliedPrimitiveDigests                 │
+    │ for each digest:                                                   │
+    │   GET current file via /workspace/:wid/{skills|commands|…} ──────▶ │
+    │                                                            ◀───── │
+    │   if (currentHash === digest.contentHashAtWrite):                  │
+    │     DELETE /workspace/:wid/{…}/:name                               │
+    │   else:                                                            │
+    │     leave file; record drift.skipped[primitiveId]                  │
+    │ status = "uninstalled"                                             │
+    │ return { removed: [...], skipped: [...] }                          │
+```
 
 ## How each connector is structured (GitHub + Bitbucket)
 
@@ -527,6 +830,220 @@ Event mapping table we'd need for B/C (Claude → OpenCode):
 | `Notification` | no direct equivalent | punt |
 | `Stop` | `experimental.session.compacting` (close) | approximate |
 
+## Authoring flow (creating primitives + bundles in-app)
+
+The reverse of ingest. A user authors Primitives + Bundles directly without a connector, e.g. to capture an ad-hoc skill they just wrote in chat.
+
+### A.1 Author a primitive
+
+1. User clicks **"Create skill"** (or agent/command/MCP) from `/plugins` → `All Skills` tab.
+2. A composer drawer opens with the right form per `kind`:
+   - `skill` → YAML frontmatter (`name`, `description`) + body editor.
+   - `agent` → frontmatter (`mode`, `model`, `tools` etc.) + system-prompt body.
+   - `command` → frontmatter (`description`, `agent?`, `model?`) + template with `$ARGUMENTS`.
+   - `mcp_server` → form (transport, command/url, env).
+3. `POST /v1/orgs/:orgId/primitives` creates the row with `origin = { type: "authored", authorOrgMembershipId }`.
+4. `validation_status` is computed synchronously (frontmatter schema, name kebab-case, reserved names, forbidden paths).
+
+### A.2 Compose a bundle
+
+1. `/plugins` → **"Create plugin"** button opens the bundle composer.
+2. User picks `name`, `description`, `version`, `icon`, `category`, and searches existing Primitives to add as `BundleMember`s (drag or click).
+3. `POST /v1/orgs/:orgId/bundles` with `{ slug, name, …, memberPrimitiveIds }`.
+4. The server enforces that every referenced primitive belongs to the same org.
+
+### A.3 Edit / delete
+
+- Authored primitives + bundles are mutable via `PATCH` and `DELETE`.
+- Connector-sourced primitives/bundles are read-only; `PATCH` returns `409 conflict_readonly_connector_source` with a hint to fork.
+- **Fork**: `POST /v1/orgs/:orgId/primitives/:id/fork` (and similar for bundles) creates an authored copy the user can edit.
+
+## Publish / export (sharing authored bundles)
+
+Closes the loop with the ecosystem: an authored Bundle can be pushed back to a Git repo as a Claude-compatible marketplace tree so other OpenWork (or Claude Code) users can ingest it.
+
+### Flow
+
+1. User on a Bundle detail page clicks **"Publish to repo"**.
+2. Picks a target: a connected Integration + repo + branch.
+3. `POST /v1/orgs/:orgId/bundles/:id/publish` with `{ targetRepo, targetRef, commitMessage }`.
+4. Server materializes the Bundle into a `.claude-plugin/` tree in a scratch directory:
+   - `.claude-plugin/plugin.json` ← Bundle metadata
+   - `skills/<name>/SKILL.md` ← each `skill` Primitive
+   - `agents/<name>.md` ← each `agent` Primitive
+   - `commands/<name>.md` ← each `command` Primitive
+   - `.mcp.json` ← merged `mcp_server` Primitives
+   - OpenCode plugin code Primitives → warn (Claude target doesn't support native TS plugins)
+5. Server commits + pushes via the Integration's credentials. Returns the commit SHA + a link.
+
+### Multi-bundle publishing
+
+Publishing multiple Bundles to the same repo synthesises a `.claude-plugin/marketplace.json` catalog listing each as a plugin entry under `plugins/<slug>/`.
+
+### Round-trip guarantee
+
+Ingesting an exported tree back into OpenWork MUST produce semantically-identical Primitives (same `contentHash` per primitive, same Bundle membership). This is a tested invariant — see [Test strategy](#test-strategy).
+
+## CLI surface
+
+For agents running inside an OpenCode session to manage the catalog without leaving the shell. Mirrors Claude Code's `claude plugin …` commands.
+
+```
+openwork connector list
+openwork connector add github --repo different-ai/openwork-plugins [--ref main]
+openwork connector remove <source-id>
+openwork connector sync <source-id>
+
+openwork bundle list [--installed]
+openwork bundle show <bundle-slug>
+openwork bundle install <bundle-slug> [--scope workspace|user|org]
+openwork bundle uninstall <bundle-slug>
+openwork bundle publish <bundle-slug> --to github:owner/repo [--ref main]
+
+openwork primitive list [--kind=skill|agent|…]
+openwork primitive show <name> --kind=<kind>
+openwork primitive create --kind=skill --file=./my-skill.md
+```
+
+All commands hit the same API endpoints as the web UI — the CLI is a thin shell over `requestJson`. Output formats: `--json` for scripting, default human-friendly tables.
+
+An **OpenWork skill** wraps the CLI and surfaces it to agents:
+
+```yaml
+---
+name: openwork-plugin-manager
+description: |
+  Install, uninstall, and discover OpenWork plugins (bundles).
+
+  Triggers when user mentions:
+  - "install plugin"
+  - "what plugins are available"
+  - "publish this as a plugin"
+---
+```
+
+This makes the full lifecycle reachable from inside any OpenCode conversation — living system behavior.
+
+## Observability + audit events
+
+Every state-changing operation emits an `AuditEvent` row with structured fields. Used for debugging, billing-relevant rate limits, and compliance.
+
+```ts
+type AuditEvent = {
+  id: UUID;
+  orgId: UUID;
+  actor: { kind: "user" | "system" | "webhook"; id?: string };
+  event: AuditEventType;
+  subject: { kind: string; id: string };        // e.g. { kind: "integration", id: "…" }
+  metadata: Record<string, unknown>;             // event-specific
+  createdAt: Iso8601;
+  requestId: string;                             // for correlating with logs
+};
+
+type AuditEventType =
+  // Integrations
+  | "integration.connected"
+  | "integration.disconnected"
+  | "integration.token_refreshed"
+  | "integration.webhook_verify_failed"
+  // Sources
+  | "plugin_source.attached"
+  | "plugin_source.detached"
+  | "plugin_source.sync_started"
+  | "plugin_source.sync_succeeded"
+  | "plugin_source.sync_failed"
+  // Primitives
+  | "primitive.created"
+  | "primitive.updated"
+  | "primitive.deleted"
+  | "primitive.forked"
+  // Bundles
+  | "bundle.created"
+  | "bundle.updated"
+  | "bundle.deleted"
+  | "bundle.published"
+  // Installations
+  | "installation.started"
+  | "installation.applied"
+  | "installation.failed"
+  | "installation.uninstalled"
+  | "installation.drift_detected";
+```
+
+### Metrics (Prometheus-style labels)
+
+| Metric | Type | Labels | Purpose |
+|---|---|---|---|
+| `connectors_sync_duration_seconds` | histogram | `provider`, `status` | Ingest latency SLO |
+| `connectors_ingested_primitives_total` | counter | `provider`, `kind` | Catalog growth |
+| `installations_materialize_duration_seconds` | histogram | `status` | Install latency SLO |
+| `installations_drift_detected_total` | counter | `kind` | Track how often users edit on disk |
+| `webhooks_received_total` | counter | `provider`, `verified` | Traffic + security signal |
+
+### Alerts (proposed thresholds)
+
+- Sync failure rate > 5% over 5 min → page.
+- Materialization p95 > 30s → warn.
+- Webhook verification failures > 10/min → page (likely secret leak or attack).
+
+## Rollout plan
+
+Five slices, each independently shippable behind a feature flag. Previous slices stay on mocks until the backing slice lands.
+
+| Slice | Scope | Feature flag | Gates |
+|---|---|---|---|
+| 0 | **This PRD** (lands now) | n/a | Merged |
+| 1 | Connector-types registry + Integrations CRUD + GitHub adapter + ingester + Primitive + Bundle tables + read-only `GET /v1/orgs/:orgId/{integrations,plugins,primitives,bundles}` | `ff.connectors.read` | Ingest a real repo; Den web Phase 1–3 reads live data |
+| 2 | Authoring: `POST/PATCH/DELETE /v1/orgs/:orgId/{primitives,bundles}` + bundle members | `ff.connectors.author` | User can create + edit in-app |
+| 3 | WorkspaceInstallation + materialization engine + agents endpoint (`POST /workspace/:id/agents`) | `ff.connectors.install` | Install Bundle from mock Den workspace; file appears on disk; OpenCode loads it |
+| 4 | Bitbucket adapter + webhooks | `ff.connectors.bitbucket`, `ff.connectors.webhooks` | Multi-provider + live updates |
+| 5 | Publish/export + CLI + universal hook runtime | `ff.connectors.publish`, `ff.connectors.cli`, `ff.connectors.hook_runtime` | Round-trip + ecosystem |
+
+### Mock-removal choreography
+
+For each slice that lands, the Den web side removes exactly one mock file's contents and swaps `queryFn`:
+
+- Slice 1 → `integration-data.tsx` queries hit real endpoints; `plugin-data.tsx` `usePlugins` reads real bundles, still filtered client-side by connected integrations.
+- Slice 3 → add `useWorkspaceInstallations()` + new `/workspaces/:id/plugins` page.
+
+### Rollback
+
+Every slice's feature flag is independent. Rolling back slice N leaves slices 0..N-1 intact. Connector-written primitives are soft-deletable (`deletedAt`) so a bad sync can be reverted without data loss.
+
+### Migration
+
+No existing data to migrate — these are all new tables. The existing `/v1/orgs/:orgId/skills` endpoint (skill-hubs) keeps working; slice 1 adds a backfill that copies skill-hub skills into the `primitives` table as `origin = { type: "authored", … }` so they show up in the unified index. Skill-hubs remain as-is for deletion after slice 2.
+
+## Test strategy
+
+### Unit
+
+- **Ingester**: table-driven tests for each shape (`claude-marketplace`, `claude-single`, `opencode-workspace`, `bare-skills`). Golden-file fixtures under `test/fixtures/ingest/`.
+- **Connector adapters**: mock GitHub/Bitbucket HTTP with `nock`; assert request construction (scopes, OAuth params, webhook payloads).
+- **Materialization**: mock the OpenWork server API; assert correct endpoint + body per primitive kind; assert `appliedPrimitiveDigests` is recorded.
+- **Drift detection**: given `{ primitive.contentHash, disk.hash }` permutations, assert correct classification.
+
+### Integration
+
+- **Real GitHub**: a test org + throwaway repo under `different-ai/openwork-test-plugins` with fixture plugins. CI authenticates with a PAT; runs a full ingest + install + uninstall against a temp worktree. Skipped in local unless `OPENWORK_TEST_GITHUB_PAT` is set.
+- **Real OpenWork server**: spins up `packaging/docker/dev-up.sh`, provisions a workspace, runs materialization, diffs `.opencode/` against expectations.
+
+### End-to-end
+
+- **Den web** + Chrome MCP: the flow shipped in PRs #1472 / #1475 re-run against real endpoints. Authorize GitHub → select repo → install a bundle → check `/plugins` populates → check `.opencode/skills/` on the worker.
+- **Round-trip**: author a Bundle in-app → publish to a repo → ingest that repo from another org → assert Primitives are identical (same `contentHash`) and Bundle membership matches.
+
+### Fuzz / property tests
+
+- **Path safety**: property-test the ingester against random inputs; assert no `../` path ever reaches a write.
+- **Drift math**: for any sequence of `(write, user-edit?, uninstall)`, assert uninstall never deletes a file the installer didn't write.
+
+### Regression invariants (asserted in CI)
+
+- `contentHash(ingest(export(bundle)))` === `contentHash(bundle.members.content)` for every primitive kind.
+- Installing the same Bundle twice is idempotent (same final disk state, same digests).
+- Uninstall after a user edit leaves the file untouched and records drift.
+
 ## UI surfaces (where each phase lives)
 
 | Phase | UI surface | Status |
@@ -576,11 +1093,13 @@ Rough visual: same `DashboardPageTemplate` shell, same `DenSelectableRow` for pe
 
 ## Next steps
 
-1. Land this PRD (this PR).
-2. **API slice 1 (ingest → index)**: connector-types registry + integrations CRUD + GitHub adapter + ingester + Primitive/Bundle tables. Behind the existing Den API.
-3. **Wire Den web Phase 1–3**: replace mocks in `integration-data.tsx` and `plugin-data.tsx` with real calls; no shape change to React Query hooks.
-4. **API slice 2 (install → materialize)**: WorkspaceInstallation + materialization engine. Reuses the existing `/workspace/:id/{skills,commands,plugins,mcp}` endpoints.
-5. **New Den page**: `/o/:slug/dashboard/workspaces/:workspaceId/plugins` (Phase 4 surface).
-6. **Hooks strategy**: ship option A as part of the ingester; file C as a separate workstream.
-7. **Bitbucket adapter**: after GitHub ships cleanly.
-8. Land `POST /workspace/:id/agents` on the OpenWork server (needed for agent materialization).
+Mapped directly to [Rollout plan](#rollout-plan) slices:
+
+1. **Land this PRD** (this PR — slice 0).
+2. **Slice 1** — ingest → index. Ship behind `ff.connectors.read`.
+3. **Slice 2** — authoring. Ship behind `ff.connectors.author`. Covers mock-removal for Phase 3 composer.
+4. **Slice 3** — install → materialize. Ship behind `ff.connectors.install`. New `/workspaces/:id/plugins` page + `POST /workspace/:id/agents` endpoint.
+5. **Slice 4** — Bitbucket + webhooks.
+6. **Slice 5** — publish/export + CLI + universal hook runtime.
+
+Each slice owns its feature flag, mock-removal scope, and rollback plan (see Rollout plan for details).
