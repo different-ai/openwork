@@ -9,6 +9,8 @@ export type ConfirmModalProps = {
   confirmLabel: string;
   cancelLabel: string;
   variant?: "danger" | "warning";
+  confirmButtonVariant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
+  cancelButtonVariant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -16,13 +18,19 @@ export type ConfirmModalProps = {
 const buttonBaseClass =
   "inline-flex items-center justify-center rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)] disabled:cursor-not-allowed disabled:opacity-60";
 
-const primaryButtonClass = `${buttonBaseClass} bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]`;
-const dangerButtonClass = `${buttonBaseClass} bg-red-9 text-white hover:bg-red-10`;
-const outlineButtonClass = `${buttonBaseClass} border border-dls-border bg-dls-surface text-dls-text hover:bg-[var(--dls-hover)]`;
+const buttonClasses = {
+  primary: `${buttonBaseClass} bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]`,
+  secondary: `${buttonBaseClass} bg-gray-12 text-gray-1 hover:bg-gray-11`,
+  ghost: `${buttonBaseClass} bg-transparent text-dls-secondary hover:bg-[var(--dls-hover)] hover:text-dls-text`,
+  outline: `${buttonBaseClass} border border-dls-border bg-dls-surface text-dls-text hover:bg-[var(--dls-hover)]`,
+  danger: `${buttonBaseClass} bg-red-9 text-white hover:bg-red-10`,
+} satisfies Record<NonNullable<ConfirmModalProps["confirmButtonVariant"]>, string>;
 
 export function ConfirmModal(props: ConfirmModalProps) {
   if (!props.open) return null;
   const variant = props.variant ?? "warning";
+  const confirmVariant = props.confirmButtonVariant ?? (variant === "danger" ? "danger" : "primary");
+  const cancelVariant = props.cancelButtonVariant ?? "outline";
 
   const iconTileClass =
     variant === "danger"
@@ -50,16 +58,14 @@ export function ConfirmModal(props: ConfirmModalProps) {
           <div className="mt-6 flex justify-end gap-2">
             <button
               type="button"
-              className={outlineButtonClass}
+              className={buttonClasses[cancelVariant]}
               onClick={props.onCancel}
             >
               {props.cancelLabel}
             </button>
             <button
               type="button"
-              className={
-                variant === "danger" ? dangerButtonClass : primaryButtonClass
-              }
+              className={buttonClasses[confirmVariant]}
               onClick={props.onConfirm}
             >
               {props.confirmLabel}
