@@ -181,7 +181,7 @@ jobs:
             xorg-server-xvfb
 
       - name: Checkout target ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: ${{ inputs.ref || github.ref_name }}
           fetch-depth: 0
@@ -231,7 +231,7 @@ jobs:
 
       - name: Download local workflow artifact
         if: env.ARTIFACT_SOURCE == 'local-build-artifact' && env.INPUT_ASSET_URL_X86_64 == ''
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.artifact_name || 'openwork-desktop-linux-amd64-deb' }}
           run-id: ${{ inputs.artifact_run_id }}
@@ -413,6 +413,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          git fetch origin main dev --no-tags
+          publish_sha="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$publish_sha" origin/main && ! git merge-base --is-ancestor "$publish_sha" origin/dev; then
+            echo "Ref ${publish_sha} is not reachable from origin/main or origin/dev; refusing AUR publish." >&2
+            exit 1
+          fi
 
           if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
             echo "AUR_SSH_PRIVATE_KEY not set; cannot push to AUR." >&2
