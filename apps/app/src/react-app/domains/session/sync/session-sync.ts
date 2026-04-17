@@ -16,7 +16,6 @@ type SyncOptions = {
 
 type SyncEntry = {
   refs: number;
-  stopTimer: ReturnType<typeof setTimeout> | null;
   dispose: () => void;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
 };
@@ -284,16 +283,11 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   const existing = syncs.get(key);
   if (existing) {
     existing.refs += 1;
-    if (existing.stopTimer) {
-      clearTimeout(existing.stopTimer);
-      existing.stopTimer = null;
-    }
     return () => releaseWorkspaceSessionSync(input);
   }
 
   syncs.set(key, {
     refs: 1,
-    stopTimer: null,
     dispose: () => {},
     pendingDeltas: new Map(),
   });
@@ -310,10 +304,13 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   if (!existing) return;
   existing.refs -= 1;
   if (existing.refs > 0) return;
-  existing.stopTimer = setTimeout(() => {
-    existing.dispose();
-    syncs.delete(key);
-  }, 10_000);
+  // Immediate disposal is important here: a single OpenCode runtime is shared
+  // across local workspaces, and keeping old workspace subscriptions alive for
+  // 10s means rapid workspace switches accumulate multiple parallel event
+  // streams. Under larger transcripts that duplicates cache writes and can make
+  // the UI feel frozen after a handful of switches.
+  existing.dispose();
+  syncs.delete(key);
 }
 
 export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {

@@ -56,6 +56,7 @@ export default {
   "app.skills_hint_disconnected": "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills.",
   "app.skills_hint_limited": "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect.",
   "app.skills_hint_readonly": "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs.",
+  "action.remove": "Remove",
   "app.unknown_error": "Unknown error",
   "app.worker_fallback": "Worker",
   "automations.desktop_required": "Scheduled tasks require the desktop app.",

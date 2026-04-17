@@ -1,8 +1,10 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
+import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, Upload, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
-import type { ComposerAttachment, SlashCommandOption } from "../../../../../app/types";
+import type { ComposerAttachment, McpServerEntry, McpStatusMap, SkillCard, SlashCommandOption } from "../../../../../app/types";
+import { currentLocale, t, type Language } from "../../../../../i18n";
 import { LexicalPromptEditor } from "./editor";
 import {
   ReactComposerNotice,
@@ -50,6 +52,13 @@ type ComposerProps = {
   listAgents: () => Promise<Agent[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
+  listSkills?: () => Promise<SkillCard[]>;
+  skills?: SkillCard[];
+  listMcp?: () => Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }>;
+  mcpServers?: McpServerEntry[];
+  mcpStatus?: string | null;
+  mcpStatuses?: McpStatusMap;
+  onOpenSettingsSection?: (section: ToolMenuSection) => void;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: "agent" | "file", value: string) => void;
@@ -63,10 +72,63 @@ type ComposerProps = {
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
+  draftScopeKey?: string;
+  compactTopSpacing?: boolean;
 };
 
-function parseClipboardLinks(text: string) {
-  return Array.from(text.matchAll(/https?:\/\/\S+/g)).map((match) => match[0]).filter(Boolean);
+const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
+const FOCUS_PROMPT_EVENT = "openwork:focusPrompt";
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const IMAGE_COMPRESS_MAX_PX = 2048;
+const IMAGE_COMPRESS_QUALITY = 0.82;
+const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
+const FILE_URL_RE = /^file:\/\//i;
+const HTTP_URL_RE = /^https?:\/\//i;
+const WINDOWS_PATH_RE = /^[a-zA-Z]:\\/;
+const UNC_PATH_RE = /^\\\\/;
+
+function parseClipboardLinks(clipboard: DataTransfer) {
+  const values = [
+    clipboard.getData("text/uri-list") ?? "",
+    clipboard.getData("text/plain") ?? "",
+    clipboard.getData("text") ?? "",
+  ];
+  const links: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const lines = value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    for (const line of lines) {
+      const target = normalizeLinkTarget(line);
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      links.push(target);
+    }
+  }
+  return links;
+}
+
+function normalizeLinkTarget(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (FILE_URL_RE.test(trimmed) || HTTP_URL_RE.test(trimmed)) {
+    return encodeURI(trimmed);
+  }
+  if (WINDOWS_PATH_RE.test(trimmed)) {
+    return `file:///${encodeURI(trimmed.replace(/\\/g, "/"))}`;
+  }
+  if (UNC_PATH_RE.test(trimmed)) {
+    const normalized = trimmed.replace(/\\/g, "/").replace(/^\/+/, "");
+    return `file://${encodeURI(normalized)}`;
+  }
+  if (trimmed.startsWith("/")) {
+    return `file://${encodeURI(trimmed)}`;
+  }
+  return "";
 }
 
 function countLines(text: string) {
@@ -83,13 +145,117 @@ function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
 }
 
+const isSupportedAttachmentType = (mime: string) => ACCEPTED_FILE_TYPES.includes(mime);
+
+async function compressImageFile(file: File): Promise<File> {
+  if (file.type === "image/gif" || file.size <= IMAGE_COMPRESS_TARGET_BYTES) {
+    return file;
+  }
+
+  const bitmap = await createImageBitmap(file);
+  const { width, height } = bitmap;
+  const maxDim = Math.max(width, height);
+  const scale = maxDim > IMAGE_COMPRESS_MAX_PX ? IMAGE_COMPRESS_MAX_PX / maxDim : 1;
+  const targetW = Math.round(width * scale);
+  const targetH = Math.round(height * scale);
+
+  let blob: Blob | null = null;
+
+  if (typeof OffscreenCanvas !== "undefined") {
+    const offscreen = new OffscreenCanvas(targetW, targetH);
+    const ctx = offscreen.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+      blob = await offscreen.convertToBlob({
+        type: "image/jpeg",
+        quality: IMAGE_COMPRESS_QUALITY,
+      });
+    }
+  }
+
+  if (!blob) {
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+      blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", IMAGE_COMPRESS_QUALITY),
+      );
+    }
+  }
+
+  bitmap.close();
+
+  if (!blob || blob.size >= file.size) {
+    return file;
+  }
+
+  const stem = file.name.replace(/\.[^.]+$/, "") || "image";
+  return new File([blob], `${stem}.jpg`, { type: "image/jpeg" });
+}
+
+function formatMcpStatusLabel(status: McpServerStatus | undefined, locale: Language) {
+  switch (status) {
+    case "connected":
+      return t("mcp.friendly_status_ready", locale);
+    case "needs_auth":
+    case "needs_client_registration":
+      return t("mcp.friendly_status_needs_signin", locale);
+    case "disabled":
+      return t("mcp.friendly_status_paused", locale);
+    case "disconnected":
+      return t("mcp.friendly_status_offline", locale);
+    case "failed":
+    default:
+      return t("mcp.friendly_status_issue", locale);
+  }
+}
+
+type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected";
+
+function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStatusMap): McpServerStatus {
+  const configured = statuses[name];
+  if (configured?.status === "connected") return "connected";
+  if (configured?.status === "needs_auth") return "needs_auth";
+  if (configured?.status === "needs_client_registration") return "needs_client_registration";
+  if (configured?.status === "failed") return "failed";
+  if (configured?.status === "disabled" || entry.config.enabled === false || entry.config.enabled === undefined && entry.config.type === "local" && entry.config.command?.length === 0) {
+    return entry.config.enabled === false ? "disabled" : configured?.status === "disabled" ? "disabled" : "disconnected";
+  }
+  return "disconnected";
+}
+
+function mcpStatusBadgeClass(status: McpServerStatus) {
+  switch (status) {
+    case "connected":
+      return "bg-green-3 text-green-11";
+    case "needs_auth":
+    case "needs_client_registration":
+      return "bg-amber-3 text-amber-11";
+    case "disabled":
+    case "disconnected":
+      return "bg-gray-3 text-gray-11";
+    default:
+      return "bg-red-3 text-red-11";
+  }
+}
+
 export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
+  let inboxFileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [variantMenuOpen, setVariantMenuOpen] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skills, setSkills] = useState<SkillCard[]>(props.skills ?? []);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpServers, setMcpServers] = useState<McpServerEntry[]>(props.mcpServers ?? []);
+  const [mcpStatus, setMcpStatus] = useState<string | null>(props.mcpStatus ?? null);
+  const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>(props.mcpStatuses ?? {});
   const [slashOpen, setSlashOpen] = useState(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
@@ -101,6 +267,19 @@ export function ReactSessionComposer(props: ComposerProps) {
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
+  const variantMenuRef = useRef<HTMLDivElement | null>(null);
+  const agentMenuRef = useRef<HTMLDivElement | null>(null);
+  // IME composition guard: while an IME composition is active, we must not
+  // treat Enter as a submit. Three signals keep this reliable across WebKit,
+  // Chrome, and Safari: event.isComposing, event.keyCode === 229, and the
+  // compositionstart/compositionend events below.
+  const imeComposingRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const locale = currentLocale();
+  const draftRef = useRef(props.draft);
+  useEffect(() => {
+    draftRef.current = props.draft;
+  }, [props.draft]);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
@@ -121,6 +300,16 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!agentMenuOpen) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
   }, [agentMenuOpen, props.listAgents]);
+
+  useEffect(() => {
+    setSkills(props.skills ?? []);
+  }, [props.skills]);
+
+  useEffect(() => {
+    setMcpServers(props.mcpServers ?? []);
+    setMcpStatus(props.mcpStatus ?? null);
+    setMcpStatuses(props.mcpStatuses ?? {});
+  }, [props.mcpServers, props.mcpStatus, props.mcpStatuses]);
 
   useEffect(() => {
     setAgentMenuIndex(0);
@@ -184,6 +373,78 @@ export function ReactSessionComposer(props: ComposerProps) {
     };
   }, [toolMenuOpen]);
 
+  useEffect(() => {
+    if (!variantMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (variantMenuRef.current?.contains(target)) return;
+      setVariantMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [variantMenuOpen]);
+
+  useEffect(() => {
+    if (!agentMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (agentMenuRef.current?.contains(target)) return;
+      setAgentMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [agentMenuOpen]);
+
+  useEffect(() => {
+    if (!toolMenuOpen) return;
+    if (toolMenuSection === "skills" && props.listSkills) {
+      let cancelled = false;
+      setSkillsLoading(true);
+      void props.listSkills()
+        .then((next) => {
+          if (!cancelled) setSkills(next);
+        })
+        .catch(() => {
+          if (!cancelled) setSkills([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSkillsLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (toolMenuSection === "mcps" && props.listMcp) {
+      let cancelled = false;
+      setMcpLoading(true);
+      void props.listMcp()
+        .then((next) => {
+          if (cancelled) return;
+          setMcpServers(next.servers);
+          setMcpStatuses(next.statuses);
+          setMcpStatus(next.status);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setMcpServers([]);
+          setMcpStatuses({});
+        })
+        .finally(() => {
+          if (!cancelled) setMcpLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    return undefined;
+  }, [toolMenuOpen, toolMenuSection, props.listSkills, props.listMcp]);
+
   const slashFiltered = !slashOpen
     ? []
     : slashQuery
@@ -240,7 +501,44 @@ export function ReactSessionComposer(props: ComposerProps) {
     return false;
   };
 
+  // Listen for cross-app focus + draft flush events. The Solid shell uses
+  // these from deep-link handlers, the command palette, and the browser
+  // pagehide/beforeunload cycle so no in-flight draft is lost.
+  useEffect(() => {
+    const handleFocus = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      const editable = root.querySelector<HTMLElement>("[contenteditable='true']");
+      editable?.focus();
+    };
+    const handleFlush = () => {
+      // onDraftChange always runs synchronously on every keystroke, so this
+      // listener is effectively a hook for the shell to signal "we're about
+      // to unmount, commit any debounced state". Re-fire with the current
+      // draft so downstream stores can checkpoint it.
+      props.onDraftChange(draftRef.current);
+    };
+    window.addEventListener(FOCUS_PROMPT_EVENT, handleFocus);
+    window.addEventListener(FLUSH_PROMPT_EVENT, handleFlush);
+    window.addEventListener("beforeunload", handleFlush);
+    window.addEventListener("pagehide", handleFlush);
+    return () => {
+      window.removeEventListener(FOCUS_PROMPT_EVENT, handleFocus);
+      window.removeEventListener(FLUSH_PROMPT_EVENT, handleFlush);
+      window.removeEventListener("beforeunload", handleFlush);
+      window.removeEventListener("pagehide", handleFlush);
+    };
+  }, [props.onDraftChange]);
+
   const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
+    // IME composition guard — block Enter while IME is mid-character.
+    const imeActive =
+      imeComposingRef.current ||
+      (event.nativeEvent as KeyboardEvent).isComposing === true ||
+      event.keyCode === 229;
+    if (event.key === "Enter" && imeActive) {
+      return;
+    }
     if (agentMenuOpen) {
       const total = agents.length + 1;
       if (event.key === "ArrowDown") {
@@ -298,389 +596,93 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
   };
 
-  return (
-    <div className="mx-auto w-full max-w-[800px] px-4" onKeyDownCapture={handleKeyDownCapture}>
-      <div className="rounded-[28px] border border-dls-border bg-dls-surface">
-        <div className="flex items-center justify-between gap-3 border-b border-dls-border px-4 py-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
-              onClick={props.onModelClick}
-            >
-              {props.modelLabel}
-            </button>
-            {props.modelBehaviorOptions?.length ? (
-              <div className="relative">
-                <button
-                  type="button"
-                  className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
-                  onClick={() => setVariantMenuOpen((value) => !value)}
-                >
-                  {(props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? props.modelVariantLabel) || "Default"}
-                </button>
-                {variantMenuOpen ? (
-                  <div className="absolute left-0 top-full z-20 mt-2 w-48 rounded-2xl border border-dls-border bg-dls-surface p-2 shadow-[var(--dls-card-shadow)]">
-                    {props.modelBehaviorOptions.map((option) => (
-                      <button
-                        key={option.value ?? "default"}
-                        type="button"
-                        className={`w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.modelVariant === option.value ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
-                        onClick={() => {
-                          props.onModelVariantChange(option.value);
-                          setVariantMenuOpen(false);
-                        }}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="relative">
-              <button
-                type="button"
-                className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
-                onClick={() => setAgentMenuOpen((value) => !value)}
-              >
-                {props.agentLabel}
-              </button>
-              {agentMenuOpen ? (
-                <div className="absolute left-0 top-full z-20 mt-2 w-64 rounded-2xl border border-dls-border bg-dls-surface p-2 shadow-[var(--dls-card-shadow)]">
-                  <button
-                    ref={(element) => {
-                      agentItemRefs.current[0] = element;
-                    }}
-                    type="button"
-                    className={`mb-1 w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.selectedAgent === null || agentMenuIndex === 0 ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
-                    onMouseEnter={() => setAgentMenuIndex(0)}
-                    onClick={() => {
-                      props.onSelectAgent(null);
-                      setAgentMenuOpen(false);
-                    }}
-                  >
-                    Default agent
-                  </button>
-                  {agents.map((agent, index) => (
-                    <button
-                      key={agent.name}
-                      ref={(element) => {
-                        agentItemRefs.current[index + 1] = element;
-                      }}
-                      type="button"
-                      className={`w-full rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover ${props.selectedAgent === agent.name || agentMenuIndex === index + 1 ? "bg-dls-hover text-dls-text" : "text-dls-secondary"}`}
-                      onMouseEnter={() => setAgentMenuIndex(index + 1)}
-                      onClick={() => {
-                        props.onSelectAgent(agent.name);
-                        setAgentMenuOpen(false);
-                      }}
-                    >
-                      {agent.name}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <input
-            ref={(element) => {
-              fileInput = element ?? undefined;
-            }}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(event) => {
-              const files = Array.from(event.currentTarget.files ?? []);
-              if (files.length) props.onAttachFiles(files);
-              event.currentTarget.value = "";
-            }}
-          />
-          <button
-            type="button"
-            className="rounded-full border border-dls-border bg-dls-hover/60 px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover disabled:opacity-50"
-            onClick={() => fileInput?.click()}
-            disabled={!props.attachmentsEnabled}
-            title={props.attachmentsDisabledReason ?? undefined}
+  const addAttachments = async (inputFiles: File[]) => {
+    if (!inputFiles.length) return;
+    if (!props.attachmentsEnabled) {
+      props.onNotice({
+        title: props.attachmentsDisabledReason ?? t("composer.attachments_unavailable", locale),
+        tone: "warning",
+      });
+      return;
+    }
+
+    const accepted: File[] = [];
+    const unsupported: string[] = [];
+    const oversize: string[] = [];
+
+    for (const original of inputFiles) {
+      if (!isSupportedAttachmentType(original.type)) {
+        unsupported.push(original.name || t("composer.file_kind", locale));
+        continue;
+      }
+      const processed = original.type.startsWith("image/") ? await compressImageFile(original) : original;
+      if (processed.size > MAX_ATTACHMENT_BYTES) {
+        oversize.push(processed.name || original.name);
+        continue;
+      }
+      accepted.push(processed);
+    }
+
+    if (accepted.length) {
+      props.onAttachFiles(accepted);
+      props.onNotice({
+        title:
+          accepted.length === 1
+            ? t("composer.uploaded_single_file", locale, { name: accepted[0]?.name ?? t("composer.file_kind", locale) })
+            : t("composer.uploaded_multiple_files", locale, { count: accepted.length }),
+        tone: "success",
+      });
+    }
+
+    if (oversize.length) {
+      props.onNotice({
+        title:
+          oversize.length === 1
+            ? t("composer.file_exceeds_limit", locale, { name: oversize[0] })
+            : `${oversize.length} files exceed the 8MB limit.`,
+        tone: "warning",
+      });
+    }
+
+    if (unsupported.length) {
+      props.onNotice({
+        title:
+          unsupported.length === 1
+            ? `${unsupported[0]} · ${t("composer.unsupported_attachment_type", locale)}`
+            : `${unsupported.length} ${t("composer.unsupported_attachment_type", locale).toLowerCase()}`,
+        tone: "warning",
+      });
+    }
+  };
+
+  const handleInboxUploadSelection = async (files: File[]) => {
+    if (!files.length || !props.onUploadInboxFiles) return;
+    try {
+      await props.onUploadInboxFiles(files);
+    } catch {
+      // Notice is handled upstream.
+    }
+  };
+
+  const activeMcpItems = mcpServers.map((entry) => ({
+    entry,
+    status: toReactMcpStatus(entry.name, entry, mcpStatuses),
+  }));
+
+  const panelRoundedClass =
+    mentionOpen || slashOpen
+      ? "rounded-t-[18px] border-t-transparent"
+      : "shadow-[var(--dls-shell-shadow)]";
+
+  const renderSlashMenu = () => {
+    if (!slashOpen) return null;
+    return (
+      <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
+        <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+          <div
+            className="max-h-64 overflow-y-auto p-2"
+            onMouseDown={(event) => event.preventDefault()}
           >
-            Attach files
-          </button>
-          <div ref={toolMenuRef} className="relative">
-            <button
-              type="button"
-              className={`rounded-full border border-dls-border px-3 py-1 text-xs font-medium transition-colors ${toolMenuOpen ? "bg-dls-hover text-dls-text" : "bg-dls-hover/60 text-dls-text hover:bg-dls-hover"}`}
-              onClick={() => {
-                setMentionOpen(false);
-                setSlashOpen(false);
-                setToolMenuOpen((value) => !value);
-              }}
-            >
-              Tools
-            </button>
-            {toolMenuOpen ? (
-              <div className="absolute right-0 top-full z-30 mt-2 w-[min(90vw,28rem)] overflow-hidden rounded-2xl border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
-                <div className="flex border-b border-dls-border p-2">
-                  {([
-                    ["commands", "Commands"],
-                    ["skills", "Skills"],
-                    ["mcps", "MCPs"],
-                  ] as const).map(([section, label]) => (
-                    <button
-                      key={section}
-                      type="button"
-                      className={`rounded-xl px-3 py-2 text-xs font-medium transition-colors ${toolMenuSection === section ? "bg-dls-hover text-dls-text" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"}`}
-                      onClick={() => setToolMenuSection(section)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="max-h-72 overflow-y-auto p-2">
-                  {toolMenuSection === "commands" ? (
-                    toolCommandItems.length > 0 ? (
-                      <div className="grid gap-1">
-                        {toolCommandItems.map((command) => (
-                          <button
-                            key={command.id}
-                            type="button"
-                            className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => applyCommandSelection(command)}
-                          >
-                            <div className="text-sm font-medium text-dls-text">/{command.name}</div>
-                            {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="px-3 py-2 text-xs text-dls-secondary">
-                        {commandsLoading ? "Loading commands..." : "No commands available."}
-                      </div>
-                    )
-                  ) : null}
-                  {toolMenuSection === "skills" ? (
-                    toolSkillItems.length > 0 ? (
-                      <div className="grid gap-1">
-                        {toolSkillItems.map((command) => (
-                          <button
-                            key={command.id}
-                            type="button"
-                            className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => applyCommandSelection(command)}
-                          >
-                            <div className="text-sm font-medium text-dls-text">/{command.name}</div>
-                            {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="px-3 py-2 text-xs text-dls-secondary">
-                        {commandsLoading ? "Loading skills..." : "No skills available."}
-                      </div>
-                    )
-                  ) : null}
-                  {toolMenuSection === "mcps" ? (
-                    toolMcpItems.length > 0 ? (
-                      <div className="grid gap-1">
-                        {toolMcpItems.map((command) => (
-                          <button
-                            key={command.id}
-                            type="button"
-                            className="rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => applyCommandSelection(command)}
-                          >
-                            <div className="text-sm font-medium text-dls-text">/{command.name}</div>
-                            {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="px-3 py-2 text-xs text-dls-secondary">
-                        {commandsLoading ? "Loading MCP tools..." : "No MCP tools detected."}
-                      </div>
-                    )
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-        {props.attachments.length > 0 ? (
-          <div className="grid gap-3 border-b border-dls-border px-4 py-3 sm:grid-cols-2">
-            {props.attachments.map((attachment) => (
-              <div key={attachment.id} className="flex items-center gap-3 rounded-2xl border border-dls-border bg-dls-hover/40 px-3 py-3 text-xs text-dls-text">
-                {isImageAttachment(attachment) && attachment.previewUrl ? (
-                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
-                    <img src={attachment.previewUrl} alt={attachment.name} className="h-full w-full object-cover" />
-                  </div>
-                ) : (
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-surface text-lg">
-                    {isImageAttachment(attachment) ? "🖼️" : "📄"}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-dls-text">{attachment.name}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
-                    <span className="truncate rounded-full bg-dls-surface px-2 py-0.5">{attachment.mimeType || "application/octet-stream"}</span>
-                    <span>{formatBytes(attachment.size)}</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="rounded-full border border-dls-border bg-dls-surface px-2 py-1 text-dls-secondary transition-colors hover:text-dls-text"
-                  onClick={() => props.onRemoveAttachment(attachment.id)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {props.pastedText.length > 0 ? (
-          <div className="flex flex-wrap gap-2 border-b border-dls-border px-4 py-3">
-            {props.pastedText.map((item) => (
-              <div key={item.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-amber-6/35 bg-amber-3/15 px-3 py-2 text-xs text-amber-11">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">Pasted text · {item.label}</div>
-                  <div className="truncate text-[11px] opacity-80">{item.lines} lines</div>
-                </div>
-                <button
-                  type="button"
-                  className="rounded-full border border-amber-6/30 bg-white/50 px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/80"
-                  onClick={() => props.onRevealPastedText(item.id)}
-                >
-                  View
-                </button>
-                <button
-                  type="button"
-                  className="rounded-full border border-amber-6/30 bg-white/50 px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/80"
-                  onClick={() => void navigator.clipboard.writeText(item.text)}
-                >
-                  Copy
-                </button>
-                <button
-                  type="button"
-                  className="rounded-full border border-amber-6/30 bg-white/50 px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/80"
-                  onClick={() => props.onRemovePastedText(item.id)}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <div className="relative">
-          <ReactComposerNotice notice={props.notice} />
-          {dropzoneActive ? (
-            <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[22px] border-2 border-dashed border-dls-accent bg-[color:color-mix(in_oklab,var(--dls-accent)_10%,transparent)]">
-              <div className="rounded-2xl border border-dls-border bg-dls-surface/95 px-5 py-4 text-center shadow-[var(--dls-card-shadow)] backdrop-blur-sm">
-                <div className="text-sm font-medium text-dls-text">Drop files to attach</div>
-                <div className="mt-1 text-xs text-dls-secondary">Images, text files, and PDFs are supported.</div>
-              </div>
-            </div>
-          ) : null}
-          <LexicalPromptEditor
-            value={props.draft}
-            mentions={props.mentions}
-            pastedText={props.pastedText.map((item) => ({ label: item.label, lines: item.lines }))}
-            disabled={props.disabled}
-            placeholder="Describe your task..."
-            onChange={props.onDraftChange}
-            onSubmit={props.onSend}
-            onPaste={(event) => {
-              const files = Array.from(event.clipboardData?.files ?? []);
-              const text = event.clipboardData?.getData("text/plain") ?? "";
-              if (files.length) {
-                event.preventDefault();
-                const supported = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("text/") || file.type === "application/pdf");
-                const unsupported = files.filter((file) => !supported.includes(file));
-                if (supported.length) {
-                  if (!props.attachmentsEnabled) {
-                    props.onNotice({
-                      title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
-                      tone: "warning",
-                    });
-                  } else {
-                    props.onAttachFiles(supported);
-                    props.onNotice({
-                      title: supported.length === 1 ? `Attached ${supported[0]?.name ?? "file"}` : `Attached ${supported.length} files`,
-                      tone: "success",
-                    });
-                  }
-                }
-                if (unsupported.length) {
-                  props.onUnsupportedFileLinks(parseClipboardLinks(text));
-                  props.onNotice({ title: "Inserted links for unsupported files", tone: "info" });
-                }
-                return;
-              }
-
-              if (!text.trim()) return;
-              if ((props.isRemoteWorkspace || props.isSandboxWorkspace) && /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)) {
-                const attachedFiles = props.attachments.map((attachment) => attachment.file);
-                props.onNotice({
-                  title: "Pasted local paths may not exist on the connected worker.",
-                  tone: "warning",
-                  actionLabel:
-                    props.onUploadInboxFiles && attachedFiles.length > 0
-                      ? `Upload ${attachedFiles.length === 1 ? "attached file" : `${attachedFiles.length} attached files`}`
-                      : undefined,
-                  onAction:
-                    props.onUploadInboxFiles && attachedFiles.length > 0
-                      ? () => void props.onUploadInboxFiles?.(attachedFiles)
-                      : undefined,
-                });
-              }
-
-              if (countLines(text) > 10) {
-                event.preventDefault();
-                props.onPasteText(text);
-                props.onNotice({ title: "Inserted pasted text as a collapsed chip", tone: "info" });
-              }
-            }}
-            onDragOver={(event) => {
-              if (event.dataTransfer?.files?.length) {
-                event.preventDefault();
-                if (!dropzoneActive) setDropzoneActive(true);
-              }
-            }}
-            onDragLeave={(event) => {
-              const nextTarget = event.relatedTarget;
-              if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-              setDropzoneActive(false);
-            }}
-            onDrop={(event) => {
-              const files = Array.from(event.dataTransfer?.files ?? []);
-              setDropzoneActive(false);
-              if (!files.length) return;
-              event.preventDefault();
-              const supported = files.filter((file) => file.type.startsWith("image/") || file.type.startsWith("text/") || file.type === "application/pdf");
-              const unsupported = files.filter((file) => !supported.includes(file));
-              if (supported.length) {
-                if (!props.attachmentsEnabled) {
-                  props.onNotice({
-                    title: props.attachmentsDisabledReason ?? "Attachments are unavailable.",
-                    tone: "warning",
-                  });
-                } else {
-                  props.onAttachFiles(supported);
-                  props.onNotice({
-                    title: supported.length === 1 ? `Attached ${supported[0]?.name ?? "file"}` : `Attached ${supported.length} files`,
-                    tone: "success",
-                  });
-                }
-              }
-              if (unsupported.length) {
-                props.onNotice({
-                  title: unsupported.length === 1 ? `${unsupported[0]?.name ?? "File"} could not be attached` : `${unsupported.length} files could not be attached`,
-                  description: "Drop supports images, text files, and PDFs for now.",
-                  tone: "info",
-                });
-              }
-            }}
-          />
-        </div>
-        {slashOpen ? (
-          <div className="border-t border-dls-border px-3 py-2">
             {slashFiltered.length > 0 ? (
               <div className="grid gap-1">
                 {slashFiltered.map((command, index) => (
@@ -690,33 +692,45 @@ export function ReactSessionComposer(props: ComposerProps) {
                       menuItemRefs.current[index] = element;
                     }}
                     type="button"
-                    className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-dls-hover" : ""}`}
+                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
                     onMouseEnter={() => setMenuIndex(index)}
                     onClick={() => applyCommandSelection(command)}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-medium text-dls-text">/{command.name}</div>
-                        {command.description ? <div className="text-xs text-dls-secondary">{command.description}</div> : null}
+                    <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="truncate text-xs font-semibold">/{command.name}</div>
+                        {command.source && command.source !== "command" ? (
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${command.source === "skill" ? "bg-violet-3/40 text-violet-11" : "bg-cyan-3/40 text-cyan-11"}`}>
+                            {command.source === "skill" ? t("composer.skill_source", locale) : t("composer.mcps_label", locale)}
+                          </span>
+                        ) : null}
                       </div>
-                      {command.source && command.source !== "command" ? (
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${command.source === "skill" ? "bg-violet-3/20 text-violet-11" : "bg-cyan-3/20 text-cyan-11"}`}>
-                          {command.source === "skill" ? "Skill" : "MCP"}
-                        </span>
-                      ) : null}
+                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
                     </div>
                   </button>
                 ))}
               </div>
             ) : (
-              <div className="px-3 py-2 text-xs text-dls-secondary">
-                {commandsLoading ? "Loading commands..." : "No matching commands."}
+              <div className="px-3 py-2 text-xs text-gray-10">
+                {commandsLoading ? t("composer.loading_commands", locale) : t("composer.no_commands", locale)}
               </div>
             )}
           </div>
-        ) : null}
-        {mentionOpen && mentionFiltered.length > 0 ? (
-          <div className="border-t border-dls-border px-3 py-2">
+        </div>
+      </div>
+    );
+  };
+
+  const renderMentionMenu = () => {
+    if (!mentionOpen || mentionFiltered.length === 0) return null;
+    return (
+      <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
+        <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+          <div
+            className="max-h-64 overflow-y-auto p-2"
+            onMouseDown={(event) => event.preventDefault()}
+          >
             <div className="grid gap-1">
               {mentionFiltered.map((item, index) => (
                 <button
@@ -725,40 +739,542 @@ export function ReactSessionComposer(props: ComposerProps) {
                     menuItemRefs.current[index] = element;
                   }}
                   type="button"
-                  className={`rounded-xl px-3 py-2 text-left transition-colors hover:bg-dls-hover ${activeMenu === "mention" && mentionFiltered[menuIndex]?.id === item.id ? "bg-dls-hover" : ""}`}
+                  className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${activeMenu === "mention" && mentionFiltered[menuIndex]?.id === item.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
                   onMouseEnter={() => setMenuIndex(index)}
                   onClick={() => {
                     props.onInsertMention(item.kind, item.value);
                     setMentionOpen(false);
                   }}
                 >
-                  <div className="text-sm font-medium text-dls-text">@{item.label}</div>
-                  <div className="text-xs text-dls-secondary">{item.kind === "agent" ? "Agent" : "File"}</div>
+                  {item.kind === "agent" ? (
+                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                  ) : (
+                    <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-semibold">@{item.label}</div>
+                    <div className="truncate text-xs text-gray-10">
+                      {item.kind === "agent"
+                        ? t("composer.agent_label", locale)
+                        : t("composer.file_kind", locale)}
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>
           </div>
-        ) : null}
-        <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
-          <div className="text-xs text-dls-secondary">{props.statusLabel}</div>
-          {props.busy ? (
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      className={`sticky bottom-0 z-20 bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 md:px-8 pb-5 ${props.compactTopSpacing ? "pt-0" : "pt-3"}`}
+      style={{ contain: "layout style" }}
+      onKeyDownCapture={handleKeyDownCapture}
+      onCompositionStart={() => {
+        imeComposingRef.current = true;
+      }}
+      onCompositionEnd={() => {
+        imeComposingRef.current = false;
+      }}
+    >
+      <div className="max-w-[800px] mx-auto">
+        {/* Main composer panel */}
+        <div
+          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
+        >
+          <ReactComposerNotice notice={props.notice} />
+
+          {renderMentionMenu()}
+          {renderSlashMenu()}
+
+          {props.attachments.length > 0 ? (
+            <div className="mx-5 mt-5 flex flex-wrap gap-2 md:mx-6">
+              {props.attachments.map((attachment) => (
+                <div key={attachment.id} className="flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-2 px-3 py-2 text-xs text-gray-10">
+                  {isImageAttachment(attachment) && attachment.previewUrl ? (
+                    <div className="h-10 w-10 overflow-hidden rounded-xl border border-gray-6 bg-gray-1">
+                      <img src={attachment.previewUrl} alt={attachment.name} decoding="async" className="h-full w-full object-cover" />
+                    </div>
+                  ) : (
+                    <FileText size={14} className="text-gray-9" />
+                  )}
+                  <div className="max-w-[160px] min-w-0">
+                    <div className="truncate text-[12px] font-medium text-gray-11">{attachment.name}</div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-gray-10">
+                      <span>{isImageAttachment(attachment) ? t("composer.image_kind", locale) : t("composer.file_kind", locale)}</span>
+                      <span>·</span>
+                      <span>{formatBytes(attachment.size)}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                    onClick={() => props.onRemoveAttachment(attachment.id)}
+                    title={t("action.remove", locale)}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {props.pastedText.length > 0 ? (
+            <div className="mx-5 mt-3 flex flex-wrap gap-2 md:mx-6">
+              {props.pastedText.map((item) => (
+                <div key={item.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-gray-6 bg-gray-2 px-3 py-2 text-xs text-gray-10">
+                  <FileText size={14} className="text-gray-9" />
+                  <div className="max-w-[200px] min-w-0">
+                    <div className="truncate text-[12px] font-medium text-gray-11">{item.label}</div>
+                    <div className="text-[11px] text-gray-10">{item.lines} {item.lines === 1 ? "line" : "lines"}</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex h-5 items-center rounded-full px-2 text-[11px] font-medium text-gray-11 transition-colors hover:bg-gray-3"
+                    onClick={() => props.onRevealPastedText(item.id)}
+                    title={t("composer.expand_pasted", locale)}
+                  >
+                    {t("composer.expand_pasted", locale)}
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                    onClick={() => props.onRemovePastedText(item.id)}
+                    title={t("action.remove", locale)}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {dropzoneActive ? (
+            <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[20px] border-2 border-dashed border-dls-accent bg-[color:color-mix(in_oklab,var(--dls-accent)_10%,transparent)]">
+              <div className="rounded-2xl border border-dls-border bg-dls-surface/95 px-5 py-4 text-center backdrop-blur-sm">
+                <div className="text-sm font-medium text-dls-text">{t("composer.attach_files", locale)}</div>
+                <div className="mt-1 text-xs text-dls-secondary">Images and PDFs are supported.</div>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="p-5 md:p-6">
+            {/* Editor */}
+            <LexicalPromptEditor
+              value={props.draft}
+              mentions={props.mentions}
+              pastedText={props.pastedText.map((item) => ({ label: item.label, lines: item.lines }))}
+              disabled={props.disabled}
+              placeholder={t("composer.placeholder", locale)}
+              onChange={props.onDraftChange}
+              onSubmit={props.onSend}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData?.files ?? []);
+                const text = event.clipboardData?.getData("text/plain") ?? "";
+                if (files.length) {
+                  event.preventDefault();
+                  void addAttachments(files);
+                  return;
+                }
+
+                if (!text.trim()) return;
+                const links = parseClipboardLinks(event.clipboardData);
+                if (links.length) {
+                  props.onUnsupportedFileLinks(links);
+                  props.onNotice({ title: t("composer.inserted_links_unsupported", locale), tone: "info" });
+                  event.preventDefault();
+                  return;
+                }
+
+                if ((props.isRemoteWorkspace || props.isSandboxWorkspace) && /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)) {
+                  const attachedFiles = props.attachments.map((attachment) => attachment.file);
+                  props.onNotice({
+                    title: t("composer.remote_worker_paste_warning", locale),
+                    tone: "warning",
+                    actionLabel:
+                      props.onUploadInboxFiles && attachedFiles.length > 0
+                        ? t("composer.upload_to_shared_folder", locale)
+                        : undefined,
+                    onAction:
+                      props.onUploadInboxFiles && attachedFiles.length > 0
+                        ? () => void props.onUploadInboxFiles?.(attachedFiles)
+                        : undefined,
+                  });
+                }
+
+                if (countLines(text) > 10) {
+                  event.preventDefault();
+                  props.onPasteText(text);
+                  props.onNotice({ title: t("composer.expand_pasted", locale), tone: "info" });
+                }
+              }}
+              onDragOver={(event) => {
+                if (event.dataTransfer?.files?.length) {
+                  event.preventDefault();
+                  if (!dropzoneActive) setDropzoneActive(true);
+                }
+              }}
+              onDragLeave={(event) => {
+                const nextTarget = event.relatedTarget;
+                if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+                setDropzoneActive(false);
+              }}
+              onDrop={(event) => {
+                const files = Array.from(event.dataTransfer?.files ?? []);
+                setDropzoneActive(false);
+                if (!files.length) return;
+                event.preventDefault();
+                void addAttachments(files);
+              }}
+            />
+
+            {/* Action row — attach/inbox/tools on the left, send on the right */}
+            <div className="mt-2 flex items-end justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <input
+                  ref={(element) => {
+                    fileInput = element ?? undefined;
+                  }}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const files = Array.from(event.currentTarget.files ?? []);
+                    if (files.length) void addAttachments(files);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <input
+                  ref={(element) => {
+                    inboxFileInput = element ?? undefined;
+                  }}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const files = Array.from(event.currentTarget.files ?? []);
+                    if (files.length) void handleInboxUploadSelection(files);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 ${
+                    !props.attachmentsEnabled ? "cursor-not-allowed opacity-60" : ""
+                  }`}
+                  onClick={() => {
+                    if (!props.attachmentsEnabled) return;
+                    fileInput?.click();
+                  }}
+                  disabled={!props.attachmentsEnabled}
+                  title={props.attachmentsDisabledReason ?? t("composer.attach_files", locale)}
+                >
+                  <Paperclip size={16} />
+                </button>
+                {props.onUploadInboxFiles ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3"
+                    onClick={() => inboxFileInput?.click()}
+                    title={t("composer.upload_to_shared_folder", locale)}
+                  >
+                    <Upload size={16} />
+                  </button>
+                ) : null}
+                <div ref={toolMenuRef} className="relative">
+                  <button
+                    type="button"
+                    className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md transition-colors ${toolMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}
+                    onClick={() => {
+                      setMentionOpen(false);
+                      setMentionItems([]);
+                      setSlashOpen(false);
+                      setToolMenuOpen((value) => !value);
+                    }}
+                    aria-expanded={toolMenuOpen}
+                    aria-haspopup="dialog"
+                    title={t("composer.tools_label", locale)}
+                  >
+                    <Plug size={16} />
+                  </button>
+                  {toolMenuOpen ? (
+                    <div className="absolute bottom-full left-0 z-40 mb-3 w-[min(calc(100vw-2.5rem),34rem)] overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+                      <div className="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
+                        <div className="border-r border-dls-border bg-gray-2/30 p-2">
+                          {([
+                            ["commands", t("dashboard.commands", locale)],
+                            ["skills", t("dashboard.skills", locale)],
+                            ["mcps", t("composer.mcps_label", locale)],
+                          ] as const).map(([section, label]) => (
+                            <button
+                              key={section}
+                              type="button"
+                              className={`mb-1 flex w-full items-center justify-between rounded-[16px] px-3 py-2.5 text-left text-sm transition-colors ${toolMenuSection === section ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2"}`}
+                              onClick={() => setToolMenuSection(section)}
+                            >
+                              <span className="truncate">{label}</span>
+                              <ChevronRight size={14} className="shrink-0 text-gray-9" />
+                            </button>
+                          ))}
+                        </div>
+                        <div className="max-h-72 overflow-y-auto p-2">
+                          <div className="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1.5 rounded-full border border-dls-border px-3 py-1.5 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-2"
+                              onClick={() => {
+                                setToolMenuOpen(false);
+                                props.onOpenSettingsSection?.(toolMenuSection);
+                              }}
+                            >
+                              <Settings size={12} />
+                              {t("composer.configure", locale)}
+                            </button>
+                          </div>
+                          {toolMenuSection === "commands" ? (
+                            toolCommandItems.length > 0 ? (
+                              <div className="grid gap-1">
+                                {toolCommandItems.map((command) => (
+                                  <button
+                                    key={command.id}
+                                    type="button"
+                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    onClick={() => applyCommandSelection(command)}
+                                  >
+                                    <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                    <div className="min-w-0">
+                                      <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
+                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="px-3 py-2 text-xs text-gray-10">
+                                {commandsLoading ? t("composer.loading_commands", locale) : t("composer.no_commands", locale)}
+                              </div>
+                            )
+                          ) : null}
+                          {toolMenuSection === "skills" ? (
+                            (skills.length > 0 || toolSkillItems.length > 0) ? (
+                              <div className="grid gap-1">
+                                {[...toolSkillItems, ...skills.filter((skill) => !toolSkillItems.some((command) => command.name === skill.name)).map((skill) => ({ id: `skill:${skill.name}`, name: skill.name, description: skill.description, source: "skill" as const }))].map((command) => (
+                                  <button
+                                    key={command.id}
+                                    type="button"
+                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    onClick={() => applyCommandSelection(command)}
+                                  >
+                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                    <div className="min-w-0">
+                                      <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
+                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="px-3 py-2 text-xs text-gray-10">
+                                {skillsLoading || commandsLoading ? t("composer.loading_commands", locale) : t("context_panel.no_skills", locale)}
+                              </div>
+                            )
+                          ) : null}
+                          {toolMenuSection === "mcps" ? (
+                            activeMcpItems.length > 0 ? (
+                              <div className="grid gap-1">
+                                {activeMcpItems.map(({ entry, status }) => (
+                                  <div key={entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                    <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                          {formatMcpStatusLabel(status, locale)}
+                                        </span>
+                                      </div>
+                                      <div className="truncate text-xs text-gray-10">{entry.config.type === "remote" ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP" : entry.config.command?.join(" ") ?? "Local MCP"}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="px-3 py-2 text-xs text-gray-10">
+                                {mcpLoading ? t("composer.loading_commands", locale) : (mcpStatus ?? t("context_panel.no_mcp", locale))}
+                              </div>
+                            )
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="ml-auto flex shrink-0 items-end">
+                {props.busy ? (
+                  <button
+                    type="button"
+                    onClick={props.onStop}
+                    className="inline-flex h-9 max-h-9 items-center gap-2 rounded-full bg-gray-12 px-4 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
+                    title={t("composer.stop", locale)}
+                  >
+                    <Square size={12} fill="currentColor" />
+                    <span>{t("composer.stop", locale)}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={props.onSend}
+                    disabled={props.disabled || !canSend}
+                    className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
+                      !canSend || props.disabled
+                        ? "bg-gray-4 text-gray-10"
+                        : "bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]"
+                    }`}
+                    title={t("composer.run_task", locale)}
+                  >
+                    <ArrowUp size={15} />
+                    <span>{t("composer.run_task", locale)}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Below-panel control strip: agent + model + behavior variant */}
+        <div className="mt-1 flex items-center justify-between px-1">
+          <div className="flex flex-wrap items-center gap-1.5 text-gray-10 sm:gap-2.5">
+            <div ref={agentMenuRef} className="relative">
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                onClick={() => setAgentMenuOpen((value) => !value)}
+                disabled={props.busy}
+                aria-expanded={agentMenuOpen}
+                title={t("composer.agent_label", locale)}
+              >
+                <span className="max-w-[140px] truncate">{props.agentLabel}</span>
+                <ChevronDown size={13} />
+              </button>
+              {agentMenuOpen ? (
+                <div className="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+                  <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
+                    {t("composer.agent_label", locale)}
+                  </div>
+                  <div
+                    className="space-y-1 p-2 max-h-64 overflow-y-auto"
+                    onMouseDown={(event) => event.preventDefault()}
+                  >
+                    <button
+                      ref={(element) => {
+                        agentItemRefs.current[0] = element;
+                      }}
+                      type="button"
+                      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${!props.selectedAgent ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"}`}
+                      onMouseEnter={() => setAgentMenuIndex(0)}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        props.onSelectAgent(null);
+                        setAgentMenuOpen(false);
+                      }}
+                    >
+                      <span>{t("composer.default_agent", locale)}</span>
+                      {!props.selectedAgent ? <Check size={14} className="text-gray-10" /> : null}
+                    </button>
+                    {agents.map((agent, index) => {
+                      const active = props.selectedAgent === agent.name;
+                      return (
+                        <button
+                          key={agent.name}
+                          ref={(element) => {
+                            agentItemRefs.current[index + 1] = element;
+                          }}
+                          type="button"
+                          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"}`}
+                          onMouseEnter={() => setAgentMenuIndex(index + 1)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            props.onSelectAgent(agent.name);
+                            setAgentMenuOpen(false);
+                          }}
+                        >
+                          <span className="truncate">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</span>
+                          {active ? <Check size={14} className="text-gray-10" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <button
               type="button"
-              className="rounded-full bg-red-9 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-red-10"
-              onClick={props.onStop}
+              className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+              onClick={props.onModelClick}
+              disabled={props.busy}
             >
-              Stop
+              <span className="truncate leading-tight">{props.modelLabel}</span>
+              <ChevronDown size={13} className="shrink-0 ml-0.5" />
             </button>
-          ) : (
-            <button
-              type="button"
-              className="rounded-full bg-[var(--dls-accent)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)] disabled:opacity-50"
-              onClick={props.onSend}
-              disabled={props.disabled || !canSend}
-            >
-              Run task
-            </button>
-          )}
+
+            {props.modelBehaviorOptions?.length ? (
+              <div ref={variantMenuRef} className="relative">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setVariantMenuOpen((value) => !value);
+                  }}
+                  disabled={props.busy}
+                  aria-expanded={variantMenuOpen}
+                >
+                  <span className="truncate leading-tight">
+                    {(props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? props.modelVariantLabel) || t("settings.default_label")}
+                  </span>
+                  <ChevronDown size={13} className="shrink-0 ml-0.5" />
+                </button>
+                {variantMenuOpen ? (
+                  <div className="absolute left-0 bottom-full z-40 mb-2 w-48 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+                    <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
+                      {t("composer.behavior_label", locale)}
+                    </div>
+                    <div className="space-y-1 p-2">
+                      {props.modelBehaviorOptions.map((option) => (
+                        <button
+                          key={option.value ?? "default"}
+                          type="button"
+                          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
+                            props.modelVariant === option.value ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"
+                          }`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            props.onModelVariantChange(option.value);
+                            setVariantMenuOpen(false);
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          {props.modelVariant === option.value ? <Check size={14} className="text-gray-10" /> : null}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {props.statusLabel ? (
+            <div className="ml-3 hidden text-[11px] text-dls-secondary sm:block">{props.statusLabel}</div>
+          ) : null}
         </div>
       </div>
     </div>

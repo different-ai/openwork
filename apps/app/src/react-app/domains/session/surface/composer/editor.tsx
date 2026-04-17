@@ -378,6 +378,9 @@ function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: b
       (event: KeyboardEvent | null) => {
         if (props.disabled) return false;
         if (!event?.metaKey && !event?.ctrlKey) return false;
+        // IME composition guard: three signals keep this reliable across
+        // Chrome, Safari, and WebKit. Matches the Solid composer guard.
+        if (event?.isComposing === true || event?.keyCode === 229) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
         event.preventDefault();

@@ -20,6 +20,7 @@ import { createConnectionsStore, useConnectionsStoreSnapshot } from "../domains/
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "../domains/connections/openwork-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "../domains/connections/provider-auth/store";
 import ProviderAuthModal from "../domains/connections/provider-auth/provider-auth-modal";
+import ConnectionsModals from "../domains/connections/modals";
 import { GeneralSettingsView } from "../domains/settings/pages/general-view";
 import { AdvancedView } from "../domains/settings/pages/advanced-view";
 import { AppearanceView } from "../domains/settings/pages/appearance-view";
@@ -32,6 +33,7 @@ import { RecoveryView } from "../domains/settings/pages/recovery-view";
 import { SkillsView } from "../domains/settings/pages/skills-view";
 import { UpdatesView } from "../domains/settings/pages/updates-view";
 import { useDebugViewModel } from "../domains/settings/state/debug-view-model";
+import { useBootState } from "./boot-state";
 import { SettingsShell } from "../domains/settings/shell/settings-shell";
 import { createAutomationsStore, useAutomationsStoreSnapshot } from "../domains/settings/state/automations-store";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "../domains/settings/state/extensions-store";
@@ -54,7 +56,7 @@ import {
   workspaceSetSelected,
   type WorkspaceInfo,
 } from "../../app/lib/tauri";
-import { isTauriRuntime } from "../../app/utils";
+import { isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef } from "../../app/types";
@@ -320,7 +322,13 @@ export function SettingsRoute() {
   const openworkServerStore = useMemo(
     () =>
       createOpenworkServerStore({
-        startupPreference: () => "server",
+        startupPreference: () => {
+          // In Tauri desktop mode, prefer the embedded host server (hostInfo.baseUrl)
+          // unless the user has explicitly pinned a remote urlOverride.
+          if (!isTauriRuntime()) return "server";
+          const stored = readOpenworkServerSettings();
+          return stored.urlOverride?.trim() ? "server" : "local";
+        },
         documentVisible: () => typeof document === "undefined" || document.visibilityState === "visible",
         developerMode: () => routeStateRef.current.developerMode,
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
@@ -504,6 +512,7 @@ export function SettingsRoute() {
     writeStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, updateAutoDownload);
   }, [updateAutoDownload]);
 
+  const { markRouteReady: markBootRouteReady } = useBootState();
   const refreshRouteState = useMemo(() => async () => {
     setLoading(true);
     setRouteError(null);
@@ -529,12 +538,28 @@ export function SettingsRoute() {
         ...workspace,
         displayNameResolved: workspaceLabel(workspace),
       }));
-      const nextWorkspaces = desktopWorkspaces.length > 0 ? desktopWorkspaces : serverWorkspaces;
+      // Mirror Solid's `applyServerLocalWorkspaces`: prefer server-registered
+      // local workspaces (their IDs are what subsequent API calls need) and
+      // append any remote entries from the desktop list since the server
+      // doesn't track remotes.
+      const desktopRemotes = desktopWorkspaces.filter(
+        (workspace) => workspace.workspaceType === "remote",
+      );
+      const nextWorkspaces =
+        serverWorkspaces.length > 0
+          ? [...serverWorkspaces, ...desktopRemotes]
+          : desktopWorkspaces;
       const sessionEntries = await Promise.all(
         nextWorkspaces.map(async (workspace) => {
           try {
-            const response = await client.listSessions(workspace.id, { limit: 100 });
-            return { workspaceId: workspace.id, sessions: response.items, error: null as string | null };
+            const response = await client.listSessions(workspace.id, { limit: 200 });
+            const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
+            const items = workspaceRoot
+              ? (response.items ?? []).filter((session: any) =>
+                  normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
+                )
+              : (response.items ?? []);
+            return { workspaceId: workspace.id, sessions: items, error: null as string | null };
           } catch (error) {
             return {
               workspaceId: workspace.id,
@@ -556,8 +581,12 @@ export function SettingsRoute() {
       setRouteError(error instanceof Error ? error.message : t("app.unknown_error"));
     } finally {
       setLoading(false);
+      // Settings can be the first route a user lands on (direct link, deep
+      // link, or after reload). Let the boot overlay dismiss once we've
+      // completed our first data load.
+      markBootRouteReady();
     }
-  }, []);
+  }, [markBootRouteReady]);
 
   useEffect(() => {
     void refreshRouteState();
@@ -1071,6 +1100,23 @@ export function SettingsRoute() {
         submitting={createWorkspaceBusy}
         remoteSubmitting={createWorkspaceRemoteBusy}
         remoteError={createWorkspaceRemoteError}
+      />
+      <ConnectionsModals
+        client={activeClient}
+        projectDir={selectedWorkspaceRoot}
+        language={currentLocale() as Language}
+        reloadBlocked={false}
+        activeSessions={[]}
+        isRemoteWorkspace={selectedWorkspace?.workspaceType === "remote"}
+        onForceStopSession={() => undefined}
+        onReloadEngine={() => undefined}
+        modalState={{
+          mcpAuthModalOpen: connectionsSnapshot.mcpAuthModalOpen,
+          mcpAuthEntry: connectionsSnapshot.mcpAuthEntry,
+          mcpAuthNeedsReload: connectionsSnapshot.mcpAuthNeedsReload,
+        }}
+        onCloseMcpAuthModal={() => connectionsStore.closeMcpAuthModal()}
+        onCompleteMcpAuthModal={() => connectionsStore.completeMcpAuthModal()}
       />
       <ModelPickerModal
         open={modelPickerOpen}

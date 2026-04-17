@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appBuildInfo as appBuildInfoCmd,
   engineInfo as engineInfoCmd,
-  engineRestart as engineRestartCmd,
+  engineStart as engineStartCmd,
   nukeOpenworkAndOpencodeConfigAndExit,
   openworkServerInfo as openworkServerInfoCmd,
   openworkServerRestart as openworkServerRestartCmd,
@@ -14,6 +14,7 @@ import {
   orchestratorStatus as orchestratorStatusCmd,
   resetOpenworkState,
   sandboxDebugProbe as sandboxDebugProbeCmd,
+  workspaceBootstrap as workspaceBootstrapCmd,
   type AppBuildInfo,
   type EngineInfo,
   type OpenCodeRouterInfo,
@@ -21,6 +22,9 @@ import {
   type OrchestratorStatus,
   type SandboxDebugProbeResult,
 } from "../../../../app/lib/tauri";
+import {
+  writeOpenworkServerSettings,
+} from "../../../../app/lib/openwork-server";
 import {
   clearStartupPreference,
   isTauriRuntime,
@@ -498,31 +502,80 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     clearStoredString(ENGINE_CUSTOM_BIN_KEY);
   }, []);
 
+  const bootFullEngineStack = useCallback(async () => {
+    const workspacePath = optionsRef.current.selectedWorkspaceRoot.trim();
+    if (!workspacePath) {
+      throw new Error(
+        "Select a local workspace before starting the orchestrator/engine.",
+      );
+    }
+
+    // Collect ALL local workspace paths so openwork-server is started with
+    // --workspace <path> for every registered local workspace. Mirrors the
+    // Solid reference (context/workspace.ts::resolveWorkspacePaths) so that
+    // `client.listWorkspaces()` later returns the full set, not just the
+    // active one.
+    const workspacePaths = [workspacePath];
+    try {
+      const list = await workspaceBootstrapCmd();
+      for (const entry of list?.workspaces ?? []) {
+        if (entry.workspaceType === "remote") continue;
+        const path = entry.path?.trim() ?? "";
+        if (path && !workspacePaths.includes(path)) workspacePaths.push(path);
+      }
+    } catch {
+      // best-effort: fall back to just the active workspace path
+    }
+
+    const info = await engineStartCmd(workspacePath, {
+      runtime: "openwork-orchestrator",
+      workspacePaths,
+      opencodeEnableExa: readOpencodeEnableExa(),
+      openworkRemoteAccess:
+        optionsRef.current.openworkServerSnapshot.openworkServerSettings
+          .remoteAccessEnabled === true,
+    });
+
+    // engine_start restarts openwork-server on a NEW port with --opencode-base-url
+    // attached. Re-read host info and persist the new base URL + token so the
+    // React route listeners pick up the fresh connection instead of the stale one.
+    try {
+      const hostInfo = await openworkServerInfoCmd();
+      if (hostInfo?.baseUrl) {
+        writeOpenworkServerSettings({
+          urlOverride: hostInfo.baseUrl,
+          token: hostInfo.ownerToken?.trim() || hostInfo.clientToken?.trim() || undefined,
+          portOverride: hostInfo.port ?? undefined,
+          remoteAccessEnabled: hostInfo.remoteAccessEnabled === true,
+        });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+        }
+      }
+    } catch {
+      // best-effort: if this fails, the host-info poller will catch up in ~10s.
+    }
+
+    await openworkServerStore.reconnectOpenworkServer();
+    await refreshEngineInfo();
+    return info;
+  }, [openworkServerStore, refreshEngineInfo]);
+
   const onRestartLocalServer = useCallback(async () => {
     if (!isTauriRuntime()) return;
     setOpenworkRestartBusy(true);
     setServiceRestartError(null);
     setOpenworkRestartStatus(null);
     try {
-      await orchestratorStatusCmd();
-      await openworkServerRestartCmd({
-        remoteAccessEnabled: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
-      });
+      await bootFullEngineStack();
       setOpenworkRestartStatus(t("settings.restart_orchestrator"));
-      pushDeveloperLog("Restarted orchestrator stack");
-      await openworkServerStore.reconnectOpenworkServer();
-      await refreshEngineInfo();
+      pushDeveloperLog("Started orchestrator + OpenCode stack via engine_start");
     } catch (error) {
       setServiceRestartError(error instanceof Error ? error.message : safeStringify(error));
     } finally {
       setOpenworkRestartBusy(false);
     }
-  }, [
-    openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled,
-    openworkServerStore,
-    pushDeveloperLog,
-    refreshEngineInfo,
-  ]);
+  }, [bootFullEngineStack, pushDeveloperLog]);
 
   const onRestartOpencode = useCallback(async () => {
     if (!isTauriRuntime()) return;
@@ -530,16 +583,15 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setServiceRestartError(null);
     setOpenworkRestartStatus(null);
     try {
-      await engineRestartCmd({ opencodeEnableExa: readOpencodeEnableExa() });
+      await bootFullEngineStack();
       setOpenworkRestartStatus(t("settings.restart_opencode"));
-      pushDeveloperLog("Restarted OpenCode engine");
-      await refreshEngineInfo();
+      pushDeveloperLog("Restarted OpenCode via engine_start");
     } catch (error) {
       setServiceRestartError(error instanceof Error ? error.message : safeStringify(error));
     } finally {
       setOpencodeRestarting(false);
     }
-  }, [pushDeveloperLog, refreshEngineInfo]);
+  }, [bootFullEngineStack, pushDeveloperLog]);
 
   const onRestartOpenworkServer = useCallback(async () => {
     if (!isTauriRuntime()) return;

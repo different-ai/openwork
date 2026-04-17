@@ -208,7 +208,16 @@ export function WorkspaceSessionList(props: Props) {
   };
 
   useEffect(() => {
-    expandWorkspace(props.selectedWorkspaceId);
+    const id = props.selectedWorkspaceId.trim();
+    if (!id) return;
+    // Keep the selected workspace expanded and collapse the rest by default.
+    // Without this, repeated switching leaves multiple large session trees open
+    // at once, which makes the sidebar increasingly expensive to render as
+    // histories grow.
+    setExpandedWorkspaceIds((previous) => {
+      if (previous.size === 1 && previous.has(id)) return previous;
+      return new Set([id]);
+    });
   }, [props.selectedWorkspaceId]);
 
   const previewCount = (workspaceId: string) =>

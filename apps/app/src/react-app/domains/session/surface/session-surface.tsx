@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
 
-import { createClient } from "../../../../app/lib/opencode";
+import { createClient, unwrap } from "../../../../app/lib/opencode";
 import { abortSessionSafe } from "../../../../app/lib/opencode-session";
 import type {
   OpenworkServerClient,
@@ -13,6 +13,9 @@ import type {
   ComposerAttachment,
   ComposerDraft,
   ComposerPart,
+  McpServerEntry,
+  McpStatusMap,
+  SkillCard,
 } from "../../../../app/types";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
@@ -32,6 +35,7 @@ import { snapshotToUIMessages } from "../sync/usechat-adapter";
 export type SessionSurfaceProps = {
   client: OpenworkServerClient;
   workspaceId: string;
+  workspaceRoot: string;
   sessionId: string;
   opencodeBaseUrl: string;
   openworkToken: string;
@@ -56,6 +60,7 @@ export type SessionSurfaceProps = {
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
+  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps") => void) | undefined;
 };
 
 function transcriptToText(messages: UIMessage[]) {
@@ -106,6 +111,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [sending, setSending] = useState(false);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
+  const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
+  const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
+  const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
+  const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const hydratedKeyRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
     () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
@@ -351,6 +360,64 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
   };
 
+  const listSkills = async (): Promise<SkillCard[]> => {
+    const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
+    const next = (response.items ?? []).map((skill) => ({
+      name: skill.name,
+      path: skill.path,
+      description: skill.description,
+      trigger: skill.trigger,
+    } satisfies SkillCard));
+    setToolSkills(next);
+    return next;
+  };
+
+  const listMcp = async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
+    const response = await props.client.listMcp(props.workspaceId);
+    const servers = (response.items ?? []).map((entry) => ({
+      name: entry.name,
+      config: entry.config as McpServerEntry["config"],
+    } satisfies McpServerEntry));
+
+    let statuses: McpStatusMap = {};
+    try {
+      if (props.workspaceRoot.trim()) {
+        statuses = unwrap(await opencodeClient.mcp.status({ directory: props.workspaceRoot.trim() })) as McpStatusMap;
+      }
+    } catch {
+      statuses = {};
+    }
+
+    const status = servers.length ? null : "No MCP servers loaded.";
+    setToolMcpServers(servers);
+    setToolMcpStatuses(statuses);
+    setToolMcpStatus(status);
+    return { servers, statuses, status };
+  };
+
+  const handleUploadInboxFiles = async (files: File[], options?: { notify?: boolean }) => {
+    const input = files.filter(Boolean);
+    if (!input.length) return;
+    try {
+      const results = await Promise.all(input.map((file) => props.client.uploadInbox(props.workspaceId, file)));
+      if (options?.notify !== false) {
+        const summary = results.map((item) => item.path.split("/").filter(Boolean).slice(-1)[0] ?? item.path).join(", ");
+        setNotice({
+          title: input.length === 1 ? "Uploaded to the shared folder." : `Uploaded ${input.length} files to the shared folder.`,
+          description: summary || undefined,
+          tone: "success",
+        });
+      }
+      return results;
+    } catch (nextError) {
+      setNotice({
+        title: nextError instanceof Error ? nextError.message : "Shared folder upload failed",
+        tone: "warning",
+      });
+      throw nextError;
+    }
+  };
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const sessionScroll = useSessionScrollController({
@@ -474,6 +541,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
         listAgents={props.listAgents}
         onSelectAgent={props.onSelectAgent}
         listCommands={props.listCommands}
+        listSkills={listSkills}
+        skills={toolSkills}
+        listMcp={listMcp}
+        mcpServers={toolMcpServers}
+        mcpStatus={toolMcpStatus}
+        mcpStatuses={toolMcpStatuses}
+        onOpenSettingsSection={props.onOpenSettingsSection}
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
@@ -486,7 +560,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onRemovePastedText={handleRemovePastedText}
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
-          onUploadInboxFiles={props.onUploadInboxFiles}
+          onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
         />
       </div>
       {error ? (
