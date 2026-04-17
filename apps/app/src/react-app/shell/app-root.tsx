@@ -1,6 +1,10 @@
 /** @jsxImportSource react */
 
+import { useDesktopFontZoomBehavior } from "./font-zoom";
+
 export function AppRoot() {
+  useDesktopFontZoomBehavior();
+
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-16">
       <div className="max-w-xl rounded-3xl border border-dls-border bg-dls-surface px-8 py-10 text-center shadow-[var(--dls-card-shadow)]">
