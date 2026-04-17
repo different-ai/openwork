@@ -29,7 +29,7 @@ import {
 } from "../sync/session-sync";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 
-type SessionSurfaceProps = {
+export type SessionSurfaceProps = {
   client: OpenworkServerClient;
   workspaceId: string;
   sessionId: string;
