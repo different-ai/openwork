@@ -7,11 +7,11 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
 }
 
-let accessModule: typeof import("../src/routes/org/plugin-arch/access.js")
+let accessModule: typeof import("../src/routes/org/plugin-system/access.js")
 
 beforeAll(async () => {
   seedRequiredEnv()
-  accessModule = await import("../src/routes/org/plugin-arch/access.js")
+  accessModule = await import("../src/routes/org/plugin-system/access.js")
 })
 
 function createActorContext(input?: { isOwner?: boolean; role?: string; teamIds?: string[] }) {
@@ -35,7 +35,7 @@ function createActorContext(input?: { isOwner?: boolean; role?: string; teamIds?
   } as any
 }
 
-test("org owners and admins get plugin-arch capability access", () => {
+test("org owners and admins get plugin-system capability access", () => {
   expect(accessModule.isPluginArchOrgAdmin(createActorContext({ isOwner: true }))).toBe(true)
   expect(accessModule.isPluginArchOrgAdmin(createActorContext({ role: "member,admin" }))).toBe(true)
   expect(accessModule.isPluginArchOrgAdmin(createActorContext({ role: "member" }))).toBe(false)

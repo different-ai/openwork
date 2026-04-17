@@ -344,7 +344,7 @@ async function githubWebhookIngress(req: Request) {
 
   if (!signature) return new Response("missing signature", { status: 401 })
 
-  const expected = signGithubBody(rawBody, env.GITHUB_APP_WEBHOOK_SECRET)
+  const expected = signGithubBody(rawBody, env.GITHUB_CONNECTOR_APP_WEBHOOK_SECRET)
   if (!timingSafeEqual(signature, expected)) {
     return new Response("invalid signature", { status: 401 })
   }

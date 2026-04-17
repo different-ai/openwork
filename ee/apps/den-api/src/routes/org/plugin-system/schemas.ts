@@ -1,3 +1,19 @@
+import {
+  accessRoleValues,
+  configObjectCreatedViaValues,
+  configObjectSourceModeValues,
+  configObjectStatusValues,
+  configObjectTypeValues,
+  connectorAccountStatusValues,
+  connectorInstanceStatusValues,
+  connectorMappingKindValues,
+  connectorSyncEventTypeValues,
+  connectorSyncStatusValues,
+  connectorTargetKindValues,
+  connectorTypeValues,
+  membershipSourceValues,
+  pluginStatusValues,
+} from "@openwork-ee/den-db/schema"
 import { z } from "zod"
 import { denTypeIdSchema } from "../../../openapi.js"
 import { idParamSchema, orgIdParamSchema } from "../shared.js"
@@ -9,20 +25,6 @@ const nullableStringSchema = z.string().trim().min(1).nullable()
 const nullableTimestampSchema = z.string().datetime({ offset: true }).nullable()
 const queryBooleanSchema = z.enum(["true", "false"]).transform((value) => value === "true")
 
-export const configObjectTypeValues = ["skill", "agent", "command", "tool", "mcp", "hook", "context", "custom"] as const
-export const configObjectSourceModeValues = ["cloud", "import", "connector"] as const
-export const configObjectCreatedViaValues = ["cloud", "import", "connector", "system"] as const
-export const configObjectStatusValues = ["active", "inactive", "deleted", "archived", "ingestion_error"] as const
-export const pluginStatusValues = ["active", "inactive", "deleted", "archived"] as const
-export const membershipSourceValues = ["manual", "connector", "api", "system"] as const
-export const accessRoleValues = ["viewer", "editor", "manager"] as const
-export const connectorTypeValues = ["github"] as const
-export const connectorAccountStatusValues = ["active", "inactive", "disconnected", "error"] as const
-export const connectorInstanceStatusValues = ["active", "disabled", "archived", "error"] as const
-export const connectorTargetKindValues = ["repository_branch"] as const
-export const connectorMappingKindValues = ["path", "api", "custom"] as const
-export const connectorSyncStatusValues = ["pending", "queued", "running", "completed", "failed", "partial", "ignored"] as const
-export const connectorSyncEventTypeValues = ["push", "installation", "installation_repositories", "repository", "manual_resync"] as const
 export const githubWebhookEventValues = ["push", "installation", "installation_repositories", "repository"] as const
 
 export const configObjectIdSchema = denTypeIdSchema("configObject")

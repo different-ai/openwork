@@ -18,7 +18,7 @@ beforeAll(async () => {
 })
 
 afterEach(() => {
-  envModule.env.github.appWebhookSecret = "super-secret"
+  envModule.env.githubConnectorApp.webhookSecret = "super-secret"
 })
 
 function createWebhookApp() {
@@ -28,7 +28,7 @@ function createWebhookApp() {
 }
 
 test("webhook route rejects invalid signatures before JSON parsing", async () => {
-  envModule.env.github.appWebhookSecret = "super-secret"
+  envModule.env.githubConnectorApp.webhookSecret = "super-secret"
   const app = createWebhookApp()
   const response = await app.request("http://den.local/api/webhooks/connectors/github", {
     body: "{",
@@ -45,7 +45,7 @@ test("webhook route rejects invalid signatures before JSON parsing", async () =>
 })
 
 test("webhook route returns 503 when the GitHub webhook secret is unset", async () => {
-  envModule.env.github.appWebhookSecret = undefined
+  envModule.env.githubConnectorApp.webhookSecret = undefined
   const app = createWebhookApp()
   const response = await app.request("http://den.local/api/webhooks/connectors/github", {
     body: "{}",
@@ -61,7 +61,7 @@ test("webhook route returns 503 when the GitHub webhook secret is unset", async 
 })
 
 test("webhook route accepts a valid signature and ignores unbound deliveries cleanly", async () => {
-  envModule.env.github.appWebhookSecret = "super-secret"
+  envModule.env.githubConnectorApp.webhookSecret = "super-secret"
   const app = createWebhookApp()
   const payload = JSON.stringify({
     after: "abc123",

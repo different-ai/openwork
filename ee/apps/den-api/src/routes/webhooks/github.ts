@@ -3,13 +3,13 @@ import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { env } from "../../env.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
-import { enqueueGithubWebhookSync } from "../org/plugin-arch/store.js"
+import { enqueueGithubWebhookSync } from "../org/plugin-system/store.js"
 import {
   githubWebhookAcceptedResponseSchema,
   githubWebhookIgnoredResponseSchema,
   githubWebhookUnauthorizedResponseSchema,
-} from "../org/plugin-arch/schemas.js"
-import { pluginArchRoutePaths } from "../org/plugin-arch/contracts.js"
+} from "../org/plugin-system/schemas.js"
+import { pluginArchRoutePaths } from "../org/plugin-system/contracts.js"
 
 export function signGithubBody(rawBody: string, secret: string) {
   return `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`
@@ -40,7 +40,7 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
       },
     }),
     async (c) => {
-      const secret = env.github.appWebhookSecret
+      const secret = env.githubConnectorApp.webhookSecret
       if (!secret) {
         return c.body(null, 503)
       }

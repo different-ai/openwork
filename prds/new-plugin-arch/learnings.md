@@ -27,19 +27,21 @@ Use this shape for new entries:
 
 ## Current entries
 
-## 2026-04-17 Post-step cleanup - Type tightening
-- The plugin-arch route wrapper can stay type-safe enough without `@ts-nocheck` by isolating Hono middleware registration behind a tiny `withPluginArchOrgContext()` helper and using explicit request-part adapters for `param`, `query`, and `json` reads.
-- The Drizzle layer is happiest when plugin-arch store/access helpers use concrete typed-id aliases (`ConfigObjectId`, `PluginId`, `ConnectorInstanceId`, etc.) plus discriminated resource-target unions; broad `string` or mixed-id unions quickly break `eq()` and `inArray()` inference.
+## 2026-04-17 Post-step cleanup - Type tightening and naming
+- The route directory is now `ee/apps/den-api/src/routes/org/plugin-system/`; `plugin-arch` was only the planning nickname and was too confusing as a long-lived API module name.
+- The plugin-system route wrapper can stay type-safe enough without `@ts-nocheck` by isolating Hono middleware registration behind a tiny `withPluginArchOrgContext()` helper and using explicit request-part adapters for `param`, `query`, and `json` reads.
+- The Drizzle layer is happiest when plugin-system store/access helpers use concrete typed-id aliases (`ConfigObjectId`, `PluginId`, `ConnectorInstanceId`, etc.) plus discriminated resource-target unions; broad `string` or mixed-id unions quickly break `eq()` and `inArray()` inference.
+- Connector GitHub App config should stay separate from normal GitHub OAuth login config, so den-api now reserves its own optional connector env namespace (`GITHUB_CONNECTOR_APP_*`) instead of reusing the existing auth credentials.
 
 ## 2026-04-17 Step 9 - Test harness and verification
 - den-api package tests currently work best from `ee/apps/den-api/test/` rather than `ee/apps/den-api/src/`, because the package `tsconfig.json` compiles `src/**` during `pnpm --filter @openwork-ee/den-api build` and would otherwise drag Bun-only test imports into the production build.
 - Bun is available in this workspace and is the easiest way to add focused TS tests for den-api without adding a new package runner; the current test slice uses `bun test ee/apps/den-api/test/...`.
 - Webhook route tests can avoid database setup by targeting the early-exit paths: invalid signatures reject before JSON parsing/side effects, and valid signed payloads without an installation id return a clean ignored response before any connector lookup.
-- Access-helper tests can import plugin-arch modules safely if they seed the minimal env vars first, because `db.ts` pulls `env.ts` during module load even when the specific test only exercises pure helper functions.
+- Access-helper tests can import plugin-system modules safely if they seed the minimal env vars first, because `db.ts` pulls `env.ts` during module load even when the specific test only exercises pure helper functions.
 
 ## 2026-04-17 Step 5-8,10 - RBAC, routes, webhook ingress, and doc reconciliation
-- The admin endpoint slice now lives in `ee/apps/den-api/src/routes/org/plugin-arch/routes.ts`, with shared access checks in `ee/apps/den-api/src/routes/org/plugin-arch/access.ts` and persistence/serialization helpers in `ee/apps/den-api/src/routes/org/plugin-arch/store.ts`.
-- `resolveOrganizationContextMiddleware` depends on validated `:orgId` params, so plugin-arch routes must run `paramValidator(...)` before org-context resolution; the custom route helper was adjusted to inject auth/org middleware after per-route validators.
+- The admin endpoint slice now lives in `ee/apps/den-api/src/routes/org/plugin-system/routes.ts`, with shared access checks in `ee/apps/den-api/src/routes/org/plugin-system/access.ts` and persistence/serialization helpers in `ee/apps/den-api/src/routes/org/plugin-system/store.ts`.
+- `resolveOrganizationContextMiddleware` depends on validated `:orgId` params, so plugin-system routes must run `paramValidator(...)` before org-context resolution; the custom route helper was adjusted to inject auth/org middleware after per-route validators.
 - The current endpoint layer has no separate org-capability table, so create/manage-account capabilities are implemented as org owner/admin checks only; resource-level edit/view behavior still uses direct, team, org-wide, and plugin-inherited access resolution.
 - Config-object inherited access from plugins is view-only in the helper layer; edit/manage actions still require direct object grants or org-admin override, which keeps plugin delivery access from accidentally becoming object edit access.
 - GitHub webhook ingress is registered at `ee/apps/den-api/src/routes/webhooks/github.ts`, verifies `X-Hub-Signature-256` against the raw body before JSON parsing, queues `push` sync events into `connector_sync_event`, and treats installation lifecycle updates as connector-account health changes rather than content sync jobs.
