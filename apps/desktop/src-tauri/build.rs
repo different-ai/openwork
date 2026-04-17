@@ -10,10 +10,12 @@ fn main() {
     emit_build_info();
     ensure_opencode_sidecar();
     ensure_openwork_server_sidecar();
+    ensure_openwork_server_v2_sidecar();
     ensure_opencode_router_sidecar();
     ensure_orchestrator_sidecar();
     ensure_chrome_devtools_mcp_sidecar();
     ensure_versions_manifest();
+    ensure_runtime_manifest();
     tauri_build::build();
 }
 
@@ -88,6 +90,60 @@ fn ensure_versions_manifest() {
     }
     if !target_path.exists() {
         let _ = fs::write(&target_path, "{}\n");
+    }
+}
+
+fn ensure_runtime_manifest() {
+    let profile = env::var("PROFILE").unwrap_or_default();
+    if profile == "release" {
+        return;
+    }
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let sidecar_dir = manifest_dir.join("sidecars");
+    let runtime_manifest_path = sidecar_dir.join("manifest.json");
+    let target = env::var("CARGO_CFG_TARGET_TRIPLE")
+        .or_else(|_| env::var("TARGET"))
+        .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
+        .unwrap_or_default();
+    let target_runtime_manifest_path = if target.is_empty() {
+        None
+    } else {
+        Some(sidecar_dir.join(format!("manifest.json-{target}")))
+    };
+
+    let target_manifest_exists = match &target_runtime_manifest_path {
+        Some(path) => path.exists(),
+        None => true,
+    };
+    if runtime_manifest_path.exists() && target_manifest_exists {
+        return;
+    }
+
+    if fs::create_dir_all(&sidecar_dir).is_err() {
+        return;
+    }
+
+    let stub = r#"{
+  "files": {
+    "opencode": { "path": "opencode", "sha256": "", "size": 0 },
+    "opencode-router": { "path": "opencode-router", "sha256": "", "size": 0 }
+  },
+  "generatedAt": "",
+  "manifestVersion": 1,
+  "opencodeVersion": "",
+  "rootDir": "",
+  "routerVersion": "",
+  "serverVersion": "",
+  "source": "release",
+  "target": "darwin-arm64"
+}
+"#;
+    let _ = fs::write(&runtime_manifest_path, stub);
+    if let Some(path) = target_runtime_manifest_path {
+        let _ = fs::write(path, stub);
     }
 }
 
@@ -409,6 +465,99 @@ fn ensure_openwork_server_sidecar() {
     } else {
         println!(
             "cargo:warning=Failed to copy OpenWork server sidecar from {} to {}",
+            source_path.display(),
+            dest_path.display()
+        );
+        create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
+        create_debug_stub(&target_dest_path, &sidecar_dir, &profile, &target);
+    }
+
+    if !dest_path.exists() {
+        create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
+    }
+    if !target_dest_path.exists() {
+        create_debug_stub(&target_dest_path, &sidecar_dir, &profile, &target);
+    }
+}
+
+fn ensure_openwork_server_v2_sidecar() {
+    let target = env::var("CARGO_CFG_TARGET_TRIPLE")
+        .or_else(|_| env::var("TARGET"))
+        .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
+        .unwrap_or_default();
+    if target.is_empty() {
+        return;
+    }
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let sidecar_dir = manifest_dir.join("sidecars");
+
+    let canonical_name = if target.contains("windows") {
+        "openwork-server-v2.exe"
+    } else {
+        "openwork-server-v2"
+    };
+
+    let mut target_name = format!("openwork-server-v2-{target}");
+    if target.contains("windows") {
+        target_name.push_str(".exe");
+    }
+
+    let dest_path = sidecar_dir.join(canonical_name);
+    let target_dest_path = sidecar_dir.join(target_name);
+
+    if dest_path.exists() {
+        return;
+    }
+
+    if target_dest_path.exists() {
+        if copy_sidecar(&target_dest_path, &dest_path, &target) {
+            return;
+        }
+    }
+
+    let source_path = env::var("OPENWORK_SERVER_V2_BIN_PATH")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            find_in_path(if target.contains("windows") {
+                "openwork-server-v2.exe"
+            } else {
+                "openwork-server-v2"
+            })
+        });
+
+    let profile = env::var("PROFILE").unwrap_or_default();
+
+    let Some(source_path) = source_path else {
+        println!(
+      "cargo:warning=OpenWork Server V2 sidecar missing at {} (set OPENWORK_SERVER_V2_BIN_PATH or install openwork-server-v2)",
+      dest_path.display()
+    );
+
+        create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
+        create_debug_stub(&target_dest_path, &sidecar_dir, &profile, &target);
+        return;
+    };
+
+    if fs::create_dir_all(&sidecar_dir).is_err() {
+        return;
+    }
+
+    let copied = copy_sidecar(&source_path, &dest_path, &target);
+
+    if copied {
+        #[cfg(unix)]
+        {
+            let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
+        }
+        let _ = copy_sidecar(&dest_path, &target_dest_path, &target);
+    } else {
+        println!(
+            "cargo:warning=Failed to copy OpenWork Server V2 sidecar from {} to {}",
             source_path.display(),
             dest_path.display()
         );

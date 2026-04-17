@@ -27,7 +27,7 @@ import type {
   OpenworkServerInfo,
   WorkspaceInfo,
 } from "../lib/tauri";
-import type { OpenworkServerSettings } from "../lib/openwork-server";
+import type { OpenworkServerClient, OpenworkServerSettings } from "../lib/openwork-server";
 import { t } from "../../i18n";
 import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
 
@@ -35,6 +35,7 @@ export type ShareWorkspaceState = ReturnType<typeof createShareWorkspaceState>;
 
 type ShareWorkspaceStateOptions = {
   workspaces: Accessor<WorkspaceInfo[]>;
+  openworkServerClient: Accessor<OpenworkServerClient | null>;
   openworkServerHostInfo: Accessor<OpenworkServerInfo | null>;
   openworkServerSettings: Accessor<OpenworkServerSettings>;
   engineInfo: Accessor<EngineInfo | null>;
@@ -71,6 +72,9 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
   const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
   const [shareSkillsSetError, setShareSkillsSetError] =
     createSignal<string | null>(null);
+  const [localWorkspaceShareAccessKey, setLocalWorkspaceShareAccessKey] = createSignal<string | null>(null);
+  const [localWorkspaceShareSyncError, setLocalWorkspaceShareSyncError] = createSignal<string | null>(null);
+  const [localWorkspaceShareSyncBusy, setLocalWorkspaceShareSyncBusy] = createSignal(false);
 
   const openShareWorkspace = (workspaceId: string) => setShareWorkspaceId(workspaceId);
   const closeShareWorkspace = () => setShareWorkspaceId(null);
@@ -117,6 +121,9 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
       setShareSkillsSetBusy(false);
       setShareSkillsSetUrl(null);
       setShareSkillsSetError(null);
+      setLocalWorkspaceShareAccessKey(null);
+      setLocalWorkspaceShareSyncError(null);
+      setLocalWorkspaceShareSyncBusy(false);
     }),
   );
 
@@ -165,6 +172,78 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
     });
   });
 
+  createEffect(() => {
+    const workspace = shareWorkspace();
+    const workspaceId = shareLocalOpenworkWorkspaceId()?.trim() ?? "";
+    const remoteAccessEnabled = options.openworkServerHostInfo()?.remoteAccessEnabled === true;
+    const client = options.openworkServerClient();
+
+    if (
+      !workspace ||
+      workspace.workspaceType !== "local" ||
+      !workspaceId ||
+      !remoteAccessEnabled ||
+      !client ||
+      typeof client.getWorkspaceShare !== "function" ||
+      typeof client.exposeWorkspaceShare !== "function"
+    ) {
+      setLocalWorkspaceShareAccessKey(null);
+      setLocalWorkspaceShareSyncError(null);
+      setLocalWorkspaceShareSyncBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLocalWorkspaceShareSyncBusy(true);
+    setLocalWorkspaceShareSyncError(null);
+
+    void (async () => {
+      try {
+        let record = await client.getWorkspaceShare(workspaceId);
+        if (!record || record.status !== "active" || !record.accessKey?.trim()) {
+          record = await client.exposeWorkspaceShare(workspaceId);
+        }
+        if (cancelled) return;
+        setLocalWorkspaceShareAccessKey(record?.accessKey?.trim() || null);
+      } catch (error) {
+        if (cancelled) return;
+        setLocalWorkspaceShareAccessKey(null);
+        setLocalWorkspaceShareSyncError(error instanceof Error ? error.message : "Failed to prepare a workspace share key.");
+      } finally {
+        if (!cancelled) {
+          setLocalWorkspaceShareSyncBusy(false);
+        }
+      }
+    })();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  createEffect(on(
+    () => ({
+      client: options.openworkServerClient(),
+      remoteAccessEnabled: options.openworkServerHostInfo()?.remoteAccessEnabled === true,
+      workspaceId: shareLocalOpenworkWorkspaceId()?.trim() ?? "",
+      workspaceType: shareWorkspace()?.workspaceType ?? null,
+    }),
+    (next, previous) => {
+      if (
+        previous?.workspaceType === "local" &&
+        previous.remoteAccessEnabled === true &&
+        next.workspaceType === "local" &&
+        next.remoteAccessEnabled === false &&
+        next.workspaceId &&
+        next.workspaceId === previous.workspaceId &&
+        next.client &&
+        typeof next.client.revokeWorkspaceShare === "function"
+      ) {
+        void next.client.revokeWorkspaceShare(next.workspaceId).catch(() => undefined);
+      }
+    },
+  ));
+
   const shareFields = createMemo(() => {
     const workspace = shareWorkspace();
     if (!workspace) {
@@ -191,6 +270,45 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
         ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId())
         : null;
       const url = mountedUrl || hostUrl;
+      const accessKey = localWorkspaceShareAccessKey()?.trim() || "";
+      if (url && accessKey) {
+        return [
+          {
+            label: t("session.share_worker_url"),
+            value: url,
+            hint: t("session.share_worker_url_phones_hint"),
+          },
+          {
+            label: "Access token",
+            value: accessKey,
+            secret: true,
+            hint: "Workspace-scoped access managed by OpenWork Server V2.",
+          },
+        ];
+      }
+      if (!localWorkspaceShareSyncError()) {
+        return [
+          {
+            label: t("session.share_worker_url"),
+            value: url,
+            placeholder: !isTauriRuntime()
+              ? t("session.share_desktop_app_required")
+              : t("session.share_starting_server"),
+            hint: mountedUrl
+              ? t("session.share_worker_url_phones_hint")
+              : hostUrl
+                ? t("session.share_worker_url_resolving_hint")
+                : undefined,
+          },
+          {
+            label: "Access token",
+            value: "",
+            secret: true,
+            placeholder: localWorkspaceShareSyncBusy() ? "Preparing workspace share..." : "Waiting for workspace share...",
+            hint: localWorkspaceShareSyncBusy() ? "Creating a workspace-scoped share key through OpenWork Server V2." : undefined,
+          },
+        ];
+      }
       const ownerToken = options.openworkServerHostInfo()?.ownerToken?.trim() || "";
       const collaboratorToken =
         options.openworkServerHostInfo()?.clientToken?.trim() || "";
@@ -270,6 +388,9 @@ export function createShareWorkspaceState(options: ShareWorkspaceStateOptions) {
   const shareNote = createMemo(() => {
     const workspace = shareWorkspace();
     if (!workspace) return null;
+    if (workspace.workspaceType === "local" && localWorkspaceShareSyncError()?.trim()) {
+      return localWorkspaceShareSyncError();
+    }
     if (
       workspace.workspaceType === "local" &&
       options.engineInfo()?.runtime === "direct"

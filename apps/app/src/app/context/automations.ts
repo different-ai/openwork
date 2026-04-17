@@ -5,6 +5,7 @@ import { schedulerDeleteJob, schedulerListJobs } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
 import { createWorkspaceContextKey } from "./workspace-context";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
+import { resolveEffectiveOpenworkWorkspaceId } from "../connections/openwork-workspace-id";
 import { t } from "../../i18n";
 
 export type AutomationsStore = ReturnType<typeof createAutomationsStore>;
@@ -96,12 +97,29 @@ export function createAutomationsStore(options: {
   const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
+  const [scheduledJobsAttemptedAt, setScheduledJobsAttemptedAt] = createSignal<number | null>(null);
+  const [scheduledJobsStartedAt, setScheduledJobsStartedAt] = createSignal<number | null>(null);
   const [pendingRefreshContextKey, setPendingRefreshContextKey] = createSignal<string | null>(null);
+
+  const shouldThrottleRefresh = (force?: boolean) => {
+    if (force) return false;
+    const startedAt = scheduledJobsStartedAt();
+    if (!startedAt) return false;
+    return Date.now() - startedAt < 4_000;
+  };
+
+  const scheduledJobsWorkspaceId = createMemo(() => {
+    return resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: options.openworkServer.openworkServerHostInfo(),
+      runtimeWorkspaceId: options.runtimeWorkspaceId(),
+      selectedWorkspaceId: options.selectedWorkspaceId(),
+      workspaceType: "local",
+    }) ?? "";
+  });
 
   const serverBacked = createMemo(() => {
     const client = options.openworkServer.openworkServerClient();
-    const runtimeWorkspaceId = (options.runtimeWorkspaceId() ?? "").trim();
-    return options.openworkServer.openworkServerStatus() === "connected" && Boolean(client && runtimeWorkspaceId);
+    return options.openworkServer.openworkServerStatus() === "connected" && Boolean(client && scheduledJobsWorkspaceId());
   });
 
   const scheduledJobsSource = createMemo<"local" | "remote">(() =>
@@ -120,10 +138,14 @@ export function createAutomationsStore(options: {
   });
 
   const refreshScheduledJobs = async (
-    _options?: { force?: boolean },
+    refreshOptions?: { force?: boolean },
   ): Promise<"success" | "error" | "unavailable" | "skipped"> => {
     const requestContextKey = scheduledJobsContextKey();
     if (!requestContextKey) return "skipped";
+
+    if (shouldThrottleRefresh(refreshOptions?.force)) {
+      return "skipped";
+    }
 
     if (scheduledJobsBusy()) {
       setPendingRefreshContextKey(requestContextKey);
@@ -132,7 +154,7 @@ export function createAutomationsStore(options: {
 
     if (scheduledJobsSource() === "remote") {
       const client = options.openworkServer.openworkServerClient();
-      const workspaceId = (options.runtimeWorkspaceId() ?? "").trim();
+      const workspaceId = scheduledJobsWorkspaceId();
       if (!client || options.openworkServer.openworkServerStatus() !== "connected" || !workspaceId) {
         if (scheduledJobsContextKey() !== requestContextKey) return "skipped";
         const status =
@@ -146,6 +168,8 @@ export function createAutomationsStore(options: {
       }
 
       setScheduledJobsBusy(true);
+      setScheduledJobsStartedAt(Date.now());
+      setScheduledJobsAttemptedAt(Date.now());
       setScheduledJobsStatus(null);
       try {
         const response = await client.listScheduledJobs(workspaceId);
@@ -170,6 +194,8 @@ export function createAutomationsStore(options: {
     }
 
     setScheduledJobsBusy(true);
+    setScheduledJobsStartedAt(Date.now());
+    setScheduledJobsAttemptedAt(Date.now());
     setScheduledJobsStatus(null);
     try {
       const root = options.selectedWorkspaceRoot().trim();
@@ -191,7 +217,7 @@ export function createAutomationsStore(options: {
   const deleteScheduledJob = async (name: string) => {
     if (scheduledJobsSource() === "remote") {
       const client = options.openworkServer.openworkServerClient();
-      const workspaceId = (options.runtimeWorkspaceId() ?? "").trim();
+      const workspaceId = scheduledJobsWorkspaceId();
       if (!client || !workspaceId) {
         throw new Error(t("automations.server_unavailable"));
       }
@@ -220,6 +246,8 @@ export function createAutomationsStore(options: {
     scheduledJobsContextKey();
     setScheduledJobs([]);
     setScheduledJobsStatus(null);
+    setScheduledJobsAttemptedAt(null);
+    setScheduledJobsStartedAt(null);
     setScheduledJobsUpdatedAt(null);
     setPendingRefreshContextKey(null);
   });
@@ -228,6 +256,7 @@ export function createAutomationsStore(options: {
     const key = scheduledJobsContextKey();
     if (!key) return;
     if (scheduledJobsBusy()) return;
+    if (scheduledJobsAttemptedAt()) return;
     if (scheduledJobsUpdatedAt()) return;
     void refreshScheduledJobs();
   });
@@ -248,6 +277,7 @@ export function createAutomationsStore(options: {
     scheduledJobs,
     scheduledJobsStatus,
     scheduledJobsBusy,
+    scheduledJobsAttemptedAt,
     scheduledJobsUpdatedAt,
     scheduledJobsSource,
     scheduledJobsPollingAvailable,
@@ -257,6 +287,7 @@ export function createAutomationsStore(options: {
     jobs: scheduledJobs,
     jobsStatus: scheduledJobsStatus,
     jobsBusy: scheduledJobsBusy,
+    jobsAttemptedAt: scheduledJobsAttemptedAt,
     jobsUpdatedAt: scheduledJobsUpdatedAt,
     jobsSource: scheduledJobsSource,
     pollingAvailable: scheduledJobsPollingAvailable,

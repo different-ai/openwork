@@ -12,6 +12,7 @@ pub struct EngineManager {
 #[derive(Default)]
 pub struct EngineState {
     pub runtime: EngineRuntime,
+    pub managed_by_server_v2: bool,
     pub child: Option<CommandChild>,
     pub child_exited: bool,
     pub project_dir: Option<String>,
@@ -27,6 +28,7 @@ pub struct EngineState {
 impl EngineManager {
     pub fn snapshot_locked(state: &mut EngineState) -> EngineInfo {
         let (running, pid) = match state.child.as_ref() {
+            None if state.managed_by_server_v2 => (state.base_url.is_some(), None),
             None => (false, None),
             Some(_child) if state.child_exited => {
                 state.child = None;
@@ -56,6 +58,7 @@ impl EngineManager {
         }
         state.child_exited = true;
         state.runtime = EngineRuntime::Direct;
+        state.managed_by_server_v2 = false;
         state.base_url = None;
         state.project_dir = None;
         state.hostname = None;

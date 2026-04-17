@@ -25,6 +25,14 @@ import {
   type OpenworkServerSettings,
   type OpenworkServerStatus,
 } from "../lib/openwork-server";
+import type { WorkspaceList } from "../lib/tauri";
+import {
+  createRemoteServerId,
+  createServerVersionAdapter,
+  LOCAL_SERVER_ID,
+} from "../kernel/server-version";
+import { resolveEffectiveOpenworkServerStatus } from "./openwork-server-status";
+import { resolveEffectiveOpenworkWorkspaceId } from "./openwork-workspace-id";
 
 export type OpenworkServerStore = ReturnType<typeof createOpenworkServerStore>;
 
@@ -50,7 +58,7 @@ export function createOpenworkServerStore(options: {
   const [shareRemoteAccessBusy, setShareRemoteAccessBusy] = createSignal(false);
   const [shareRemoteAccessError, setShareRemoteAccessError] = createSignal<string | null>(null);
   const [openworkServerUrl, setOpenworkServerUrl] = createSignal("");
-  const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
+  const [rawOpenworkServerStatus, setRawOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
   const [openworkServerCapabilities, setOpenworkServerCapabilities] =
     createSignal<OpenworkServerCapabilities | null>(null);
   const [, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
@@ -58,6 +66,8 @@ export function createOpenworkServerStore(options: {
   const [openworkServerHostInfoReady, setOpenworkServerHostInfoReady] = createSignal(!isTauriRuntime());
   const [openworkServerDiagnostics, setOpenworkServerDiagnostics] =
     createSignal<OpenworkServerDiagnostics | null>(null);
+  const [openworkServerContractMode, setOpenworkServerContractMode] =
+    createSignal<"server-v2" | null>(null);
   const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
   const [opencodeRouterInfoState, setOpenCodeRouterInfoState] =
     createSignal<OpenCodeRouterInfo | null>(null);
@@ -67,6 +77,15 @@ export function createOpenworkServerStore(options: {
   const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
+
+  const serverVersionAdapter = createServerVersionAdapter({
+    developerMode: options.developerMode,
+    openworkServerCapabilities,
+    openworkServerHostInfo,
+    openworkServerSettings,
+    selectedWorkspaceDisplay: options.selectedWorkspaceDisplay,
+    startupPreference: options.startupPreference,
+  });
 
   const openworkServerBaseUrl = createMemo(() => {
     const pref = options.startupPreference();
@@ -107,11 +126,32 @@ export function createOpenworkServerStore(options: {
     const baseUrl = openworkServerBaseUrl().trim();
     if (!baseUrl) return null;
     const auth = openworkServerAuth();
-    return createOpenworkServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
+      return createOpenworkServerClient({
+        baseUrl,
+        hostToken: auth.hostToken,
+        serverV2: {
+          capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+          enabled: true,
+        },
+        token: auth.token,
+      });
   });
 
+  const openworkServerStatus = createMemo<OpenworkServerStatus>(() =>
+    resolveEffectiveOpenworkServerStatus(rawOpenworkServerStatus(), openworkServerHostInfo()),
+  );
+
+  const effectiveOpenworkWorkspaceId = createMemo(() =>
+    resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: openworkServerHostInfo(),
+      runtimeWorkspaceId: options.runtimeWorkspaceId(),
+      selectedWorkspaceId: options.selectedWorkspaceDisplay().id,
+      workspaceType: options.selectedWorkspaceDisplay().workspaceType,
+    }),
+  );
+
   const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
-  const openworkServerWorkspaceReady = createMemo(() => Boolean(options.runtimeWorkspaceId()));
+  const openworkServerWorkspaceReady = createMemo(() => Boolean(effectiveOpenworkWorkspaceId()));
   const resolvedOpenworkCapabilities = createMemo(() => openworkServerCapabilities());
   const openworkServerCanWriteSkills = createMemo(
     () =>
@@ -137,29 +177,27 @@ export function createOpenworkServerStore(options: {
   };
 
   const checkOpenworkServer = async (url: string, token?: string, hostToken?: string) => {
-    const client = createOpenworkServerClient({ baseUrl: url, token, hostToken });
     try {
-      await client.health();
+      const probe = await serverVersionAdapter.createSdk({
+        explicitTarget: {
+          baseUrl: url,
+          hostToken,
+          label: hostToken ? "Local OpenWork Server" : "Configured OpenWork Server",
+          token,
+        },
+        serverId: hostToken ? LOCAL_SERVER_ID : createRemoteServerId(url),
+      }).system.status();
+
+      setOpenworkServerContractMode(probe.contract);
+      setOpenworkServerDiagnostics(probe.diagnostics);
+      return { status: probe.status, capabilities: probe.capabilities };
     } catch (error) {
       const resolved = error as OpenworkServerError | Error;
       if ("status" in resolved && (resolved.status === 401 || resolved.status === 403)) {
+        setOpenworkServerContractMode("server-v2");
         return { status: "limited" as OpenworkServerStatus, capabilities: null };
       }
-      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
-    }
-
-    if (!token) {
-      return { status: "limited" as OpenworkServerStatus, capabilities: null };
-    }
-
-    try {
-      const caps = await client.capabilities();
-      return { status: "connected" as OpenworkServerStatus, capabilities: caps };
-    } catch (error) {
-      const resolved = error as OpenworkServerError | Error;
-      if ("status" in resolved && (resolved.status === 401 || resolved.status === 403)) {
-        return { status: "limited" as OpenworkServerStatus, capabilities: null };
-      }
+      setOpenworkServerContractMode(null);
       return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
     }
   };
@@ -202,8 +240,9 @@ export function createOpenworkServerStore(options: {
     const hostToken = auth.hostToken;
 
     if (!url) {
-      setOpenworkServerStatus("disconnected");
+      setRawOpenworkServerStatus("disconnected");
       setOpenworkServerCapabilities(null);
+      setOpenworkServerContractMode(null);
       setOpenworkServerCheckedAt(Date.now());
       return;
     }
@@ -247,7 +286,7 @@ export function createOpenworkServerStore(options: {
         }
 
         if (!active) return;
-        setOpenworkServerStatus(result.status);
+        setRawOpenworkServerStatus(result.status);
         setOpenworkServerCapabilities(result.capabilities);
         delayMs =
           result.status === "connected" || result.status === "limited"
@@ -317,8 +356,8 @@ export function createOpenworkServerStore(options: {
       return;
     }
 
-    const client = openworkServerClient();
-    if (!client || openworkServerStatus() === "disconnected") {
+    const serverId = serverVersionAdapter.resolvePrimaryServerId();
+    if (!serverId || openworkServerStatus() === "disconnected") {
       setOpenworkServerDiagnostics(null);
       return;
     }
@@ -330,8 +369,11 @@ export function createOpenworkServerStore(options: {
       if (busy) return;
       busy = true;
       try {
-        const status = await client.status();
-        if (active) setOpenworkServerDiagnostics(status);
+        const probe = await serverVersionAdapter.createSdk({ serverId }).system.status();
+        if (active) {
+          setOpenworkServerContractMode(probe.contract);
+          setOpenworkServerDiagnostics(probe.diagnostics);
+        }
       } catch {
         if (active) setOpenworkServerDiagnostics(null);
       } finally {
@@ -377,6 +419,10 @@ export function createOpenworkServerStore(options: {
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (!options.developerMode()) {
+      setOrchestratorStatusState(null);
+      return;
+    }
+    if (openworkServerHostInfo()?.startupMode === "server-v2") {
       setOrchestratorStatusState(null);
       return;
     }
@@ -487,14 +533,14 @@ export function createOpenworkServerStore(options: {
   const testOpenworkServerConnection = async (next: OpenworkServerSettings) => {
     const derived = normalizeOpenworkServerUrl(next.urlOverride ?? "");
     if (!derived) {
-      setOpenworkServerStatus("disconnected");
+      setRawOpenworkServerStatus("disconnected");
       setOpenworkServerCapabilities(null);
       setOpenworkServerCheckedAt(Date.now());
       return false;
     }
 
     const result = await checkOpenworkServer(derived, next.token);
-    setOpenworkServerStatus(result.status);
+    setRawOpenworkServerStatus(result.status);
     setOpenworkServerCapabilities(result.capabilities);
     setOpenworkServerCheckedAt(Date.now());
 
@@ -538,14 +584,14 @@ export function createOpenworkServerStore(options: {
       const url = openworkServerBaseUrl().trim();
       const auth = openworkServerAuth();
       if (!url) {
-        setOpenworkServerStatus("disconnected");
+        setRawOpenworkServerStatus("disconnected");
         setOpenworkServerCapabilities(null);
         setOpenworkServerCheckedAt(Date.now());
         return false;
       }
 
       const result = await checkOpenworkServer(url, auth.token, auth.hostToken);
-      setOpenworkServerStatus(result.status);
+      setRawOpenworkServerStatus(result.status);
       setOpenworkServerCapabilities(result.capabilities);
       setOpenworkServerCheckedAt(Date.now());
       return result.status === "connected" || result.status === "limited";
@@ -554,11 +600,79 @@ export function createOpenworkServerStore(options: {
     }
   };
 
+  const resolveLocalServerHostInfo = async () => {
+    const cached = openworkServerHostInfo();
+    if (cached?.baseUrl?.trim() && cached.clientToken?.trim()) {
+      return cached;
+    }
+
+    if (isTauriRuntime()) {
+      try {
+        const live = await openworkServerInfo();
+        setOpenworkServerHostInfo(live);
+        setOpenworkServerHostInfoReady(true);
+        if (live?.baseUrl?.trim() && live.clientToken?.trim()) {
+          return live;
+        }
+      } catch {
+        // ignore and try restart-backed recovery below
+      }
+    }
+
+    const client = await ensureLocalOpenworkServerClient();
+    if (!client) {
+      return null;
+    }
+    return openworkServerHostInfo();
+  };
+
+  const ensureLocalServerV2Target = async () => {
+    const hostInfo = await resolveLocalServerHostInfo();
+    return Boolean(hostInfo?.baseUrl?.trim());
+  };
+
+  const listLocalServerWorkspaces = async (options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+    const hostInfo = await resolveLocalServerHostInfo();
+    if (hostInfo?.startupMode === "server-v2" && hostInfo.baseUrl?.trim() && hostInfo.clientToken?.trim()) {
+      const list = await createOpenworkServerClient({
+        baseUrl: hostInfo.baseUrl.trim(),
+        hostToken: hostInfo.hostToken?.trim() || undefined,
+        serverV2: {
+          capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+          enabled: true,
+        },
+        token: hostInfo.clientToken.trim(),
+      }).listWorkspaces();
+      return {
+        activeId: list.activeId ?? list.items[0]?.id ?? null,
+        selectedId: list.activeId ?? list.items[0]?.id ?? "",
+        watchedId: list.activeId ?? list.items[0]?.id ?? null,
+        workspaces: list.items,
+      } satisfies WorkspaceList;
+    }
+
+    await ensureLocalServerV2Target();
+    return serverVersionAdapter.createSdk({ serverId: LOCAL_SERVER_ID }).workspaces.list({
+      legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+    });
+  };
+
+  const getLocalServerWorkspace = async (workspaceId: string, options?: { legacyWorkspaceList?: WorkspaceList | null }) => {
+    await ensureLocalServerV2Target();
+    return serverVersionAdapter.createSdk({ serverId: LOCAL_SERVER_ID }).workspaces.detail(workspaceId, {
+      legacyWorkspaceList: options?.legacyWorkspaceList ?? null,
+    });
+  };
+
   async function ensureLocalOpenworkServerClient(): Promise<OpenworkServerClient | null> {
     let hostInfo = openworkServerHostInfo();
     if (hostInfo?.baseUrl?.trim() && hostInfo.clientToken?.trim()) {
       const existing = createOpenworkServerClient({
         baseUrl: hostInfo.baseUrl.trim(),
+        serverV2: {
+          capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+          enabled: hostInfo.startupMode === "server-v2",
+        },
         token: hostInfo.clientToken.trim(),
         hostToken: hostInfo.hostToken?.trim() || undefined,
       });
@@ -599,6 +713,10 @@ export function createOpenworkServerStore(options: {
 
     return createOpenworkServerClient({
       baseUrl,
+      serverV2: {
+        capabilities: openworkServerCapabilities()?.serverV2 ?? null,
+        enabled: hostInfo?.startupMode === "server-v2",
+      },
       token,
       hostToken: hostToken || undefined,
     });
@@ -665,9 +783,12 @@ export function createOpenworkServerStore(options: {
     openworkAuditStatus,
     openworkAuditError,
     devtoolsWorkspaceId,
+    openworkServerContractMode,
     checkOpenworkServer,
     testOpenworkServerConnection,
     reconnectOpenworkServer,
     ensureLocalOpenworkServerClient,
+    listLocalServerWorkspaces,
+    getLocalServerWorkspace,
   };
 }

@@ -42,6 +42,7 @@ import {
   engineStart,
   engineStop,
   sandboxDoctor,
+  openworkServerInfo,
   orchestratorInstanceDispose,
   orchestratorStartDetached,
   orchestratorWorkspaceActivate,
@@ -65,6 +66,7 @@ import {
   type EngineInfo,
   type SandboxDoctorResult,
   type WorkspaceInfo,
+  type WorkspaceList,
 } from "../lib/tauri";
 import type { BootPhase, StartupBranch } from "../lib/startup-boot";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
@@ -357,6 +359,13 @@ export function createWorkspaceStore(options: {
     return nextWorkspaces[0]?.id ?? "";
   };
 
+  const emptyWorkspaceList = (): WorkspaceList => ({
+    activeId: null,
+    selectedId: "",
+    watchedId: null,
+    workspaces: [],
+  });
+
   const applyServerLocalWorkspaces = (nextLocals: WorkspaceInfo[], nextActiveId: string | null | undefined) => {
     const remotes = workspaces().filter((workspace) => workspace.workspaceType === "remote");
     const merged = [...nextLocals, ...remotes];
@@ -365,6 +374,14 @@ export function createWorkspaceStore(options: {
     syncSelectedWorkspaceId(
       pickSelectedWorkspaceId(merged, [selectedWorkspaceId()], { activeId: nextActiveId ?? null }),
     );
+  };
+
+  const applyServerRemoteWorkspaces = (nextRemotes: WorkspaceInfo[], nextSelectedId?: string | null) => {
+    const locals = workspaces().filter((workspace) => workspace.workspaceType !== "remote");
+    const otherRemotes = workspaces().filter((workspace) => workspace.workspaceType === "remote" && !nextRemotes.some((next) => next.id === workspace.id));
+    const merged = [...locals, ...otherRemotes, ...nextRemotes];
+    setWorkspaces(merged);
+    syncSelectedWorkspaceId(pickSelectedWorkspaceId(merged, [nextSelectedId, selectedWorkspaceId()], { activeId: nextSelectedId ?? null }));
   };
 
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
@@ -882,7 +899,7 @@ export function createWorkspaceStore(options: {
     };
   };
 
-  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwork-orchestrator";
+  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "direct";
 
   const resolveWorkspacePaths = () => {
     const active = selectedWorkspacePath().trim();
@@ -916,6 +933,29 @@ export function createWorkspaceStore(options: {
       });
       return null;
     }
+  };
+
+  const waitForFreshLocalRuntimeBaseUrl = async (previousBaseUrl?: string | null, timeoutMs = 8_000) => {
+    const startedAt = Date.now();
+    const prior = previousBaseUrl?.trim() ?? "";
+    let fallback = "";
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const hostInfo = await openworkServerInfo().catch(() => null);
+      const engineSnapshot = await engineInfo().catch(() => null);
+      const nextBaseUrl = hostInfo?.opencodeBaseUrl?.trim() || engineSnapshot?.baseUrl?.trim() || "";
+      if (nextBaseUrl) {
+        if (!fallback) {
+          fallback = nextBaseUrl;
+        }
+        if (!prior || nextBaseUrl !== prior || hostInfo?.opencodeStatus === "running") {
+          return nextBaseUrl;
+        }
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+    }
+
+    return fallback || prior;
   };
 
   const resolveActiveOpenworkWorkspace = () => {
@@ -1129,8 +1169,16 @@ export function createWorkspaceStore(options: {
     preset: WorkspacePreset,
   ) => {
     if (preset !== "starter") return null;
-    const localWorkspace = await ensureBackendWorkspaceReady(workspacePath, name, preset);
-    return await localWorkspace.client.materializeBlueprintSessions(localWorkspace.workspaceId);
+    try {
+      const localWorkspace = await ensureBackendWorkspaceReady(workspacePath, name, preset);
+      return await localWorkspace.client.materializeBlueprintSessions(localWorkspace.workspaceId);
+    } catch (error) {
+      wsDebug("starter-sessions:skip-server-materialize", {
+        message: error instanceof Error ? error.message : safeStringify(error),
+        workspacePath,
+      });
+      return null;
+    }
   };
 
   const waitForWorkspaceSessionsReady = async (
@@ -1186,6 +1234,31 @@ export function createWorkspaceStore(options: {
     } catch {
       // ignore
     }
+  };
+
+  const ensureLocalServerWorkspaceActivated = async (
+    workspacePath: string,
+    input?: { name?: string | null; preset?: WorkspacePreset | null },
+  ) => {
+    const localServer = await resolveLocalOpenworkServer();
+    if (!localServer) return null;
+
+    let resolved = await findOpenworkWorkspaceByPathWithClient(localServer, workspacePath);
+    if (!resolved) {
+      const fallbackName = input?.name?.trim() || workspacePath.split(/[\\/]/).filter(Boolean).pop() || "Workspace";
+      await localServer.createLocalWorkspace({
+        folderPath: workspacePath,
+        name: fallbackName,
+        preset: input?.preset ?? "starter",
+      });
+      resolved = await findOpenworkWorkspaceByPathWithClient(localServer, workspacePath);
+    }
+    if (!resolved) {
+      throw new Error("Local OpenWork server did not register the workspace.");
+    }
+
+    await localServer.activateWorkspace(resolved.workspaceId);
+    return resolved;
   };
 
   async function testWorkspaceConnection(workspaceId: string) {
@@ -1448,7 +1521,25 @@ export function createWorkspaceStore(options: {
 
           const finishRemoteWorkspaceActivation = async (shouldPersistResolved: boolean) => {
             if (shouldPersistResolved) {
-              if (isTauriRuntime()) {
+              const localServer = await resolveLocalOpenworkServer();
+              if (localServer) {
+                try {
+                  const connected = await localServer.connectRemoteServer({
+                    baseUrl: hostUrl,
+                    directory: resolvedDirectory || null,
+                    label: next.displayName ?? next.name ?? workspaceInfo?.name ?? null,
+                    token: token ? token : null,
+                    workspaceId: workspaceInfo?.id ?? next.openworkWorkspaceId ?? null,
+                  });
+                  const listed = await localServer.listWorkspaces();
+                  applyServerRemoteWorkspaces(
+                    (listed.items ?? []).filter((workspace) => workspace.workspaceType === "remote"),
+                    connected.selectedWorkspaceId ?? next.id,
+                  );
+                } catch {
+                  // ignore and fall back below
+                }
+              } else if (isTauriRuntime()) {
                 try {
                   const ws = await workspaceUpdateRemote({
                     workspaceId: next.id,
@@ -1728,14 +1819,21 @@ export function createWorkspaceStore(options: {
         existingEngineProjectDir: existingEngine?.projectDir ?? null,
       });
 
-      if (canReuseHost && runtime === "openwork-orchestrator") {
+      if (canReuseHost) {
         try {
           const reuseStart = Date.now();
-          await orchestratorWorkspaceActivate({
-            workspacePath: next.path,
+          const localWorkspace = await ensureLocalServerWorkspaceActivated(next.path, {
             name: next.displayName?.trim() || next.name?.trim() || null,
-          });
-          await activateOpenworkHostWorkspace(next.path);
+            preset: next.preset === "starter" || next.preset === "minimal" ? next.preset : "starter",
+          }).catch(() => null);
+
+          if (!localWorkspace && runtime === "openwork-orchestrator") {
+            await orchestratorWorkspaceActivate({
+              workspacePath: next.path,
+              name: next.displayName?.trim() || next.name?.trim() || null,
+            });
+            await activateOpenworkHostWorkspace(next.path);
+          }
 
           const nextInfo = await engineInfo();
           setEngine(nextInfo);
@@ -1788,7 +1886,26 @@ export function createWorkspaceStore(options: {
 
       try {
         const runtime = resolveEngineRuntime();
-        if (runtime === "openwork-orchestrator") {
+        const localWorkspace = await ensureLocalServerWorkspaceActivated(next.path, {
+          name: next.displayName?.trim() || next.name?.trim() || null,
+          preset: next.preset === "starter" || next.preset === "minimal" ? next.preset : "starter",
+        }).catch(() => null);
+
+        if (localWorkspace) {
+          const newInfo = await engineInfo();
+          setEngine(newInfo);
+
+          const ok = await connectToServer(
+            newInfo.baseUrl || options.openworkServer.openworkServerHostInfo()?.opencodeBaseUrl?.trim() || "",
+            next.path,
+            { workspaceType: "local", targetRoot: next.path, reason: "workspace-server-v2-switch" },
+            undefined,
+            { navigate: false },
+          );
+          if (!ok) {
+            options.setError("Failed to reconnect after worker switch");
+          }
+        } else if (runtime === "openwork-orchestrator") {
           await orchestratorWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
@@ -1948,7 +2065,31 @@ export function createWorkspaceStore(options: {
           targetRoot: context?.targetRoot,
           workspaceType: context?.workspaceType ?? "local",
         });
-        let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
+        const hostInfo = options.openworkServer.openworkServerHostInfo();
+        const resolvedWorkspaceId = resolveWorkspaceEntryId({
+          workspaceId: context?.workspaceId ?? null,
+          workspaceType: context?.workspaceType,
+          targetRoot: context?.targetRoot ?? resolvedDirectory,
+          directory: resolvedDirectory,
+        });
+        const routedAuth: OpencodeAuth | undefined =
+          context?.workspaceType === "local" &&
+          resolvedWorkspaceId &&
+          hostInfo?.startupMode === "server-v2" &&
+          hostInfo.baseUrl?.trim() &&
+          hostInfo.clientToken?.trim()
+            ? {
+                ...(auth ?? {}),
+                sessionRouting: {
+                  baseUrl: hostInfo.baseUrl.trim(),
+                  hostToken: hostInfo.hostToken?.trim() || undefined,
+                  required: true,
+                  token: hostInfo.clientToken.trim(),
+                  workspaceId: resolvedWorkspaceId,
+                },
+              }
+            : auth;
+        let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, routedAuth);
         const healthTimeoutMs = resolveConnectHealthTimeoutMs(context?.reason);
         const health = await waitForHealthy(nextClient, { timeoutMs: healthTimeoutMs });
         connectMetrics.healthyMs = Date.now() - connectStart;
@@ -1967,18 +2108,43 @@ export function createWorkspaceStore(options: {
             if (discovered) {
               resolvedDirectory = discovered;
               console.log("[workspace] remote directory resolved", resolvedDirectory);
-              if (isTauriRuntime() && context.workspaceId) {
-                const updated = await workspaceUpdateRemote({
-                  workspaceId: context.workspaceId,
-                  directory: resolvedDirectory,
-                });
-                setWorkspaces(updated.workspaces);
-                syncSelectedWorkspaceId(
-                  pickSelectedWorkspaceId(updated.workspaces, [context.workspaceId, selectedWorkspaceId()], updated),
-                );
+              if (context.workspaceId) {
+                const localServer = await resolveLocalOpenworkServer();
+                const currentWorkspace = workspaces().find((workspace) => workspace.id === context.workspaceId) ?? null;
+                if (localServer && currentWorkspace?.workspaceType === "remote") {
+                  try {
+                    const connected = await localServer.connectRemoteServer({
+                      baseUrl: currentWorkspace.openworkHostUrl?.trim() || currentWorkspace.baseUrl?.trim() || nextBaseUrl,
+                      directory: resolvedDirectory,
+                      hostToken: currentWorkspace.openworkHostToken?.trim() || null,
+                      label: currentWorkspace.displayName ?? currentWorkspace.name ?? null,
+                      token:
+                        currentWorkspace.openworkClientToken?.trim()
+                        || currentWorkspace.openworkToken?.trim()
+                        || null,
+                      workspaceId: currentWorkspace.openworkWorkspaceId?.trim() || null,
+                    });
+                    const listed = await localServer.listWorkspaces();
+                    applyServerRemoteWorkspaces(
+                      (listed.items ?? []).filter((workspace) => workspace.workspaceType === "remote"),
+                      connected.selectedWorkspaceId ?? context.workspaceId,
+                    );
+                  } catch {
+                    // ignore and fall back below
+                  }
+                } else if (isTauriRuntime()) {
+                  const updated = await workspaceUpdateRemote({
+                    workspaceId: context.workspaceId,
+                    directory: resolvedDirectory,
+                  });
+                  setWorkspaces(updated.workspaces);
+                  syncSelectedWorkspaceId(
+                    pickSelectedWorkspaceId(updated.workspaces, [context.workspaceId, selectedWorkspaceId()], updated),
+                  );
+                }
               }
               setProjectDir(resolvedDirectory);
-              nextClient = createClient(nextBaseUrl, resolvedDirectory, auth);
+              nextClient = createClient(nextBaseUrl, resolvedDirectory, routedAuth);
             }
           } catch (error) {
             console.log("[workspace] remote directory lookup failed", error);
@@ -2202,14 +2368,6 @@ export function createWorkspaceStore(options: {
 
       const createdWorkspaceId = pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws);
 
-      if (openworkServer && isTauriRuntime()) {
-        try {
-          await workspaceCreate({ folderPath: resolvedFolder, name, preset });
-        } catch {
-          // keep the server result as the source of truth for this run
-        }
-      }
-
       const nextSelectedId = createdWorkspaceId;
       applyServerLocalWorkspaces(ws.workspaces, nextSelectedId);
       if (nextSelectedId) {
@@ -2232,28 +2390,33 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
+      let openedSessionSurface = false;
+
       if (preset === "starter") {
         const materialized = await materializeStarterSessions(resolvedFolder, name, preset);
-        const sessionsReady = await waitForWorkspaceSessionsReady(resolvedFolder);
-        if (!sessionsReady) {
-          throw new Error("Starter sessions did not finish loading for the new workspace.");
-        }
-        if (nextSelectedId) {
-          await options.refreshWorkspaceSessions?.(nextSelectedId);
-        }
-        const openSessionId = materialized?.openSessionId?.trim() || "";
-        if (openSessionId) {
-          options.setPendingInitialSessionSelection?.(null);
-          options.setSelectedSessionId(openSessionId);
-          options.setView("session", openSessionId);
-          await options.selectSession(openSessionId, {
-            skipHealthCheck: true,
-            source: "create-workspace-open-session",
-          });
+        if (materialized) {
+          const sessionsReady = await waitForWorkspaceSessionsReady(resolvedFolder);
+          if (!sessionsReady) {
+            throw new Error("Starter sessions did not finish loading for the new workspace.");
+          }
+          if (nextSelectedId) {
+            await options.refreshWorkspaceSessions?.(nextSelectedId);
+          }
+          const openSessionId = materialized.openSessionId?.trim() || "";
+          if (openSessionId) {
+            options.setPendingInitialSessionSelection?.(null);
+            options.setSelectedSessionId(openSessionId);
+            options.setView("session", openSessionId);
+            await options.selectSession(openSessionId, {
+              skipHealthCheck: true,
+              source: "create-workspace-open-session",
+            });
+            openedSessionSurface = true;
+          }
         }
       }
 
-      if (!nextSelectedId) {
+      if (!openedSessionSurface) {
         await openEmptySession(resolvedFolder);
       }
 
@@ -2386,13 +2549,6 @@ export function createWorkspaceStore(options: {
               workspaces: response.workspaces ?? response.items,
             })))()
           : workspaceForget(localId));
-        if (activeLocalWorkspace && isTauriRuntime()) {
-          try {
-            await workspaceForget(localId);
-          } catch {
-            // ignore desktop mirror failures here
-          }
-        }
         applyServerLocalWorkspaces(forgotten.workspaces, forgotten.activeId);
       }
 
@@ -2662,30 +2818,30 @@ export function createWorkspaceStore(options: {
 
     try {
       let createdWorkspaceId: string | null = null;
-      if (isTauriRuntime()) {
-        const ws = await workspaceCreateRemote({
-          baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
-          directory: finalDirectory ? finalDirectory : null,
-          displayName,
-          remoteType,
-          openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
-          openworkToken: remoteType === "openwork" ? (token || null) : null,
-          openworkClientToken:
-            remoteType === "openwork" ? (input.openworkClientToken?.trim() || null) : null,
-          openworkHostToken:
-            remoteType === "openwork" ? (input.openworkHostToken?.trim() || null) : null,
-          openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
-          openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
-          sandboxBackend: input.sandboxBackend ?? null,
-          sandboxRunId: input.sandboxRunId ?? null,
-          sandboxContainerName: input.sandboxContainerName ?? null,
-        });
-        setWorkspaces(ws.workspaces);
-        const nextSelectedId = pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws);
-        createdWorkspaceId = nextSelectedId;
-        syncSelectedWorkspaceId(nextSelectedId);
-        console.log("[workspace] create remote complete:", nextSelectedId || "none");
-      } else {
+      const localServer = await resolveLocalOpenworkServer();
+      if (localServer) {
+        try {
+          const connected = await localServer.connectRemoteServer({
+            baseUrl: resolvedHostUrl,
+            directory: finalDirectory || null,
+            hostToken: input.openworkHostToken?.trim() || null,
+            label: displayName ?? openworkWorkspace?.name ?? null,
+            token: token || null,
+            workspaceId: openworkWorkspace?.id ?? null,
+          });
+          const listed = await localServer.listWorkspaces();
+          applyServerRemoteWorkspaces((listed.items ?? []).filter((workspace) => workspace.workspaceType === "remote"), connected.selectedWorkspaceId ?? null);
+          createdWorkspaceId = connected.selectedWorkspaceId ?? null;
+          console.log("[workspace] create remote complete:", createdWorkspaceId || "none");
+        } catch (error) {
+          wsDebug("create-remote:local-server-fallback", {
+            message: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
+      }
+      if (!createdWorkspaceId && isTauriRuntime()) {
+        throw new Error("Remote workers must be registered through the local OpenWork server. Restart the local server and try again.");
+      } else if (!createdWorkspaceId) {
         const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
         createdWorkspaceId = workspaceId;
         const nextWorkspace: WorkspaceInfo = {
@@ -2869,30 +3025,30 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    if (isTauriRuntime()) {
+    const localServer = await resolveLocalOpenworkServer();
+    if (localServer) {
       try {
-        const ws = await workspaceUpdateRemote({
-          workspaceId: id,
-          remoteType: "openwork",
-          baseUrl: resolvedBaseUrl,
+        const connected = await localServer.connectRemoteServer({
+          baseUrl: resolvedHostUrl,
           directory: finalDirectory ? finalDirectory : null,
-          displayName,
-          openworkHostUrl: resolvedHostUrl,
-          openworkToken: token ? token : null,
-          openworkClientToken:
-            input.openworkClientToken?.trim() || workspace.openworkClientToken?.trim() || null,
-          openworkHostToken:
-            input.openworkHostToken?.trim() || workspace.openworkHostToken?.trim() || null,
-          openworkWorkspaceId: openworkWorkspace?.id ?? workspace.openworkWorkspaceId ?? null,
-          openworkWorkspaceName: openworkWorkspace?.name ?? workspace.openworkWorkspaceName ?? null,
+          hostToken: input.openworkHostToken?.trim() || workspace.openworkHostToken?.trim() || null,
+          label: displayName ?? openworkWorkspace?.name ?? workspace.openworkWorkspaceName ?? null,
+          token: token ? token : null,
+          workspaceId: openworkWorkspace?.id ?? workspace.openworkWorkspaceId ?? null,
         });
-        setWorkspaces(ws.workspaces);
-        syncSelectedWorkspaceId(pickSelectedWorkspaceId(ws.workspaces, [id, selectedWorkspaceId()], ws));
-      } catch {
-        // ignore
+        const listed = await localServer.listWorkspaces();
+        applyServerRemoteWorkspaces((listed.items ?? []).filter((workspace) => workspace.workspaceType === "remote"), connected.selectedWorkspaceId ?? id);
+        return true;
+      } catch (error) {
+        wsDebug("update-remote:local-server-fallback", {
+          message: error instanceof Error ? error.message : safeStringify(error),
+        });
       }
+    }
+    if (isTauriRuntime()) {
+      throw new Error("Remote workers must be updated through the local OpenWork server. Restart the local server and try again.");
     } else {
-      setWorkspaces((prev) =>
+        setWorkspaces((prev) =>
         prev.map((item) =>
           item.id === id
             ? {
@@ -2940,24 +3096,50 @@ export function createWorkspaceStore(options: {
 
     try {
       const previousActive = selectedWorkspaceId();
-      const openworkWorkspace = workspace?.workspaceType === "local" ? await findOpenworkWorkspaceByPath(workspace.path) : null;
-      const ws = openworkWorkspace
+      const localServer = workspace?.workspaceType === "local" || workspace?.workspaceType === "remote"
+        ? await resolveLocalOpenworkServer()
+        : null;
+      const openworkWorkspace = workspace?.workspaceType === "local" && localServer
+        ? await findOpenworkWorkspaceByPathWithClient(localServer, workspace.path)
+        : null;
+      if (workspace?.workspaceType === "local") {
+        if (!localServer) {
+          throw new Error("Local workers must be removed through the local OpenWork server. Restart the local server and try again.");
+        }
+        if (!openworkWorkspace) {
+          throw new Error("Local worker not found on the local OpenWork server.");
+        }
+      }
+      if (workspace?.workspaceType === "remote" && !localServer) {
+        throw new Error("Remote workers must be removed through the local OpenWork server. Restart the local server and try again.");
+      }
+      let ws = openworkWorkspace
         ? await openworkWorkspace.client.deleteWorkspace(openworkWorkspace.workspaceId).then((response) => ({
             activeId: response.activeId ?? "",
             workspaces: response.workspaces ?? response.items,
           }))
-        : await workspaceForget(id);
+        : { activeId: "", workspaces: [] as WorkspaceInfo[] };
 
-      if (openworkWorkspace && isTauriRuntime()) {
+      if (!openworkWorkspace && localServer && workspace?.workspaceType === "remote") {
         try {
-          await workspaceForget(id);
-        } catch {
-          // ignore desktop mirror failures here
+          ws = await localServer.deleteWorkspace(id).then(async (response) => {
+            const listed = await localServer.listWorkspaces();
+            return {
+              activeId: response.activeId ?? "",
+              workspaces: listed.workspaces ?? listed.items,
+            };
+          });
+        } catch (error) {
+          wsDebug("forget-remote:local-server-fallback", {
+            message: error instanceof Error ? error.message : safeStringify(error),
+          });
         }
       }
 
       if (openworkWorkspace) {
         applyServerLocalWorkspaces(ws.workspaces, ws.activeId);
+      } else if (localServer) {
+        setWorkspaces(ws.workspaces);
       } else {
         setWorkspaces(ws.workspaces);
       }
@@ -3064,24 +3246,62 @@ export function createWorkspaceStore(options: {
         throw new Error("Worker is still warming up. Try again in a few seconds.");
       }
 
-      const updated = await workspaceUpdateRemote({
-        workspaceId: id,
-        remoteType: "openwork",
-        baseUrl: resolved.opencodeBaseUrl,
-        directory: resolved.directory || workspacePath,
-        openworkHostUrl: resolved.hostUrl,
-        openworkToken: host.ownerToken?.trim() || host.token,
-        openworkClientToken: host.token,
-        openworkHostToken: host.hostToken,
-        openworkWorkspaceId: resolved.workspace.id,
-        openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
-        sandboxBackend: host.sandboxBackend ?? "docker",
-        sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
-        sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
-      });
+      const localServer = await resolveLocalOpenworkServer();
+      if (localServer) {
+        try {
+          const connected = await localServer.connectRemoteServer({
+            baseUrl: resolved.hostUrl,
+            directory: resolved.directory || workspacePath,
+            hostToken: host.hostToken,
+            label: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? workspace.displayName ?? workspace.name,
+            token: host.ownerToken?.trim() || host.token,
+            workspaceId: resolved.workspace.id,
+          });
+          const listed = await localServer.listWorkspaces();
+          applyServerRemoteWorkspaces(
+            (listed.items ?? []).filter((item) => item.workspaceType === "remote"),
+            connected.selectedWorkspaceId ?? id,
+          );
+        } catch {
+          const updated = await workspaceUpdateRemote({
+            workspaceId: id,
+            remoteType: "openwork",
+            baseUrl: resolved.opencodeBaseUrl,
+            directory: resolved.directory || workspacePath,
+            openworkHostUrl: resolved.hostUrl,
+            openworkToken: host.ownerToken?.trim() || host.token,
+            openworkClientToken: host.token,
+            openworkHostToken: host.hostToken,
+            openworkWorkspaceId: resolved.workspace.id,
+            openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
+            sandboxBackend: host.sandboxBackend ?? "docker",
+            sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
+            sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
+          });
 
-      setWorkspaces(updated.workspaces);
-      syncSelectedWorkspaceId(pickSelectedWorkspaceId(updated.workspaces, [id, selectedWorkspaceId()], updated));
+          setWorkspaces(updated.workspaces);
+          syncSelectedWorkspaceId(pickSelectedWorkspaceId(updated.workspaces, [id, selectedWorkspaceId()], updated));
+        }
+      } else {
+        const updated = await workspaceUpdateRemote({
+          workspaceId: id,
+          remoteType: "openwork",
+          baseUrl: resolved.opencodeBaseUrl,
+          directory: resolved.directory || workspacePath,
+          openworkHostUrl: resolved.hostUrl,
+          openworkToken: host.ownerToken?.trim() || host.token,
+          openworkClientToken: host.token,
+          openworkHostToken: host.hostToken,
+          openworkWorkspaceId: resolved.workspace.id,
+          openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
+          sandboxBackend: host.sandboxBackend ?? "docker",
+          sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
+          sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
+        });
+
+        setWorkspaces(updated.workspaces);
+        syncSelectedWorkspaceId(pickSelectedWorkspaceId(updated.workspaces, [id, selectedWorkspaceId()], updated));
+      }
 
       const ok = await reconnect();
       if (!ok) {
@@ -3368,13 +3588,6 @@ export function createWorkspaceStore(options: {
     if (openworkWorkspace) {
       try {
         const ws = await openworkWorkspace.client.updateWorkspaceDisplayName(openworkWorkspace.workspaceId, nextDisplayName);
-        if (isTauriRuntime()) {
-          try {
-            await workspaceUpdateDisplayName({ workspaceId: id, displayName: nextDisplayName });
-          } catch {
-            // ignore desktop mirror failures here
-          }
-        }
         applyServerLocalWorkspaces(ws.workspaces, ws.activeId);
         updateWorkspaceConnectionState(id, { status: "connected", message: null });
         return true;
@@ -3568,6 +3781,39 @@ export function createWorkspaceStore(options: {
     options.setBusyStartedAt(Date.now());
 
     try {
+      const localServer = await resolveLocalOpenworkServer();
+      if (localServer) {
+        const localWorkspace = await findOpenworkWorkspaceByPathWithClient(localServer, root);
+        if (localWorkspace?.workspaceId) {
+          const previousBaseUrl = engine()?.baseUrl?.trim() || "";
+          await localServer.reloadWorkspaceEngine(localWorkspace.workspaceId);
+          const nextBaseUrl = await waitForFreshLocalRuntimeBaseUrl(previousBaseUrl);
+          if (!nextBaseUrl) {
+            options.setError("Failed to discover runtime after reload");
+            return false;
+          }
+
+          options.setClient(null);
+          options.setConnectedVersion(null);
+          setConnectedWorkspaceId(null);
+          options.setSseConnected(false);
+          const ok = await connectToServer(
+            nextBaseUrl,
+            root,
+            { workspaceType: "local", targetRoot: root, reason: "engine-reload-server-v2" },
+            undefined,
+          );
+          if (!ok) {
+            options.setError("Failed to reconnect after reload");
+            return false;
+          }
+          const nextInfo = await engineInfo();
+          setEngine(nextInfo);
+          setEngineAuth(null);
+          return true;
+        }
+      }
+
       const runtime = engine()?.runtime ?? resolveEngineRuntime();
       if (runtime === "openwork-orchestrator") {
         await orchestratorInstanceDispose(root);
@@ -3813,10 +4059,28 @@ export function createWorkspaceStore(options: {
     const startupPref = readStartupPreference();
     let info: EngineInfo | null = null;
 
+    let serverV2WorkspaceBootstrapFailed = false;
+
     if (isTauriRuntime()) {
       enterPhase("workspaceBootstrap", { source: "workspace_bootstrap" });
       try {
-        const ws = await workspaceBootstrap();
+        const ws = await options.openworkServer.listLocalServerWorkspaces().catch(async (error) => {
+          options.onStartupTrace?.("workspace_bootstrap:server_v2_unavailable", {
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+
+          try {
+            return await workspaceBootstrap();
+          } catch (legacyError) {
+            serverV2WorkspaceBootstrapFailed = true;
+            options.onStartupTrace?.("workspace_bootstrap:server_v2_error", {
+              error: error instanceof Error ? error.message : safeStringify(error),
+              legacyError: legacyError instanceof Error ? legacyError.message : safeStringify(legacyError),
+            });
+            options.setError("Failed to load workspaces from the local OpenWork server.");
+            return emptyWorkspaceList();
+          }
+        });
         setWorkspaces(ws.workspaces);
         syncSelectedWorkspaceId(pickSelectedWorkspaceId(ws.workspaces, [resolveWorkspaceListSelectedId(ws)], ws));
       } catch (error) {
@@ -3824,6 +4088,11 @@ export function createWorkspaceStore(options: {
           error: error instanceof Error ? error.message : safeStringify(error),
         });
       }
+    }
+
+    if (serverV2WorkspaceBootstrapFailed) {
+      enterPhase("ready", { reason: "server-v2-workspace-bootstrap-failed" });
+      return;
     }
 
     enterPhase("engineProbe", { source: "ts-probe" });
@@ -3872,18 +4141,20 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    const localEngine = info ?? engine();
+    let localEngine = info ?? engine();
     if (localEngine?.baseUrl) {
       options.setBaseUrl(localEngine.baseUrl);
     }
 
     const activeWorkspace = selectedWorkspaceInfo();
-    if (isTauriRuntime() && !localEngine?.baseUrl) {
+    const selectedPath = selectedWorkspacePath().trim();
+    if (isTauriRuntime() && !localEngine?.baseUrl && !selectedPath) {
       const firstLocalWorkspace = workspaces().find((workspace) => workspace.workspaceType === "local");
       if (firstLocalWorkspace?.path?.trim()) {
         enterPhase("engineStartOrConnect", { source: "bootstrap-first-local-host-start" });
         await startHost({ workspacePath: firstLocalWorkspace.path.trim(), navigate: false }).catch(() => false);
         info = engine();
+        localEngine = info ?? engine();
       }
     }
 
@@ -3915,14 +4186,14 @@ export function createWorkspaceStore(options: {
       return;
     }
 
-    if (selectedWorkspacePath().trim()) {
+    if (selectedPath) {
       options.setStartupPreference("local");
 
       if (localEngine?.running && localEngine.baseUrl) {
         markBranch("localAttachExisting", {
           baseUrl: localEngine.baseUrl,
         });
-        const bootstrapRoot = selectedWorkspacePath().trim() || localEngine.projectDir?.trim() || "";
+        const bootstrapRoot = selectedPath || localEngine.projectDir?.trim() || "";
         options.setOnboardingStep("connecting");
         enterPhase("engineStartOrConnect", { source: "bootstrap-local-attach" });
         const ok = await connectToServer(
@@ -3944,10 +4215,10 @@ export function createWorkspaceStore(options: {
         return;
       }
 
-      markBranch("localHostStart", { workspacePath: selectedWorkspacePath().trim() });
+      markBranch("localHostStart", { workspacePath: selectedPath });
       options.setOnboardingStep("connecting");
       enterPhase("engineStartOrConnect", { source: "bootstrap-local-host-start" });
-      const ok = await startHost({ workspacePath: selectedWorkspacePath().trim() });
+      const ok = await startHost({ workspacePath: selectedPath });
       if (!ok) {
         options.setOnboardingStep("local");
         enterPhase("error", { reason: "bootstrap-local-host-start-failed" });

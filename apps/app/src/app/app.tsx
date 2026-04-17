@@ -24,6 +24,7 @@ import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import ConnectionsModals from "./connections/modals";
 import { OpenworkServerProvider } from "./connections/openwork-server-provider";
 import { createOpenworkServerStore } from "./connections/openwork-server-store";
+import { resolveEffectiveOpenworkWorkspaceId } from "./connections/openwork-workspace-id";
 import { ConnectionsProvider } from "./connections/provider";
 import { ExtensionsProvider } from "./extensions/provider";
 import { AutomationsProvider } from "./automations/provider";
@@ -119,9 +120,13 @@ import {
   hydrateOpenworkServerSettingsFromEnv,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
+  sanitizeDesktopServerV2StartupSettings,
   writeOpenworkServerSettings,
   type OpenworkServerSettings,
 } from "./lib/openwork-server";
+import { isServerV2Enabled } from "./kernel/server-version/flag";
+import { hydrateDenSettingsFromOpenwork, readDenSettings, registerDenCloudSyncClient } from "./lib/den";
+import { dispatchDenSessionUpdated } from "./lib/den-session-events";
 import { ReactIsland } from "../react/island";
 import { reactSessionEnabled } from "../react/feature-flag";
 import { ReactSessionRuntime } from "../react/session/runtime-sync.react";
@@ -173,6 +178,24 @@ type StartupSessionSnapshot = {
 
 export default function App() {
   const { resetSessionDisplayPreferences } = useSessionDisplayPreferences();
+  const initialStartupPreference = (() => {
+    const currentPreference = readStartupPreference();
+    const sanitized = sanitizeDesktopServerV2StartupSettings({
+      settings: readOpenworkServerSettings(),
+      startupPreference: currentPreference,
+      tauriRuntime: isTauriRuntime(),
+      serverV2Enabled: isServerV2Enabled(),
+    });
+
+    if (sanitized.changed) {
+      writeOpenworkServerSettings(sanitized.settings);
+      if (currentPreference === "server" && sanitized.startupPreference !== "server") {
+        clearStartupPreference();
+      }
+    }
+
+    return sanitized.startupPreference;
+  })();
   const envOpenworkWorkspaceId =
     typeof import.meta.env?.VITE_OPENWORK_WORKSPACE_ID === "string"
       ? import.meta.env.VITE_OPENWORK_WORKSPACE_ID.trim() || null
@@ -230,7 +253,7 @@ export default function App() {
   };
 
   const [startupPreference, setStartupPreference] = createSignal<StartupPreference | null>(
-    readStartupPreference(),
+    initialStartupPreference,
   );
   const [onboardingStep, setOnboardingStep] =
     createSignal<OnboardingStep>("welcome");
@@ -243,7 +266,7 @@ export default function App() {
 
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
 
-  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwork-orchestrator");
+  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("direct");
   const [opencodeEnableExa, setOpencodeEnableExa] = createSignal(false);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
@@ -489,6 +512,7 @@ export default function App() {
     openworkServerClient: () => openworkServerStore?.openworkServerClient?.() ?? null,
     openworkServerStatus: () => openworkServerStore?.openworkServerStatus?.() ?? "disconnected",
     openworkServerCapabilities: () => openworkServerStore?.openworkServerCapabilities?.() ?? null,
+    openworkServerHostInfo: () => openworkServerStore?.openworkServerHostInfo?.() ?? null,
     runtimeWorkspaceId: () => workspaceStore?.runtimeWorkspaceId?.() ?? null,
     focusSessionPromptSoon: () => focusSessionPromptSoon(),
     setError,
@@ -717,6 +741,46 @@ export default function App() {
     ensureLocalOpenworkServerClient,
   } = openworkServerStore;
 
+  registerDenCloudSyncClient(() => openworkServerClient() ?? null);
+  onCleanup(() => registerDenCloudSyncClient(null));
+
+  let hydratedDenCloudKey: string | null = null;
+  createEffect(() => {
+    if (openworkServerStatus() !== "connected") {
+      return;
+    }
+    const clientForCloud = openworkServerClient();
+    const baseUrl = clientForCloud?.baseUrl?.trim() ?? "";
+    if (!clientForCloud || !baseUrl) {
+      return;
+    }
+    const hydrateKey = `${baseUrl}|${clientForCloud.token?.trim() ?? ""}`;
+    if (hydrateKey === hydratedDenCloudKey) {
+      return;
+    }
+    hydratedDenCloudKey = hydrateKey;
+
+    const currentCloudSettings = readDenSettings();
+    void hydrateDenSettingsFromOpenwork({ client: clientForCloud }).then((nextCloudSettings) => {
+      const tokenChanged = (currentCloudSettings.authToken?.trim() ?? "") !== (nextCloudSettings.authToken?.trim() ?? "");
+      const orgChanged = (currentCloudSettings.activeOrgId?.trim() ?? "") !== (nextCloudSettings.activeOrgId?.trim() ?? "");
+      const baseChanged = (currentCloudSettings.baseUrl?.trim() ?? "") !== (nextCloudSettings.baseUrl?.trim() ?? "");
+      if (!tokenChanged && !orgChanged && !baseChanged) {
+        return;
+      }
+      if (!nextCloudSettings.authToken?.trim()) {
+        return;
+      }
+      dispatchDenSessionUpdated({
+        status: "success",
+        baseUrl: nextCloudSettings.baseUrl,
+        token: nextCloudSettings.authToken,
+        user: null,
+        email: null,
+      });
+    }).catch(() => undefined);
+  });
+
   const extensionsStore = createExtensionsStore({
     client,
     projectDir: () => workspaceProjectDir(),
@@ -933,7 +997,14 @@ export default function App() {
     focusPromptSoon: focusSessionPromptSoon,
   });
 
-  const runtimeWorkspaceId = createMemo(() => workspaceStore.runtimeWorkspaceId());
+  const runtimeWorkspaceId = createMemo(() =>
+    resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: openworkServerStore?.openworkServerHostInfo?.() ?? null,
+      runtimeWorkspaceId: workspaceStore.runtimeWorkspaceId(),
+      selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
+      workspaceType: workspaceStore.selectedWorkspaceDisplay().workspaceType,
+    }),
+  );
   const activeWorkspaceServerConfig = createMemo(() => workspaceStore.runtimeWorkspaceConfig());
   const statusToastsStore = createStatusToastsStore();
   const bundlesStore = createBundlesStore({
@@ -1413,7 +1484,7 @@ export default function App() {
       setThemeMode("system");
       setEngineSource(isTauriRuntime() ? "sidecar" : "path");
       setEngineCustomBinPath("");
-      setEngineRuntime("openwork-orchestrator");
+      setEngineRuntime("direct");
       modelConfig.resetAppDefaults();
       resetSessionDisplayPreferences();
       setHideTitlebar(false);

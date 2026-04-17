@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 
 import type { ScheduledJob } from "../types";
 import { useAutomations } from "../automations/provider";
@@ -147,6 +147,7 @@ export type AutomationsViewProps = {
   addPlugin: (pluginNameOverride?: string) => void;
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
+  reloadError: string | null;
   canReloadWorkspace: boolean;
   showHeader?: boolean;
 };
@@ -359,7 +360,6 @@ const TemplateCard = (props: {
 const JobCard = (props: {
   job: ScheduledJob;
   busy: boolean;
-  sourceLabel: string;
   onRun: () => void;
   onDelete: () => void;
 }) => {
@@ -383,7 +383,6 @@ const JobCard = (props: {
           </p>
           <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
             <span class={tagClass}>{scheduleLabel()}</span>
-            <span class={tagClass}>{props.sourceLabel}</span>
             <Show when={props.job.source}>
               <span class={tagClass}>{props.job.source}</span>
             </Show>
@@ -441,6 +440,16 @@ export default function AutomationsView(props: AutomationsViewProps) {
     onCleanup(() => window.clearInterval(interval));
   });
 
+  createEffect(on(
+    () => props.reloadBusy,
+    (busy, previousBusy) => {
+      if (!previousBusy || busy) return;
+      if (!schedulerInstallRequested()) return;
+      if (props.reloadError) return;
+      setSchedulerInstallRequested(false);
+    },
+  ));
+
   const showToast = (title: string, tone: AppStatusToastTone = "info") => {
     statusToasts.showToast({ title, tone });
   };
@@ -468,16 +477,6 @@ export default function AutomationsView(props: AutomationsViewProps) {
 
   const automationDisabled = createMemo(
     () => props.newTaskDisabled || schedulerGateActive() || createBusy(),
-  );
-
-  const sourceLabel = createMemo(() =>
-    automations.jobsSource() === "remote" ? t("scheduled.source_remote") : t("scheduled.source_local"),
-  );
-
-  const sourceDescription = createMemo(() =>
-    automations.jobsSource() === "remote"
-      ? t("scheduled.subtitle_remote")
-      : t("scheduled.subtitle_local"),
   );
 
   const supportNote = createMemo(() => {
@@ -786,10 +785,9 @@ export default function AutomationsView(props: AutomationsViewProps) {
           <div class="flex items-end justify-between gap-3">
             <div>
               <h3 class={sectionTitleClass}>{t("scheduled.your_automations")}</h3>
-              <p class="mt-1 text-[13px] text-dls-secondary">{sourceDescription()}</p>
             </div>
             <div class="text-[12px] text-dls-secondary">
-              {sourceLabel()} · {t("scheduled.last_updated_prefix")} {lastUpdatedLabel()}
+              {t("scheduled.last_updated_prefix")} {lastUpdatedLabel()}
             </div>
           </div>
 
@@ -807,7 +805,6 @@ export default function AutomationsView(props: AutomationsViewProps) {
                   {(job) => (
                     <JobCard
                       job={job}
-                      sourceLabel={sourceLabel()}
                       busy={props.busy || deleteBusy() || !supported()}
                       onRun={() => void handleRunAutomation(job)}
                       onDelete={() => setDeleteTarget(job)}
@@ -864,7 +861,7 @@ export default function AutomationsView(props: AutomationsViewProps) {
               <div>
                 <h3 class="text-lg font-semibold text-dls-text">{t("scheduled.delete_confirm_title")}</h3>
                 <p class="mt-1 text-sm text-dls-secondary">
-                  {t("scheduled.delete_confirm_desc", undefined, { source: sourceLabel().toLowerCase() })}
+                  {t("scheduled.delete_confirm_desc", undefined, { source: t("scheduled.source_local").toLowerCase() })}
                 </p>
               </div>
 

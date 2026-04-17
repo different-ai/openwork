@@ -13,6 +13,7 @@ import { isTauriRuntime, safeStringify, addOpencodeCacheHint } from "../utils";
 import type { WorkspaceStore } from "../context/workspace";
 import type { StartupPreference } from "../types";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
+import { resolveEffectiveOpenworkWorkspaceId } from "../connections/openwork-workspace-id";
 import {
   buildImportPayloadFromBundle,
   describeWorkspaceForBundleToasts,
@@ -185,7 +186,12 @@ export function createBundlesStore(options: {
             // ignore and keep polling
           }
         } else {
-          const workspaceId = options.runtimeWorkspaceId();
+          const workspaceId = resolveEffectiveOpenworkWorkspaceId({
+            hostInfo: options.openworkServer.openworkServerHostInfo(),
+            runtimeWorkspaceId: options.runtimeWorkspaceId(),
+            selectedWorkspaceId: options.workspaceStore.selectedWorkspaceId(),
+            workspaceType: options.workspaceStore.selectedWorkspaceDisplay().workspaceType,
+          });
           if (workspaceId) {
             return { client, workspaceId };
           }

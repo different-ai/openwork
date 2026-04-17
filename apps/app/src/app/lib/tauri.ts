@@ -20,6 +20,7 @@ export type EngineInfo = {
 export type OpenworkServerInfo = {
   running: boolean;
   remoteAccessEnabled: boolean;
+  startupMode: "legacy" | "server-v2";
   host: string | null;
   port: number | null;
   baseUrl: string | null;
@@ -29,6 +30,11 @@ export type OpenworkServerInfo = {
   clientToken: string | null;
   ownerToken: string | null;
   hostToken: string | null;
+  serverVersion: string | null;
+  opencodeBaseUrl: string | null;
+  opencodeStatus: string | null;
+  routerBaseUrl: string | null;
+  routerStatus: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;

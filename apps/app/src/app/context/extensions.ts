@@ -42,6 +42,7 @@ import {
 } from "../cloud/import-state";
 import { createWorkspaceContextKey } from "./workspace-context";
 import type { OpenworkServerStore } from "../connections/openwork-server-store";
+import { resolveEffectiveOpenworkWorkspaceId } from "../connections/openwork-workspace-id";
 
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -105,6 +106,68 @@ export function createExtensionsStore(options: {
     selectedWorkspaceRoot: options.selectedWorkspaceRoot,
     runtimeWorkspaceId: options.runtimeWorkspaceId,
     workspaceType: options.workspaceType,
+  });
+
+  const effectiveOpenworkWorkspaceId = createMemo(() => {
+    return resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: options.openworkServer.openworkServerHostInfo(),
+      runtimeWorkspaceId: options.runtimeWorkspaceId(),
+      selectedWorkspaceId: options.selectedWorkspaceId(),
+      workspaceType: options.workspaceType(),
+    }) ?? "";
+  });
+
+  const connectedOpenworkClient = createMemo(() =>
+    options.openworkServer.openworkServerStatus() === "connected"
+      ? options.openworkServer.openworkServerClient()
+      : null,
+  );
+
+  const localServerV2ManagedReady = createMemo(() =>
+    isTauriRuntime()
+    && options.workspaceType() === "local"
+    && options.openworkServer.openworkServerHostInfo()?.startupMode === "server-v2"
+    && Boolean(connectedOpenworkClient() && effectiveOpenworkWorkspaceId()),
+  );
+
+  const supportsOpenworkSkillReads = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.skills?.read || capabilities?.serverV2?.managed?.skills || localServerV2ManagedReady());
+  });
+
+  const supportsOpenworkSkillWrites = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.skills?.write || capabilities?.serverV2?.managed?.skills || localServerV2ManagedReady());
+  });
+
+  const supportsOpenworkConfigReads = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.config?.read || capabilities?.serverV2?.config?.read || localServerV2ManagedReady());
+  });
+
+  const supportsOpenworkConfigWrites = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.config?.write || capabilities?.serverV2?.config?.write || localServerV2ManagedReady());
+  });
+
+  const supportsOpenworkHubSkillReads = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.hub?.skills?.read || capabilities?.serverV2?.managed?.skills || localServerV2ManagedReady());
+  });
+
+  const supportsOpenworkHubSkillInstall = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.hub?.skills?.install || capabilities?.serverV2?.managed?.skills || localServerV2ManagedReady());
+  });
+
+  const supportsOpenworkPluginReads = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.plugins?.read || capabilities?.serverV2?.managed?.plugins || localServerV2ManagedReady());
+  });
+
+  const supportsOpenworkPluginWrites = createMemo(() => {
+    const capabilities = options.openworkServer.openworkServerCapabilities();
+    return Boolean(capabilities?.plugins?.write || capabilities?.serverV2?.managed?.plugins || localServerV2ManagedReady());
   });
 
   // Per-resource staleness: tracks the context key each resource was last loaded for.
@@ -212,14 +275,12 @@ export function createExtensionsStore(options: {
   const readWorkspaceOpenworkConfigRecord = async (): Promise<Record<string, unknown>> => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
+      supportsOpenworkConfigReads();
 
     if (canUseOpenworkServer) {
       const config = await openworkClient.getConfig(openworkWorkspaceId);
@@ -236,14 +297,12 @@ export function createExtensionsStore(options: {
   const writeWorkspaceOpenworkConfigRecord = async (config: Record<string, unknown>) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
+      supportsOpenworkConfigWrites();
 
     if (canUseOpenworkServer) {
       await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
@@ -342,14 +401,12 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.skills?.write;
+      supportsOpenworkSkillWrites();
 
     if (canUseOpenworkServer) {
       await openworkClient.upsertSkill(openworkWorkspaceId, {
@@ -456,16 +513,14 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkClient = options.openworkServer.openworkServerClient() as
+    const openworkClient = connectedOpenworkClient() as
       | (OpenworkServerClient & { deleteSkill?: (workspaceId: string, skillName: string) => Promise<unknown> })
       | null;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.skills?.write &&
+      supportsOpenworkSkillWrites() &&
       typeof openworkClient.deleteSkill === "function";
 
     if (canUseOpenworkServer) {
@@ -580,12 +635,10 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const repo = hubRepo();
     const loadKey = `${root}::${repo ? hubRepoKey(repo) : "none"}`;
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
-      openworkCapabilities?.hub?.skills?.read &&
+      supportsOpenworkHubSkillReads() &&
       typeof (openworkClient as any).listHubSkills === "function";
 
     if (loadKey !== hubSkillsLoadKey) {
@@ -932,14 +985,12 @@ export function createExtensionsStore(options: {
     }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.hub?.skills?.install &&
+      supportsOpenworkHubSkillInstall() &&
       typeof (openworkClient as any).installHubSkill === "function";
 
     if (!canUseOpenworkServer) {
@@ -961,6 +1012,11 @@ export function createExtensionsStore(options: {
       };
       const result = await (openworkClient as any).installHubSkill(openworkWorkspaceId, trimmed, {
         repo: repoOverride,
+      });
+      options.markReloadRequired?.("skills", {
+        type: "skill",
+        name: trimmed,
+        action: result?.action === "updated" ? "updated" : "added",
       });
       await refreshSkills({ force: true });
       await refreshHubSkills({ force: true });
@@ -1076,14 +1132,12 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.skills?.read;
+      supportsOpenworkSkillReads();
 
     if (!root) {
       setSkills([]);
@@ -1264,14 +1318,12 @@ export function createExtensionsStore(options: {
   async function refreshPlugins(scopeOverride?: PluginScope) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.plugins?.read;
+      supportsOpenworkPluginReads();
 
     // Skip if already in flight
     if (refreshPluginsInFlight) {
@@ -1406,14 +1458,12 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.plugins?.write;
+      supportsOpenworkPluginWrites();
 
     if (!pluginName) {
       if (isManualInput) {
@@ -1511,14 +1561,12 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.plugins?.write;
+      supportsOpenworkPluginWrites();
 
     if (pluginScope() !== "project" && !isLocalWorkspace) {
       setPluginStatus("Global plugins are only available for local workers.");
@@ -1640,14 +1688,12 @@ export function createExtensionsStore(options: {
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.skills?.write;
+      supportsOpenworkSkillWrites();
 
     // Use OpenWork server when available
     if (canUseOpenworkServer) {
@@ -1821,14 +1867,12 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.skills?.read &&
+      supportsOpenworkSkillReads() &&
       typeof (openworkClient as any).getSkill === "function";
 
     if (canUseOpenworkServer) {
@@ -1887,14 +1931,12 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
+    const openworkClient = connectedOpenworkClient();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const canUseOpenworkServer =
-      options.openworkServer.openworkServerStatus() === "connected" &&
       openworkClient &&
       openworkWorkspaceId &&
-      openworkCapabilities?.skills?.write;
+      supportsOpenworkSkillWrites();
 
     if (canUseOpenworkServer) {
       options.setBusy(true);

@@ -16,6 +16,7 @@ import type { Client, ProviderListItem, WorkspaceDisplay } from "../../types";
 import { isTauriRuntime, safeStringify } from "../../utils";
 import { compareProviders, filterProviderList, mapConfigProvidersToList } from "../../utils/providers";
 import type { OpenworkServerStore } from "../../connections/openwork-server-store";
+import { resolveEffectiveOpenworkWorkspaceId } from "../../connections/openwork-workspace-id";
 import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
@@ -64,6 +65,15 @@ type CreateProvidersStoreOptions = {
 };
 
 export function createProvidersStore(options: CreateProvidersStoreOptions) {
+  const effectiveOpenworkWorkspaceId = createMemo(() =>
+    resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: options.openworkServer.openworkServerHostInfo(),
+      runtimeWorkspaceId: options.runtimeWorkspaceId(),
+      selectedWorkspaceId: options.selectedWorkspaceDisplay().id,
+      workspaceType: options.selectedWorkspaceDisplay().workspaceType,
+    }),
+  );
+
   const [providerAuthModalOpen, setProviderAuthModalOpen] = createSignal(false);
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
@@ -166,7 +176,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.selectedWorkspaceDisplay().workspaceType === "local";
     const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServer.openworkServerStatus() === "connected" &&
@@ -190,7 +200,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.selectedWorkspaceDisplay().workspaceType === "local";
     const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServer.openworkServerStatus() === "connected" &&
@@ -249,7 +259,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.selectedWorkspaceDisplay().workspaceType === "local";
     const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServer.openworkServerStatus() === "connected" &&
@@ -273,7 +283,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.selectedWorkspaceDisplay().workspaceType === "local";
     const openworkClient = options.openworkServer.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServer.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServer.openworkServerStatus() === "connected" &&
@@ -556,7 +566,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
   createEffect(() => {
     void options.selectedWorkspaceRoot();
-    void options.runtimeWorkspaceId();
+    void effectiveOpenworkWorkspaceId();
     void refreshImportedCloudProviders();
   });
 

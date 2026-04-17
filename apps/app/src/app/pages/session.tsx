@@ -1061,6 +1061,7 @@ export default function SessionView(props: SessionViewProps) {
   });
   const shareWorkspaceState = createShareWorkspaceState({
     workspaces: () => props.workspaces,
+    openworkServerClient: () => props.openworkServerClient,
     openworkServerHostInfo: () => props.openworkServerHostInfo,
     openworkServerSettings: () => props.openworkServerSettings,
     engineInfo: () => props.engineInfo,

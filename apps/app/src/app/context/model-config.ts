@@ -35,6 +35,8 @@ import {
   safeStringify,
 } from "../utils";
 import { compareProviders, providerPriorityRank } from "../utils/providers";
+import type { OpenworkServerInfo } from "../lib/tauri";
+import { resolveEffectiveOpenworkWorkspaceId } from "../connections/openwork-workspace-id";
 
 export type SessionChoiceOverride = {
   model?: ModelRef | null;
@@ -331,12 +333,22 @@ export function createModelConfigStore(options: {
   openworkServerClient: Accessor<OpenworkServerClient | null>;
   openworkServerStatus: Accessor<OpenworkServerStatus>;
   openworkServerCapabilities: Accessor<OpenworkServerCapabilities | null>;
+  openworkServerHostInfo: Accessor<OpenworkServerInfo | null>;
   runtimeWorkspaceId: Accessor<string | null>;
   focusSessionPromptSoon: () => void;
   setError: (value: string | null) => void;
   setLastKnownConfigSnapshot: (value: string) => void;
   markOpencodeConfigReloadRequired: () => void;
 }) {
+  const effectiveOpenworkWorkspaceId = createMemo(() =>
+    resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: options.openworkServerHostInfo(),
+      runtimeWorkspaceId: options.runtimeWorkspaceId(),
+      selectedWorkspaceId: options.selectedWorkspaceId(),
+      workspaceType: options.selectedWorkspaceDisplay().workspaceType,
+    }),
+  );
+
   const initialDefaultModel = readStoredDefaultModel();
 
   const [sessionChoiceOverrideById, setSessionChoiceOverrideById] = createSignal<
@@ -924,7 +936,7 @@ export function createModelConfigStore(options: {
     const workspaceRoot = options.selectedWorkspacePath().trim();
     const activeClient = options.client();
     const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServerStatus() === "connected" &&
@@ -1026,7 +1038,7 @@ export function createModelConfigStore(options: {
     if (!root) return;
     const nextModel = defaultModel();
     const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServerStatus() === "connected" &&
@@ -1106,7 +1118,7 @@ export function createModelConfigStore(options: {
     const root = options.selectedWorkspacePath().trim();
     const activeClient = options.client();
     const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServerStatus() === "connected" &&
@@ -1167,7 +1179,7 @@ export function createModelConfigStore(options: {
     const workspace = options.selectedWorkspaceDisplay();
     const root = options.selectedWorkspacePath().trim();
     const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const openworkWorkspaceId = effectiveOpenworkWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
     const canUseOpenworkServer =
       options.openworkServerStatus() === "connected" &&

@@ -273,9 +273,12 @@ const main = async () => {
       );
       process.exit(1);
     }
-    console.log(`[openwork] UI dev server already running at ${detectedViteUrl} (reusing).`);
-    holdOpenUntilSignal();
-    return;
+    console.error(
+      `[openwork] A UI dev server is already running at ${detectedViteUrl} for this checkout.\n` +
+        `OpenWork dev now blocks startup when the UI port is already occupied to avoid accidentally running multiple instances against the same port.\n\n` +
+        `Stop the existing UI/dev process and retry, or run on a different PORT (for example: PORT=5174 pnpm dev).`
+    );
+    process.exit(1);
   }
 
   let portInUse = false;

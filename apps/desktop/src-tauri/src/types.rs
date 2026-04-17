@@ -92,10 +92,24 @@ pub struct EngineInfo {
 }
 
 #[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum OpenworkServerStartupMode {
+    Legacy,
+    ServerV2,
+}
+
+impl Default for OpenworkServerStartupMode {
+    fn default() -> Self {
+        Self::Legacy
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenworkServerInfo {
     pub running: bool,
     pub remote_access_enabled: bool,
+    pub startup_mode: OpenworkServerStartupMode,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub base_url: Option<String>,
@@ -105,6 +119,11 @@ pub struct OpenworkServerInfo {
     pub client_token: Option<String>,
     pub owner_token: Option<String>,
     pub host_token: Option<String>,
+    pub server_version: Option<String>,
+    pub opencode_base_url: Option<String>,
+    pub opencode_status: Option<String>,
+    pub router_base_url: Option<String>,
+    pub router_status: Option<String>,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
