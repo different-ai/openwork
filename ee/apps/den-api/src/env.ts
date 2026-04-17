@@ -10,6 +10,7 @@ const EnvSchema = z.object({
   DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
+  API_DESKTOP_CONFIG: z.string().optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
@@ -111,6 +112,16 @@ const EnvSchema = z.object({
 
 const parsed = EnvSchema.parse(process.env)
 
+export const desktopConfigSchema = z.object({
+  requireSignin: z.boolean().optional(),
+  models: z.object({
+    allowConfig: z.boolean().optional(),
+    removeZen: z.boolean().optional(),
+  }).optional(),
+}).meta({ ref: "DenApiDesktopConfig" })
+
+const defaultDesktopConfig = desktopConfigSchema.parse({})
+
 function splitCsv(value: string | undefined) {
   return (value ?? "")
     .split(",")
@@ -121,6 +132,24 @@ function splitCsv(value: string | undefined) {
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+function parseDesktopConfig(value: string | undefined) {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return defaultDesktopConfig
+  }
+
+  let parsedValue: unknown
+  try {
+    parsedValue = JSON.parse(trimmed)
+  } catch (error) {
+    throw new Error(
+      `API_DESKTOP_CONFIG must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  return desktopConfigSchema.parse(parsedValue)
 }
 
 function normalizeOrigin(origin: string) {
@@ -154,6 +183,7 @@ export const env = {
   databaseUrl: parsed.DATABASE_URL,
   dbEncryptionKey: optionalString(parsed.DEN_DB_ENCRYPTION_KEY),
   dbMode: parsed.DB_MODE ?? (parsed.DATABASE_URL ? "mysql" : "planetscale"),
+  desktopConfig: parseDesktopConfig(parsed.API_DESKTOP_CONFIG),
   planetscale: planetscaleCredentials,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: normalizeOrigin(parsed.BETTER_AUTH_URL),

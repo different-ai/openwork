@@ -8,7 +8,7 @@ import type { RequestIdVariables } from "hono/request-id"
 import { requestId } from "hono/request-id"
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
 import { z } from "zod"
-import { env } from "./env.js"
+import { desktopConfigSchema, env } from "./env.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
@@ -27,6 +27,18 @@ const healthResponseSchema = z.object({
   ok: z.literal(true),
   service: z.literal("den-api"),
 }).meta({ ref: "DenApiHealthResponse" })
+
+const desktopConfigResponseSchema = desktopConfigSchema.meta({
+  ref: "DenApiDesktopConfigResponse",
+  description: "Desktop app configuration published by den-api via API_DESKTOP_CONFIG.",
+  examples: [{
+    requireSignin: false,
+    models: {
+      allowConfig: true,
+      removeZen: false,
+    },
+  }],
+})
 
 const openApiDocumentSchema = z.object({
   openapi: z.string(),
@@ -101,6 +113,21 @@ app.get(
   }),
   (c) => {
     return c.json({ ok: true, service: "den-api" })
+  },
+)
+
+app.get(
+  "/desktop-config",
+  describeRoute({
+    tags: ["System"],
+    summary: "Get desktop config",
+    description: "Returns the desktop configuration payload derived from the API_DESKTOP_CONFIG environment variable so desktop clients can toggle sign-in and model behavior without another config store.",
+    responses: {
+      200: jsonResponse("Desktop configuration returned successfully.", desktopConfigResponseSchema),
+    },
+  }),
+  (c) => {
+    return c.json(env.desktopConfig)
   },
 )
 
