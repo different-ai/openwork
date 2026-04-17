@@ -48,7 +48,7 @@ export const ConfigObjectTable = mysqlTable(
     searchText: text("search_text"),
     currentFileName: varchar("current_file_name", { length: 255 }),
     currentFileExtension: varchar("current_file_extension", { length: 64 }),
-    currentRelativePath: varchar("current_relative_path", { length: 2048 }),
+    currentRelativePath: varchar("current_relative_path", { length: 255 }),
     status: mysqlEnum("status", configObjectStatusValues).notNull().default("active"),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id"),
@@ -71,6 +71,7 @@ export const ConfigObjectVersionTable = mysqlTable(
   "config_object_version",
   {
     id: denTypeIdColumn("configObjectVersion", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     normalizedPayloadJson: encryptedJsonColumn<Record<string, unknown> | null>("normalized_payload_json"),
     rawSourceText: encryptedTextColumn("raw_source_text"),
@@ -83,6 +84,7 @@ export const ConfigObjectVersionTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
+    index("config_object_version_organization_id").on(table.organizationId),
     index("config_object_version_config_object_id").on(table.configObjectId),
     index("config_object_version_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("config_object_version_connector_sync_event_id").on(table.connectorSyncEventId),
@@ -116,6 +118,7 @@ export const PluginConfigObjectTable = mysqlTable(
   "plugin_config_object",
   {
     id: denTypeIdColumn("pluginConfigObject", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     pluginId: denTypeIdColumn("plugin", "plugin_id").notNull(),
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     membershipSource: mysqlEnum("membership_source", membershipSourceValues).notNull().default("manual"),
@@ -125,6 +128,7 @@ export const PluginConfigObjectTable = mysqlTable(
     removedAt: timestamp("removed_at", { fsp: 3 }),
   },
   (table) => [
+    index("plugin_config_object_organization_id").on(table.organizationId),
     index("plugin_config_object_plugin_id").on(table.pluginId),
     index("plugin_config_object_config_object_id").on(table.configObjectId),
     index("plugin_config_object_connector_mapping_id").on(table.connectorMappingId),
@@ -136,6 +140,7 @@ export const ConfigObjectAccessGrantTable = mysqlTable(
   "config_object_access_grant",
   {
     id: denTypeIdColumn("configObjectAccessGrant", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
     teamId: denTypeIdColumn("team", "team_id"),
@@ -146,6 +151,7 @@ export const ConfigObjectAccessGrantTable = mysqlTable(
     removedAt: timestamp("removed_at", { fsp: 3 }),
   },
   (table) => [
+    index("config_object_access_grant_organization_id").on(table.organizationId),
     index("config_object_access_grant_config_object_id").on(table.configObjectId),
     index("config_object_access_grant_org_membership_id").on(table.orgMembershipId),
     index("config_object_access_grant_team_id").on(table.teamId),
@@ -159,6 +165,7 @@ export const PluginAccessGrantTable = mysqlTable(
   "plugin_access_grant",
   {
     id: denTypeIdColumn("pluginAccessGrant", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     pluginId: denTypeIdColumn("plugin", "plugin_id").notNull(),
     orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
     teamId: denTypeIdColumn("team", "team_id"),
@@ -169,6 +176,7 @@ export const PluginAccessGrantTable = mysqlTable(
     removedAt: timestamp("removed_at", { fsp: 3 }),
   },
   (table) => [
+    index("plugin_access_grant_organization_id").on(table.organizationId),
     index("plugin_access_grant_plugin_id").on(table.pluginId),
     index("plugin_access_grant_org_membership_id").on(table.orgMembershipId),
     index("plugin_access_grant_team_id").on(table.teamId),
@@ -234,6 +242,7 @@ export const ConnectorInstanceAccessGrantTable = mysqlTable(
   "connector_instance_access_grant",
   {
     id: denTypeIdColumn("connectorInstanceAccessGrant", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id").notNull(),
     orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
     teamId: denTypeIdColumn("team", "team_id"),
@@ -244,6 +253,7 @@ export const ConnectorInstanceAccessGrantTable = mysqlTable(
     removedAt: timestamp("removed_at", { fsp: 3 }),
   },
   (table) => [
+    index("connector_instance_access_grant_organization_id").on(table.organizationId),
     index("connector_instance_access_grant_instance_id").on(table.connectorInstanceId),
     index("connector_instance_access_grant_org_membership_id").on(table.orgMembershipId),
     index("connector_instance_access_grant_team_id").on(table.teamId),
@@ -257,6 +267,7 @@ export const ConnectorTargetTable = mysqlTable(
   "connector_target",
   {
     id: denTypeIdColumn("connectorTarget", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id").notNull(),
     connectorType: mysqlEnum("connector_type", connectorTypeValues).notNull(),
     remoteId: varchar("remote_id", { length: 255 }).notNull(),
@@ -267,6 +278,7 @@ export const ConnectorTargetTable = mysqlTable(
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
+    index("connector_target_organization_id").on(table.organizationId),
     index("connector_target_connector_instance_id").on(table.connectorInstanceId),
     index("connector_target_connector_type").on(table.connectorType),
     index("connector_target_target_kind").on(table.targetKind),
@@ -278,12 +290,13 @@ export const ConnectorMappingTable = mysqlTable(
   "connector_mapping",
   {
     id: denTypeIdColumn("connectorMapping", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id").notNull(),
     connectorTargetId: denTypeIdColumn("connectorTarget", "connector_target_id").notNull(),
     connectorType: mysqlEnum("connector_type", connectorTypeValues).notNull(),
     remoteId: varchar("remote_id", { length: 255 }),
     mappingKind: mysqlEnum("mapping_kind", connectorMappingKindValues).notNull(),
-    selector: varchar("selector", { length: 1024 }).notNull(),
+    selector: varchar("selector", { length: 255 }).notNull(),
     objectType: mysqlEnum("object_type", configObjectTypeValues).notNull(),
     pluginId: denTypeIdColumn("plugin", "plugin_id"),
     autoAddToPlugin: boolean("auto_add_to_plugin").notNull().default(false),
@@ -292,6 +305,7 @@ export const ConnectorMappingTable = mysqlTable(
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
+    index("connector_mapping_organization_id").on(table.organizationId),
     index("connector_mapping_connector_instance_id").on(table.connectorInstanceId),
     index("connector_mapping_connector_target_id").on(table.connectorTargetId),
     index("connector_mapping_object_type").on(table.objectType),
@@ -304,6 +318,7 @@ export const ConnectorSyncEventTable = mysqlTable(
   "connector_sync_event",
   {
     id: denTypeIdColumn("connectorSyncEvent", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id").notNull(),
     connectorTargetId: denTypeIdColumn("connectorTarget", "connector_target_id"),
     connectorType: mysqlEnum("connector_type", connectorTypeValues).notNull(),
@@ -317,6 +332,7 @@ export const ConnectorSyncEventTable = mysqlTable(
     completedAt: timestamp("completed_at", { fsp: 3 }),
   },
   (table) => [
+    index("connector_sync_event_organization_id").on(table.organizationId),
     index("connector_sync_event_connector_instance_id").on(table.connectorInstanceId),
     index("connector_sync_event_connector_target_id").on(table.connectorTargetId),
     index("connector_sync_event_event_type").on(table.eventType),
@@ -330,13 +346,14 @@ export const ConnectorSourceBindingTable = mysqlTable(
   "connector_source_binding",
   {
     id: denTypeIdColumn("connectorSourceBinding", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id").notNull(),
     connectorTargetId: denTypeIdColumn("connectorTarget", "connector_target_id").notNull(),
     connectorMappingId: denTypeIdColumn("connectorMapping", "connector_mapping_id").notNull(),
     connectorType: mysqlEnum("connector_type", connectorTypeValues).notNull(),
     remoteId: varchar("remote_id", { length: 255 }),
-    externalLocator: varchar("external_locator", { length: 2048 }).notNull(),
+    externalLocator: varchar("external_locator", { length: 255 }).notNull(),
     externalStableRef: varchar("external_stable_ref", { length: 255 }),
     lastSeenSourceRevisionRef: varchar("last_seen_source_revision_ref", { length: 255 }),
     status: mysqlEnum("status", configObjectStatusValues).notNull().default("active"),
@@ -345,6 +362,7 @@ export const ConnectorSourceBindingTable = mysqlTable(
     deletedAt: timestamp("deleted_at", { fsp: 3 }),
   },
   (table) => [
+    index("connector_source_binding_organization_id").on(table.organizationId),
     index("connector_source_binding_config_object_id").on(table.configObjectId),
     index("connector_source_binding_connector_instance_id").on(table.connectorInstanceId),
     index("connector_source_binding_connector_target_id").on(table.connectorTargetId),
@@ -358,18 +376,20 @@ export const ConnectorSourceTombstoneTable = mysqlTable(
   "connector_source_tombstone",
   {
     id: denTypeIdColumn("connectorSourceTombstone", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     connectorInstanceId: denTypeIdColumn("connectorInstance", "connector_instance_id").notNull(),
     connectorTargetId: denTypeIdColumn("connectorTarget", "connector_target_id").notNull(),
     connectorMappingId: denTypeIdColumn("connectorMapping", "connector_mapping_id").notNull(),
     connectorType: mysqlEnum("connector_type", connectorTypeValues).notNull(),
     remoteId: varchar("remote_id", { length: 255 }),
-    externalLocator: varchar("external_locator", { length: 2048 }).notNull(),
+    externalLocator: varchar("external_locator", { length: 255 }).notNull(),
     formerConfigObjectId: denTypeIdColumn("configObject", "former_config_object_id").notNull(),
     deletedInSyncEventId: denTypeIdColumn("connectorSyncEvent", "deleted_in_sync_event_id").notNull(),
     deletedSourceRevisionRef: varchar("deleted_source_revision_ref", { length: 255 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
+    index("connector_source_tombstone_organization_id").on(table.organizationId),
     index("connector_source_tombstone_connector_instance_id").on(table.connectorInstanceId),
     index("connector_source_tombstone_connector_target_id").on(table.connectorTargetId),
     index("connector_source_tombstone_connector_mapping_id").on(table.connectorMappingId),

@@ -489,6 +489,7 @@ async function upsertGrant(input: ResourceTarget & {
 }) {
   const createdAt = new Date()
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
+  const organizationId = input.context.organizationContext.organization.id
 
   if (input.resourceKind === "config_object") {
     const existing = await db
@@ -524,6 +525,7 @@ async function upsertGrant(input: ResourceTarget & {
       createdAt,
       createdByOrgMembershipId,
       id: createDenTypeId("configObjectAccessGrant"),
+      organizationId,
       orgMembershipId: input.value.orgMembershipId ?? null,
       orgWide: input.value.orgWide ?? false,
       role: input.value.role,
@@ -566,6 +568,7 @@ async function upsertGrant(input: ResourceTarget & {
       createdAt,
       createdByOrgMembershipId,
       id: createDenTypeId("pluginAccessGrant"),
+      organizationId,
       orgMembershipId: input.value.orgMembershipId ?? null,
       orgWide: input.value.orgWide ?? false,
       pluginId: input.resourceId,
@@ -609,6 +612,7 @@ async function upsertGrant(input: ResourceTarget & {
     createdAt,
     createdByOrgMembershipId,
     id: createDenTypeId("connectorInstanceAccessGrant"),
+    organizationId,
     orgMembershipId: input.value.orgMembershipId ?? null,
     orgWide: input.value.orgWide ?? false,
     role: input.value.role,
@@ -745,26 +749,28 @@ export async function createConfigObject(input: {
       connectorInstanceId: null,
     })
 
-    await tx.insert(ConfigObjectVersionTable).values({
-      configObjectId,
-      connectorSyncEventId: null,
-      createdAt: now,
-      createdByOrgMembershipId,
-      createdVia: input.sourceMode,
-      id: versionId,
-      isDeletedVersion: false,
-      normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
-      rawSourceText: normalizeOptionalString(input.value.rawSourceText),
+      await tx.insert(ConfigObjectVersionTable).values({
+        configObjectId,
+        connectorSyncEventId: null,
+        createdAt: now,
+        createdByOrgMembershipId,
+        createdVia: input.sourceMode,
+        id: versionId,
+        isDeletedVersion: false,
+        normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+        organizationId,
+        rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
       sourceRevisionRef: null,
     })
 
-    await tx.insert(ConfigObjectAccessGrantTable).values({
-      configObjectId,
-      createdAt: now,
-      createdByOrgMembershipId,
-      id: createDenTypeId("configObjectAccessGrant"),
-      orgMembershipId: createdByOrgMembershipId,
+      await tx.insert(ConfigObjectAccessGrantTable).values({
+        configObjectId,
+        createdAt: now,
+        createdByOrgMembershipId,
+        id: createDenTypeId("configObjectAccessGrant"),
+        organizationId,
+        orgMembershipId: createdByOrgMembershipId,
       orgWide: false,
       role: "manager",
       teamId: null,
@@ -787,6 +793,7 @@ export async function createConfigObject(input: {
           createdByOrgMembershipId,
           id: createDenTypeId("pluginConfigObject"),
           membershipSource: "manual",
+          organizationId,
           pluginId,
         })
       }
@@ -857,6 +864,7 @@ export async function createConfigObjectVersion(input: { context: PluginArchActo
       id: createDenTypeId("configObjectVersion"),
       isDeletedVersion: false,
       normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+      organizationId: row.organizationId,
       rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
       sourceRevisionRef: normalizeOptionalString(input.reason),
@@ -932,6 +940,7 @@ export async function attachConfigObjectToPlugin(input: { context: PluginArchAct
       createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
       id: membershipId,
       membershipSource: input.membershipSource ?? "manual",
+      organizationId: input.context.organizationContext.organization.id,
       pluginId: input.pluginId,
     })
   }
@@ -1037,6 +1046,7 @@ export async function createPlugin(input: { context: PluginArchActorContext; des
       createdAt: now,
       createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
       id: createDenTypeId("pluginAccessGrant"),
+      organizationId: input.context.organizationContext.organization.id,
       orgMembershipId: input.context.organizationContext.currentMember.id,
       orgWide: false,
       pluginId: row.id,
@@ -1211,6 +1221,7 @@ export async function createConnectorInstance(input: { connectorAccountId: Conne
       createdAt: now,
       createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
       id: createDenTypeId("connectorInstanceAccessGrant"),
+      organizationId: input.context.organizationContext.organization.id,
       orgMembershipId: input.context.organizationContext.currentMember.id,
       orgWide: false,
       role: "manager",
@@ -1268,6 +1279,7 @@ export async function createConnectorTarget(input: { config: Record<string, unkn
     createdAt: new Date(),
     externalTargetRef: normalizeOptionalString(input.externalTargetRef ?? undefined),
     id: createDenTypeId("connectorTarget"),
+    organizationId: input.context.organizationContext.organization.id,
     remoteId: input.remoteId.trim(),
     targetConfigJson: input.config,
     targetKind: input.targetKind,
@@ -1310,6 +1322,7 @@ export async function queueConnectorTargetResync(input: { connectorTargetId: Con
     eventType: "manual_resync",
     externalEventRef: null,
     id: eventId,
+    organizationId: instance.organizationId,
     remoteId: target.remoteId,
     sourceRevisionRef: null,
     startedAt: new Date(),
@@ -1350,6 +1363,7 @@ export async function createConnectorMapping(input: { autoAddToPlugin: boolean; 
     mappingConfigJson: input.config ?? null,
     mappingKind: input.mappingKind,
     objectType: input.objectType,
+    organizationId: input.context.organizationContext.organization.id,
     pluginId: input.pluginId ?? null,
     remoteId: null,
     selector: input.selector.trim(),
@@ -1637,6 +1651,7 @@ export async function enqueueGithubWebhookSync(input: {
         eventType: "push",
         externalEventRef: input.deliveryId,
         id,
+        organizationId: row.instance.organizationId,
         remoteId: input.repositoryFullName,
         sourceRevisionRef: input.headSha,
         startedAt: new Date(),

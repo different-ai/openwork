@@ -268,7 +268,7 @@ export const connectorTargetUpdateSchema = z.object({
 
 export const connectorMappingCreateSchema = z.object({
   mappingKind: connectorMappingKindSchema,
-  selector: z.string().trim().min(1).max(1024),
+  selector: z.string().trim().min(1).max(255),
   objectType: configObjectTypeSchema,
   pluginId: pluginIdSchema.nullable().optional(),
   autoAddToPlugin: z.boolean().default(false),
@@ -276,7 +276,7 @@ export const connectorMappingCreateSchema = z.object({
 })
 
 export const connectorMappingUpdateSchema = z.object({
-  selector: z.string().trim().min(1).max(1024).optional(),
+  selector: z.string().trim().min(1).max(255).optional(),
   objectType: configObjectTypeSchema.optional(),
   pluginId: pluginIdSchema.nullable().optional(),
   autoAddToPlugin: z.boolean().optional(),
@@ -358,7 +358,7 @@ export const configObjectSchema = z.object({
   searchText: z.string().trim().min(1).max(65535).nullable(),
   currentFileName: z.string().trim().min(1).max(255).nullable(),
   currentFileExtension: z.string().trim().min(1).max(32).nullable(),
-  currentRelativePath: z.string().trim().min(1).max(2048).nullable(),
+  currentRelativePath: z.string().trim().min(1).max(255).nullable(),
   status: configObjectStatusSchema,
   createdByOrgMembershipId: memberIdSchema,
   connectorInstanceId: connectorInstanceIdSchema.nullable(),
@@ -443,7 +443,7 @@ export const connectorMappingSchema = z.object({
   connectorType: connectorTypeSchema,
   remoteId: z.string().trim().min(1).max(255).nullable(),
   mappingKind: connectorMappingKindSchema,
-  selector: z.string().trim().min(1).max(1024),
+  selector: z.string().trim().min(1).max(255),
   objectType: configObjectTypeSchema,
   pluginId: pluginIdSchema.nullable(),
   autoAddToPlugin: z.boolean(),
@@ -484,7 +484,7 @@ export const connectorSourceBindingSchema = z.object({
   connectorMappingId: connectorMappingIdSchema,
   connectorType: connectorTypeSchema,
   remoteId: z.string().trim().min(1).max(255).nullable(),
-  externalLocator: z.string().trim().min(1).max(2048),
+  externalLocator: z.string().trim().min(1).max(255),
   externalStableRef: z.string().trim().min(1).max(255).nullable(),
   lastSeenSourceRevisionRef: z.string().trim().min(1).max(255).nullable(),
   status: configObjectStatusSchema,
@@ -500,7 +500,7 @@ export const connectorSourceTombstoneSchema = z.object({
   connectorMappingId: connectorMappingIdSchema,
   connectorType: connectorTypeSchema,
   remoteId: z.string().trim().min(1).max(255).nullable(),
-  externalLocator: z.string().trim().min(1).max(2048),
+  externalLocator: z.string().trim().min(1).max(255),
   formerConfigObjectId: configObjectIdSchema,
   deletedInSyncEventId: connectorSyncEventIdSchema,
   deletedSourceRevisionRef: z.string().trim().min(1).max(255).nullable(),
