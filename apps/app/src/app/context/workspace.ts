@@ -935,6 +935,29 @@ export function createWorkspaceStore(options: {
     }
   };
 
+  const waitForFreshLocalRuntimeBaseUrl = async (previousBaseUrl?: string | null, timeoutMs = 8_000) => {
+    const startedAt = Date.now();
+    const prior = previousBaseUrl?.trim() ?? "";
+    let fallback = "";
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const hostInfo = await openworkServerInfo().catch(() => null);
+      const engineSnapshot = await engineInfo().catch(() => null);
+      const nextBaseUrl = hostInfo?.opencodeBaseUrl?.trim() || engineSnapshot?.baseUrl?.trim() || "";
+      if (nextBaseUrl) {
+        if (!fallback) {
+          fallback = nextBaseUrl;
+        }
+        if (!prior || nextBaseUrl !== prior || hostInfo?.opencodeStatus === "running") {
+          return nextBaseUrl;
+        }
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+    }
+
+    return fallback || prior;
+  };
+
   const resolveActiveOpenworkWorkspace = () => {
     const client = resolveConnectedOpenworkServer();
     const workspaceId = runtimeWorkspaceId()?.trim() ?? "";
@@ -3762,21 +3785,27 @@ export function createWorkspaceStore(options: {
       if (localServer) {
         const localWorkspace = await findOpenworkWorkspaceByPathWithClient(localServer, root);
         if (localWorkspace?.workspaceId) {
+          const previousBaseUrl = engine()?.baseUrl?.trim() || "";
           await localServer.reloadWorkspaceEngine(localWorkspace.workspaceId);
-          const hostInfo = options.openworkServer.openworkServerHostInfo()
-            ?? await openworkServerInfo().catch(() => null);
-          const nextBaseUrl = hostInfo?.opencodeBaseUrl?.trim() || engine()?.baseUrl?.trim() || "";
-          if (nextBaseUrl) {
-            const ok = await connectToServer(
-              nextBaseUrl,
-              root,
-              { workspaceType: "local", targetRoot: root, reason: "engine-reload-server-v2" },
-              undefined,
-            );
-            if (!ok) {
-              options.setError("Failed to reconnect after reload");
-              return false;
-            }
+          const nextBaseUrl = await waitForFreshLocalRuntimeBaseUrl(previousBaseUrl);
+          if (!nextBaseUrl) {
+            options.setError("Failed to discover runtime after reload");
+            return false;
+          }
+
+          options.setClient(null);
+          options.setConnectedVersion(null);
+          setConnectedWorkspaceId(null);
+          options.setSseConnected(false);
+          const ok = await connectToServer(
+            nextBaseUrl,
+            root,
+            { workspaceType: "local", targetRoot: root, reason: "engine-reload-server-v2" },
+            undefined,
+          );
+          if (!ok) {
+            options.setError("Failed to reconnect after reload");
+            return false;
           }
           const nextInfo = await engineInfo();
           setEngine(nextInfo);

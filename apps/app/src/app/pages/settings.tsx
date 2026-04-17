@@ -1752,6 +1752,7 @@ export default function SettingsView(props: SettingsViewProps) {
               addPlugin={props.addPlugin}
               reloadWorkspaceEngine={props.reloadWorkspaceEngine}
               reloadBusy={props.reloadBusy}
+              reloadError={props.reloadError}
               canReloadWorkspace={props.canReloadWorkspace}
               showHeader={false}
             />

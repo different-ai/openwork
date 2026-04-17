@@ -2007,9 +2007,15 @@ export function createOpenworkServerClient(options: {
         method: "DELETE",
       }),
     listScheduledJobs: (workspaceId: string) =>
-      requestJson<{ items: ScheduledJob[] }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs`, { token, hostToken }),
+      requestJson<{ items: ScheduledJob[] }>(
+        baseUrl,
+        serverV2 ? `/workspaces/${workspaceId}/scheduler/jobs` : `/workspace/${workspaceId}/scheduler/jobs`,
+        { token, hostToken },
+      ),
     deleteScheduledJob: (workspaceId: string, name: string) =>
-      requestJson<{ job: ScheduledJob }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs/${encodeURIComponent(name)}`,
+      requestJson<{ job: ScheduledJob }>(
+        baseUrl,
+        serverV2 ? `/workspaces/${workspaceId}/scheduler/jobs/${encodeURIComponent(name)}` : `/workspace/${workspaceId}/scheduler/jobs/${encodeURIComponent(name)}`,
         {
           token,
           hostToken,

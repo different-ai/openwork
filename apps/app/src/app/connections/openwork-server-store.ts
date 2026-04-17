@@ -31,6 +31,8 @@ import {
   createServerVersionAdapter,
   LOCAL_SERVER_ID,
 } from "../kernel/server-version";
+import { resolveEffectiveOpenworkServerStatus } from "./openwork-server-status";
+import { resolveEffectiveOpenworkWorkspaceId } from "./openwork-workspace-id";
 
 export type OpenworkServerStore = ReturnType<typeof createOpenworkServerStore>;
 
@@ -56,7 +58,7 @@ export function createOpenworkServerStore(options: {
   const [shareRemoteAccessBusy, setShareRemoteAccessBusy] = createSignal(false);
   const [shareRemoteAccessError, setShareRemoteAccessError] = createSignal<string | null>(null);
   const [openworkServerUrl, setOpenworkServerUrl] = createSignal("");
-  const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
+  const [rawOpenworkServerStatus, setRawOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
   const [openworkServerCapabilities, setOpenworkServerCapabilities] =
     createSignal<OpenworkServerCapabilities | null>(null);
   const [, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
@@ -135,8 +137,21 @@ export function createOpenworkServerStore(options: {
       });
   });
 
+  const openworkServerStatus = createMemo<OpenworkServerStatus>(() =>
+    resolveEffectiveOpenworkServerStatus(rawOpenworkServerStatus(), openworkServerHostInfo()),
+  );
+
+  const effectiveOpenworkWorkspaceId = createMemo(() =>
+    resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: openworkServerHostInfo(),
+      runtimeWorkspaceId: options.runtimeWorkspaceId(),
+      selectedWorkspaceId: options.selectedWorkspaceDisplay().id,
+      workspaceType: options.selectedWorkspaceDisplay().workspaceType,
+    }),
+  );
+
   const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
-  const openworkServerWorkspaceReady = createMemo(() => Boolean(options.runtimeWorkspaceId()));
+  const openworkServerWorkspaceReady = createMemo(() => Boolean(effectiveOpenworkWorkspaceId()));
   const resolvedOpenworkCapabilities = createMemo(() => openworkServerCapabilities());
   const openworkServerCanWriteSkills = createMemo(
     () =>
@@ -225,7 +240,7 @@ export function createOpenworkServerStore(options: {
     const hostToken = auth.hostToken;
 
     if (!url) {
-      setOpenworkServerStatus("disconnected");
+      setRawOpenworkServerStatus("disconnected");
       setOpenworkServerCapabilities(null);
       setOpenworkServerContractMode(null);
       setOpenworkServerCheckedAt(Date.now());
@@ -271,7 +286,7 @@ export function createOpenworkServerStore(options: {
         }
 
         if (!active) return;
-        setOpenworkServerStatus(result.status);
+        setRawOpenworkServerStatus(result.status);
         setOpenworkServerCapabilities(result.capabilities);
         delayMs =
           result.status === "connected" || result.status === "limited"
@@ -518,14 +533,14 @@ export function createOpenworkServerStore(options: {
   const testOpenworkServerConnection = async (next: OpenworkServerSettings) => {
     const derived = normalizeOpenworkServerUrl(next.urlOverride ?? "");
     if (!derived) {
-      setOpenworkServerStatus("disconnected");
+      setRawOpenworkServerStatus("disconnected");
       setOpenworkServerCapabilities(null);
       setOpenworkServerCheckedAt(Date.now());
       return false;
     }
 
     const result = await checkOpenworkServer(derived, next.token);
-    setOpenworkServerStatus(result.status);
+    setRawOpenworkServerStatus(result.status);
     setOpenworkServerCapabilities(result.capabilities);
     setOpenworkServerCheckedAt(Date.now());
 
@@ -569,14 +584,14 @@ export function createOpenworkServerStore(options: {
       const url = openworkServerBaseUrl().trim();
       const auth = openworkServerAuth();
       if (!url) {
-        setOpenworkServerStatus("disconnected");
+        setRawOpenworkServerStatus("disconnected");
         setOpenworkServerCapabilities(null);
         setOpenworkServerCheckedAt(Date.now());
         return false;
       }
 
       const result = await checkOpenworkServer(url, auth.token, auth.hostToken);
-      setOpenworkServerStatus(result.status);
+      setRawOpenworkServerStatus(result.status);
       setOpenworkServerCapabilities(result.capabilities);
       setOpenworkServerCheckedAt(Date.now());
       return result.status === "connected" || result.status === "limited";

@@ -270,6 +270,57 @@ test("server-v2 delete still uses v2 routes before capabilities hydrate", async 
   expect(calls).toEqual(["DELETE /workspaces/ws_local", "GET /workspaces"]);
 });
 
+test("server-v2 scheduler routes use workspace-first paths", async () => {
+  const calls: string[] = [];
+  const baseUrl = startServer(async (request) => {
+    const url = new URL(request.url);
+    calls.push(`${request.method} ${url.pathname}${url.search}`);
+
+    if (url.pathname === "/workspaces/ws_local/scheduler/jobs" && request.method === "GET") {
+      return Response.json({
+        items: [
+          {
+            slug: "nightly-review",
+            name: "Nightly Review",
+            schedule: "0 9 * * *",
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+    }
+
+    if (url.pathname === "/workspaces/ws_local/scheduler/jobs/nightly-review" && request.method === "DELETE") {
+      return Response.json({
+        job: {
+          slug: "nightly-review",
+          name: "Nightly Review",
+          schedule: "0 9 * * *",
+          createdAt: new Date().toISOString(),
+        },
+      });
+    }
+
+    return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
+  });
+
+  const client = createOpenworkServerClient({
+    baseUrl,
+    serverV2: { enabled: true, capabilities: serverV2Capabilities },
+    token: "client-token",
+  });
+
+  const jobs = await client.listScheduledJobs("ws_local");
+  expect(jobs.items).toHaveLength(1);
+
+  const deleted = await client.deleteScheduledJob("ws_local", "nightly-review");
+  expect(deleted.job.slug).toBe("nightly-review");
+
+  expect(calls).toEqual([
+    "GET /workspaces/ws_local/scheduler/jobs",
+    "DELETE /workspaces/ws_local/scheduler/jobs/nightly-review",
+  ]);
+});
+
 test("desktop Server V2 startup clears stale remote override state", () => {
   const sanitized = sanitizeDesktopServerV2StartupSettings({
     settings: {

@@ -79,6 +79,36 @@ export function createSystemState(options: {
   setProviderConnectedIds: (value: string[]) => void;
   setError: (value: string | null) => void;
 }) {
+  const waitForReloadedClient = async (initialClient: Client | null, timeoutMs = 12_000) => {
+    const startedAt = Date.now();
+    let lastError: unknown = null;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const candidate = options.client();
+      if (!candidate) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+        continue;
+      }
+
+      try {
+        await waitForHealthy(candidate, { timeoutMs: 1_500 });
+        if (candidate !== initialClient || !initialClient) {
+          return candidate;
+        }
+        return candidate;
+      } catch (error) {
+        lastError = error;
+      }
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+    }
+
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+    throw new Error("OpenCode client unavailable after reload.");
+  };
+
   const isActiveSessionStatus = (status: string | null | undefined) =>
     status === "running" || status === "retry";
 
@@ -277,12 +307,7 @@ export function createSystemState(options: {
         unwrap(await initialClient.instance.dispose());
       }
 
-      const nextClient = options.client();
-      if (!nextClient) {
-        throw new Error("OpenCode client unavailable after reload.");
-      }
-
-      await waitForHealthy(nextClient, { timeoutMs: 12_000 });
+      const nextClient = await waitForReloadedClient(initialClient, 12_000);
       let disabledProviders: string[] = [];
       try {
         const config = unwrap(await nextClient.config.get()) as {

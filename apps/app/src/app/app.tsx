@@ -24,6 +24,7 @@ import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import ConnectionsModals from "./connections/modals";
 import { OpenworkServerProvider } from "./connections/openwork-server-provider";
 import { createOpenworkServerStore } from "./connections/openwork-server-store";
+import { resolveEffectiveOpenworkWorkspaceId } from "./connections/openwork-workspace-id";
 import { ConnectionsProvider } from "./connections/provider";
 import { ExtensionsProvider } from "./extensions/provider";
 import { AutomationsProvider } from "./automations/provider";
@@ -511,6 +512,7 @@ export default function App() {
     openworkServerClient: () => openworkServerStore?.openworkServerClient?.() ?? null,
     openworkServerStatus: () => openworkServerStore?.openworkServerStatus?.() ?? "disconnected",
     openworkServerCapabilities: () => openworkServerStore?.openworkServerCapabilities?.() ?? null,
+    openworkServerHostInfo: () => openworkServerStore?.openworkServerHostInfo?.() ?? null,
     runtimeWorkspaceId: () => workspaceStore?.runtimeWorkspaceId?.() ?? null,
     focusSessionPromptSoon: () => focusSessionPromptSoon(),
     setError,
@@ -995,7 +997,14 @@ export default function App() {
     focusPromptSoon: focusSessionPromptSoon,
   });
 
-  const runtimeWorkspaceId = createMemo(() => workspaceStore.runtimeWorkspaceId());
+  const runtimeWorkspaceId = createMemo(() =>
+    resolveEffectiveOpenworkWorkspaceId({
+      hostInfo: openworkServerStore?.openworkServerHostInfo?.() ?? null,
+      runtimeWorkspaceId: workspaceStore.runtimeWorkspaceId(),
+      selectedWorkspaceId: workspaceStore.selectedWorkspaceId(),
+      workspaceType: workspaceStore.selectedWorkspaceDisplay().workspaceType,
+    }),
+  );
   const activeWorkspaceServerConfig = createMemo(() => workspaceStore.runtimeWorkspaceConfig());
   const statusToastsStore = createStatusToastsStore();
   const bundlesStore = createBundlesStore({

@@ -7,6 +7,7 @@ import { createAppDependencies } from "./context/app-dependencies.js";
 
 const tempRoots: string[] = [];
 const envBackup = {
+  home: process.env.HOME,
   publisherBaseUrl: process.env.OPENWORK_PUBLISHER_BASE_URL,
   publisherOrigin: process.env.OPENWORK_PUBLISHER_REQUEST_ORIGIN,
 };
@@ -20,6 +21,7 @@ afterEach(() => {
   }
   process.env.OPENWORK_PUBLISHER_BASE_URL = envBackup.publisherBaseUrl;
   process.env.OPENWORK_PUBLISHER_REQUEST_ORIGIN = envBackup.publisherOrigin;
+  process.env.HOME = envBackup.home;
   globalThis.fetch = originalFetch;
 });
 
@@ -261,4 +263,42 @@ test("managed resource routes cover MCPs, plugins, skills, shares, export/import
   } finally {
     routerSendServer.stop(true);
   }
+});
+
+test("scheduler routes list and delete jobs for a local workspace", async () => {
+  const root = createTempRoot("openwork-server-v2-scheduler");
+  process.env.HOME = root;
+  const { app } = createTestApp("openwork-server-v2-phase8-scheduler");
+  const workspaceRoot = path.join(root, "workspace-scheduler");
+  const jobsDir = path.join(root, ".config", "opencode", "jobs");
+  fs.mkdirSync(jobsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(jobsDir, "nightly-review.json"),
+    JSON.stringify({
+      createdAt: new Date("2026-04-16T00:00:00.000Z").toISOString(),
+      name: "Nightly Review",
+      schedule: "0 9 * * *",
+      slug: "nightly-review",
+      workdir: workspaceRoot,
+    }, null, 2),
+    "utf8",
+  );
+
+  const createResponse = await app.request("http://openwork.local/workspaces/local", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folderPath: workspaceRoot, name: "Scheduler", preset: "starter" }),
+  });
+  const workspaceId = (await createResponse.json()).data.id as string;
+
+  const listResponse = await app.request(`http://openwork.local/workspaces/${workspaceId}/scheduler/jobs`);
+  expect(listResponse.status).toBe(200);
+  expect((await listResponse.json()).data.items[0].slug).toBe("nightly-review");
+
+  const deleteResponse = await app.request(`http://openwork.local/workspaces/${workspaceId}/scheduler/jobs/nightly-review`, {
+    method: "DELETE",
+  });
+  expect(deleteResponse.status).toBe(200);
+  expect((await deleteResponse.json()).data.job.slug).toBe("nightly-review");
+  expect(fs.existsSync(path.join(jobsDir, "nightly-review.json"))).toBe(false);
 });
