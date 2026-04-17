@@ -3,7 +3,7 @@ title: "Missing languages"
 description: "See which OpenWork languages ship today and help us improve them."
 ---
 
-Want to help OpenWork speak more languages? Start here.
+OpenWork already ships with a growing set of languages, and we want to keep expanding that list.
 
 <Frame>
   <iframe
@@ -18,7 +18,7 @@ Want to help OpenWork speak more languages? Start here.
 
 ## Languages available today
 
-OpenWork currently ships with these app languages:
+Watch the video above for a quick overview, then use this list as the current source of truth for languages supported in the app:
 
 - English (`en`)
 - Japanese (`ja`)
@@ -30,8 +30,25 @@ OpenWork currently ships with these app languages:
 - Catalan (`ca`)
 - Spanish (`es`)
 
-## Help improve it
+## Improve current translations
 
-If you spot a translation issue, want to correct copy, or want to add support for another language, open a [pull request](https://github.com/different-ai/openwork/tree/dev/apps/app/src/i18n) and we will review it.
+If you want to improve an existing translation, start in [`apps/app/src/i18n/locales`](https://github.com/different-ai/openwork/tree/dev/apps/app/src/i18n/locales).
+
+Each language lives in its own file, so most fixes are simple copy updates inside one locale file such as `apps/app/src/i18n/locales/fr.ts` or `apps/app/src/i18n/locales/es.ts`.
+
+## Add a new language
+
+If you want to add a new language to OpenWork, the basic file changes are:
+
+- Create a new locale file in `apps/app/src/i18n/locales/<language-code>.ts`.
+- Register that locale in `apps/app/src/i18n/index.ts` by adding the import, language code, language option, and translation map entry.
+- Re-export the locale from `apps/app/src/i18n/locales/index.ts`.
+- Add the new locale code to `scripts/i18n-audit.mjs` so the audit script checks it.
+
+After that, run the audit script to spot missing keys:
+
+```bash
+node scripts/i18n-audit.mjs --missing
+```
 
 If you want to follow broader localization work, language requests, or upcoming improvements, check the [i18n roadmap](https://github.com/different-ai/openwork/issues/1385).
