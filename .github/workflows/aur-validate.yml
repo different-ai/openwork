@@ -414,10 +414,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch origin main dev --no-tags
+          git fetch origin dev --no-tags
           publish_sha="$(git rev-parse HEAD)"
-          if ! git merge-base --is-ancestor "$publish_sha" origin/main && ! git merge-base --is-ancestor "$publish_sha" origin/dev; then
-            echo "Ref ${publish_sha} is not reachable from origin/main or origin/dev; refusing AUR publish." >&2
+          if ! git merge-base --is-ancestor "$publish_sha" origin/dev; then
+            echo "Ref ${publish_sha} is not reachable from origin/dev; refusing AUR publish." >&2
             exit 1
           fi
 

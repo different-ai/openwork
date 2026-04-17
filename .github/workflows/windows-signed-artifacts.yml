@@ -33,7 +33,7 @@ jobs:
 
           requested_ref="${INPUT_REF:-${GITHUB_REF_NAME}}"
 
-          git fetch origin --force --tags main dev
+          git fetch origin --force --tags dev
 
           if git show-ref --verify --quiet "refs/remotes/origin/${requested_ref}"; then
             candidate_sha="$(git rev-parse "refs/remotes/origin/${requested_ref}")"
@@ -44,12 +44,12 @@ jobs:
             candidate_sha="$(git rev-parse FETCH_HEAD)"
           fi
 
-          if git merge-base --is-ancestor "$candidate_sha" origin/main || git merge-base --is-ancestor "$candidate_sha" origin/dev; then
+          if git merge-base --is-ancestor "$candidate_sha" origin/dev; then
             echo "trusted_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "Requested ref ${requested_ref} resolves to ${candidate_sha}, which is not reachable from origin/main or origin/dev." >&2
+          echo "Requested ref ${requested_ref} resolves to ${candidate_sha}, which is not reachable from origin/dev." >&2
           exit 1
 
   build-and-sign-windows:

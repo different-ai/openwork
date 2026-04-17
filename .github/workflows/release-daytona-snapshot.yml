@@ -111,14 +111,14 @@ jobs:
           set -euo pipefail
 
           tag_commit="$(git rev-parse HEAD)"
-          git fetch origin main dev --no-tags
+          git fetch origin dev --no-tags
 
-          if git merge-base --is-ancestor "$tag_commit" origin/main || git merge-base --is-ancestor "$tag_commit" origin/dev; then
+          if git merge-base --is-ancestor "$tag_commit" origin/dev; then
             echo "Trusted release tag commit verified: $tag_commit"
             exit 0
           fi
 
-          echo "Release tag ${{ steps.resolve.outputs.release_tag }} points to commit $tag_commit, which is not reachable from origin/main or origin/dev." >&2
+          echo "Release tag ${{ steps.resolve.outputs.release_tag }} points to commit $tag_commit, which is not reachable from origin/dev." >&2
           exit 1
 
       - name: Set up Docker Buildx
