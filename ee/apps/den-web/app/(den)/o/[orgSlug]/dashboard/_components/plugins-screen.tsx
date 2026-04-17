@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
+  Cable,
   FileText,
   Puzzle,
   Search,
@@ -13,8 +14,10 @@ import { PaperMeshGradient } from "@openwork/ui/react";
 import { UnderlineTabs } from "../../../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../../../_components/ui/input";
-import { getPluginRoute } from "../../../../_lib/den-org";
+import { buttonVariants } from "../../../../_components/ui/button";
+import { getIntegrationsRoute, getPluginRoute } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useHasAnyIntegration } from "./integration-data";
 import {
   getPluginCategoryLabel,
   getPluginPartsSummary,
@@ -33,6 +36,7 @@ const PLUGIN_TABS = [
 export function PluginsScreen() {
   const { orgSlug } = useOrgDashboard();
   const { data: plugins = [], isLoading, error } = usePlugins();
+  const { hasAny: hasAnyIntegration, isLoading: integrationsLoading } = useHasAnyIntegration();
   const [activeView, setActiveView] = useState<PluginView>("plugins");
   const [query, setQuery] = useState("");
 
@@ -145,17 +149,19 @@ export function PluginsScreen() {
         </div>
       ) : null}
 
-      {isLoading ? (
+      {isLoading || integrationsLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading plugin catalog...
         </div>
+      ) : !hasAnyIntegration ? (
+        <ConnectIntegrationEmptyState integrationsHref={getIntegrationsRoute(orgSlug)} />
       ) : activeView === "plugins" ? (
         filteredPlugins.length === 0 ? (
           <EmptyState
             title={plugins.length === 0 ? "No plugins available yet." : "No plugins match that search."}
             description={
               plugins.length === 0
-                ? "Once you connect a marketplace, discovered plugins will appear here."
+                ? "None of your connected integrations expose plugins yet. Connect another repository to discover more."
                 : "Try a different search term or browse the skills, hooks, or MCPs tabs."
             }
           />
@@ -253,6 +259,32 @@ function EmptyState({ title, description }: { title: string; description: string
     <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
       <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">{title}</p>
       <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500">{description}</p>
+    </div>
+  );
+}
+
+function ConnectIntegrationEmptyState({ integrationsHref }: { integrationsHref: string }) {
+  return (
+    <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-gray-100 text-gray-500">
+        <Cable className="h-6 w-6" />
+      </div>
+      <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
+        Connect an integration to discover plugins
+      </p>
+      <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500">
+        Plugins, skills, hooks, and MCP servers are sourced from the repositories you connect on the
+        Integrations page. Connect GitHub or Bitbucket to see your catalog populate.
+      </p>
+      <div className="mt-6 flex justify-center">
+        <Link
+          href={integrationsHref}
+          className={buttonVariants({ variant: "primary" })}
+        >
+          <Cable className="h-4 w-4" aria-hidden="true" />
+          Open Integrations
+        </Link>
+      </div>
     </div>
   );
 }

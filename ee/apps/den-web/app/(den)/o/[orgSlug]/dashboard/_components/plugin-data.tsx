@@ -1,6 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  type ConnectedIntegration,
+  integrationQueryKeys,
+} from "./integration-data";
 
 /**
  * Plugin primitives — mirror OpenCode / Claude Code's plugin surface:
@@ -15,6 +19,12 @@ import { useQuery } from "@tanstack/react-query";
  * This file models the frontend shape only. Mock data is served through
  * React Query so we can swap the queryFn for a real API call later without
  * touching any consumers.
+ *
+ * Gating: the catalog is empty until the user has connected at least one
+ * integration (GitHub or Bitbucket) on the Integrations page. The queryFn
+ * reads the integrations cache and derives which plugins are visible from
+ * the set of connected repositories. Integration mutations invalidate
+ * `["plugins"]`, so connections and disconnections propagate automatically.
  */
 
 // ── Primitive types ────────────────────────────────────────────────────────
@@ -91,6 +101,13 @@ export type DenPlugin = {
   agents: PluginAgent[];
   commands: PluginCommand[];
   updatedAt: string;
+  /**
+   * Opt-in gating: which connected integration provider exposes this plugin.
+   * - "any"      → visible once ANY integration is connected (e.g. marketplace output styles)
+   * - "github"   → only visible after a GitHub account is connected
+   * - "bitbucket"→ only visible after a Bitbucket account is connected
+   */
+  requiresProvider: "any" | "github" | "bitbucket";
 };
 
 // ── Display helpers ────────────────────────────────────────────────────────
@@ -196,6 +213,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
       { id: "cmd_gh_pr", name: "/gh:pr", description: "Create a pull request from the current branch." },
     ],
     updatedAt: "2026-04-10T12:00:00Z",
+    requiresProvider: "github",
   },
   {
     id: "plg_commit_commands",
@@ -221,6 +239,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
       { id: "cmd_cc_pr", name: "/pr", description: "Open a pull request." },
     ],
     updatedAt: "2026-04-07T09:00:00Z",
+    requiresProvider: "any",
   },
   {
     id: "plg_typescript_lsp",
@@ -254,6 +273,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     agents: [],
     commands: [],
     updatedAt: "2026-03-28T16:45:00Z",
+    requiresProvider: "any",
   },
   {
     id: "plg_linear",
@@ -286,6 +306,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
       { id: "cmd_lin_new", name: "/linear:new", description: "File a new issue from the current context." },
     ],
     updatedAt: "2026-04-02T18:12:00Z",
+    requiresProvider: "any",
   },
   {
     id: "plg_openwork_release",
@@ -318,6 +339,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
       { id: "cmd_ow_release", name: "/release", description: "Run the standardized release workflow." },
     ],
     updatedAt: "2026-04-14T08:30:00Z",
+    requiresProvider: "github",
   },
   {
     id: "plg_sentry",
@@ -346,6 +368,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     agents: [],
     commands: [],
     updatedAt: "2026-03-20T11:00:00Z",
+    requiresProvider: "any",
   },
   {
     id: "plg_explanatory_style",
@@ -371,18 +394,26 @@ const MOCK_PLUGINS: DenPlugin[] = [
     agents: [],
     commands: [],
     updatedAt: "2026-03-12T14:22:00Z",
+    requiresProvider: "any",
   },
 ];
 
-async function fetchMockPlugins(): Promise<DenPlugin[]> {
-  // Simulate network latency so loading states render during development.
-  await new Promise((resolve) => setTimeout(resolve, 180));
-  return MOCK_PLUGINS;
+function readConnectedProviders(client: QueryClient): Set<"github" | "bitbucket"> {
+  const connections = client.getQueryData<ConnectedIntegration[]>(integrationQueryKeys.list()) ?? [];
+  return new Set(connections.map((connection) => connection.provider));
 }
 
-async function fetchMockPlugin(id: string): Promise<DenPlugin | null> {
-  await new Promise((resolve) => setTimeout(resolve, 120));
-  return MOCK_PLUGINS.find((plugin) => plugin.id === id) ?? null;
+function filterByConnectedProviders(
+  plugins: DenPlugin[],
+  connectedProviders: Set<"github" | "bitbucket">,
+): DenPlugin[] {
+  if (connectedProviders.size === 0) {
+    return [];
+  }
+  return plugins.filter((plugin) => {
+    if (plugin.requiresProvider === "any") return true;
+    return connectedProviders.has(plugin.requiresProvider);
+  });
 }
 
 // ── Query hooks ────────────────────────────────────────────────────────────
@@ -397,16 +428,27 @@ export const pluginQueryKeys = {
 };
 
 export function usePlugins() {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: pluginQueryKeys.list(),
-    queryFn: fetchMockPlugins,
+    queryFn: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      const connectedProviders = readConnectedProviders(queryClient);
+      return filterByConnectedProviders(MOCK_PLUGINS, connectedProviders);
+    },
   });
 }
 
 export function usePlugin(id: string) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: pluginQueryKeys.detail(id),
-    queryFn: () => fetchMockPlugin(id),
+    queryFn: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const connectedProviders = readConnectedProviders(queryClient);
+      const visible = filterByConnectedProviders(MOCK_PLUGINS, connectedProviders);
+      return visible.find((plugin) => plugin.id === id) ?? null;
+    },
     enabled: Boolean(id),
   });
 }

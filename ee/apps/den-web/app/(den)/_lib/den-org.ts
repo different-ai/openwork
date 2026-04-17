@@ -284,6 +284,10 @@ export function getPluginRoute(orgSlug: string, pluginId: string): string {
   return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
 }
 
+export function getIntegrationsRoute(orgSlug: string): string {
+  return `${getOrgDashboardRoute(orgSlug)}/integrations`;
+}
+
 export function parseOrgListPayload(payload: unknown): {
   orgs: DenOrgSummary[];
   activeOrgId: string | null;

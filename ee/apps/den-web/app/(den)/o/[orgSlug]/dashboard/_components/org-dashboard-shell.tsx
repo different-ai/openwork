@@ -24,6 +24,7 @@ import {
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getOrgAccessFlags,
+  getIntegrationsRoute,
   getMembersRoute,
   getOrgDashboardRoute,
   getPluginsRoute,
@@ -113,6 +114,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugins";
+  }
+  if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
+    return "Integrations";
   }
   if (pathname.startsWith(getBillingRoute(orgSlug)) || pathname === "/checkout") {
     return "Billing";
