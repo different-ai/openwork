@@ -37,8 +37,19 @@
               "start-here/do-work-with-it/share-your-setup"
             ]
           },
-          "start-here/self-host",
-          "start-here/missing-docs"
+          {
+            "group": "Self-host",
+            "pages": [
+              "start-here/self-host"
+            ]
+          },
+          {
+            "group": "Help improve OpenWork",
+            "pages": [
+              "start-here/missing-docs",
+              "start-here/missing-languages"
+            ]
+          }
         ]
       },
       {
