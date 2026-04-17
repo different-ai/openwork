@@ -100,7 +100,7 @@ jobs:
           echo "snapshot_region=$snapshot_region" >> "$GITHUB_OUTPUT"
 
       - name: Checkout release source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve.outputs.release_tag }}
@@ -122,7 +122,7 @@ jobs:
           exit 1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        uses: docker/setup-buildx-action@v3
 
       - name: Install Daytona CLI
         shell: bash
