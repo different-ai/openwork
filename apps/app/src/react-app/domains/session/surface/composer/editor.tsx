@@ -377,13 +377,18 @@ function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: b
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (props.disabled) return false;
-        if (!event?.metaKey && !event?.ctrlKey) return false;
         // IME composition guard: three signals keep this reliable across
-        // Chrome, Safari, and WebKit. Matches the Solid composer guard.
+        // Chrome, Safari, and WebKit. While IME is mid-character, Enter
+        // must always fall through to the editor so the composition can
+        // commit.
         if (event?.isComposing === true || event?.keyCode === 229) return false;
+        // Shift+Enter inserts a newline — let the editor handle it.
+        if (event?.shiftKey) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
-        event.preventDefault();
+        // Plain Enter submits. Cmd/Ctrl+Enter also submits for muscle
+        // memory compatibility.
+        event?.preventDefault();
         void props.onSubmit();
         return true;
       },

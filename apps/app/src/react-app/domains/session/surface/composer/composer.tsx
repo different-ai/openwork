@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, Upload, X, Zap } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, SkillCard, SlashCommandOption } from "../../../../../app/types";
 import { currentLocale, t, type Language } from "../../../../../i18n";
@@ -244,7 +244,6 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
 
 export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
-  let inboxFileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [variantMenuOpen, setVariantMenuOpen] = useState(false);
@@ -655,15 +654,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
   };
 
-  const handleInboxUploadSelection = async (files: File[]) => {
-    if (!files.length || !props.onUploadInboxFiles) return;
-    try {
-      await props.onUploadInboxFiles(files);
-    } catch {
-      // Notice is handled upstream.
-    }
-  };
-
   const activeMcpItems = mcpServers.map((entry) => ({
     entry,
     status: toReactMcpStatus(entry.name, entry, mcpStatuses),
@@ -948,19 +938,6 @@ export function ReactSessionComposer(props: ComposerProps) {
                     event.currentTarget.value = "";
                   }}
                 />
-                <input
-                  ref={(element) => {
-                    inboxFileInput = element ?? undefined;
-                  }}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(event) => {
-                    const files = Array.from(event.currentTarget.files ?? []);
-                    if (files.length) void handleInboxUploadSelection(files);
-                    event.currentTarget.value = "";
-                  }}
-                />
                 <button
                   type="button"
                   className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 ${
@@ -975,16 +952,6 @@ export function ReactSessionComposer(props: ComposerProps) {
                 >
                   <Paperclip size={16} />
                 </button>
-                {props.onUploadInboxFiles ? (
-                  <button
-                    type="button"
-                    className="inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3"
-                    onClick={() => inboxFileInput?.click()}
-                    title={t("composer.upload_to_shared_folder", locale)}
-                  >
-                    <Upload size={16} />
-                  </button>
-                ) : null}
                 <div ref={toolMenuRef} className="relative">
                   <button
                     type="button"
