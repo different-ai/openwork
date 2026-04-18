@@ -17,6 +17,10 @@ import type {
   McpStatusMap,
   SkillCard,
 } from "../../../../app/types";
+import {
+  publishInspectorSlice,
+  recordInspectorEvent,
+} from "../../../shell/app-inspector";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
 import type { ReactComposerNotice } from "./composer/notice";
@@ -159,6 +163,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     setSending(false);
     setShowDelayedLoading(false);
+    // Clear draft + attachments + mentions on session change so typed text
+    // doesn't bleed across sessions (and across workspaces). The sessionId
+    // effectively changes when the workspace changes too because the route
+    // navigates to the remembered session id for that workspace.
+    setDraft("");
     setAttachments([]);
     setMentions({});
     setPasteParts([]);
@@ -170,6 +179,51 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const id = window.setTimeout(() => setNotice(null), 2400);
     return () => window.clearTimeout(id);
   }, [notice]);
+
+  // Publish a composer inspector slice so external drivers can read draft
+  // state, attachments, mentions, and sending status from the running app.
+  useEffect(() => {
+    const dispose = publishInspectorSlice("composer", () => ({
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+      draft,
+      draftLength: draft.length,
+      attachments: attachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        kind: attachment.kind,
+      })),
+      mentions,
+      pasteParts: pasteParts.map((part) => ({
+        id: part.id,
+        label: part.label,
+        lines: part.lines,
+      })),
+      sending,
+      error,
+      hasNotice: Boolean(notice),
+    }));
+    return dispose;
+  }, [
+    attachments,
+    draft,
+    error,
+    mentions,
+    notice,
+    pasteParts,
+    props.sessionId,
+    props.workspaceId,
+    sending,
+  ]);
+
+  useEffect(() => {
+    recordInspectorEvent("session.mounted", {
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+    });
+  }, [props.sessionId, props.workspaceId]);
 
   useEffect(() => {
     if (!currentSnapshot) return;

@@ -249,7 +249,8 @@ export function SessionPage(props: SessionPageProps) {
       props.runtimeWorkspaceId &&
       props.openworkServerClient &&
       reactSessionBaseUrl &&
-      reactSessionToken,
+      reactSessionToken &&
+      props.surface,
   );
 
   useEffect(() => {

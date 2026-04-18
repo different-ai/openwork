@@ -59,6 +59,10 @@ import {
   writeActiveWorkspaceId,
   writeLastSessionFor,
 } from "./session-memory";
+import {
+  publishInspectorSlice,
+  recordInspectorEvent,
+} from "./app-inspector";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -351,6 +355,11 @@ export function SessionRoute() {
       setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
       setSelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
+      recordInspectorEvent("route.refresh.complete", {
+        workspaces: nextWorkspaces.length,
+        selectedWorkspaceId: nextWorkspaceId,
+        errors: Object.fromEntries(sessionEntries.filter((e) => e.error).map((e) => [e.workspaceId, e.error])),
+      });
     } finally {
       setLoading(false);
       refreshInFlightRef.current = false;
@@ -383,6 +392,51 @@ export function SessionRoute() {
       window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
     };
   }, [refreshRouteState]);
+
+  // Inspector wiring: publish the route's current state so an external
+  // operator (or an AI driver like Chrome MCP) can call
+  // `window.__openwork.snapshot()` or `window.__openwork.slice("route")` and
+  // see workspaces / sessions / connection info without walking the DOM.
+  useEffect(() => {
+    const dispose = publishInspectorSlice("route", () => ({
+      loading,
+      baseUrl,
+      tokenPresent: token.length > 0,
+      connected: Boolean(client),
+      selectedSessionId,
+      selectedWorkspaceId,
+      persistedActiveWorkspaceId: readActiveWorkspaceId(),
+      workspaces: workspaces.map((workspace) => ({
+        id: workspace.id,
+        displayNameResolved: workspace.displayNameResolved,
+        workspaceType: workspace.workspaceType,
+        path: workspace.path,
+        sessionCount: (sessionsByWorkspaceId[workspace.id] ?? []).length,
+        error: errorsByWorkspaceId[workspace.id] ?? null,
+      })),
+      sessionsByWorkspaceId: Object.fromEntries(
+        Object.entries(sessionsByWorkspaceId).map(([wsId, items]) => [
+          wsId,
+          (items ?? []).map((session: any) => ({
+            id: session?.id ?? null,
+            title: session?.title ?? null,
+            directory: session?.directory ?? null,
+          })),
+        ]),
+      ),
+    }));
+    return dispose;
+  }, [
+    baseUrl,
+    client,
+    errorsByWorkspaceId,
+    loading,
+    selectedSessionId,
+    selectedWorkspaceId,
+    sessionsByWorkspaceId,
+    token,
+    workspaces,
+  ]);
 
   // Once workspaces + sessions are loaded and the URL has no sessionId, try to
   // restore the last session the user opened in the active workspace.
@@ -490,6 +544,20 @@ export function SessionRoute() {
       return null;
     }
 
+    // Transient-safety: when the user switches workspaces the URL-driven
+    // selectedSessionId may still point at a session from the old workspace
+    // for one render tick (until the navigate() lands on the remembered id).
+    // Don't mount SessionSurface with that mismatched pair — it causes a
+    // brief "session.mounted" fire with a session the server won't return
+    // for this workspace and produces a flash-of-not-found state.
+    const workspaceSessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
+    const sessionBelongsToSelectedWorkspace = workspaceSessions.some(
+      (session: any) => session?.id === selectedSessionId,
+    );
+    if (!sessionBelongsToSelectedWorkspace) {
+      return null;
+    }
+
     return {
       client,
       workspaceId: selectedWorkspaceId,
@@ -588,6 +656,7 @@ export function SessionRoute() {
     selectedWorkspace,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
+    sessionsByWorkspaceId,
     token,
   ]);
 
