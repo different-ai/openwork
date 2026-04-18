@@ -83,7 +83,7 @@ export function ApiKeysScreen() {
         setError(null);
         try {
             const { response, payload } = await requestJson(
-                `/v1/org/api-keys`,
+                `/v1/api-keys`,
                 { method: "GET" },
                 12000,
             );
@@ -135,7 +135,7 @@ export function ApiKeysScreen() {
         setCopied(false);
         try {
             const { response, payload } = await requestJson(
-                `/v1/org/api-keys`,
+                `/v1/api-keys`,
                 {
                     method: "POST",
                     body: JSON.stringify({ name }),
@@ -203,7 +203,7 @@ export function ApiKeysScreen() {
         setError(null);
         try {
             const { response, payload } = await requestJson(
-                `/v1/org/api-keys/${encodeURIComponent(apiKey.id)}`,
+                `/v1/api-keys/${encodeURIComponent(apiKey.id)}`,
                 { method: "DELETE" },
                 12000,
             );

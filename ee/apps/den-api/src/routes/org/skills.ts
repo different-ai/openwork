@@ -263,7 +263,7 @@ function canViewSkill(input: {
 
 export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
   app.post(
-    "/v1/org/skills",
+    "/v1/skills",
     describeRoute({
       tags: ["Skills"],
       summary: "Create skill",
@@ -313,7 +313,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.get(
-    "/v1/org/skills",
+    "/v1/skills",
     describeRoute({
       tags: ["Skills"],
       summary: "List skills",
@@ -358,7 +358,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/org/skills/:skillId",
+    "/v1/skills/:skillId",
     describeRoute({
       tags: ["Skills"],
       summary: "Delete skill",
@@ -410,7 +410,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.patch(
-    "/v1/org/skills/:skillId",
+    "/v1/skills/:skillId",
     describeRoute({
       tags: ["Skills"],
       summary: "Update skill",
@@ -484,7 +484,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.post(
-    "/v1/org/skill-hubs",
+    "/v1/skill-hubs",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Create skill hub",
@@ -539,7 +539,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.get(
-    "/v1/org/skill-hubs",
+    "/v1/skill-hubs",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "List skill hubs",
@@ -694,7 +694,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.patch(
-    "/v1/org/skill-hubs/:skillHubId",
+    "/v1/skill-hubs/:skillHubId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Update skill hub",
@@ -763,7 +763,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/org/skill-hubs/:skillHubId",
+    "/v1/skill-hubs/:skillHubId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Delete skill hub",
@@ -816,7 +816,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.post(
-    "/v1/org/skill-hubs/:skillHubId/skills",
+    "/v1/skill-hubs/:skillHubId/skills",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Add skill to skill hub",
@@ -904,7 +904,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/org/skill-hubs/:skillHubId/skills/:skillId",
+    "/v1/skill-hubs/:skillHubId/skills/:skillId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Remove skill from skill hub",
@@ -967,7 +967,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.post(
-    "/v1/org/skill-hubs/:skillHubId/access",
+    "/v1/skill-hubs/:skillHubId/access",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Grant skill hub access",
@@ -1078,7 +1078,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/org/skill-hubs/:skillHubId/access/:accessId",
+    "/v1/skill-hubs/:skillHubId/access/:accessId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Revoke skill hub access",

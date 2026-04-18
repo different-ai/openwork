@@ -119,7 +119,7 @@ type DeferredEndpointContract = {
   tag: EndpointTag
 }
 
-const orgBasePath = "/v1/org"
+const orgBasePath = "/v1"
 
 export const pluginArchRoutePaths = {
   configObjects: `${orgBasePath}/config-objects`,

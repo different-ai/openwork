@@ -67,7 +67,7 @@ export function LlmProviderDetailScreen({
         setDeleteError(null);
         try {
             const { response, payload } = await requestJson(
-                `/v1/org/llm-providers/${encodeURIComponent(provider.id)}`,
+                `/v1/llm-providers/${encodeURIComponent(provider.id)}`,
                 { method: "DELETE" },
                 12000,
             );

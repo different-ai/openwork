@@ -35,6 +35,14 @@ const organizationResponseSchema = z.object({
   organization: z.object({}).passthrough().nullable(),
 }).meta({ ref: "OrganizationResponse" })
 
+const organizationOwnerSchema = z.object({
+  memberId: denTypeIdSchema("member"),
+  userId: denTypeIdSchema("user"),
+  name: z.string().nullable(),
+  email: z.string().email().nullable(),
+  image: z.string().nullable().optional(),
+}).meta({ ref: "OrganizationOwner" })
+
 const paymentRequiredSchema = z.object({
   error: z.literal("payment_required"),
   message: z.string(),
@@ -55,6 +63,10 @@ const invitationAcceptedResponseSchema = z.object({
 }).meta({ ref: "InvitationAcceptedResponse" })
 
 const organizationContextResponseSchema = z.object({
+  organization: z.object({
+    owner: organizationOwnerSchema.nullable().optional(),
+  }).passthrough(),
+  currentMember: z.object({}).passthrough(),
   currentMemberTeams: z.array(z.object({}).passthrough()),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
@@ -97,7 +109,7 @@ async function setRequestActiveOrganization(
 
 export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/orgs",
+    "/v1/org",
     describeRoute({
       tags: ["Organizations"],
       hide: true,
@@ -288,14 +300,13 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.get(
-    "/v1/org/context",
+    "/v1/org",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Get organization context",
-      description: "Returns the resolved organization context for a specific org, including the current member record and their team memberships.",
+      summary: "Get active organization",
+      description: "Returns the active organization from the current session, including its owner, the current member record, and their team memberships.",
       responses: {
         200: jsonResponse("Organization context returned successfully.", organizationContextResponseSchema),
-        400: jsonResponse("The organization context path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to load organization context.", unauthorizedSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
@@ -304,8 +315,23 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     (c) => {
+      const payload = c.get("organizationContext")
+      const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
+
       return c.json({
-        ...c.get("organizationContext"),
+        ...payload,
+        organization: {
+          ...payload.organization,
+          owner: owner
+            ? {
+              memberId: owner.id,
+              userId: owner.user.id,
+              name: owner.user.name,
+              email: owner.user.email,
+              image: owner.user.image,
+            }
+            : null,
+        },
         currentMemberTeams: c.get("memberTeams") ?? [],
       })
     },

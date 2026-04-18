@@ -97,7 +97,7 @@ const hideApiKeyGenerationRoute = () => process.env.NODE_ENV === "production"
 
 export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
-    "/v1/org/api-keys",
+    "/v1/api-keys",
     describeRoute({
       tags: ["API Keys"],
       summary: "List organization API keys",
@@ -161,7 +161,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
   )
 
   app.post(
-    "/v1/org/api-keys",
+    "/v1/api-keys",
     describeRoute({
       tags: ["API Keys"],
       summary: "Create an organization API key",
@@ -257,7 +257,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
   )
 
   app.delete(
-    "/v1/org/api-keys/:apiKeyId",
+    "/v1/api-keys/:apiKeyId",
     describeRoute({
       tags: ["API Keys"],
       hide: true,

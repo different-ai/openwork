@@ -37,7 +37,7 @@ const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
 
 export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/org/invitations",
+    "/v1/invitations",
     describeRoute({
       tags: ["Invitations"],
       summary: "Create organization invitation",
@@ -172,7 +172,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
   )
 
   app.post(
-    "/v1/org/invitations/:invitationId/cancel",
+    "/v1/invitations/:invitationId/cancel",
     describeRoute({
       tags: ["Invitations"],
       summary: "Cancel organization invitation",

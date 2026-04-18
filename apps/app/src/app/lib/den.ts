@@ -1021,7 +1021,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async listTemplates(orgSlug: string): Promise<DenTemplate[]> {
       const payload = await requestJson<unknown>(
         baseUrls,
-        "/v1/org/templates",
+        "/v1/templates",
         {
           method: "GET",
           token,
@@ -1036,7 +1036,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     ): Promise<DenTemplate> {
       const payload = await requestJson<unknown>(
         baseUrls,
-        "/v1/org/templates",
+        "/v1/templates",
         {
           method: "POST",
           token,
@@ -1056,7 +1056,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async deleteTemplate(orgSlug: string, templateId: string): Promise<void> {
       const raw = await requestJsonRaw(
         baseUrls,
-        `/v1/org/templates/${encodeURIComponent(templateId)}`,
+        `/v1/templates/${encodeURIComponent(templateId)}`,
         {
           method: "DELETE",
           token,
@@ -1071,7 +1071,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgSkills(orgId: string): Promise<DenOrgSkillCard[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skills", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
         method: "GET",
         token,
       });
@@ -1079,7 +1079,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgSkillHubs(orgId: string): Promise<DenOrgSkillHub[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skill-hubs", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
         method: "GET",
         token,
       });
@@ -1087,7 +1087,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgSkillHubSummaries(orgId: string): Promise<DenOrgSkillHubSummary[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skill-hubs", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
         method: "GET",
         token,
       });
@@ -1102,7 +1102,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         skillText: input.skillText,
         shared: input.shared === undefined ? ("org" as const) : input.shared,
       };
-      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skills", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
         method: "POST",
         token,
         body,
@@ -1117,7 +1117,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async addOrgSkillToHub(orgId: string, skillHubId: string, skillId: string): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
-        `/v1/org/skill-hubs/${encodeURIComponent(skillHubId)}/skills`,
+        `/v1/skill-hubs/${encodeURIComponent(skillHubId)}/skills`,
         {
           method: "POST",
           token,
@@ -1127,7 +1127,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/org/llm-providers", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/llm-providers", {
         method: "GET",
         token,
       });
@@ -1137,7 +1137,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {
       const payload = await requestJson<unknown>(
         baseUrls,
-        `/v1/org/llm-providers/${encodeURIComponent(llmProviderId)}/connect`,
+        `/v1/llm-providers/${encodeURIComponent(llmProviderId)}/connect`,
         {
           method: "GET",
           token,

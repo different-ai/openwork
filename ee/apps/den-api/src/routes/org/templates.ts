@@ -45,7 +45,7 @@ const orgTemplateParamsSchema = idParamSchema("templateId", "tempTemplateSharing
 
 export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/org/templates",
+    "/v1/templates",
     describeRoute({
       tags: ["Templates"],
       summary: "Create shared template",
@@ -100,7 +100,7 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
   )
 
   app.get(
-    "/v1/org/templates",
+    "/v1/templates",
     describeRoute({
       tags: ["Templates"],
       summary: "List shared templates",
@@ -166,7 +166,7 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
   )
 
   app.delete(
-    "/v1/org/templates/:templateId",
+    "/v1/templates/:templateId",
     describeRoute({
       tags: ["Templates"],
       summary: "Delete shared template",

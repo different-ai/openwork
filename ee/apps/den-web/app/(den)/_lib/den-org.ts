@@ -109,6 +109,13 @@ export type DenOrgContext = {
     metadata: string | null;
     createdAt: string | null;
     updatedAt: string | null;
+    owner: {
+      memberId: string;
+      userId: string;
+      name: string | null;
+      email: string | null;
+      image: string | null;
+    } | null;
   };
   currentMember: {
     id: string;
@@ -346,6 +353,9 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
   const organizationId = asString(organization.id);
   const organizationName = asString(organization.name);
   const organizationSlug = asString(organization.slug);
+  const organizationOwner = isRecord(organization.owner) ? organization.owner : null;
+  const organizationOwnerMemberId = organizationOwner ? asString(organizationOwner.memberId) : null;
+  const organizationOwnerUserId = organizationOwner ? asString(organizationOwner.userId) : null;
   const currentMemberId = asString(currentMember.id);
   const currentMemberUserId = asString(currentMember.userId);
   const currentMemberRole = asString(currentMember.role);
@@ -498,6 +508,15 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       metadata: asString(organization.metadata),
       createdAt: asIsoString(organization.createdAt),
       updatedAt: asIsoString(organization.updatedAt),
+      owner: organizationOwner && organizationOwnerMemberId && organizationOwnerUserId
+        ? {
+          memberId: organizationOwnerMemberId,
+          userId: organizationOwnerUserId,
+          name: asString(organizationOwner.name),
+          email: asString(organizationOwner.email),
+          image: asString(organizationOwner.image),
+        }
+        : null,
     },
     currentMember: {
       id: currentMemberId,

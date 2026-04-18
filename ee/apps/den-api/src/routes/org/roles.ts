@@ -28,7 +28,7 @@ const orgRoleParamsSchema = idParamSchema("roleId", "organizationRole")
 
 export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/org/roles",
+    "/v1/roles",
     describeRoute({
       tags: ["Roles"],
       summary: "Create organization role",
@@ -80,7 +80,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.patch(
-    "/v1/org/roles/:roleId",
+    "/v1/roles/:roleId",
     describeRoute({
       tags: ["Roles"],
       summary: "Update organization role",
@@ -187,7 +187,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.delete(
-    "/v1/org/roles/:roleId",
+    "/v1/roles/:roleId",
     describeRoute({
       tags: ["Roles"],
       summary: "Delete organization role",

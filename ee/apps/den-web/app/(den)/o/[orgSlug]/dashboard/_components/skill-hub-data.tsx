@@ -363,8 +363,8 @@ export function useOrgSkillLibrary(orgId: string | null) {
     setError(null);
     try {
       const [skillsResult, skillHubsResult] = await Promise.all([
-        requestJson(`/v1/org/skills`, { method: "GET" }, 12000),
-        requestJson(`/v1/org/skill-hubs`, { method: "GET" }, 12000),
+        requestJson(`/v1/skills`, { method: "GET" }, 12000),
+        requestJson(`/v1/skill-hubs`, { method: "GET" }, 12000),
       ]);
 
       if (!skillsResult.response.ok) {

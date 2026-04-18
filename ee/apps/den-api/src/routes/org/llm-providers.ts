@@ -480,7 +480,7 @@ async function loadLlmProviders(input: {
 
 export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
   app.get(
-    "/v1/org/llm-provider-catalog",
+    "/v1/llm-provider-catalog",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List LLM provider catalog",
@@ -508,7 +508,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.get(
-    "/v1/org/llm-provider-catalog/:providerId",
+    "/v1/llm-provider-catalog/:providerId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Get LLM provider catalog entry",
@@ -555,7 +555,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.get(
-    "/v1/org/llm-providers",
+    "/v1/llm-providers",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List organization LLM providers",
@@ -590,7 +590,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.get(
-    "/v1/org/llm-providers/:llmProviderId/connect",
+    "/v1/llm-providers/:llmProviderId/connect",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Get LLM provider connect payload",
@@ -667,7 +667,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.post(
-    "/v1/org/llm-providers",
+    "/v1/llm-providers",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Create organization LLM provider",
@@ -778,7 +778,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.patch(
-    "/v1/org/llm-providers/:llmProviderId",
+    "/v1/llm-providers/:llmProviderId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Update organization LLM provider",
@@ -914,7 +914,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.delete(
-    "/v1/org/llm-providers/:llmProviderId",
+    "/v1/llm-providers/:llmProviderId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Delete organization LLM provider",
@@ -970,7 +970,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.delete(
-    "/v1/org/llm-providers/:llmProviderId/access/:accessId",
+    "/v1/llm-providers/:llmProviderId/access/:accessId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Remove LLM provider access grant",

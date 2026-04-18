@@ -103,7 +103,7 @@ export function OrgDashboardProvider({
   }
 
   async function loadOrgContext() {
-    const { response, payload } = await requestJson("/v1/org/context", { method: "GET" }, 12000);
+    const { response, payload } = await requestJson("/v1/org", { method: "GET" }, 12000);
     if (!response.ok) {
       throw new Error(getErrorMessage(payload, `Failed to load organization (${response.status}).`));
     }
@@ -177,7 +177,7 @@ export function OrgDashboardProvider({
     setOrgError(null);
     try {
       const { response, payload } = await requestJson(
-        "/v1/orgs",
+        "/v1/org",
         {
           method: "POST",
           body: JSON.stringify({ name: trimmed }),
@@ -267,7 +267,7 @@ export function OrgDashboardProvider({
     await runMutation("invite-member", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        "/v1/org/invitations",
+        "/v1/invitations",
         {
           method: "POST",
           body: JSON.stringify(input),
@@ -289,7 +289,7 @@ export function OrgDashboardProvider({
     await runMutation("cancel-invitation", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        `/v1/org/invitations/${encodeURIComponent(invitationId)}/cancel`,
+        `/v1/invitations/${encodeURIComponent(invitationId)}/cancel`,
         { method: "POST", body: JSON.stringify({}) },
         12000,
       );
@@ -304,7 +304,7 @@ export function OrgDashboardProvider({
     await runMutation("update-member-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        `/v1/org/members/${encodeURIComponent(memberId)}/role`,
+        `/v1/members/${encodeURIComponent(memberId)}/role`,
         {
           method: "POST",
           body: JSON.stringify({ role }),
@@ -322,7 +322,7 @@ export function OrgDashboardProvider({
     await runMutation("remove-member", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        `/v1/org/members/${encodeURIComponent(memberId)}`,
+        `/v1/members/${encodeURIComponent(memberId)}`,
         { method: "DELETE" },
         12000,
       );
@@ -337,7 +337,7 @@ export function OrgDashboardProvider({
     await runMutation("create-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        "/v1/org/roles",
+        "/v1/roles",
         {
           method: "POST",
           body: JSON.stringify(input),
@@ -355,7 +355,7 @@ export function OrgDashboardProvider({
     await runMutation("create-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        "/v1/org/teams",
+        "/v1/teams",
         {
           method: "POST",
           body: JSON.stringify(input),
@@ -373,7 +373,7 @@ export function OrgDashboardProvider({
     await runMutation("update-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        `/v1/org/teams/${encodeURIComponent(teamId)}`,
+        `/v1/teams/${encodeURIComponent(teamId)}`,
         {
           method: "PATCH",
           body: JSON.stringify(input),
@@ -391,7 +391,7 @@ export function OrgDashboardProvider({
     await runMutation("delete-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        `/v1/org/teams/${encodeURIComponent(teamId)}`,
+        `/v1/teams/${encodeURIComponent(teamId)}`,
         { method: "DELETE" },
         12000,
       );
@@ -406,7 +406,7 @@ export function OrgDashboardProvider({
     await runMutation("update-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        `/v1/org/roles/${encodeURIComponent(roleId)}`,
+        `/v1/roles/${encodeURIComponent(roleId)}`,
         {
           method: "PATCH",
           body: JSON.stringify(input),
@@ -424,7 +424,7 @@ export function OrgDashboardProvider({
     await runMutation("delete-role", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
-        `/v1/org/roles/${encodeURIComponent(roleId)}`,
+        `/v1/roles/${encodeURIComponent(roleId)}`,
         { method: "DELETE" },
         12000,
       );

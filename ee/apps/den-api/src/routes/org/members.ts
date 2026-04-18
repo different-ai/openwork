@@ -20,7 +20,7 @@ const orgMemberParamsSchema = idParamSchema("memberId", "member")
 
 export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/org/members/:memberId/role",
+    "/v1/members/:memberId/role",
     describeRoute({
       tags: ["Members"],
       summary: "Update member role",
@@ -81,7 +81,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
   )
 
   app.delete(
-    "/v1/org/members/:memberId",
+    "/v1/members/:memberId",
     describeRoute({
       tags: ["Members"],
       summary: "Remove organization member",

@@ -84,7 +84,7 @@ async function ensureMembersBelongToOrganization(input: {
 
 export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/org/teams",
+    "/v1/teams",
     describeRoute({
       tags: ["Teams"],
       summary: "Create team",
@@ -172,7 +172,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.patch(
-    "/v1/org/teams/:teamId",
+    "/v1/teams/:teamId",
     describeRoute({
       tags: ["Teams"],
       summary: "Update team",
@@ -276,7 +276,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.delete(
-    "/v1/org/teams/:teamId",
+    "/v1/teams/:teamId",
     describeRoute({
       tags: ["Teams"],
       summary: "Delete team",
