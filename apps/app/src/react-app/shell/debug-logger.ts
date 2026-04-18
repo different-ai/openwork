@@ -242,17 +242,29 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
     }
   }) as typeof window.fetch;
 
-  // Heartbeat / hang detector
+  // Heartbeat / hang detector.
+  // A long heartbeat gap has two possible causes:
+  // 1. A real JS-thread stall (bug) — usually 3-10s.
+  // 2. macOS threw the webview into App Nap / backgrounding throttle when
+  //    the window wasn't focused — gaps can be minutes, not a real "hang".
+  // We split them so alarms only fire for case 1.
+  const HANG_THRESHOLD_MS = 3000;
+  const RESUME_THRESHOLD_MS = 10_000;
   lastHeartbeat = Date.now();
   hangHandle = setInterval(() => {
     const now = Date.now();
     const gap = now - lastHeartbeat;
-    if (gap > 3000) {
+    if (gap > HANG_THRESHOLD_MS) {
+      const level = gap >= RESUME_THRESHOLD_MS ? ("meta" as const) : ("hang" as const);
       enqueue({
-        level: "hang",
+        level,
         durationMs: gap,
-        message: `Main thread stalled ~${gap}ms`,
+        message:
+          level === "hang"
+            ? `Main thread stalled ~${gap}ms`
+            : `Webview resumed after ~${Math.round(gap / 1000)}s throttled/background (NOT a hang)`,
         extra: {
+          resume: level !== "hang",
           pendingFetchCount: pendingFetches.size,
           pendingFetchSamples: Array.from(pendingFetches.values())
             .slice(0, 5)
@@ -261,11 +273,33 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
               method: entry.method,
               ageMs: Date.now() - entry.startedAt,
             })),
+          visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
         },
       });
     }
     lastHeartbeat = now;
   }, 1000);
+
+  // When the page returns to visibility after being backgrounded, stale
+  // in-flight SSE subscriptions/Query caches can make the UI look frozen
+  // even though JS is fine. Nudge the app to re-resolve its connection and
+  // re-fetch route data.
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      enqueue({
+        level: "meta",
+        message: `visibilitychange: ${document.visibilityState}`,
+        extra: { visibility: document.visibilityState },
+      });
+      if (document.visibilityState === "visible") {
+        try {
+          window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+        } catch {
+          // ignore
+        }
+      }
+    });
+  }
 
   publishInspectorSlice("debug", () => ({
     enabled: true,

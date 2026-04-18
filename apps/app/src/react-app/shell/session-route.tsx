@@ -383,13 +383,32 @@ export function SessionRoute() {
     })();
 
     const handleSettingsChange = () => {
+      // Self-heal: if the previous refresh got stuck mid-flight (e.g. macOS
+      // backgrounded the webview and never let a fetch resolve), clear the
+      // guard so a re-entry after resume actually goes through.
+      refreshInFlightRef.current = false;
       void refreshRouteState();
     };
     window.addEventListener("openwork-server-settings-changed", handleSettingsChange);
 
+    // Also retry on visibility flip independently — even when nobody else
+    // dispatches the settings event.
+    const handleVisibility = () => {
+      if (typeof document === "undefined") return;
+      if (document.visibilityState !== "visible") return;
+      refreshInFlightRef.current = false;
+      void refreshRouteState();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+
     return () => {
       cancelled = true;
       window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
     };
   }, [refreshRouteState]);
 
