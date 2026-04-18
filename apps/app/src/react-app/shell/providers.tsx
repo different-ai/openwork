@@ -2,7 +2,7 @@
 import { type ReactNode } from "react";
 
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
-import { hydrateOpenworkServerSettingsFromEnv } from "../../app/lib/openwork-server";
+import { hydrateOpenworkServerSettingsFromEnv, readOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { isTauriRuntime } from "../../app/utils";
 import { GlobalSDKProvider } from "../kernel/global-sdk-provider";
 import { GlobalSyncProvider } from "../kernel/global-sync-provider";
@@ -10,6 +10,7 @@ import { LocalProvider } from "../kernel/local-provider";
 import { ServerProvider } from "../kernel/server-provider";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
+import { startDebugLogger } from "./debug-logger";
 
 function resolveDefaultServerUrl(): string {
   if (isTauriRuntime()) return "http://127.0.0.1:4096";
@@ -39,6 +40,12 @@ type AppProvidersProps = {
 
 export function AppProviders({ children }: AppProvidersProps) {
   hydrateOpenworkServerSettingsFromEnv();
+  // Start the dev observability forwarder. Reads the current openwork-server
+  // URL on every flush so reconnects after port changes still work. In prod
+  // builds `startDebugLogger` is a no-op.
+  startDebugLogger({
+    serverUrl: () => readOpenworkServerSettings().urlOverride?.trim() ?? "",
+  });
 
   const defaultUrl = resolveDefaultServerUrl();
   return (

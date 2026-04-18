@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
+import { readFile, writeFile, rm, readdir, rename, stat, appendFile, mkdir } from "node:fs/promises";
 import { createHash, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -808,6 +808,15 @@ function resolveToyUiEnabled(): boolean {
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
+// Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
+// /dev/log endpoint accepts JSON payloads and appends them to that file so an
+// operator can `tail -f` the file to see live browser activity. Returning null
+// disables the endpoint entirely.
+function resolveDevLogPath(): string | null {
+  const raw = (process.env.OPENWORK_DEV_LOG_FILE ?? "").trim();
+  return raw.length > 0 ? raw : null;
+}
+
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
   const raw = (process.env.OPENWORK_BROWSER_PROVIDER ?? "").trim().toLowerCase();
   if (raw === "sandbox-headless") {
@@ -1190,6 +1199,49 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+  });
+
+  // Dev log sink: append browser console + error events to a file that an
+  // operator (or an AI driver) can tail. Unauth on purpose because this is
+  // scoped to the dev host and needs to work before clients finish wiring
+  // tokens; it is also a no-op when OPENWORK_DEV_LOG_FILE is unset.
+  addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" }, 404);
+    }
+    let payload: unknown = null;
+    try {
+      payload = await ctx.request.json();
+    } catch {
+      return jsonResponse({ ok: false, reason: "invalid_json" }, 400);
+    }
+    const entries = Array.isArray(payload) ? payload : [payload];
+    try {
+      await mkdir(dirname(target), { recursive: true });
+      const lines = entries
+        .map((entry) => {
+          try {
+            const stamped = { at: new Date().toISOString(), ...(entry as Record<string, unknown>) };
+            return JSON.stringify(stamped);
+          } catch {
+            return JSON.stringify({ at: new Date().toISOString(), raw: String(entry) });
+          }
+        })
+        .join("\n");
+      await appendFile(target, `${lines}\n`, "utf8");
+    } catch (error) {
+      return jsonResponse({ ok: false, reason: error instanceof Error ? error.message : String(error) }, 500);
+    }
+    return jsonResponse({ ok: true, count: entries.length });
+  });
+
+  addRoute(routes, "GET", "/dev/log", "none", async () => {
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" }, 404);
+    }
+    return jsonResponse({ ok: true, path: target });
   });
 
   addRoute(routes, "GET", "/ui", "none", async () => {

@@ -1,0 +1,302 @@
+/**
+ * Dev observability client. Forwards browser console logs, uncaught errors,
+ * promise rejections, and fetch activity to the openwork-server `/dev/log`
+ * sink so an operator can tail a single file and see everything the React
+ * shell is doing — especially right before a hang.
+ *
+ * Also powers a lightweight hang detector: a heartbeat runs every 1s; if the
+ * main thread doesn't service the heartbeat within 3s we log a stall event.
+ *
+ * Everything here is a no-op in prod builds (checked via `import.meta.env`).
+ */
+
+import { publishInspectorSlice, recordInspectorEvent } from "./app-inspector";
+
+type LogLevel = "log" | "info" | "warn" | "error" | "debug";
+
+type DevLogEntry = {
+  level: LogLevel | "uncaught" | "unhandledRejection" | "hang" | "meta" | "fetch";
+  source?: string;
+  url?: string;
+  message?: string;
+  stack?: string;
+  durationMs?: number;
+  status?: number;
+  method?: string;
+  args?: unknown[];
+  extra?: Record<string, unknown>;
+  sessionKey?: string;
+};
+
+let started = false;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let queue: DevLogEntry[] = [];
+let serverUrlRef: () => string = () => readFallbackServerUrl();
+const pendingFetches = new Map<number, { url: string; method: string; startedAt: number }>();
+let nextFetchId = 1;
+let lastHeartbeat = Date.now();
+let hangHandle: ReturnType<typeof setInterval> | null = null;
+// Reference to the un-wrapped fetch. We use it from inside `flushQueue` so our
+// own POST to /dev/log doesn't go through the wrapper (which would recurse
+// and also spam the log with its own activity).
+let nativeFetchRef: typeof fetch = typeof window !== "undefined" ? window.fetch.bind(window) : (globalThis.fetch as typeof fetch);
+const sessionKey = `react-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+function readFallbackServerUrl(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem("openwork.server.urlOverride") ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function safeStringify(input: unknown, depth = 0): unknown {
+  if (depth > 3) return "[…]";
+  if (input === null || typeof input !== "object") {
+    if (typeof input === "function") return `[function ${(input as Function).name || "anonymous"}]`;
+    if (typeof input === "bigint") return input.toString();
+    if (typeof input === "symbol") return input.toString();
+    return input;
+  }
+  if (input instanceof Error) {
+    return { name: input.name, message: input.message, stack: input.stack };
+  }
+  if (Array.isArray(input)) {
+    return input.slice(0, 25).map((item) => safeStringify(item, depth + 1));
+  }
+  const out: Record<string, unknown> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (count++ > 25) {
+      out.__truncated = true;
+      break;
+    }
+    try {
+      out[key] = safeStringify(value, depth + 1);
+    } catch {
+      out[key] = "[unserializable]";
+    }
+  }
+  return out;
+}
+
+function scheduleFlush() {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flushQueue();
+  }, 500);
+}
+
+async function flushQueue() {
+  if (queue.length === 0) return;
+  const base = serverUrlRef();
+  if (!base) return;
+  const batch = queue;
+  queue = [];
+  try {
+    await nativeFetchRef(`${base.replace(/\/+$/, "")}/dev/log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(batch),
+      keepalive: true,
+    });
+  } catch {
+    // Keep this silent; we don't want the logger to itself create a log
+    // storm when the server is unreachable. Events are still retained in
+    // window.__openwork.events().
+  }
+}
+
+function enqueue(entry: DevLogEntry) {
+  queue.push({ sessionKey, ...entry });
+  if (queue.length > 200) queue.splice(0, queue.length - 200);
+  recordInspectorEvent(`log.${entry.level}`, entry);
+  scheduleFlush();
+}
+
+function isEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  // Always on in dev; explicit opt-out via `localStorage.openwork.debug.disableLogger = "1"`.
+  try {
+    if (window.localStorage.getItem("openwork.debug.disableLogger") === "1") return false;
+  } catch {
+    // ignore
+  }
+  const env = (import.meta as unknown as { env?: Record<string, unknown> }).env ?? {};
+  if (env.PROD === true) {
+    return window.localStorage.getItem("openwork.debug.enableLoggerInProd") === "1";
+  }
+  return true;
+}
+
+export function startDebugLogger(opts?: { serverUrl?: () => string }) {
+  if (started) return;
+  if (!isEnabled()) return;
+  started = true;
+  if (opts?.serverUrl) serverUrlRef = opts.serverUrl;
+
+  // Patch console
+  const nativeConsole: Record<LogLevel, (...args: unknown[]) => void> = {
+    log: console.log.bind(console),
+    info: console.info.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    debug: console.debug.bind(console),
+  };
+  (Object.keys(nativeConsole) as LogLevel[]).forEach((level) => {
+    const original = nativeConsole[level];
+    console[level] = (...args: unknown[]) => {
+      try {
+        enqueue({
+          level,
+          url: typeof location !== "undefined" ? location.pathname + location.search : undefined,
+          message: typeof args[0] === "string" ? args[0] : undefined,
+          args: args.map((arg) => safeStringify(arg)),
+        });
+      } catch {
+        // ignore
+      }
+      original(...args);
+    };
+  });
+
+  // Window errors
+  window.addEventListener("error", (event) => {
+    const target = event.error as Error | undefined;
+    enqueue({
+      level: "uncaught",
+      source: event.filename,
+      message: event.message,
+      stack: target?.stack,
+      extra: { line: event.lineno, col: event.colno },
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    enqueue({
+      level: "unhandledRejection",
+      message: reason instanceof Error ? reason.message : typeof reason === "string" ? reason : undefined,
+      stack: reason instanceof Error ? reason.stack : undefined,
+      extra: { reason: safeStringify(reason) as Record<string, unknown> },
+    });
+  });
+
+  // Fetch wrapping (so we can see which requests are hanging around a stall).
+  // We capture the native reference here and reuse it inside `flushQueue` so
+  // our own POST to /dev/log doesn't go through the wrapper (which would make
+  // the logger log itself forever).
+  const nativeFetch = window.fetch.bind(window);
+  nativeFetchRef = nativeFetch;
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const id = nextFetchId++;
+    let url = "";
+    let method = "GET";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input instanceof URL) {
+        url = input.toString();
+      } else if (input instanceof Request) {
+        url = input.url;
+        method = input.method;
+      }
+      if (init?.method) method = init.method;
+    } catch {
+      // ignore
+    }
+    const isDevLogCall = url.includes("/dev/log");
+    if (!isDevLogCall) {
+      pendingFetches.set(id, { url, method, startedAt: Date.now() });
+    }
+    try {
+      const response = await nativeFetch(input as RequestInfo, init);
+      if (!isDevLogCall) {
+        const duration = Date.now() - (pendingFetches.get(id)?.startedAt ?? Date.now());
+        enqueue({
+          level: "fetch",
+          method,
+          url,
+          status: response.status,
+          durationMs: duration,
+        });
+      }
+      return response;
+    } catch (error) {
+      if (!isDevLogCall) {
+        const duration = Date.now() - (pendingFetches.get(id)?.startedAt ?? Date.now());
+        enqueue({
+          level: "fetch",
+          method,
+          url,
+          status: 0,
+          durationMs: duration,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw error;
+    } finally {
+      if (!isDevLogCall) pendingFetches.delete(id);
+    }
+  }) as typeof window.fetch;
+
+  // Heartbeat / hang detector
+  lastHeartbeat = Date.now();
+  hangHandle = setInterval(() => {
+    const now = Date.now();
+    const gap = now - lastHeartbeat;
+    if (gap > 3000) {
+      enqueue({
+        level: "hang",
+        durationMs: gap,
+        message: `Main thread stalled ~${gap}ms`,
+        extra: {
+          pendingFetchCount: pendingFetches.size,
+          pendingFetchSamples: Array.from(pendingFetches.values())
+            .slice(0, 5)
+            .map((entry) => ({
+              url: entry.url,
+              method: entry.method,
+              ageMs: Date.now() - entry.startedAt,
+            })),
+        },
+      });
+    }
+    lastHeartbeat = now;
+  }, 1000);
+
+  publishInspectorSlice("debug", () => ({
+    enabled: true,
+    sessionKey,
+    pendingFetchCount: pendingFetches.size,
+    pendingFetches: Array.from(pendingFetches.values()).map((entry) => ({
+      url: entry.url,
+      method: entry.method,
+      ageMs: Date.now() - entry.startedAt,
+    })),
+    memory: readMemoryUsage(),
+    queueSize: queue.length,
+  }));
+
+  enqueue({ level: "meta", message: "debug-logger started", extra: { userAgent: navigator.userAgent } });
+}
+
+function readMemoryUsage(): Record<string, unknown> | null {
+  if (typeof performance === "undefined") return null;
+  const mem = (performance as unknown as { memory?: { totalJSHeapSize: number; usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+  if (!mem) return null;
+  return {
+    usedMb: Math.round((mem.usedJSHeapSize / (1024 * 1024)) * 10) / 10,
+    totalMb: Math.round((mem.totalJSHeapSize / (1024 * 1024)) * 10) / 10,
+    limitMb: Math.round((mem.jsHeapSizeLimit / (1024 * 1024)) * 10) / 10,
+  };
+}
+
+export function stopDebugLogger() {
+  if (!started) return;
+  if (hangHandle) clearInterval(hangHandle);
+  hangHandle = null;
+  started = false;
+}
