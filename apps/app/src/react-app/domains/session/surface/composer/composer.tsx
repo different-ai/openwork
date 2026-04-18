@@ -852,7 +852,7 @@ export function ReactSessionComposer(props: ComposerProps) {
             </div>
           ) : null}
 
-          <div className="p-5 md:p-6">
+          <div className="px-4 pt-3 pb-2">
             {/* Editor */}
             <LexicalPromptEditor
               value={props.draft}
@@ -1204,7 +1204,12 @@ export function ReactSessionComposer(props: ComposerProps) {
                   aria-expanded={variantMenuOpen}
                 >
                   <span className="truncate leading-tight">
-                    {(props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? props.modelVariantLabel) || t("settings.default_label")}
+                    {/* Pill label is the summary resolved by session-route:
+                        if modelVariant is null it already carries the
+                        provider-default preset's label (e.g. "Balanced"). */}
+                    {props.modelVariantLabel ||
+                      (props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? "") ||
+                      t("settings.default_label")}
                   </span>
                   <ChevronDown size={13} className="shrink-0 ml-0.5" />
                 </button>
@@ -1214,24 +1219,33 @@ export function ReactSessionComposer(props: ComposerProps) {
                       {t("composer.behavior_label", locale)}
                     </div>
                     <div className="space-y-1 p-2">
-                      {props.modelBehaviorOptions.map((option) => (
-                        <button
-                          key={option.value ?? "default"}
-                          type="button"
-                          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                            props.modelVariant === option.value ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"
-                          }`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            props.onModelVariantChange(option.value);
-                            setVariantMenuOpen(false);
-                          }}
-                        >
-                          <span>{option.label}</span>
-                          {props.modelVariant === option.value ? <Check size={14} className="text-gray-10" /> : null}
-                        </button>
-                      ))}
+                      {props.modelBehaviorOptions.map((option) => {
+                        // Highlight the row whose label matches the pill. When
+                        // modelVariant is null but the provider-default is
+                        // e.g. "medium", the "medium" row should render as
+                        // selected — user sees the actual active mode.
+                        const isActive =
+                          props.modelVariant === option.value ||
+                          (props.modelVariant == null && option.label === props.modelVariantLabel);
+                        return (
+                          <button
+                            key={option.value ?? "default"}
+                            type="button"
+                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
+                              isActive ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"
+                            }`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              props.onModelVariantChange(option.value);
+                              setVariantMenuOpen(false);
+                            }}
+                          >
+                            <span>{option.label}</span>
+                            {isActive ? <Check size={14} className="text-gray-10" /> : null}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}

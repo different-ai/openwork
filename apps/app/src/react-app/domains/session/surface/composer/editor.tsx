@@ -513,11 +513,17 @@ export function LexicalPromptEditor(props: EditorProps) {
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
-      <div className="relative min-h-[180px] px-6 py-5">
+      {/*
+        Tight start, bounded growth:
+        - min-h holds the editor to a single-line look until the user starts typing.
+        - max-h caps the composer — long pastes / multi-paragraph drafts scroll
+          inside the editor instead of pushing the transcript out of view.
+      */}
+      <div className="relative">
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
-              className="min-h-[140px] w-full resize-none bg-transparent text-base text-dls-text outline-none placeholder:text-dls-secondary"
+              className="min-h-[24px] max-h-[220px] w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-6 text-dls-text outline-none placeholder:text-dls-secondary"
               aria-placeholder={props.placeholder}
               placeholder={<span />}
               onPaste={props.onPaste}
@@ -527,7 +533,7 @@ export function LexicalPromptEditor(props: EditorProps) {
             />
           }
           placeholder={
-            <div className="pointer-events-none absolute left-6 top-5 text-base text-dls-secondary/70">
+            <div className="pointer-events-none absolute inset-0 text-[15px] leading-6 text-dls-secondary/70">
               {props.placeholder}
             </div>
           }

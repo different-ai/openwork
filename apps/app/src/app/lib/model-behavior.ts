@@ -22,6 +22,33 @@ function defaultBehaviorOption(): ModelBehaviorOption {
   };
 }
 
+/**
+ * Resolve which concrete variant the provider would use when no override
+ * is sent. OpenCode's variants dict doesn't mark one entry as "default",
+ * so this encodes the provider-side convention:
+ *   - OpenAI reasoning models default to `medium`
+ *   - Google reasoning budget defaults to `medium`
+ *   - Anthropic extended thinking defaults to `none` (off)
+ *   - Everyone else: prefer `medium` > `low` > first variant in the
+ *     well-known order
+ * Returns null when we can't confidently pick a default (e.g. no
+ * variants exposed).
+ */
+const resolveProviderDefaultVariant = (providerID: string, variantKeys: string[]) => {
+  if (!variantKeys.length) return null;
+  const has = (key: string) => variantKeys.includes(key);
+  if (providerID === "anthropic") return has("none") ? "none" : variantKeys[0] ?? null;
+  if (providerID === "openai" || providerID === "opencode" || providerID === "google") {
+    if (has("medium")) return "medium";
+    if (has("low")) return "low";
+    return variantKeys[0] ?? null;
+  }
+  if (has("medium")) return "medium";
+  if (has("low")) return "low";
+  if (has("minimal")) return "minimal";
+  return variantKeys[0] ?? null;
+};
+
 const humanize = (value: string) => {
   const cleaned = value.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!cleaned) return value;
@@ -125,17 +152,17 @@ export const getModelBehaviorOptions = (
 ): ModelBehaviorOption[] => {
   const variantKeys = sortVariantKeys(getVariantKeys(model));
   if (!variantKeys.length) return [];
-  return [
-    defaultBehaviorOption(),
-    ...variantKeys.map((key) => {
-      const label = getVariantLabel(providerID, key);
-      return {
-        value: key,
-        label,
-        description: getVariantDescription(providerID, key, label),
-      };
-    }),
-  ];
+  // Only concrete variants — no "Provider default" catch-all. The composer
+  // resolves the null preference into the actual default variant at display
+  // time via `getModelBehaviorSummary` below.
+  return variantKeys.map((key) => {
+    const label = getVariantLabel(providerID, key);
+    return {
+      value: key,
+      label,
+      description: getVariantDescription(providerID, key, label),
+    };
+  });
 };
 
 export const sanitizeModelBehaviorValue = (
@@ -156,9 +183,14 @@ export const getModelBehaviorSummary = (
   value: string | null,
 ) => {
   const options = getModelBehaviorOptions(providerID, model);
+  const variantKeys = sortVariantKeys(getVariantKeys(model));
   const sanitized = sanitizeModelBehaviorValue(providerID, model, value);
-  const selected = options.find((option) => option.value === sanitized) ?? options[0] ?? null;
-  const title = getBehaviorTitle(providerID, model, getVariantKeys(model));
+  // When no explicit variant is picked, show the provider's actual default
+  // (e.g. OpenAI → medium → "Balanced"), not a generic "Provider default"
+  // row. That makes the composer pill honest about what will actually run.
+  const resolvedKey = sanitized ?? resolveProviderDefaultVariant(providerID, variantKeys);
+  const selected = options.find((option) => option.value === resolvedKey) ?? options[0] ?? null;
+  const title = getBehaviorTitle(providerID, model, variantKeys);
 
   if (options.length > 0) {
     return {
