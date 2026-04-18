@@ -266,6 +266,32 @@ const resolveAuthHeader = (auth?: OpencodeAuth) => {
   return encoded ? `Basic ${encoded}` : null;
 };
 
+/**
+ * URLs whose response body we must stream chunk-by-chunk (SSE, long-running
+ * message streams, event subscriptions). The Tauri HTTP plugin's
+ * `fetch_read_body` IPC call blocks until the entire body is delivered, so
+ * pointing it at an infinite stream freezes the webview's main thread for
+ * minutes. For these endpoints we always use the webview's native fetch —
+ * CORS is already wide open on the openwork/opencode stack, so there's no
+ * reason to route them through the plugin.
+ */
+const STREAM_URL_RE = /\/(event|stream)(\b|\/|$|\?)/;
+
+function requestIsStreaming(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const url = getRequestUrl(input);
+  if (STREAM_URL_RE.test(url)) return true;
+  const accept =
+    input instanceof Request
+      ? input.headers.get("accept") ?? input.headers.get("Accept")
+      : new Headers(init?.headers).get("accept") ?? new Headers(init?.headers).get("Accept");
+  return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
+}
+
+function nativeFetchRef(): typeof globalThis.fetch {
+  if (typeof window !== "undefined" && typeof window.fetch === "function") return window.fetch.bind(window);
+  return globalThis.fetch as typeof globalThis.fetch;
+}
+
 const createTauriFetch = (auth?: OpencodeAuth) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
@@ -274,28 +300,33 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
   };
 
   return (input: RequestInfo | URL, init?: RequestInit) => {
+    // Streams must go through the webview's native fetch to avoid the
+    // Tauri HTTP plugin's `fetch_read_body` hang on never-closing bodies.
+    const shouldStream = requestIsStreaming(input, init);
+    const underlyingFetch = shouldStream
+      ? nativeFetchRef()
+      : (tauriFetch as unknown as typeof globalThis.fetch);
+    // Streams should never be timed out at the transport layer; the caller
+    // aborts via AbortSignal when the subscription unmounts.
+    const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
+
     if (input instanceof Request) {
       const headers = new Headers(input.headers);
       addAuth(headers);
       const request = new Request(input, { headers });
-      return fetchWithTimeout(
-        tauriFetch as unknown as typeof globalThis.fetch,
-        request,
-        undefined,
-        DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
-      );
+      return fetchWithTimeout(underlyingFetch, request, undefined, timeoutMs);
     }
 
     const headers = new Headers(init?.headers);
     addAuth(headers);
     return fetchWithTimeout(
-      tauriFetch as unknown as typeof globalThis.fetch,
+      underlyingFetch,
       input,
       {
         ...init,
         headers,
       },
-      DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+      timeoutMs,
     );
   };
 };
