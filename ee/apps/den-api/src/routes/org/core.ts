@@ -1,18 +1,19 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { auth } from "../../auth.js"
 import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { jsonValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { acceptInvitationForUser, createOrganizationForUser, getInvitationPreview, setSessionActiveOrganization, updateOrganizationName } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOwner, orgIdParamSchema } from "./shared.js"
+import { ensureOwner } from "./shared.js"
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -73,6 +74,27 @@ function getStoredSessionId(session: { id?: string | null } | null) {
   }
 }
 
+async function setRequestActiveOrganization(
+  c: {
+    get: (key: "session") => { id?: string | null } | null
+    req: { raw: Request }
+  },
+  organizationId: DenTypeId<"organization"> | null,
+) {
+  try {
+    await auth.api.setActiveOrganization({
+      body: { organizationId },
+      headers: c.req.raw.headers,
+    })
+    return
+  } catch {}
+
+  const sessionId = getStoredSessionId(c.get("session"))
+  if (sessionId) {
+    await setSessionActiveOrganization(sessionId, organizationId)
+  }
+}
+
 export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
     "/v1/orgs",
@@ -100,7 +122,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     const user = c.get("user")
-    const session = c.get("session")
     const input = c.req.valid("json")
     const email = getRequiredUserEmail(user)
 
@@ -131,10 +152,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       name: input.name,
     })
 
-    const sessionId = getStoredSessionId(session)
-    if (sessionId) {
-      await setSessionActiveOrganization(sessionId, organizationId)
-    }
+    await setRequestActiveOrganization(c, organizationId)
 
     const organization = await db
       .select()
@@ -196,7 +214,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     const user = c.get("user")
-    const session = c.get("session")
     const input = c.req.valid("json")
     const email = getRequiredUserEmail(user)
 
@@ -214,10 +231,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
-    const sessionId = getStoredSessionId(session)
-    if (sessionId) {
-      await setSessionActiveOrganization(sessionId, accepted.member.organizationId)
-    }
+    await setRequestActiveOrganization(c, accepted.member.organizationId)
 
     const orgRows = await db
       .select({ slug: OrganizationTable.slug })
@@ -235,7 +249,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.patch(
-    "/v1/orgs/:orgId",
+    "/v1/org",
     describeRoute({
       tags: ["Organizations"],
       summary: "Update organization",
@@ -249,7 +263,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(updateOrganizationSchema),
     async (c) => {
@@ -275,7 +288,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.get(
-    "/v1/orgs/:orgId/context",
+    "/v1/org/context",
     describeRoute({
       tags: ["Organizations"],
       summary: "Get organization context",
@@ -288,7 +301,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     (c) => {

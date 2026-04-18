@@ -11,7 +11,7 @@ import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, n
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { listAssignableRoles } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName, orgIdParamSchema } from "./shared.js"
+import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName } from "./shared.js"
 
 const inviteMemberSchema = z.object({
   email: z.string().email(),
@@ -33,11 +33,11 @@ const invitationEmailFailedSchema = z.object({
 }).meta({ ref: "InvitationEmailFailedError" })
 
 type InvitationId = typeof InvitationTable.$inferSelect.id
-const orgInvitationParamsSchema = orgIdParamSchema.extend(idParamSchema("invitationId", "invitation").shape)
+const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
 
 export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/orgs/:orgId/invitations",
+    "/v1/org/invitations",
     describeRoute({
       tags: ["Invitations"],
       summary: "Create organization invitation",
@@ -53,7 +53,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(inviteMemberSchema),
     async (c) => {
@@ -173,7 +172,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
   )
 
   app.post(
-    "/v1/orgs/:orgId/invitations/:invitationId/cancel",
+    "/v1/org/invitations/:invitationId/cancel",
     describeRoute({
       tags: ["Invitations"],
       summary: "Cancel organization invitation",

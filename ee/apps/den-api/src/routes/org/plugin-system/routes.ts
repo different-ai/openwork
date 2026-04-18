@@ -200,7 +200,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     app,
     "get",
     pluginArchRoutePaths.configObjects,
-    paramValidator(configObjectParamsSchema.pick({ orgId: true })),
     queryValidator(configObjectListQuerySchema),
     describeRoute({
       tags: ["Config Objects"],
@@ -233,7 +232,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     app,
     "post",
     pluginArchRoutePaths.configObjects,
-    paramValidator(configObjectParamsSchema.pick({ orgId: true })),
     jsonValidator(configObjectCreateSchema),
     describeRoute({
       tags: ["Config Objects"],
@@ -549,7 +547,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.plugins,
-    paramValidator(pluginParamsSchema.pick({ orgId: true })),
     queryValidator(pluginListQuerySchema),
     describeRoute({
       tags: ["Plugins"],
@@ -567,7 +564,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.plugins,
-    paramValidator(pluginParamsSchema.pick({ orgId: true })),
     jsonValidator(pluginCreateSchema),
     describeRoute({
       tags: ["Plugins"],
@@ -828,7 +824,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.marketplaces,
-    paramValidator(marketplaceParamsSchema.pick({ orgId: true })),
     queryValidator(marketplaceListQuerySchema),
     describeRoute({
       tags: ["Marketplaces"],
@@ -846,7 +841,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.marketplaces,
-    paramValidator(marketplaceParamsSchema.pick({ orgId: true })),
     jsonValidator(marketplaceCreateSchema),
     describeRoute({
       tags: ["Marketplaces"],
@@ -1085,7 +1079,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.connectorAccounts,
-    paramValidator(connectorAccountParamsSchema.pick({ orgId: true })),
     queryValidator(connectorAccountListQuerySchema),
     describeRoute({
       tags: ["Connectors"],
@@ -1103,7 +1096,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.connectorAccounts,
-    paramValidator(connectorAccountParamsSchema.pick({ orgId: true })),
     jsonValidator(connectorAccountCreateSchema),
     describeRoute({
       tags: ["Connectors"],
@@ -1176,7 +1168,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.connectorInstances,
-    paramValidator(connectorInstanceParamsSchema.pick({ orgId: true })),
     queryValidator(connectorInstanceListQuerySchema),
     describeRoute({
       tags: ["Connectors"],
@@ -1194,7 +1185,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.connectorInstances,
-    paramValidator(connectorInstanceParamsSchema.pick({ orgId: true })),
     jsonValidator(connectorInstanceCreateSchema),
     describeRoute({
       tags: ["Connectors"],
@@ -1577,7 +1567,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.connectorSyncEvents,
-    paramValidator(connectorSyncEventParamsSchema.pick({ orgId: true })),
     queryValidator(connectorSyncEventListQuerySchema),
     describeRoute({
       tags: ["Connectors"],
@@ -1639,7 +1628,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.githubAccounts,
-    paramValidator(connectorAccountParamsSchema.pick({ orgId: true })),
     jsonValidator(githubConnectorAccountCreateSchema),
     describeRoute({
       tags: ["GitHub"],
@@ -1664,7 +1652,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.githubSetup,
-    paramValidator(connectorAccountParamsSchema.pick({ orgId: true })),
     jsonValidator(githubConnectorSetupSchema),
     describeRoute({
       tags: ["GitHub"],
@@ -1713,7 +1700,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.githubValidateTarget,
-    paramValidator(connectorAccountParamsSchema.pick({ orgId: true })),
     jsonValidator(githubValidateTargetSchema),
     describeRoute({
       tags: ["GitHub"],

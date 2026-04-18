@@ -196,95 +196,95 @@ export function formatRoleLabel(role: string): string {
     .join(" ");
 }
 
-export function getOrgDashboardRoute(orgSlug: string): string {
-  return `/o/${encodeURIComponent(orgSlug)}/dashboard`;
+export function getOrgDashboardRoute(_orgSlug?: string | null): string {
+  return "/dashboard";
 }
 
 export function getJoinOrgRoute(invitationId: string): string {
   return `/join-org?invite=${encodeURIComponent(invitationId)}`;
 }
 
-export function getManageMembersRoute(orgSlug: string): string {
+export function getManageMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/manage-members`;
 }
 
-export function getMembersRoute(orgSlug: string): string {
+export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
 }
 
-export function getSharedSetupsRoute(orgSlug: string): string {
+export function getSharedSetupsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/shared-setups`;
 }
 
-export function getBackgroundAgentsRoute(orgSlug: string): string {
+export function getBackgroundAgentsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/background-agents`;
 }
 
-export function getCustomLlmProvidersRoute(orgSlug: string): string {
+export function getCustomLlmProvidersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/custom-llm-providers`;
 }
 
-export function getLlmProvidersRoute(orgSlug: string): string {
+export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
 }
 
-export function getLlmProviderRoute(orgSlug: string, llmProviderId: string): string {
+export function getLlmProviderRoute(orgSlug: string | null | undefined, llmProviderId: string): string {
   return `${getLlmProvidersRoute(orgSlug)}/${encodeURIComponent(llmProviderId)}`;
 }
 
-export function getEditLlmProviderRoute(orgSlug: string, llmProviderId: string): string {
+export function getEditLlmProviderRoute(orgSlug: string | null | undefined, llmProviderId: string): string {
   return `${getLlmProviderRoute(orgSlug, llmProviderId)}/edit`;
 }
 
-export function getNewLlmProviderRoute(orgSlug: string): string {
+export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
-export function getBillingRoute(orgSlug: string): string {
+export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }
 
-export function getApiKeysRoute(orgSlug: string): string {
+export function getApiKeysRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/api-keys`;
 }
 
-export function getSkillHubsRoute(orgSlug: string): string {
+export function getSkillHubsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/skill-hubs`;
 }
 
-export function getSkillHubRoute(orgSlug: string, skillHubId: string): string {
+export function getSkillHubRoute(orgSlug: string | null | undefined, skillHubId: string): string {
   return `${getSkillHubsRoute(orgSlug)}/${encodeURIComponent(skillHubId)}`;
 }
 
-export function getEditSkillHubRoute(orgSlug: string, skillHubId: string): string {
+export function getEditSkillHubRoute(orgSlug: string | null | undefined, skillHubId: string): string {
   return `${getSkillHubRoute(orgSlug, skillHubId)}/edit`;
 }
 
-export function getNewSkillHubRoute(orgSlug: string): string {
+export function getNewSkillHubRoute(orgSlug?: string | null): string {
   return `${getSkillHubsRoute(orgSlug)}/new`;
 }
 
-export function getSkillDetailRoute(orgSlug: string, skillId: string): string {
+export function getSkillDetailRoute(orgSlug: string | null | undefined, skillId: string): string {
   return `${getSkillHubsRoute(orgSlug)}/skills/${encodeURIComponent(skillId)}`;
 }
 
-export function getEditSkillRoute(orgSlug: string, skillId: string): string {
+export function getEditSkillRoute(orgSlug: string | null | undefined, skillId: string): string {
   return `${getSkillDetailRoute(orgSlug, skillId)}/edit`;
 }
 
-export function getNewSkillRoute(orgSlug: string): string {
+export function getNewSkillRoute(orgSlug?: string | null): string {
   return `${getSkillHubsRoute(orgSlug)}/skills/new`;
 }
 
-export function getPluginsRoute(orgSlug: string): string {
+export function getPluginsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/plugins`;
 }
 
-export function getPluginRoute(orgSlug: string, pluginId: string): string {
+export function getPluginRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
 }
 
-export function getIntegrationsRoute(orgSlug: string): string {
+export function getIntegrationsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/integrations`;
 }
 

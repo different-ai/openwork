@@ -87,7 +87,6 @@ import {
   pluginUpdateSchema,
   resourceAccessGrantWriteSchema,
 } from "./schemas.js"
-import { orgIdParamSchema } from "../shared.js"
 
 type EndpointMethod = "DELETE" | "GET" | "PATCH" | "POST"
 type EndpointAudience = "admin" | "public_webhook"
@@ -120,7 +119,7 @@ type DeferredEndpointContract = {
   tag: EndpointTag
 }
 
-const orgBasePath = "/v1/orgs/:orgId"
+const orgBasePath = "/v1/org"
 
 export const pluginArchRoutePaths = {
   configObjects: `${orgBasePath}/config-objects`,
@@ -191,7 +190,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "List current config object projections with search and connector filters.",
     method: "GET",
     path: pluginArchRoutePaths.configObjects,
-    request: { params: orgIdParamSchema, query: configObjectListQuerySchema },
+    request: { query: configObjectListQuerySchema },
     response: { description: "Current config object rows.", schema: configObjectListResponseSchema, status: 200 },
     tag: "Config Objects",
   },
@@ -209,7 +208,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Create a cloud or imported config object and optionally attach it to plugins.",
     method: "POST",
     path: pluginArchRoutePaths.configObjects,
-    request: { body: configObjectCreateSchema, params: orgIdParamSchema },
+    request: { body: configObjectCreateSchema },
     response: { description: "Config object created successfully.", schema: configObjectMutationResponseSchema, status: 201 },
     tag: "Config Objects",
   },
@@ -335,7 +334,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "List accessible plugins for the organization.",
     method: "GET",
     path: pluginArchRoutePaths.plugins,
-    request: { params: orgIdParamSchema, query: pluginListQuerySchema },
+    request: { query: pluginListQuerySchema },
     response: { description: "Plugin list.", schema: pluginListResponseSchema, status: 200 },
     tag: "Plugins",
   },
@@ -353,7 +352,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Create a private-by-default plugin.",
     method: "POST",
     path: pluginArchRoutePaths.plugins,
-    request: { body: pluginCreateSchema, params: orgIdParamSchema },
+    request: { body: pluginCreateSchema },
     response: { description: "Plugin created successfully.", schema: pluginMutationResponseSchema, status: 201 },
     tag: "Plugins",
   },
@@ -452,7 +451,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "List accessible marketplaces for the organization.",
     method: "GET",
     path: pluginArchRoutePaths.marketplaces,
-    request: { params: orgIdParamSchema, query: marketplaceListQuerySchema },
+    request: { query: marketplaceListQuerySchema },
     response: { description: "Marketplace list.", schema: marketplaceListResponseSchema, status: 200 },
     tag: "Marketplaces",
   },
@@ -470,7 +469,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Create a private-by-default marketplace.",
     method: "POST",
     path: pluginArchRoutePaths.marketplaces,
-    request: { body: marketplaceCreateSchema, params: orgIdParamSchema },
+    request: { body: marketplaceCreateSchema },
     response: { description: "Marketplace created successfully.", schema: marketplaceMutationResponseSchema, status: 201 },
     tag: "Marketplaces",
   },
@@ -560,7 +559,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "List connector accounts such as GitHub App installations available to the org.",
     method: "GET",
     path: pluginArchRoutePaths.connectorAccounts,
-    request: { params: orgIdParamSchema, query: connectorAccountListQuerySchema },
+    request: { query: connectorAccountListQuerySchema },
     response: { description: "Connector account list.", schema: connectorAccountListResponseSchema, status: 200 },
     tag: "Connectors",
   },
@@ -569,7 +568,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Create a reusable connector account record.",
     method: "POST",
     path: pluginArchRoutePaths.connectorAccounts,
-    request: { body: connectorAccountCreateSchema, params: orgIdParamSchema },
+    request: { body: connectorAccountCreateSchema },
     response: { description: "Connector account created successfully.", schema: connectorAccountMutationResponseSchema, status: 201 },
     tag: "Connectors",
   },
@@ -596,7 +595,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "List configured connector instances for the org.",
     method: "GET",
     path: pluginArchRoutePaths.connectorInstances,
-    request: { params: orgIdParamSchema, query: connectorInstanceListQuerySchema },
+    request: { query: connectorInstanceListQuerySchema },
     response: { description: "Connector instance list.", schema: connectorInstanceListResponseSchema, status: 200 },
     tag: "Connectors",
   },
@@ -605,7 +604,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Create a connector instance backed by one connector account.",
     method: "POST",
     path: pluginArchRoutePaths.connectorInstances,
-    request: { body: connectorInstanceCreateSchema, params: orgIdParamSchema },
+    request: { body: connectorInstanceCreateSchema },
     response: { description: "Connector instance created successfully.", schema: connectorInstanceMutationResponseSchema, status: 201 },
     tag: "Connectors",
   },
@@ -767,7 +766,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "List connector sync events for inspection and debugging.",
     method: "GET",
     path: pluginArchRoutePaths.connectorSyncEvents,
-    request: { params: orgIdParamSchema, query: connectorSyncEventListQuerySchema },
+    request: { query: connectorSyncEventListQuerySchema },
     response: { description: "Connector sync event list.", schema: connectorSyncEventListResponseSchema, status: 200 },
     tag: "Connectors",
   },
@@ -794,7 +793,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Create the GitHub connector account, instance, target, and initial mappings in one setup flow.",
     method: "POST",
     path: pluginArchRoutePaths.githubSetup,
-    request: { body: githubConnectorSetupSchema, params: orgIdParamSchema },
+    request: { body: githubConnectorSetupSchema },
     response: { description: "GitHub connector setup created successfully.", schema: githubSetupResponseSchema, status: 201 },
     tag: "GitHub",
   },
@@ -803,7 +802,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Persist a GitHub App installation as a reusable connector account.",
     method: "POST",
     path: pluginArchRoutePaths.githubAccounts,
-    request: { body: githubConnectorAccountCreateSchema, params: orgIdParamSchema },
+    request: { body: githubConnectorAccountCreateSchema },
     response: { description: "GitHub connector account created successfully.", schema: connectorAccountMutationResponseSchema, status: 201 },
     tag: "GitHub",
   },
@@ -821,7 +820,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
     description: "Validate one GitHub repository-branch target before persisting it.",
     method: "POST",
     path: pluginArchRoutePaths.githubValidateTarget,
-    request: { body: githubValidateTargetSchema, params: orgIdParamSchema },
+    request: { body: githubValidateTargetSchema },
     response: { description: "GitHub target validation result.", schema: githubValidateTargetResponseSchema, status: 200 },
     tag: "GitHub",
   },

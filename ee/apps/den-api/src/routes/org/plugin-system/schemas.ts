@@ -17,7 +17,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { z } from "zod"
 import { denTypeIdSchema } from "../../../openapi.js"
-import { idParamSchema, orgIdParamSchema } from "../shared.js"
+import { idParamSchema } from "../shared.js"
 
 const cursorSchema = z.string().trim().min(1).max(255)
 const jsonObjectSchema = z.object({}).passthrough()
@@ -132,21 +132,21 @@ export const githubRepositoryListQuerySchema = pluginArchPaginationQuerySchema.e
   q: z.string().trim().min(1).max(255).optional(),
 })
 
-export const configObjectParamsSchema = orgIdParamSchema.extend(idParamSchema("configObjectId", "configObject").shape)
+export const configObjectParamsSchema = idParamSchema("configObjectId", "configObject")
 export const configObjectVersionParamsSchema = configObjectParamsSchema.extend(idParamSchema("versionId", "configObjectVersion").shape)
 export const configObjectAccessGrantParamsSchema = configObjectParamsSchema.extend(idParamSchema("grantId", "configObjectAccessGrant").shape)
-export const pluginParamsSchema = orgIdParamSchema.extend(idParamSchema("pluginId", "plugin").shape)
+export const pluginParamsSchema = idParamSchema("pluginId", "plugin")
 export const pluginConfigObjectParamsSchema = pluginParamsSchema.extend(idParamSchema("configObjectId", "configObject").shape)
 export const pluginAccessGrantParamsSchema = pluginParamsSchema.extend(idParamSchema("grantId", "pluginAccessGrant").shape)
-export const marketplaceParamsSchema = orgIdParamSchema.extend(idParamSchema("marketplaceId", "marketplace").shape)
+export const marketplaceParamsSchema = idParamSchema("marketplaceId", "marketplace")
 export const marketplacePluginParamsSchema = marketplaceParamsSchema.extend(idParamSchema("pluginId", "plugin").shape)
 export const marketplaceAccessGrantParamsSchema = marketplaceParamsSchema.extend(idParamSchema("grantId", "marketplaceAccessGrant").shape)
-export const connectorAccountParamsSchema = orgIdParamSchema.extend(idParamSchema("connectorAccountId", "connectorAccount").shape)
-export const connectorInstanceParamsSchema = orgIdParamSchema.extend(idParamSchema("connectorInstanceId", "connectorInstance").shape)
+export const connectorAccountParamsSchema = idParamSchema("connectorAccountId", "connectorAccount")
+export const connectorInstanceParamsSchema = idParamSchema("connectorInstanceId", "connectorInstance")
 export const connectorInstanceAccessGrantParamsSchema = connectorInstanceParamsSchema.extend(idParamSchema("grantId", "connectorInstanceAccessGrant").shape)
-export const connectorTargetParamsSchema = orgIdParamSchema.extend(idParamSchema("connectorTargetId", "connectorTarget").shape)
-export const connectorMappingParamsSchema = orgIdParamSchema.extend(idParamSchema("connectorMappingId", "connectorMapping").shape)
-export const connectorSyncEventParamsSchema = orgIdParamSchema.extend(idParamSchema("connectorSyncEventId", "connectorSyncEvent").shape)
+export const connectorTargetParamsSchema = idParamSchema("connectorTargetId", "connectorTarget")
+export const connectorMappingParamsSchema = idParamSchema("connectorMappingId", "connectorMapping")
+export const connectorSyncEventParamsSchema = idParamSchema("connectorSyncEventId", "connectorSyncEvent")
 
 export const connectorAccountRepositoryParamsSchema = connectorAccountParamsSchema
 

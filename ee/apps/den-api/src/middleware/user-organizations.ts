@@ -30,13 +30,13 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     ? resolved.orgs.filter((org) => org.id === scopedOrganizationId)
     : resolved.orgs
 
+  const activeOrganizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
+  const activeOrganizationSlug = scopedOrganizationId
+    ? scopedOrgs[0]?.slug ?? null
+    : resolved.activeOrgSlug
+
   c.set("userOrganizations", scopedOrgs)
-  c.set("activeOrganizationId", scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId)
-  c.set(
-    "activeOrganizationSlug",
-    scopedOrganizationId
-      ? scopedOrgs[0]?.slug ?? null
-      : resolved.activeOrgSlug,
-  )
+  c.set("activeOrganizationId", activeOrganizationId)
+  c.set("activeOrganizationSlug", activeOrganizationSlug)
   await next()
 }

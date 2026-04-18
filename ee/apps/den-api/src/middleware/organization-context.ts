@@ -1,45 +1,62 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
-import { isScopedApiKeyForOrganization } from "../api-keys.js"
-import { getOrganizationContextForUser, type OrganizationContext } from "../orgs.js"
+import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
+import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
+import type { UserOrganizationsContext } from "./user-organizations.js"
 
 export type OrganizationContextVariables = {
   organizationContext: OrganizationContext
 }
 
 export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
-  Variables: AuthContextVariables & Partial<OrganizationContextVariables>
+  Variables: AuthContextVariables & Partial<OrganizationContextVariables> & Partial<UserOrganizationsContext>
 }> = async (c, next) => {
   const user = c.get("user")
   if (!user?.id) {
     return c.json({ error: "unauthorized" }, 401) as never
   }
 
-  const params = (c.req as { valid: (target: "param") => { orgId?: string } }).valid("param")
-  const organizationIdRaw = params.orgId?.trim()
-  if (!organizationIdRaw) {
-    return c.json({ error: "organization_id_required" }, 400) as never
+  const apiKey = c.get("apiKey")
+  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
+
+  let organizationId = c.get("activeOrganizationId") ?? null
+  let organizationSlug = c.get("activeOrganizationSlug") ?? null
+
+  if (!organizationId) {
+    const resolved = await resolveUserOrganizations({
+      activeOrganizationId: scopedOrganizationId ?? c.get("session")?.activeOrganizationId ?? null,
+      userId: normalizeDenTypeId("user", user.id),
+    })
+
+    const scopedOrgs = scopedOrganizationId
+      ? resolved.orgs.filter((org) => org.id === scopedOrganizationId)
+      : resolved.orgs
+
+    organizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
+    organizationSlug = scopedOrganizationId ? scopedOrgs[0]?.slug ?? null : resolved.activeOrgSlug
+
+    c.set("userOrganizations", scopedOrgs)
+    c.set("activeOrganizationId", organizationId)
+    c.set("activeOrganizationSlug", organizationSlug)
   }
 
-  let organizationId
-  try {
-    organizationId = normalizeDenTypeId("organization", organizationIdRaw)
-  } catch {
+  if (!organizationId) {
     return c.json({ error: "organization_not_found" }, 404) as never
   }
 
+  const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)
+
   const context = await getOrganizationContextForUser({
     userId: normalizeDenTypeId("user", user.id),
-    organizationId,
+    organizationId: normalizedOrganizationId,
   })
 
   if (!context) {
     return c.json({ error: "organization_not_found" }, 404) as never
   }
 
-  const apiKey = c.get("apiKey")
-  if (apiKey && !isScopedApiKeyForOrganization({ apiKey, organizationId })) {
+  if (apiKey && !isScopedApiKeyForOrganization({ apiKey, organizationId: normalizedOrganizationId })) {
     return c.json({
       error: "forbidden",
       message: "This API key is scoped to a different organization.",
@@ -54,5 +71,7 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   }
 
   c.set("organizationContext", context)
+  c.set("activeOrganizationId", context.organization.id)
+  c.set("activeOrganizationSlug", context.organization.slug)
   await next()
 }

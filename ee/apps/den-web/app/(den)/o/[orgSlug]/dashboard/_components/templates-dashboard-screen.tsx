@@ -100,7 +100,7 @@ export function SharedSetupsScreen() {
       }
 
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgId)}/templates/${encodeURIComponent(templateId)}`,
+        `/v1/org/templates/${encodeURIComponent(templateId)}`,
         { method: "DELETE" },
         12000,
       );

@@ -12,6 +12,14 @@ This folder owns organization-facing Den API routes.
 - `templates.ts`: shared template CRUD
 - `shared.ts`: shared route-local helpers, param schemas, and guard helpers
 
+## Active organization model
+
+- `POST /api/auth/organization/set-active` is the only Better Auth endpoint that should switch the user's active org explicitly.
+- New sessions should get an initial `activeOrganizationId` from Better Auth session creation hooks in `src/auth.ts`.
+- Routes under `/v1/org/**` always resolve organization context from the current session or API-key scope. They should not require `:orgId` or `:orgSlug` in the path.
+- Routes under `/v1/orgs/**` are reserved for cross-org flows that are not tied to the active workspace yet, such as org creation and invitation preview/accept.
+- If a client needs to change workspaces, it should call Better Auth set-active first, then use `/v1/org/**` routes.
+
 ## Middleware expectations
 
 - `requireUserMiddleware`: the route requires a signed-in user
