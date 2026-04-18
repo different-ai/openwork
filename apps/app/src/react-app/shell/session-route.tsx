@@ -546,15 +546,19 @@ export function SessionRoute() {
 
     // Transient-safety: when the user switches workspaces the URL-driven
     // selectedSessionId may still point at a session from the old workspace
-    // for one render tick (until the navigate() lands on the remembered id).
-    // Don't mount SessionSurface with that mismatched pair — it causes a
-    // brief "session.mounted" fire with a session the server won't return
-    // for this workspace and produces a flash-of-not-found state.
-    const workspaceSessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
-    const sessionBelongsToSelectedWorkspace = workspaceSessions.some(
-      (session: any) => session?.id === selectedSessionId,
-    );
-    if (!sessionBelongsToSelectedWorkspace) {
+    // for one render tick. Only block rendering when we KNOW the session
+    // belongs to a different workspace (i.e., it exists in another
+    // workspace's list). A brand-new session that hasn't been refreshed
+    // into any list yet must still render so "New task" feels instant.
+    let sessionOwnedByOtherWorkspace = false;
+    for (const [workspaceId, sessions] of Object.entries(sessionsByWorkspaceId)) {
+      if (workspaceId === selectedWorkspaceId) continue;
+      if ((sessions ?? []).some((session: any) => session?.id === selectedSessionId)) {
+        sessionOwnedByOtherWorkspace = true;
+        break;
+      }
+    }
+    if (sessionOwnedByOtherWorkspace) {
       return null;
     }
 
@@ -986,7 +990,20 @@ export function SessionRoute() {
           const session = unwrap(
             await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
           );
+          // Make sure the new session is the active pair before navigating
+          // so the surface renders the new id immediately instead of going
+          // through the "unknown session" render tick.
+          setSelectedWorkspaceId(workspaceId);
+          writeActiveWorkspaceId(workspaceId || null);
+          writeLastSessionFor(workspaceId, session.id);
+          setSessionsByWorkspaceId((current) => ({
+            ...current,
+            [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
+          }));
           navigate(`/session/${session.id}`);
+          // Refresh in the background so the new session picks up its real
+          // metadata (title, timestamps) as soon as the server knows them.
+          void refreshRouteState();
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,

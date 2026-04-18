@@ -579,7 +579,26 @@ async function proxyOpencodeRequest(input: {
     body,
   });
 
-  return response;
+  return sanitizeProxyResponse(response);
+}
+
+/**
+ * Strip hop-by-hop and transport-level headers that Bun's native fetch keeps
+ * in the upstream response even after it has already decoded the body for us.
+ * Without this the browser sees `content-encoding: gzip` on a plain-text
+ * payload and bails out with ERR_CONTENT_DECODING_FAILED, breaking any UI
+ * code that reaches through /opencode/* (including session.create).
+ */
+function sanitizeProxyResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function resolveOpenCodeRouterBaseUrl(): string {
@@ -613,7 +632,7 @@ async function proxyOpenCodeRouterRequest(input: {
       headers,
       body,
     });
-    return response;
+    return sanitizeProxyResponse(response);
   } catch (error) {
     const port = parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT);
     throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host", {
