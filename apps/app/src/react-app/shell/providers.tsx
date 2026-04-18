@@ -50,8 +50,8 @@ export function AppProviders({ children }: AppProvidersProps) {
   const defaultUrl = resolveDefaultServerUrl();
   return (
     <BootStateProvider>
-      <DesktopRuntimeBoot />
       <ServerProvider defaultUrl={defaultUrl}>
+        <DesktopRuntimeBoot />
         <GlobalSDKProvider>
           <GlobalSyncProvider>
             <LocalProvider>{children}</LocalProvider>

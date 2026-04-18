@@ -11,6 +11,7 @@ import {
 } from "../../app/lib/tauri";
 import { hydrateOpenworkServerSettingsFromEnv, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { isTauriRuntime, safeStringify } from "../../app/utils";
+import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
 
 // Module-scoped latch so React Strict-Mode's "mount-unmount-remount" cycle in
@@ -31,6 +32,7 @@ let BOOT_STARTED = false;
  */
 export function useDesktopRuntimeBoot() {
   const { setPhase, setError, markReady } = useBootState();
+  const { setActive } = useServer();
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -75,6 +77,7 @@ export function useDesktopRuntimeBoot() {
         try {
           const engine = await engineInfo();
           if (engine?.running && engine.baseUrl) {
+            setActive(engine.baseUrl);
             const fresh = await openworkServerInfo().catch(() => null);
             if (fresh?.baseUrl) {
               writeOpenworkServerSettings({
@@ -125,6 +128,9 @@ export function useDesktopRuntimeBoot() {
         });
 
         if (engineStartResult) {
+          if (engineStartResult.baseUrl) {
+            setActive(engineStartResult.baseUrl);
+          }
           try {
             const freshInfo = await openworkServerInfo();
             if (freshInfo?.baseUrl) {
@@ -162,7 +168,7 @@ export function useDesktopRuntimeBoot() {
         setError(error instanceof Error ? error.message : safeStringify(error));
       }
     })();
-  }, [markReady, setError, setPhase]);
+  }, [markReady, setActive, setError, setPhase]);
 }
 
 /**
