@@ -37,8 +37,10 @@ export type CommandPaletteProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   /** Called when "New session" is chosen. */
   onCreateNewSession: () => void;
-  /** Called when "Open settings" is chosen. */
-  onOpenSettings: () => void;
+  /** Called when "Open settings" is chosen. Accepts an optional route to jump straight to a tab. */
+  onOpenSettings: (route?: string) => void;
+  /** Optional — open a URL in the user's browser. Falls back to window.open. */
+  onOpenUrl?: (url: string) => void;
   /** Optional: sessions for the second mode. */
   sessions: SessionOption[];
 };
@@ -68,6 +70,14 @@ export function CommandPalette(props: CommandPaletteProps) {
     }, 10);
     return () => window.clearTimeout(id);
   }, [props.open]);
+
+  const openUrl = (url: string) => {
+    if (props.onOpenUrl) {
+      props.onOpenUrl(url);
+    } else if (typeof window !== "undefined") {
+      window.open(url, "_blank", "noopener");
+    }
+  };
 
   const rootItems = useMemo<PaletteItem[]>(() => {
     const items: PaletteItem[] = [
@@ -103,6 +113,88 @@ export function CommandPalette(props: CommandPaletteProps) {
         action: () => {
           props.onClose();
           props.onOpenSettings();
+        },
+      },
+      // Top-bar shortcuts — these used to be selectable via Cmd+K and were
+      // missing after the React port. Each one mirrors one of the icons at
+      // the bottom-right of the session surface (documentation / feedback)
+      // plus every settings tab the user is likely to reach for.
+      {
+        id: "open-docs",
+        title: t("session.support_docs"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          openUrl("https://openwork.dev/docs");
+        },
+      },
+      {
+        id: "open-feedback",
+        title: t("session.support_feedback"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          openUrl("https://openwork.dev/feedback");
+        },
+      },
+      {
+        id: "settings-skills",
+        title: t("settings.tab_skills"),
+        detail: t("settings.tab_description_skills"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          props.onOpenSettings("/settings/skills");
+        },
+      },
+      {
+        id: "settings-extensions",
+        title: t("settings.tab_extensions"),
+        detail: t("settings.tab_description_extensions"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          props.onOpenSettings("/settings/extensions");
+        },
+      },
+      {
+        id: "settings-mcp",
+        title: t("settings.tab_messaging"),
+        detail: t("settings.tab_description_messaging"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          props.onOpenSettings("/settings/mcp");
+        },
+      },
+      {
+        id: "settings-appearance",
+        title: t("settings.tab_appearance"),
+        detail: t("settings.tab_description_appearance"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          props.onOpenSettings("/settings/appearance");
+        },
+      },
+      {
+        id: "settings-recovery",
+        title: t("settings.tab_recovery"),
+        detail: t("settings.tab_description_recovery"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          props.onOpenSettings("/settings/recovery");
+        },
+      },
+      {
+        id: "settings-updates",
+        title: t("settings.tab_updates"),
+        detail: t("settings.tab_description_updates"),
+        meta: t("session.cmd_settings_meta"),
+        action: () => {
+          props.onClose();
+          props.onOpenSettings("/settings/updates");
         },
       },
     ];

@@ -63,6 +63,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "./app-inspector";
+import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -227,6 +228,10 @@ export function SessionRoute() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerQuery, setModelPickerQuery] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  // Provider catalog cache. Used to compute the reasoning/thinking variant
+  // options for whichever model is currently selected so the composer's
+  // behavior pill actually shows its options (bug: was empty before).
+  const [providerCatalog, setProviderCatalog] = useState<Record<string, Record<string, any>>>({});
 
   const refreshRouteState = useCallback(async () => {
     // Dedupe: if a refresh is already running, skip this call. Fast workspace
@@ -507,9 +512,52 @@ export function SessionRoute() {
     ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
     : t("session.default_model");
 
-  // Load provider/model list lazily when the picker opens. Uses the
-  // workspace-scoped opencode client so responses are scoped to the actual
-  // workspace directory (same pattern settings-route uses).
+  // Prefetch the full provider catalog once so `getModelBehaviorSummary` has
+  // everything it needs to expose the reasoning/thinking variants the active
+  // model supports — without waiting for the model picker to open. Cached
+  // as providerID → modelID → ProviderModel.
+  useEffect(() => {
+    if (!opencodeClient) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await opencodeClient.config.providers({
+          directory: selectedWorkspaceRoot || undefined,
+        });
+        const data = (res as { data?: { providers?: Array<{ id: string; models: Record<string, any> }> } }).data;
+        if (cancelled || !data?.providers) return;
+        const next: Record<string, Record<string, any>> = {};
+        for (const provider of data.providers) {
+          next[provider.id] = { ...(provider.models ?? {}) };
+        }
+        setProviderCatalog(next);
+      } catch {
+        // best-effort cache; UI will fall back to empty variant options.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [opencodeClient, selectedWorkspaceRoot]);
+
+  // Compute behavior (reasoning/thinking variant) options for the current
+  // default model. This is what the composer renders as its variant pill.
+  const { modelVariantLabel, modelBehaviorOptions } = useMemo(() => {
+    const ref = local.prefs.defaultModel;
+    const variant = local.prefs.modelVariant ?? null;
+    if (!ref) {
+      return { modelVariantLabel: t("settings.default_label"), modelBehaviorOptions: [] as { value: string | null; label: string }[] };
+    }
+    const model = providerCatalog[ref.providerID]?.[ref.modelID];
+    if (!model) {
+      return { modelVariantLabel: variant ?? t("settings.default_label"), modelBehaviorOptions: [] as { value: string | null; label: string }[] };
+    }
+    const summary = getModelBehaviorSummary(ref.providerID, model, variant);
+    return { modelVariantLabel: summary.label, modelBehaviorOptions: summary.options };
+  }, [local.prefs.defaultModel, local.prefs.modelVariant, providerCatalog]);
+
+  // Load the picker list lazily the first time the modal opens. Uses the
+  // cached catalog when available, otherwise re-fetches.
   useEffect(() => {
     if (!modelPickerOpen || !opencodeClient) return;
     let cancelled = false;
@@ -634,8 +682,9 @@ export function SessionRoute() {
       },
       attachmentsEnabled: true,
       attachmentsDisabledReason: null,
-      modelVariantLabel: local.prefs.modelVariant ?? t("settings.default_label"),
-      modelVariant: local.prefs.modelVariant,
+      modelVariantLabel,
+      modelVariant: local.prefs.modelVariant ?? null,
+      modelBehaviorOptions,
       onModelVariantChange: (value: string | null) => {
         local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
       },
@@ -1101,7 +1150,7 @@ export function SessionRoute() {
         }
       }}
       onOpenSession={(_workspaceId, sessionId) => navigate(`/session/${sessionId}`)}
-      onOpenSettings={() => navigate("/settings/general")}
+      onOpenSettings={(route) => navigate(route ?? "/settings/general")}
       sessions={paletteSessionOptions}
     />
     <ModelPickerModal
