@@ -882,11 +882,36 @@ async function requestJson<T>(
   return raw.json as T;
 }
 
+async function ensureActiveOrganization(
+  baseUrls: DenBaseUrls,
+  token: string | null,
+  input: { organizationId?: string | null; organizationSlug?: string | null },
+) {
+  const organizationId = input.organizationId?.trim() ?? "";
+  const organizationSlug = input.organizationSlug?.trim() ?? "";
+  if (!token || (!organizationId && !organizationSlug)) {
+    return;
+  }
+
+  await requestJson<unknown>(baseUrls, "/api/auth/organization/set-active", {
+    method: "POST",
+    token,
+    body: {
+      organizationId: organizationId || undefined,
+      organizationSlug: organizationSlug || undefined,
+    },
+  });
+}
+
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {
   const baseUrls = resolveDenBaseUrls(options.baseUrl);
   const token = options.token?.trim() ?? null;
 
   return {
+    async setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }): Promise<void> {
+      await ensureActiveOrganization(baseUrls, token, input);
+    },
+
     async signInEmail(email: string, password: string): Promise<DenAuthResult> {
       const payload = await requestJson<unknown>(baseUrls, "/api/auth/sign-in/email", {
         method: "POST",
@@ -949,21 +974,30 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return { user: getUser(payload), token: getToken(payload) };
     },
 
-    async listOrgs(): Promise<{ orgs: DenOrgSummary[]; defaultOrgId: string | null }> {
+    async listOrgs(): Promise<{ orgs: DenOrgSummary[]; activeOrgId: string | null; activeOrgSlug: string | null; defaultOrgId: string | null }> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/me/orgs", {
         method: "GET",
         token,
       });
+
+      const activeOrgId = isRecord(payload) && typeof payload.activeOrgId === "string"
+        ? payload.activeOrgId
+        : null;
+      const activeOrgSlug = isRecord(payload) && typeof payload.activeOrgSlug === "string"
+        ? payload.activeOrgSlug
+        : null;
+
       return {
         orgs: getOrgList(payload),
-        defaultOrgId: isRecord(payload) && typeof payload.defaultOrgId === "string" ? payload.defaultOrgId : null,
+        activeOrgId,
+        activeOrgSlug,
+        defaultOrgId: activeOrgId,
       };
     },
 
     async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {
       const params = new URLSearchParams();
       params.set("limit", String(limit));
-      params.set("orgId", orgId);
       const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
         method: "GET",
         token,
@@ -972,9 +1006,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
-      const params = new URLSearchParams();
-      params.set("orgId", orgId);
-      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens?${params.toString()}`, {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens`, {
         method: "POST",
         token,
         body: {},
@@ -989,7 +1021,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async listTemplates(orgSlug: string): Promise<DenTemplate[]> {
       const payload = await requestJson<unknown>(
         baseUrls,
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates`,
+        "/v1/org/templates",
         {
           method: "GET",
           token,
@@ -1004,7 +1036,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     ): Promise<DenTemplate> {
       const payload = await requestJson<unknown>(
         baseUrls,
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates`,
+        "/v1/org/templates",
         {
           method: "POST",
           token,
@@ -1024,7 +1056,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async deleteTemplate(orgSlug: string, templateId: string): Promise<void> {
       const raw = await requestJsonRaw(
         baseUrls,
-        `/v1/orgs/${encodeURIComponent(orgSlug)}/templates/${encodeURIComponent(templateId)}`,
+        `/v1/org/templates/${encodeURIComponent(templateId)}`,
         {
           method: "DELETE",
           token,
@@ -1039,7 +1071,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgSkills(orgId: string): Promise<DenOrgSkillCard[]> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skills`, {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skills", {
         method: "GET",
         token,
       });
@@ -1047,7 +1079,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgSkillHubs(orgId: string): Promise<DenOrgSkillHub[]> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs`, {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skill-hubs", {
         method: "GET",
         token,
       });
@@ -1055,7 +1087,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgSkillHubSummaries(orgId: string): Promise<DenOrgSkillHubSummary[]> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs`, {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skill-hubs", {
         method: "GET",
         token,
       });
@@ -1070,7 +1102,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         skillText: input.skillText,
         shared: input.shared === undefined ? ("org" as const) : input.shared,
       };
-      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/skills`, {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org/skills", {
         method: "POST",
         token,
         body,
@@ -1085,7 +1117,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async addOrgSkillToHub(orgId: string, skillHubId: string, skillId: string): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
-        `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs/${encodeURIComponent(skillHubId)}/skills`,
+        `/v1/org/skill-hubs/${encodeURIComponent(skillHubId)}/skills`,
         {
           method: "POST",
           token,
@@ -1095,7 +1127,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers`, {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org/llm-providers", {
         method: "GET",
         token,
       });
@@ -1105,7 +1137,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {
       const payload = await requestJson<unknown>(
         baseUrls,
-        `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers/${encodeURIComponent(llmProviderId)}/connect`,
+        `/v1/org/llm-providers/${encodeURIComponent(llmProviderId)}/connect`,
         {
           method: "GET",
           token,

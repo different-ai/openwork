@@ -308,6 +308,26 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     setCloudSettings(nextSettings);
   };
 
+  const switchActiveOrg = async (orgId: string) => {
+    const nextOrg = orgs().find((org) => org.id === orgId) ?? null;
+    if (!nextOrg || orgId === activeOrgId().trim()) {
+      return;
+    }
+
+    setOrgsBusy(true);
+    setOrgsError(null);
+    try {
+      await denClient().setActiveOrganization({ organizationId: orgId });
+      applyActiveOrg(nextOrg);
+    } catch (error) {
+      setOrgsError(
+        error instanceof Error ? error.message : translate("dashboard.error_load_orgs"),
+      );
+    } finally {
+      setOrgsBusy(false);
+    }
+  };
+
   const refreshOrgs = async () => {
     if (!isSignedIn()) return;
     setOrgsBusy(true);
@@ -597,8 +617,7 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           orgs={orgs()}
           activeOrgId={activeOrgId()}
           onActiveOrgChange={(orgId) => {
-            const nextOrg = orgs().find((org) => org.id === orgId) ?? null;
-            applyActiveOrg(nextOrg);
+            void switchActiveOrg(orgId);
           }}
           orgsBusy={orgsBusy()}
           orgsError={orgsError()}

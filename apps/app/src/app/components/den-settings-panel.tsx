@@ -533,6 +533,34 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
   };
 
+  const switchActiveOrg = async (nextId: string) => {
+    const nextOrg = orgs().find((org) => org.id === nextId) ?? null;
+    if (!nextOrg || nextId === activeOrgId()) {
+      return;
+    }
+
+    setOrgsBusy(true);
+    setOrgsError(null);
+    try {
+      await client().setActiveOrganization({ organizationId: nextId });
+      setActiveOrgId(nextId);
+      writeDenSettings({
+        baseUrl: baseUrl(),
+        authToken: authToken() || null,
+        activeOrgId: nextId || null,
+        activeOrgSlug: nextOrg.slug,
+        activeOrgName: nextOrg.name,
+      });
+      setStatusMessage(
+        t("den.org_switched", currentLocale(), { name: nextOrg.name }),
+      );
+    } catch (error) {
+      setOrgsError(error instanceof Error ? error.message : tr("den.error_load_orgs"));
+    } finally {
+      setOrgsBusy(false);
+    }
+  };
+
   const refreshWorkers = async (quiet = false) => {
     const orgId = activeOrgId().trim();
     if (!authToken().trim() || !orgId) {
@@ -1300,18 +1328,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
                     value={activeOrgId()}
                     onChange={(event) => {
                       const nextId = event.currentTarget.value;
-                      const nextOrg = orgs().find((org) => org.id === nextId) ?? null;
-                      setActiveOrgId(nextId);
-                      writeDenSettings({
-                        baseUrl: baseUrl(),
-                        authToken: authToken() || null,
-                        activeOrgId: nextId || null,
-                        activeOrgSlug: nextOrg?.slug ?? null,
-                        activeOrgName: nextOrg?.name ?? null,
-                      });
-                      setStatusMessage(
-                        t("den.org_switched", currentLocale(), { name: nextOrg?.name ?? tr("den.active_org_title") }),
-                      );
+                      void switchActiveOrg(nextId);
                     }}
                     disabled={orgsBusy() || orgs().length === 0}
                   >
