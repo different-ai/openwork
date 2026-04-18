@@ -54,6 +54,17 @@ Key idea:
 
 Plugins replace the current mental model of a hub.
 
+### Marketplace
+
+A marketplace is an organization-scoped grouping of plugins.
+
+Key idea:
+
+- administrators can curate multiple marketplaces per org;
+- each marketplace contains zero or more plugins;
+- marketplace access controls discovery and delivery at a higher level than individual plugins;
+- plugin-level access can still exist for direct sharing or exceptions.
+
 ## Source Model
 
 Config objects may be created or updated from multiple source channels:
@@ -226,12 +237,31 @@ Important:
 - plugin delivery resolves the latest version of each linked object;
 - delivery logic can decide whether deleted items are omitted from downloads.
 
+### Marketplace layer
+
+Marketplaces likely need:
+
+- stable id;
+- org id;
+- metadata;
+- lifecycle status;
+- membership rows pointing to plugins;
+- access grants for member/team/org-wide visibility.
+
+Important:
+
+- orgs can have multiple marketplaces;
+- a plugin may belong to multiple marketplaces;
+- marketplace membership should preserve history even when a plugin is later archived or removed;
+- marketplace access should provide view/discovery access to included plugins without automatically granting plugin edit rights.
+
 ## RBAC Direction
 
 RBAC should be consistent across:
 
 - config objects;
 - plugins;
+- marketplaces;
 - connectors.
 
 We will likely need separate permission families for:
@@ -239,7 +269,9 @@ We will likely need separate permission families for:
 - creating config objects manually;
 - editing cloud/import-managed objects;
 - creating plugins;
+- creating marketplaces;
 - attaching objects to plugins;
+- attaching plugins to marketplaces;
 - creating connector definitions;
 - configuring connector instances;
 - binding connector instances to plugins;
@@ -301,6 +333,7 @@ Future:
 - skills become one config object type among many;
 - hubs disappear from the product model;
 - plugins become the administrator-authored deliverable;
+- marketplaces become the higher-level catalog/grouping surface for plugins;
 - connectors can automatically populate plugins;
 - delivery/install rules move up from individual skills to plugin-aware distribution.
 
@@ -315,6 +348,7 @@ That document currently captures:
 
 - the proposed `config_object` and `config_object_version` split;
 - plugin membership tables;
+- marketplace membership tables;
 - RBAC table direction;
 - connector/account/instance/mapping/source-binding tables;
 - latest-version lookup strategy;
@@ -385,6 +419,7 @@ Key current data-model decisions:
 - Treat `config_object_version` as the only source of truth for latest-version lookup in v1.
 - Do not add a version-number column in v1 unless product requirements emerge for human-facing revision labels.
 - Treat plugins as first-class entities with membership tables.
+- Treat marketplaces as first-class entities that group plugins.
 - Keep source ownership explicit on every config object identity.
 - Model connectors as reusable integration definitions plus configured instances.
 - Store connector provenance richly enough to debug and reconcile webhook-driven ingestion.

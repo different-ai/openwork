@@ -183,6 +183,27 @@ These should sit on top of the shared config-object model.
 - `POST /v1/orgs/:orgId/plugins/:pluginId/access`
 - `DELETE /v1/orgs/:orgId/plugins/:pluginId/access/:grantId`
 
+## Marketplaces
+
+- `GET /v1/orgs/:orgId/marketplaces`
+- `GET /v1/orgs/:orgId/marketplaces/:marketplaceId`
+- `POST /v1/orgs/:orgId/marketplaces`
+- `PATCH /v1/orgs/:orgId/marketplaces/:marketplaceId`
+- `POST /v1/orgs/:orgId/marketplaces/:marketplaceId/archive`
+- `POST /v1/orgs/:orgId/marketplaces/:marketplaceId/restore`
+
+### Marketplace/plugin membership endpoints
+
+- `GET /v1/orgs/:orgId/marketplaces/:marketplaceId/plugins`
+- `POST /v1/orgs/:orgId/marketplaces/:marketplaceId/plugins`
+- `DELETE /v1/orgs/:orgId/marketplaces/:marketplaceId/plugins/:pluginId`
+
+### Marketplace access endpoints
+
+- `GET /v1/orgs/:orgId/marketplaces/:marketplaceId/access`
+- `POST /v1/orgs/:orgId/marketplaces/:marketplaceId/access`
+- `DELETE /v1/orgs/:orgId/marketplaces/:marketplaceId/access/:grantId`
+
 ## Connector accounts
 
 - `GET /v1/orgs/:orgId/connector-accounts`

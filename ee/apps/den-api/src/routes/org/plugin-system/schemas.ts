@@ -11,6 +11,7 @@ import {
   connectorSyncStatusValues,
   connectorTargetKindValues,
   connectorTypeValues,
+  marketplaceStatusValues,
   membershipSourceValues,
   pluginStatusValues,
 } from "@openwork-ee/den-db/schema"
@@ -33,6 +34,9 @@ export const configObjectAccessGrantIdSchema = denTypeIdSchema("configObjectAcce
 export const pluginIdSchema = denTypeIdSchema("plugin")
 export const pluginConfigObjectIdSchema = denTypeIdSchema("pluginConfigObject")
 export const pluginAccessGrantIdSchema = denTypeIdSchema("pluginAccessGrant")
+export const marketplaceIdSchema = denTypeIdSchema("marketplace")
+export const marketplacePluginIdSchema = denTypeIdSchema("marketplacePlugin")
+export const marketplaceAccessGrantIdSchema = denTypeIdSchema("marketplaceAccessGrant")
 export const connectorAccountIdSchema = denTypeIdSchema("connectorAccount")
 export const connectorInstanceIdSchema = denTypeIdSchema("connectorInstance")
 export const connectorInstanceAccessGrantIdSchema = denTypeIdSchema("connectorInstanceAccessGrant")
@@ -49,6 +53,7 @@ export const configObjectSourceModeSchema = z.enum(configObjectSourceModeValues)
 export const configObjectCreatedViaSchema = z.enum(configObjectCreatedViaValues)
 export const configObjectStatusSchema = z.enum(configObjectStatusValues)
 export const pluginStatusSchema = z.enum(pluginStatusValues)
+export const marketplaceStatusSchema = z.enum(marketplaceStatusValues)
 export const membershipSourceSchema = z.enum(membershipSourceValues)
 export const accessRoleSchema = z.enum(accessRoleValues)
 export const connectorTypeSchema = z.enum(connectorTypeValues)
@@ -81,6 +86,11 @@ export const configObjectVersionListQuerySchema = pluginArchPaginationQuerySchem
 
 export const pluginListQuerySchema = pluginArchPaginationQuerySchema.extend({
   status: pluginStatusSchema.optional(),
+  q: z.string().trim().min(1).max(255).optional(),
+})
+
+export const marketplaceListQuerySchema = pluginArchPaginationQuerySchema.extend({
+  status: marketplaceStatusSchema.optional(),
   q: z.string().trim().min(1).max(255).optional(),
 })
 
@@ -128,6 +138,9 @@ export const configObjectAccessGrantParamsSchema = configObjectParamsSchema.exte
 export const pluginParamsSchema = orgIdParamSchema.extend(idParamSchema("pluginId", "plugin").shape)
 export const pluginConfigObjectParamsSchema = pluginParamsSchema.extend(idParamSchema("configObjectId", "configObject").shape)
 export const pluginAccessGrantParamsSchema = pluginParamsSchema.extend(idParamSchema("grantId", "pluginAccessGrant").shape)
+export const marketplaceParamsSchema = orgIdParamSchema.extend(idParamSchema("marketplaceId", "marketplace").shape)
+export const marketplacePluginParamsSchema = marketplaceParamsSchema.extend(idParamSchema("pluginId", "plugin").shape)
+export const marketplaceAccessGrantParamsSchema = marketplaceParamsSchema.extend(idParamSchema("grantId", "marketplaceAccessGrant").shape)
 export const connectorAccountParamsSchema = orgIdParamSchema.extend(idParamSchema("connectorAccountId", "connectorAccount").shape)
 export const connectorInstanceParamsSchema = orgIdParamSchema.extend(idParamSchema("connectorInstanceId", "connectorInstance").shape)
 export const connectorInstanceAccessGrantParamsSchema = connectorInstanceParamsSchema.extend(idParamSchema("grantId", "connectorInstanceAccessGrant").shape)
@@ -204,8 +217,31 @@ export const pluginUpdateSchema = z.object({
   }
 })
 
+export const marketplaceCreateSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  description: nullableStringSchema.optional(),
+})
+
+export const marketplaceUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(255).optional(),
+  description: nullableStringSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (value.name === undefined && value.description === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide at least one field to update.",
+      path: ["name"],
+    })
+  }
+})
+
 export const pluginMembershipWriteSchema = z.object({
   configObjectId: configObjectIdSchema,
+  membershipSource: membershipSourceSchema.optional(),
+})
+
+export const marketplacePluginWriteSchema = z.object({
+  pluginId: pluginIdSchema,
   membershipSource: membershipSourceSchema.optional(),
 })
 
@@ -324,7 +360,7 @@ export const githubValidateTargetSchema = z.object({
 })
 
 export const accessGrantSchema = z.object({
-  id: z.union([configObjectAccessGrantIdSchema, pluginAccessGrantIdSchema, connectorInstanceAccessGrantIdSchema]),
+  id: z.union([configObjectAccessGrantIdSchema, pluginAccessGrantIdSchema, marketplaceAccessGrantIdSchema, connectorInstanceAccessGrantIdSchema]),
   orgMembershipId: memberIdSchema.nullable(),
   teamId: teamIdSchema.nullable(),
   orgWide: z.boolean(),
@@ -392,6 +428,30 @@ export const pluginSchema = z.object({
   deletedAt: nullableTimestampSchema,
   memberCount: z.number().int().nonnegative().optional(),
 }).meta({ ref: "PluginArchPlugin" })
+
+export const marketplacePluginSchema = z.object({
+  id: marketplacePluginIdSchema,
+  marketplaceId: marketplaceIdSchema,
+  pluginId: pluginIdSchema,
+  membershipSource: membershipSourceSchema,
+  createdByOrgMembershipId: memberIdSchema.nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+  removedAt: nullableTimestampSchema,
+  plugin: pluginSchema.optional(),
+}).meta({ ref: "PluginArchMarketplacePluginMembership" })
+
+export const marketplaceSchema = z.object({
+  id: marketplaceIdSchema,
+  organizationId: denTypeIdSchema("organization"),
+  name: z.string().trim().min(1).max(255),
+  description: nullableStringSchema,
+  status: marketplaceStatusSchema,
+  createdByOrgMembershipId: memberIdSchema,
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true }),
+  deletedAt: nullableTimestampSchema,
+  pluginCount: z.number().int().nonnegative().optional(),
+}).meta({ ref: "PluginArchMarketplace" })
 
 export const connectorAccountSchema = z.object({
   id: connectorAccountIdSchema,
@@ -609,6 +669,11 @@ export const pluginMutationResponseSchema = pluginArchMutationResponseSchema("Pl
 export const pluginMembershipListResponseSchema = pluginArchListResponseSchema("PluginArchPluginMembershipListResponse", pluginMembershipSchema)
 export const pluginMembershipDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchPluginMembershipDetailResponse", pluginMembershipSchema)
 export const pluginMembershipMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchPluginMembershipMutationResponse", pluginMembershipSchema)
+export const marketplaceListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplaceListResponse", marketplaceSchema)
+export const marketplaceDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchMarketplaceDetailResponse", marketplaceSchema)
+export const marketplaceMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchMarketplaceMutationResponse", marketplaceSchema)
+export const marketplacePluginListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplacePluginListResponse", marketplacePluginSchema)
+export const marketplacePluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchMarketplacePluginMutationResponse", marketplacePluginSchema)
 export const accessGrantListResponseSchema = pluginArchListResponseSchema("PluginArchAccessGrantListResponse", accessGrantSchema)
 export const accessGrantMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchAccessGrantMutationResponse", accessGrantSchema)
 export const connectorAccountListResponseSchema = pluginArchListResponseSchema("PluginArchConnectorAccountListResponse", connectorAccountSchema)

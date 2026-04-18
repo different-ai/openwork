@@ -41,6 +41,7 @@ test("org owners and admins get plugin-system capability access", () => {
   expect(accessModule.isPluginArchOrgAdmin(createActorContext({ role: "member" }))).toBe(false)
 
   expect(accessModule.hasPluginArchCapability(createActorContext({ isOwner: true }), "plugin.create")).toBe(true)
+  expect(accessModule.hasPluginArchCapability(createActorContext({ role: "admin" }), "marketplace.create")).toBe(true)
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "admin" }), "connector_instance.create")).toBe(true)
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "config_object.create")).toBe(false)
 })

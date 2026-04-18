@@ -21,6 +21,7 @@ RBAC design lives in:
 - config objects are first-class and versioned;
 - plugins link to config object identities, never directly to object versions;
 - plugin resolution always uses the latest active object version;
+- marketplace resolution always uses the latest active plugin state;
 - latest version is derived from `config_object_version` ordering, not stored separately on `config_object`;
 - key config payload/data columns should be encrypted at rest;
 - friendly current metadata like `title` and `description` can remain plaintext for UI and search;
@@ -161,6 +162,51 @@ Notes:
 - current implementation keeps one logical membership row per (`plugin_id`, `config_object_id`) and uses `removed_at` for soft removal/reactivation rather than append-only history rows;
 - if an object later becomes deleted, the membership row can remain while delivery skips that object.
 
+### `marketplace`
+
+Stable top-level grouping row for plugins.
+
+Suggested columns:
+
+- `id`
+- `organization_id`
+- `name`
+- `description`
+- `status`
+- `created_by_org_membership_id`
+- `created_at`
+- `updated_at`
+- `deleted_at` nullable
+
+Notes:
+
+- an org can have multiple marketplaces;
+- a marketplace groups plugins, not config objects directly;
+- marketplace access can be the primary discovery/delivery control plane for curated plugin catalogs.
+
+### `marketplace_plugin`
+
+Membership join between marketplaces and plugins.
+
+Suggested columns:
+
+- `id`
+- `marketplace_id`
+- `plugin_id`
+- `membership_source` (`manual`, `connector`, `api`, `system`)
+- `created_by_org_membership_id` nullable
+- `created_at`
+- `removed_at` nullable
+
+Constraints:
+
+- unique active membership on (`marketplace_id`, `plugin_id`)
+
+Notes:
+
+- a plugin may appear in multiple marketplaces;
+- current implementation should keep one logical membership row per (`marketplace_id`, `plugin_id`) and reactivate it by clearing `removed_at`.
+
 ## Access and RBAC tables
 
 We want the same RBAC model across config objects, plugins, and connectors.
@@ -196,6 +242,10 @@ Suggested columns:
 
 Same shape as plugin access, but scoped to `config_object_id`.
 
+### `marketplace_access_grant`
+
+Same shape as plugin access, but scoped to `marketplace_id`.
+
 ### `connector_instance_access_grant`
 
 Same shape as plugin access, but scoped to `connector_instance_id`.
@@ -203,6 +253,7 @@ Same shape as plugin access, but scoped to `connector_instance_id`.
 RBAC note:
 
 - plugin delivery may be implemented primarily by plugin access grants;
+- marketplace access may sit one level above plugin access and provide discovery/view inheritance into contained plugins;
 - if a team has access to a plugin, that is effectively the publish step.
 - config objects and plugins should be private by default;
 - sharing with the whole org should be represented as one org-wide grant, not per-user entries.
@@ -457,6 +508,12 @@ Notes:
 4. optionally update `config_object.updated_at`
 5. optionally insert `plugin_config_object`
 
+### Creating a new marketplace
+
+1. insert `marketplace`
+2. insert initial `marketplace_access_grant` giving the creator `manager`
+3. optionally insert `marketplace_plugin` rows for any initial plugin set
+
 ### Connector sync updating an existing object
 
 1. create `connector_sync_event`
@@ -516,6 +573,9 @@ If we had to start implementation now, the minimum useful table set would be:
 - `plugin`
 - `plugin_config_object`
 - `plugin_access_grant`
+- `marketplace`
+- `marketplace_plugin`
+- `marketplace_access_grant`
 - `connector_account`
 - `connector_instance`
 - `connector_target`

@@ -10,6 +10,7 @@ We want one consistent RBAC model across:
 
 - config objects
 - plugins
+- marketplaces
 - connector instances
 
 And we also need org-level permissions for who can:
@@ -62,6 +63,7 @@ Resources:
 
 - one `config_object`
 - one `plugin`
+- one `marketplace`
 - one `connector_instance`
 
 Current recommendation:
@@ -114,6 +116,16 @@ Actions:
 - manage plugin access
 - view delivery preview/resolved manifest
 - create release snapshot if releases exist
+
+### Marketplaces
+
+Actions:
+
+- view metadata
+- view included plugins
+- edit metadata
+- add/remove plugins
+- manage marketplace access
 
 ### Connector instances
 
@@ -171,6 +183,7 @@ Candidate capabilities:
 
 - `config_object.create`
 - `plugin.create`
+- `marketplace.create`
 - `connector_account.create`
 - `connector_instance.create`
 - `connector_sync.view_all`
@@ -194,8 +207,9 @@ Current recommendation:
 
 - separate access tables with the same shape:
   - `config_object_access_grant`
-  - `plugin_access_grant`
-  - `connector_instance_access_grant`
+- `plugin_access_grant`
+- `marketplace_access_grant`
+- `connector_instance_access_grant`
 
 Suggested shared columns:
 
@@ -287,6 +301,29 @@ Needs:
 
 - `manager` on the plugin
 
+### Marketplaces
+
+#### View
+
+Needs one of:
+
+- direct marketplace grant
+- team marketplace grant
+- marketplace has an active org-wide grant
+- org admin implicit access
+
+#### Edit marketplace metadata / membership
+
+Needs:
+
+- `editor` or `manager` on the marketplace
+
+#### Manage marketplace access
+
+Needs:
+
+- `manager` on the marketplace
+
 ### Connector instances
 
 #### View connector setup
@@ -324,11 +361,13 @@ Current direction from the other docs:
 That means:
 
 - if team B has access to plugin A, that is effectively the publish step;
+- if team B has access to marketplace M, they should be able to discover the plugins grouped inside it;
 - the delivery system should resolve access from plugin grants, not from low-level config-object grants alone.
 
 Current recommendation:
 
 - plugin delivery should primarily check plugin access;
+- marketplace access can grant view/discovery access to included plugins, but should not automatically grant plugin edit rights;
 - config-object access should govern direct admin/editing access, not plugin delivery;
 - a user should have access to a config object if any of the following are true:
   - they are directly granted access to the object
@@ -424,6 +463,7 @@ Current recommendation:
 - connector-created objects also default to the creator of the relevant connector/mapping action;
 - org owners/admins have implicit override access across all resources;
 - teams should only gain access through explicit grants, not automatic inheritance.
+- marketplace inclusion should only inherit downward for view/discovery, never upward into edit/manage on plugins.
 
 Locked decision:
 
@@ -456,6 +496,7 @@ The API surface in `prds/new-plugin-arch/admin-api.md` should assume:
 
 - object access endpoints manage `config_object_access_grant`
 - plugin access endpoints manage `plugin_access_grant`
+- marketplace access endpoints manage `marketplace_access_grant`
 - connector instance access endpoints manage `connector_instance_access_grant`
 
 The API should also distinguish between:
@@ -475,8 +516,10 @@ That distinction will help a lot with admin UX.
 6. A user can access a config object if they are directly granted, team-granted, org-wide granted, or it is included in a plugin they can access.
 7. Default grants for connector auto-created objects should go to the creator.
 8. Config objects and plugins are private by default.
-9. Sharing with the whole org should be represented as one org-wide grant, not per-user entries.
-10. Member and team sharing should continue to use explicit grant rows.
+9. Marketplaces are private by default.
+10. Sharing with the whole org should be represented as one org-wide grant, not per-user entries.
+11. Member and team sharing should continue to use explicit grant rows.
+12. Marketplace access may grant view access to included plugins, but not plugin edit/manage access.
 
 ## Discussion questions
 

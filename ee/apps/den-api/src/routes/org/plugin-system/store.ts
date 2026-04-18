@@ -11,6 +11,9 @@ import {
   ConnectorSourceTombstoneTable,
   ConnectorSyncEventTable,
   ConnectorTargetTable,
+  MarketplaceAccessGrantTable,
+  MarketplacePluginTable,
+  MarketplaceTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
@@ -25,17 +28,23 @@ type MemberId = PluginArchActorContext["organizationContext"]["currentMember"]["
 type TeamId = PluginArchActorContext["memberTeams"][number]["id"]
 type ConfigObjectRow = typeof ConfigObjectTable.$inferSelect
 type ConfigObjectVersionRow = typeof ConfigObjectVersionTable.$inferSelect
+type MarketplaceRow = typeof MarketplaceTable.$inferSelect
+type MarketplaceMembershipRow = typeof MarketplacePluginTable.$inferSelect
 type PluginRow = typeof PluginTable.$inferSelect
 type PluginMembershipRow = typeof PluginConfigObjectTable.$inferSelect
 type ConfigObjectId = ConfigObjectRow["id"]
 type ConfigObjectVersionId = ConfigObjectVersionRow["id"]
+type MarketplaceId = MarketplaceRow["id"]
+type MarketplaceMembershipId = MarketplaceMembershipRow["id"]
 type PluginId = PluginRow["id"]
 type PluginMembershipId = PluginMembershipRow["id"]
 type AccessGrantRow =
   | typeof ConfigObjectAccessGrantTable.$inferSelect
+  | typeof MarketplaceAccessGrantTable.$inferSelect
   | typeof PluginAccessGrantTable.$inferSelect
   | typeof ConnectorInstanceAccessGrantTable.$inferSelect
 type ConfigObjectAccessGrantId = typeof ConfigObjectAccessGrantTable.$inferSelect.id
+type MarketplaceAccessGrantId = typeof MarketplaceAccessGrantTable.$inferSelect.id
 type PluginAccessGrantId = typeof PluginAccessGrantTable.$inferSelect.id
 type ConnectorInstanceAccessGrantId = typeof ConnectorInstanceAccessGrantTable.$inferSelect.id
 type ConnectorAccountRow = typeof ConnectorAccountTable.$inferSelect
@@ -86,6 +95,11 @@ type PluginResourceTarget = {
   resourceKind: "plugin"
 }
 
+type MarketplaceResourceTarget = {
+  resourceId: MarketplaceId
+  resourceKind: "marketplace"
+}
+
 type ConnectorInstanceResourceTarget = {
   resourceId: ConnectorInstanceId
   resourceKind: "connector_instance"
@@ -93,13 +107,15 @@ type ConnectorInstanceResourceTarget = {
 
 type ResourceTarget =
   | ConfigObjectResourceTarget
+  | MarketplaceResourceTarget
   | PluginResourceTarget
   | ConnectorInstanceResourceTarget
 
 type ConfigObjectGrantTarget = ConfigObjectResourceTarget & { grantId: ConfigObjectAccessGrantId }
+type MarketplaceGrantTarget = MarketplaceResourceTarget & { grantId: MarketplaceAccessGrantId }
 type PluginGrantTarget = PluginResourceTarget & { grantId: PluginAccessGrantId }
 type ConnectorInstanceGrantTarget = ConnectorInstanceResourceTarget & { grantId: ConnectorInstanceAccessGrantId }
-type GrantTarget = ConfigObjectGrantTarget | PluginGrantTarget | ConnectorInstanceGrantTarget
+type GrantTarget = ConfigObjectGrantTarget | MarketplaceGrantTarget | PluginGrantTarget | ConnectorInstanceGrantTarget
 
 export class PluginArchRouteFailure extends Error {
   constructor(
@@ -254,6 +270,21 @@ function serializePlugin(row: PluginRow, memberCount?: number) {
   }
 }
 
+function serializeMarketplace(row: MarketplaceRow, pluginCount?: number) {
+  return {
+    createdAt: row.createdAt.toISOString(),
+    createdByOrgMembershipId: row.createdByOrgMembershipId,
+    deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
+    description: row.description,
+    id: row.id,
+    name: row.name,
+    organizationId: row.organizationId,
+    pluginCount,
+    status: row.status,
+    updatedAt: row.updatedAt.toISOString(),
+  }
+}
+
 function serializeMembership(row: PluginMembershipRow, configObject?: ReturnType<typeof serializeConfigObject>) {
   return {
     configObject,
@@ -263,6 +294,19 @@ function serializeMembership(row: PluginMembershipRow, configObject?: ReturnType
     createdByOrgMembershipId: row.createdByOrgMembershipId,
     id: row.id,
     membershipSource: row.membershipSource,
+    pluginId: row.pluginId,
+    removedAt: row.removedAt ? row.removedAt.toISOString() : null,
+  }
+}
+
+function serializeMarketplaceMembership(row: MarketplaceMembershipRow, plugin?: ReturnType<typeof serializePlugin>) {
+  return {
+    createdAt: row.createdAt.toISOString(),
+    createdByOrgMembershipId: row.createdByOrgMembershipId,
+    id: row.id,
+    marketplaceId: row.marketplaceId,
+    membershipSource: row.membershipSource,
+    plugin,
     pluginId: row.pluginId,
     removedAt: row.removedAt ? row.removedAt.toISOString() : null,
   }
@@ -385,6 +429,16 @@ async function getPluginRow(organizationId: OrganizationId, pluginId: PluginId) 
   return rows[0] ?? null
 }
 
+async function getMarketplaceRow(organizationId: OrganizationId, marketplaceId: MarketplaceId) {
+  const rows = await db
+    .select()
+    .from(MarketplaceTable)
+    .where(and(eq(MarketplaceTable.organizationId, organizationId), eq(MarketplaceTable.id, marketplaceId)))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
 async function getConnectorAccountRow(organizationId: OrganizationId, connectorAccountId: ConnectorAccountId) {
   const rows = await db
     .select()
@@ -453,6 +507,24 @@ async function ensureEditablePlugin(context: PluginArchActorContext, pluginId: P
     throw new PluginArchRouteFailure(404, "plugin_not_found", "Plugin not found.")
   }
   await requirePluginArchResourceRole({ context, resourceId: row.id, resourceKind: "plugin", role: "editor" })
+  return row
+}
+
+async function ensureEditableMarketplace(context: PluginArchActorContext, marketplaceId: MarketplaceId) {
+  const row = await getMarketplaceRow(context.organizationContext.organization.id, marketplaceId)
+  if (!row) {
+    throw new PluginArchRouteFailure(404, "marketplace_not_found", "Marketplace not found.")
+  }
+  await requirePluginArchResourceRole({ context, resourceId: row.id, resourceKind: "marketplace", role: "editor" })
+  return row
+}
+
+async function ensureVisibleMarketplace(context: PluginArchActorContext, marketplaceId: MarketplaceId) {
+  const row = await getMarketplaceRow(context.organizationContext.organization.id, marketplaceId)
+  if (!row) {
+    throw new PluginArchRouteFailure(404, "marketplace_not_found", "Marketplace not found.")
+  }
+  await requirePluginArchResourceRole({ context, resourceId: row.id, resourceKind: "marketplace", role: "viewer" })
   return row
 }
 
@@ -532,6 +604,50 @@ async function upsertGrant(input: ResourceTarget & {
       teamId: input.value.teamId ?? null,
     }
     await db.insert(ConfigObjectAccessGrantTable).values(row)
+    return serializeAccessGrant({ ...row, removedAt: null })
+  }
+
+  if (input.resourceKind === "marketplace") {
+    const existing = await db
+      .select()
+      .from(MarketplaceAccessGrantTable)
+      .where(and(
+        eq(MarketplaceAccessGrantTable.marketplaceId, input.resourceId),
+        input.value.orgMembershipId
+          ? eq(MarketplaceAccessGrantTable.orgMembershipId, input.value.orgMembershipId)
+          : input.value.teamId
+            ? eq(MarketplaceAccessGrantTable.teamId, input.value.teamId)
+            : eq(MarketplaceAccessGrantTable.orgWide, true),
+      ))
+      .limit(1)
+
+    if (existing[0]) {
+      await db
+        .update(MarketplaceAccessGrantTable)
+        .set({
+          createdByOrgMembershipId,
+          orgMembershipId: input.value.orgMembershipId ?? null,
+          orgWide: input.value.orgWide ?? false,
+          removedAt: null,
+          role: input.value.role,
+          teamId: input.value.teamId ?? null,
+        })
+        .where(eq(MarketplaceAccessGrantTable.id, existing[0].id))
+      return serializeAccessGrant({ ...existing[0], createdByOrgMembershipId, orgMembershipId: input.value.orgMembershipId ?? null, orgWide: input.value.orgWide ?? false, removedAt: null, role: input.value.role, teamId: input.value.teamId ?? null })
+    }
+
+    const row = {
+      createdAt,
+      createdByOrgMembershipId,
+      id: createDenTypeId("marketplaceAccessGrant"),
+      marketplaceId: input.resourceId,
+      organizationId,
+      orgMembershipId: input.value.orgMembershipId ?? null,
+      orgWide: input.value.orgWide ?? false,
+      role: input.value.role,
+      teamId: input.value.teamId ?? null,
+    }
+    await db.insert(MarketplaceAccessGrantTable).values(row)
     return serializeAccessGrant({ ...row, removedAt: null })
   }
 
@@ -632,6 +748,16 @@ async function removeGrant(input: GrantTarget & { context: PluginArchActorContex
       .limit(1)
     if (!rows[0]) throw new PluginArchRouteFailure(404, "access_grant_not_found", "Access grant not found.")
     await db.update(ConfigObjectAccessGrantTable).set({ removedAt }).where(eq(ConfigObjectAccessGrantTable.id, input.grantId))
+    return
+  }
+  if (input.resourceKind === "marketplace") {
+    const rows = await db
+      .select()
+      .from(MarketplaceAccessGrantTable)
+      .where(and(eq(MarketplaceAccessGrantTable.id, input.grantId), eq(MarketplaceAccessGrantTable.marketplaceId, input.resourceId)))
+      .limit(1)
+    if (!rows[0]) throw new PluginArchRouteFailure(404, "access_grant_not_found", "Access grant not found.")
+    await db.update(MarketplaceAccessGrantTable).set({ removedAt }).where(eq(MarketplaceAccessGrantTable.id, input.grantId))
     return
   }
   if (input.resourceKind === "plugin") {
@@ -970,6 +1096,10 @@ export async function listResourceAccess(input: { context: PluginArchActorContex
     const rows = await db.select().from(ConfigObjectAccessGrantTable).where(eq(ConfigObjectAccessGrantTable.configObjectId, input.resourceId)).orderBy(desc(ConfigObjectAccessGrantTable.createdAt))
     return { items: rows.map((row) => serializeAccessGrant(row)), nextCursor: null }
   }
+  if (input.resourceKind === "marketplace") {
+    const rows = await db.select().from(MarketplaceAccessGrantTable).where(eq(MarketplaceAccessGrantTable.marketplaceId, input.resourceId)).orderBy(desc(MarketplaceAccessGrantTable.createdAt))
+    return { items: rows.map((row) => serializeAccessGrant(row)), nextCursor: null }
+  }
   if (input.resourceKind === "plugin") {
     const rows = await db.select().from(PluginAccessGrantTable).where(eq(PluginAccessGrantTable.pluginId, input.resourceId)).orderBy(desc(PluginAccessGrantTable.createdAt))
     return { items: rows.map((row) => serializeAccessGrant(row)), nextCursor: null }
@@ -1105,6 +1235,166 @@ export async function addPluginMembership(input: { configObjectId: ConfigObjectI
 
 export async function removePluginMembership(input: { configObjectId: ConfigObjectId; context: PluginArchActorContext; pluginId: PluginId }) {
   return removeConfigObjectFromPlugin(input)
+}
+
+export async function listMarketplaces(input: { context: PluginArchActorContext; cursor?: string; limit?: number; q?: string; status?: MarketplaceRow["status"] }) {
+  const rows = await db
+    .select()
+    .from(MarketplaceTable)
+    .where(eq(MarketplaceTable.organizationId, input.context.organizationContext.organization.id))
+    .orderBy(desc(MarketplaceTable.updatedAt), desc(MarketplaceTable.id))
+
+  const memberships = await db
+    .select({ marketplaceId: MarketplacePluginTable.marketplaceId, count: MarketplacePluginTable.id })
+    .from(MarketplacePluginTable)
+    .where(isNull(MarketplacePluginTable.removedAt))
+
+  const counts = memberships.reduce((accumulator, row) => {
+    accumulator.set(row.marketplaceId, (accumulator.get(row.marketplaceId) ?? 0) + 1)
+    return accumulator
+  }, new Map<string, number>())
+
+  const visible: ReturnType<typeof serializeMarketplace>[] = []
+  for (const row of rows) {
+    const role = await resolvePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "marketplace" })
+    if (!role) continue
+    if (input.status && row.status !== input.status) continue
+    if (input.q) {
+      const haystack = `${row.name}\n${row.description ?? ""}`.toLowerCase()
+      if (!haystack.includes(input.q.toLowerCase())) continue
+    }
+    visible.push(serializeMarketplace(row, counts.get(row.id) ?? 0))
+  }
+
+  return pageItems(visible, input.cursor, input.limit)
+}
+
+export async function getMarketplaceDetail(context: PluginArchActorContext, marketplaceId: MarketplaceId) {
+  const row = await ensureVisibleMarketplace(context, marketplaceId)
+  const memberships = await db
+    .select({ id: MarketplacePluginTable.id })
+    .from(MarketplacePluginTable)
+    .where(and(eq(MarketplacePluginTable.marketplaceId, row.id), isNull(MarketplacePluginTable.removedAt)))
+  return serializeMarketplace(row, memberships.length)
+}
+
+export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; name: string }) {
+  const now = new Date()
+  const row = {
+    createdAt: now,
+    createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+    deletedAt: null,
+    description: normalizeOptionalString(input.description ?? undefined),
+    id: createDenTypeId("marketplace"),
+    name: input.name.trim(),
+    organizationId: input.context.organizationContext.organization.id,
+    status: "active" as const,
+    updatedAt: now,
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.insert(MarketplaceTable).values(row)
+    await tx.insert(MarketplaceAccessGrantTable).values({
+      createdAt: now,
+      createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+      id: createDenTypeId("marketplaceAccessGrant"),
+      marketplaceId: row.id,
+      organizationId: input.context.organizationContext.organization.id,
+      orgMembershipId: input.context.organizationContext.currentMember.id,
+      orgWide: false,
+      role: "manager",
+      teamId: null,
+    })
+  })
+
+  return serializeMarketplace(row, 0)
+}
+
+export async function updateMarketplace(input: { context: PluginArchActorContext; description?: string | null; marketplaceId: MarketplaceId; name?: string }) {
+  const row = await ensureEditableMarketplace(input.context, input.marketplaceId)
+  const updatedAt = new Date()
+  await db.update(MarketplaceTable).set({
+    description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
+    name: input.name?.trim() || row.name,
+    updatedAt,
+  }).where(eq(MarketplaceTable.id, row.id))
+  return getMarketplaceDetail(input.context, row.id)
+}
+
+export async function setMarketplaceLifecycle(input: { action: "archive" | "restore"; context: PluginArchActorContext; marketplaceId: MarketplaceId }) {
+  const row = await ensureVisibleMarketplace(input.context, input.marketplaceId)
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "marketplace", role: "manager" })
+  const updatedAt = new Date()
+  await db.update(MarketplaceTable).set({
+    deletedAt: input.action === "archive" ? row.deletedAt : null,
+    status: input.action === "archive" ? "archived" : "active",
+    updatedAt,
+  }).where(eq(MarketplaceTable.id, row.id))
+  return getMarketplaceDetail(input.context, row.id)
+}
+
+export async function listMarketplaceMemberships(input: { context: PluginArchActorContext; includePlugins?: boolean; marketplaceId: MarketplaceId; onlyActive?: boolean }) {
+  await ensureVisibleMarketplace(input.context, input.marketplaceId)
+  const memberships = await db
+    .select()
+    .from(MarketplacePluginTable)
+    .where(input.onlyActive ? and(eq(MarketplacePluginTable.marketplaceId, input.marketplaceId), isNull(MarketplacePluginTable.removedAt)) : eq(MarketplacePluginTable.marketplaceId, input.marketplaceId))
+    .orderBy(desc(MarketplacePluginTable.createdAt))
+
+  if (!input.includePlugins) {
+    return { items: memberships.map((membership) => serializeMarketplaceMembership(membership)), nextCursor: null }
+  }
+
+  const plugins = memberships.length === 0
+    ? []
+    : await db.select().from(PluginTable).where(inArray(PluginTable.id, memberships.map((membership) => membership.pluginId)))
+  const byId = new Map<string, ReturnType<typeof serializePlugin>>(plugins.map((row) => [row.id, serializePlugin(row)]))
+  return { items: memberships.map((membership) => serializeMarketplaceMembership(membership, byId.get(membership.pluginId))), nextCursor: null }
+}
+
+export async function attachPluginToMarketplace(input: { context: PluginArchActorContext; marketplaceId: MarketplaceId; membershipSource?: MarketplaceMembershipRow["membershipSource"]; pluginId: PluginId }) {
+  await ensureVisiblePlugin(input.context, input.pluginId)
+  await ensureEditableMarketplace(input.context, input.marketplaceId)
+
+  const existing = await db
+    .select()
+    .from(MarketplacePluginTable)
+    .where(and(eq(MarketplacePluginTable.marketplaceId, input.marketplaceId), eq(MarketplacePluginTable.pluginId, input.pluginId)))
+    .limit(1)
+
+  const now = new Date()
+  let membershipId: MarketplaceMembershipId | null = existing[0]?.id ?? null
+  if (existing[0]) {
+    await db.update(MarketplacePluginTable).set({ membershipSource: input.membershipSource ?? existing[0].membershipSource, removedAt: null }).where(eq(MarketplacePluginTable.id, existing[0].id))
+  } else {
+    membershipId = createDenTypeId("marketplacePlugin")
+    await db.insert(MarketplacePluginTable).values({
+      createdAt: now,
+      createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+      id: membershipId,
+      marketplaceId: input.marketplaceId,
+      membershipSource: input.membershipSource ?? "manual",
+      organizationId: input.context.organizationContext.organization.id,
+      pluginId: input.pluginId,
+    })
+  }
+
+  const rows = await db.select().from(MarketplacePluginTable).where(eq(MarketplacePluginTable.id, membershipId!)).limit(1)
+  return serializeMarketplaceMembership(rows[0])
+}
+
+export async function removePluginFromMarketplace(input: { context: PluginArchActorContext; marketplaceId: MarketplaceId; pluginId: PluginId }) {
+  await ensureVisiblePlugin(input.context, input.pluginId)
+  await ensureEditableMarketplace(input.context, input.marketplaceId)
+  const rows = await db
+    .select()
+    .from(MarketplacePluginTable)
+    .where(and(eq(MarketplacePluginTable.marketplaceId, input.marketplaceId), eq(MarketplacePluginTable.pluginId, input.pluginId), isNull(MarketplacePluginTable.removedAt)))
+    .limit(1)
+  if (!rows[0]) {
+    throw new PluginArchRouteFailure(404, "marketplace_membership_not_found", "Marketplace membership not found.")
+  }
+  await db.update(MarketplacePluginTable).set({ removedAt: new Date() }).where(eq(MarketplacePluginTable.id, rows[0].id))
 }
 
 export async function listConnectorAccounts(input: { context: PluginArchActorContext; connectorType?: ConnectorAccountRow["connectorType"]; cursor?: string; limit?: number; q?: string; status?: ConnectorAccountRow["status"] }) {

@@ -60,6 +60,18 @@ import {
   githubConnectorSetupSchema,
   githubValidateTargetResponseSchema,
   githubValidateTargetSchema,
+  marketplaceAccessGrantParamsSchema,
+  marketplaceCreateSchema,
+  marketplaceDetailResponseSchema,
+  marketplaceListQuerySchema,
+  marketplaceListResponseSchema,
+  marketplaceMutationResponseSchema,
+  marketplaceParamsSchema,
+  marketplacePluginListResponseSchema,
+  marketplacePluginMutationResponseSchema,
+  marketplacePluginParamsSchema,
+  marketplacePluginWriteSchema,
+  marketplaceUpdateSchema,
   pluginAccessGrantParamsSchema,
   pluginCreateSchema,
   pluginDetailResponseSchema,
@@ -85,6 +97,7 @@ import {
   createConnectorInstance,
   createConnectorMapping,
   createGithubConnectorAccount,
+  createMarketplace,
   createPlugin,
   createResourceAccessGrant,
   createConnectorTarget,
@@ -98,6 +111,7 @@ import {
   getConnectorSyncEventDetail,
   getConnectorTargetDetail,
   getLatestConfigObjectVersion,
+  getMarketplaceDetail,
   getPluginDetail,
   githubSetup,
   listConfigObjectPlugins,
@@ -109,19 +123,25 @@ import {
   listConnectorSyncEvents,
   listConnectorTargets,
   listGithubRepositories,
+  listMarketplaceMemberships,
+  listMarketplaces,
   listPluginMemberships,
   listPlugins,
   listResourceAccess,
+  attachPluginToMarketplace,
   queueConnectorTargetResync,
   removeConfigObjectFromPlugin,
+  removePluginFromMarketplace,
   removePluginMembership,
   retryConnectorSyncEvent,
   setConfigObjectLifecycle,
   setConnectorInstanceLifecycle,
+  setMarketplaceLifecycle,
   setPluginLifecycle,
   updateConnectorInstance,
   updateConnectorMapping,
   updateConnectorTarget,
+  updateMarketplace,
   updatePlugin,
   validateGithubTarget,
 } from "./store.js"
@@ -801,6 +821,263 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         await deleteResourceAccessGrant({ context: actorContext(c), grantId: params.grantId, resourceId: params.pluginId, resourceKind: "plugin" })
+        return c.body(null, 204)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.marketplaces,
+    paramValidator(marketplaceParamsSchema.pick({ orgId: true })),
+    queryValidator(marketplaceListQuerySchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "List marketplaces",
+      description: "Lists marketplaces visible to the current organization member.",
+      responses: {
+        200: jsonResponse("Marketplaces returned successfully.", marketplaceListResponseSchema),
+        400: jsonResponse("The marketplace query parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to list marketplaces.", unauthorizedSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      const query = validQuery<any>(c)
+      return c.json(await listMarketplaces({ context: actorContext(c), cursor: query.cursor, limit: query.limit, q: query.q, status: query.status }))
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.marketplaces,
+    paramValidator(marketplaceParamsSchema.pick({ orgId: true })),
+    jsonValidator(marketplaceCreateSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Create marketplace",
+      description: "Creates a new private marketplace and grants the creator manager access.",
+      responses: {
+        201: jsonResponse("Marketplace created successfully.", marketplaceMutationResponseSchema),
+        400: jsonResponse("The marketplace creation request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to create marketplaces.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create marketplaces.", forbiddenSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "marketplace.create")
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await createMarketplace({ context, description: body.description, name: body.name }) }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.marketplace,
+    paramValidator(marketplaceParamsSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Get marketplace",
+      description: "Returns one marketplace detail when the caller can view it.",
+      responses: {
+        200: jsonResponse("Marketplace returned successfully.", marketplaceDetailResponseSchema),
+        400: jsonResponse("The marketplace path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view marketplaces.", unauthorizedSchema),
+        404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json({ item: await getMarketplaceDetail(actorContext(c), params.marketplaceId) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "patch", pluginArchRoutePaths.marketplace,
+    paramValidator(marketplaceParamsSchema),
+    jsonValidator(marketplaceUpdateSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Update marketplace",
+      description: "Updates marketplace metadata.",
+      responses: {
+        200: jsonResponse("Marketplace updated successfully.", marketplaceMutationResponseSchema),
+        400: jsonResponse("The marketplace update request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update marketplaces.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this marketplace.", forbiddenSchema),
+        404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await updateMarketplace({ context: actorContext(c), description: body.description, marketplaceId: params.marketplaceId, name: body.name }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  for (const [path, action] of [[pluginArchRoutePaths.marketplaceArchive, "archive"], [pluginArchRoutePaths.marketplaceRestore, "restore"]] as const) {
+    withPluginArchOrgContext(app, "post", path,
+      paramValidator(marketplaceParamsSchema),
+      describeRoute({
+        tags: ["Marketplaces"],
+        summary: `${action} marketplace`,
+        description: `${action} a marketplace without touching membership history.`,
+        responses: {
+          200: jsonResponse("Marketplace lifecycle updated successfully.", marketplaceMutationResponseSchema),
+          400: jsonResponse("The marketplace lifecycle path parameters were invalid.", invalidRequestSchema),
+          401: jsonResponse("The caller must be signed in to manage marketplaces.", unauthorizedSchema),
+          403: jsonResponse("The caller lacks permission to manage this marketplace.", forbiddenSchema),
+          404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+        },
+      }),
+      async (c: OrgContext) => {
+        try {
+          const params = validParam<any>(c)
+          return c.json({ ok: true, item: await setMarketplaceLifecycle({ action, context: actorContext(c), marketplaceId: params.marketplaceId }) })
+        } catch (error) {
+          return routeErrorResponse(c, error)
+        }
+      })
+  }
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.marketplacePlugins,
+    paramValidator(marketplaceParamsSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "List marketplace plugins",
+      description: "Lists marketplace memberships and resolved plugin projections.",
+      responses: {
+        200: jsonResponse("Marketplace memberships returned successfully.", marketplacePluginListResponseSchema),
+        400: jsonResponse("The marketplace membership path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view marketplace memberships.", unauthorizedSchema),
+        404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json(await listMarketplaceMemberships({ context: actorContext(c), includePlugins: true, marketplaceId: params.marketplaceId, onlyActive: false }))
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.marketplacePlugins,
+    paramValidator(marketplaceParamsSchema),
+    jsonValidator(marketplacePluginWriteSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Add marketplace plugin",
+      description: "Adds a plugin to a marketplace.",
+      responses: {
+        201: jsonResponse("Marketplace membership created successfully.", marketplacePluginMutationResponseSchema),
+        400: jsonResponse("The marketplace membership request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage marketplace memberships.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this marketplace.", forbiddenSchema),
+        404: jsonResponse("The marketplace or plugin could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await attachPluginToMarketplace({ context: actorContext(c), marketplaceId: params.marketplaceId, membershipSource: body.membershipSource, pluginId: body.pluginId }) }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "delete", pluginArchRoutePaths.marketplacePlugin,
+    paramValidator(marketplacePluginParamsSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Remove marketplace plugin",
+      description: "Removes one plugin from a marketplace.",
+      responses: {
+        204: emptyResponse("Marketplace membership removed successfully."),
+        400: jsonResponse("The marketplace membership path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage marketplace memberships.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this marketplace.", forbiddenSchema),
+        404: jsonResponse("The marketplace membership could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        await removePluginFromMarketplace({ context: actorContext(c), marketplaceId: params.marketplaceId, pluginId: params.pluginId })
+        return c.body(null, 204)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.marketplaceAccess,
+    paramValidator(marketplaceParamsSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "List marketplace access grants",
+      description: "Lists direct, team, and org-wide grants for a marketplace.",
+      responses: {
+        200: jsonResponse("Marketplace access grants returned successfully.", accessGrantListResponseSchema),
+        400: jsonResponse("The marketplace access path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage marketplace access.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to manage marketplace access.", forbiddenSchema),
+        404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json(await listResourceAccess({ context: actorContext(c), resourceId: params.marketplaceId, resourceKind: "marketplace" }))
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.marketplaceAccess,
+    paramValidator(marketplaceParamsSchema),
+    jsonValidator(resourceAccessGrantWriteSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Grant marketplace access",
+      description: "Creates or reactivates one access grant for a marketplace.",
+      responses: {
+        201: jsonResponse("Marketplace access grant created successfully.", accessGrantMutationResponseSchema),
+        400: jsonResponse("The marketplace access request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage marketplace access.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to manage marketplace access.", forbiddenSchema),
+        404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json({ ok: true, item: await createResourceAccessGrant({ context: actorContext(c), resourceId: params.marketplaceId, resourceKind: "marketplace", value: validJson<any>(c) }) }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "delete", pluginArchRoutePaths.marketplaceAccessGrant,
+    paramValidator(marketplaceAccessGrantParamsSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Revoke marketplace access",
+      description: "Soft-revokes one marketplace access grant.",
+      responses: {
+        204: emptyResponse("Marketplace access revoked successfully."),
+        400: jsonResponse("The marketplace access path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage marketplace access.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to manage marketplace access.", forbiddenSchema),
+        404: jsonResponse("The access grant could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        await deleteResourceAccessGrant({ context: actorContext(c), grantId: params.grantId, resourceId: params.marketplaceId, resourceKind: "marketplace" })
         return c.body(null, 204)
       } catch (error) {
         return routeErrorResponse(c, error)

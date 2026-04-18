@@ -4,6 +4,9 @@ import {
   ConfigObjectTable,
   ConnectorInstanceAccessGrantTable,
   ConnectorInstanceTable,
+  MarketplaceAccessGrantTable,
+  MarketplacePluginTable,
+  MarketplaceTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
@@ -12,9 +15,9 @@ import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
 import { memberHasRole } from "../shared.js"
 
-export type PluginArchResourceKind = "config_object" | "connector_instance" | "plugin"
+export type PluginArchResourceKind = "config_object" | "connector_instance" | "marketplace" | "plugin"
 export type PluginArchRole = "viewer" | "editor" | "manager"
-export type PluginArchCapability = "config_object.create" | "connector_account.create" | "connector_instance.create" | "plugin.create"
+export type PluginArchCapability = "config_object.create" | "connector_account.create" | "connector_instance.create" | "marketplace.create" | "plugin.create"
 
 export type PluginArchActorContext = {
   memberTeams: MemberTeamSummary[]
@@ -24,12 +27,20 @@ export type PluginArchActorContext = {
 type MemberId = OrganizationContext["currentMember"]["id"]
 type TeamId = MemberTeamSummary["id"]
 type ConfigObjectId = typeof ConfigObjectTable.$inferSelect.id
+type MarketplaceId = typeof MarketplaceTable.$inferSelect.id
 type PluginId = typeof PluginTable.$inferSelect.id
 type ConnectorInstanceId = typeof ConnectorInstanceTable.$inferSelect.id
 type ConfigObjectGrantRow = Pick<typeof ConfigObjectAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
+type MarketplaceGrantRow = Pick<typeof MarketplaceAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type PluginGrantRow = Pick<typeof PluginAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type ConnectorInstanceGrantRow = Pick<typeof ConnectorInstanceAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
-type GrantRow = ConfigObjectGrantRow | PluginGrantRow | ConnectorInstanceGrantRow
+type GrantRow = ConfigObjectGrantRow | MarketplaceGrantRow | PluginGrantRow | ConnectorInstanceGrantRow
+
+type MarketplaceResourceLookupInput = {
+  context: PluginArchActorContext
+  resourceId: MarketplaceId
+  resourceKind: "marketplace"
+}
 
 type PluginResourceLookupInput = {
   context: PluginArchActorContext
@@ -52,6 +63,7 @@ type ConfigObjectResourceLookupInput = {
 type ResourceLookupInput =
   | PluginResourceLookupInput
   | ConnectorInstanceResourceLookupInput
+  | MarketplaceResourceLookupInput
   | ConfigObjectResourceLookupInput
 
 type RequireResourceRoleInput = ResourceLookupInput & { role: PluginArchRole }
@@ -144,9 +156,46 @@ async function resolvePluginRoleForIds(context: PluginArchActorContext, pluginId
   return resolveGrantRole({ context, grants })
 }
 
+async function resolveMarketplaceRoleForIds(context: PluginArchActorContext, marketplaceIds: MarketplaceId[]) {
+  if (marketplaceIds.length === 0) {
+    return null
+  }
+
+  if (isPluginArchOrgAdmin(context)) {
+    return "manager" satisfies PluginArchRole
+  }
+
+  const grants = await db
+    .select({
+      orgMembershipId: MarketplaceAccessGrantTable.orgMembershipId,
+      orgWide: MarketplaceAccessGrantTable.orgWide,
+      removedAt: MarketplaceAccessGrantTable.removedAt,
+      role: MarketplaceAccessGrantTable.role,
+      teamId: MarketplaceAccessGrantTable.teamId,
+    })
+    .from(MarketplaceAccessGrantTable)
+    .where(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIds))
+
+  return resolveGrantRole({ context, grants })
+}
+
 export async function resolvePluginArchResourceRole(input: ResourceLookupInput) {
   if (isPluginArchOrgAdmin(input.context)) {
     return "manager" satisfies PluginArchRole
+  }
+
+  if (input.resourceKind === "marketplace") {
+    const grants = await db
+      .select({
+        orgMembershipId: MarketplaceAccessGrantTable.orgMembershipId,
+        orgWide: MarketplaceAccessGrantTable.orgWide,
+        removedAt: MarketplaceAccessGrantTable.removedAt,
+        role: MarketplaceAccessGrantTable.role,
+        teamId: MarketplaceAccessGrantTable.teamId,
+      })
+      .from(MarketplaceAccessGrantTable)
+      .where(eq(MarketplaceAccessGrantTable.marketplaceId, input.resourceId))
+    return resolveGrantRole({ context: input.context, grants })
   }
 
   if (input.resourceKind === "plugin") {
@@ -160,7 +209,18 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
       })
       .from(PluginAccessGrantTable)
       .where(eq(PluginAccessGrantTable.pluginId, input.resourceId))
-    return resolveGrantRole({ context: input.context, grants })
+    const resolved = await resolveGrantRole({ context: input.context, grants })
+    if (resolved) {
+      return resolved
+    }
+
+    const memberships = await db
+      .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
+      .from(MarketplacePluginTable)
+      .where(and(eq(MarketplacePluginTable.pluginId, input.resourceId), isNull(MarketplacePluginTable.removedAt)))
+
+    const marketplaceRole = await resolveMarketplaceRoleForIds(input.context, memberships.map((membership) => membership.marketplaceId))
+    return maxRole(resolved, marketplaceRole ? "viewer" : null)
   }
 
   if (input.resourceKind === "connector_instance") {
@@ -213,7 +273,7 @@ export async function requirePluginArchCapability(context: PluginArchActorContex
 
 export async function requirePluginArchResourceRole(input: {
   context: PluginArchActorContext
-  resourceId: ConfigObjectId | ConnectorInstanceId | PluginId
+  resourceId: ConfigObjectId | ConnectorInstanceId | MarketplaceId | PluginId
   resourceKind: PluginArchResourceKind
   role: PluginArchRole
 }) {

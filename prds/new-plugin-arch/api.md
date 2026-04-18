@@ -30,6 +30,7 @@ Use for:
 - config object CRUD
 - version history access
 - plugin management
+- marketplace management
 - access grants
 - connector setup and mapping management
 - sync-event inspection and retries
@@ -57,6 +58,7 @@ Use for:
 - keep one shared `config-objects` admin surface and add type-specific convenience endpoints where UI needs them;
 - keep current-state search/list endpoints separate from version-history endpoints;
 - treat plugin access management as a first-class API surface;
+- treat marketplace access and marketplace-plugin composition as first-class API surfaces;
 - keep connector setup, target, mapping, and sync APIs explicit;
 - keep public webhook ingress separate from authenticated APIs.
 

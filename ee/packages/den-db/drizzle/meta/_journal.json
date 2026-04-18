@@ -71,6 +71,13 @@
       "when": 1776427000000,
       "tag": "0010_plugin_arch",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1776440000000,
+      "tag": "0011_marketplaces",
+      "breakpoints": true
     }
   ]
 }

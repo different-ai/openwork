@@ -19,6 +19,7 @@ export const configObjectSourceModeValues = ["cloud", "import", "connector"] as 
 export const configObjectStatusValues = ["active", "inactive", "deleted", "archived", "ingestion_error"] as const
 export const configObjectCreatedViaValues = ["cloud", "import", "connector", "system"] as const
 export const pluginStatusValues = ["active", "inactive", "deleted", "archived"] as const
+export const marketplaceStatusValues = ["active", "inactive", "deleted", "archived"] as const
 export const membershipSourceValues = ["manual", "connector", "api", "system"] as const
 export const accessRoleValues = ["viewer", "editor", "manager"] as const
 export const connectorTypeValues = ["github"] as const
@@ -111,6 +112,72 @@ export const PluginTable = mysqlTable(
     index("plugin_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("plugin_status").on(table.status),
     index("plugin_name").on(table.name),
+  ],
+)
+
+export const MarketplaceTable = mysqlTable(
+  "marketplace",
+  {
+    id: denTypeIdColumn("marketplace", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    description: text("description"),
+    status: mysqlEnum("status", marketplaceStatusValues).notNull().default("active"),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+    deletedAt: timestamp("deleted_at", { fsp: 3 }),
+  },
+  (table) => [
+    index("marketplace_organization_id").on(table.organizationId),
+    index("marketplace_created_by_org_membership_id").on(table.createdByOrgMembershipId),
+    index("marketplace_status").on(table.status),
+    index("marketplace_name").on(table.name),
+  ],
+)
+
+export const MarketplacePluginTable = mysqlTable(
+  "marketplace_plugin",
+  {
+    id: denTypeIdColumn("marketplacePlugin", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    marketplaceId: denTypeIdColumn("marketplace", "marketplace_id").notNull(),
+    pluginId: denTypeIdColumn("plugin", "plugin_id").notNull(),
+    membershipSource: mysqlEnum("membership_source", membershipSourceValues).notNull().default("manual"),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    removedAt: timestamp("removed_at", { fsp: 3 }),
+  },
+  (table) => [
+    index("marketplace_plugin_organization_id").on(table.organizationId),
+    index("marketplace_plugin_marketplace_id").on(table.marketplaceId),
+    index("marketplace_plugin_plugin_id").on(table.pluginId),
+    uniqueIndex("marketplace_plugin_marketplace_plugin").on(table.marketplaceId, table.pluginId),
+  ],
+)
+
+export const MarketplaceAccessGrantTable = mysqlTable(
+  "marketplace_access_grant",
+  {
+    id: denTypeIdColumn("marketplaceAccessGrant", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    marketplaceId: denTypeIdColumn("marketplace", "marketplace_id").notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
+    teamId: denTypeIdColumn("team", "team_id"),
+    orgWide: boolean("org_wide").notNull().default(false),
+    role: mysqlEnum("role", accessRoleValues).notNull(),
+    createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    removedAt: timestamp("removed_at", { fsp: 3 }),
+  },
+  (table) => [
+    index("marketplace_access_grant_organization_id").on(table.organizationId),
+    index("marketplace_access_grant_marketplace_id").on(table.marketplaceId),
+    index("marketplace_access_grant_org_membership_id").on(table.orgMembershipId),
+    index("marketplace_access_grant_team_id").on(table.teamId),
+    index("marketplace_access_grant_org_wide").on(table.orgWide),
+    uniqueIndex("marketplace_access_grant_marketplace_org_membership").on(table.marketplaceId, table.orgMembershipId),
+    uniqueIndex("marketplace_access_grant_marketplace_team").on(table.marketplaceId, table.teamId),
   ],
 )
 
@@ -438,12 +505,60 @@ export const pluginRelations = relations(PluginTable, ({ many, one }) => ({
     fields: [PluginTable.createdByOrgMembershipId],
     references: [MemberTable.id],
   }),
+  marketplaces: many(MarketplacePluginTable),
   memberships: many(PluginConfigObjectTable),
   organization: one(OrganizationTable, {
     fields: [PluginTable.organizationId],
     references: [OrganizationTable.id],
   }),
   mappings: many(ConnectorMappingTable),
+}))
+
+export const marketplaceRelations = relations(MarketplaceTable, ({ many, one }) => ({
+  accessGrants: many(MarketplaceAccessGrantTable),
+  createdByOrgMembership: one(MemberTable, {
+    fields: [MarketplaceTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  memberships: many(MarketplacePluginTable),
+  organization: one(OrganizationTable, {
+    fields: [MarketplaceTable.organizationId],
+    references: [OrganizationTable.id],
+  }),
+}))
+
+export const marketplacePluginRelations = relations(MarketplacePluginTable, ({ one }) => ({
+  createdByOrgMembership: one(MemberTable, {
+    fields: [MarketplacePluginTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  marketplace: one(MarketplaceTable, {
+    fields: [MarketplacePluginTable.marketplaceId],
+    references: [MarketplaceTable.id],
+  }),
+  plugin: one(PluginTable, {
+    fields: [MarketplacePluginTable.pluginId],
+    references: [PluginTable.id],
+  }),
+}))
+
+export const marketplaceAccessGrantRelations = relations(MarketplaceAccessGrantTable, ({ one }) => ({
+  createdByOrgMembership: one(MemberTable, {
+    fields: [MarketplaceAccessGrantTable.createdByOrgMembershipId],
+    references: [MemberTable.id],
+  }),
+  marketplace: one(MarketplaceTable, {
+    fields: [MarketplaceAccessGrantTable.marketplaceId],
+    references: [MarketplaceTable.id],
+  }),
+  orgMembership: one(MemberTable, {
+    fields: [MarketplaceAccessGrantTable.orgMembershipId],
+    references: [MemberTable.id],
+  }),
+  team: one(TeamTable, {
+    fields: [MarketplaceAccessGrantTable.teamId],
+    references: [TeamTable.id],
+  }),
 }))
 
 export const pluginConfigObjectRelations = relations(PluginConfigObjectTable, ({ one }) => ({
@@ -643,6 +758,9 @@ export const connectorSourceTombstoneRelations = relations(ConnectorSourceTombst
 export const configObject = ConfigObjectTable
 export const configObjectVersion = ConfigObjectVersionTable
 export const plugin = PluginTable
+export const marketplace = MarketplaceTable
+export const marketplacePlugin = MarketplacePluginTable
+export const marketplaceAccessGrant = MarketplaceAccessGrantTable
 export const pluginConfigObject = PluginConfigObjectTable
 export const configObjectAccessGrant = ConfigObjectAccessGrantTable
 export const pluginAccessGrant = PluginAccessGrantTable
