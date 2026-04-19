@@ -223,8 +223,11 @@ pub fn run() {
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/opencode/openwork-server processes and stale ports.
+    // Only run on ExitRequested — Exit fires immediately after and would re-run
+    // the same teardown, causing duplicate shutdown HTTP requests against an
+    // already-stopped orchestrator.
     app.run(|app_handle, event| match event {
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
+        RunEvent::ExitRequested { .. } => stop_managed_services(&app_handle),
         // On macOS the default behavior is to keep the process alive after the
         // last window closes. We want parity with Windows/Linux: closing the
         // main window quits the app.
