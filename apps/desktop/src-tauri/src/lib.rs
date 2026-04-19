@@ -114,12 +114,6 @@ fn show_main_window(app_handle: &AppHandle) {
     }
 }
 
-fn hide_main_window(app_handle: &AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        let _ = window.hide();
-    }
-}
-
 fn stop_managed_services(app_handle: &tauri::AppHandle) {
     if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
         EngineManager::stop_locked(&mut engine);
@@ -227,14 +221,16 @@ pub fn run() {
     // orchestrator/opencode/openwork-server processes and stale ports.
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
+        // On macOS the default behavior is to keep the process alive after the
+        // last window closes. We want parity with Windows/Linux: closing the
+        // main window quits the app.
         #[cfg(target_os = "macos")]
         RunEvent::WindowEvent {
             label,
-            event: WindowEvent::CloseRequested { api, .. },
+            event: WindowEvent::CloseRequested { .. },
             ..
         } if label == "main" => {
-            api.prevent_close();
-            hide_main_window(&app_handle);
+            app_handle.exit(0);
         }
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
@@ -245,14 +241,11 @@ pub fn run() {
             show_main_window(&app_handle);
             emit_native_deep_links(&app_handle, urls);
         }
+        // Always raise/refocus the main window on dock-icon clicks, even if
+        // it's already visible but behind other apps or on another Space.
         #[cfg(target_os = "macos")]
-        RunEvent::Reopen {
-            has_visible_windows,
-            ..
-        } => {
-            if !has_visible_windows {
-                show_main_window(&app_handle);
-            }
+        RunEvent::Reopen { .. } => {
+            show_main_window(&app_handle);
         }
         _ => {}
     });
