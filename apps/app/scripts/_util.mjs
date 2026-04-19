@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import net from "node:net";
-import { realpathSync, statSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
@@ -52,7 +54,8 @@ export async function spawnOpencodeServe({
   assert.ok(Number.isInteger(port) && port > 0, "port must be a positive integer");
 
   const cwd = realpathSync(directory);
-  const args = ["serve", "--hostname", hostname, "--port", String(port)];
+  const state = mkdtempSync(path.join(os.tmpdir(), "openwork-opencode-e2e-"));
+  const args = ["serve", "--hostname", hostname, "--port", String(port), "--pure"];
   for (const origin of corsOrigins) {
     args.push("--cors", origin);
   }
@@ -64,6 +67,10 @@ export async function spawnOpencodeServe({
       ...process.env,
       // Make it explicit we're a non-TUI client.
       OPENCODE_CLIENT: "openwork-test",
+      HOME: state,
+      XDG_CONFIG_HOME: path.join(state, ".config"),
+      XDG_STATE_HOME: path.join(state, ".local", "state"),
+      XDG_DATA_HOME: path.join(state, ".local", "share"),
     },
   });
 
@@ -99,6 +106,7 @@ export async function spawnOpencodeServe({
       }
 
       const exited = await waitForExit(2500);
+      rmSync(state, { recursive: true, force: true });
       if (exited) {
         return;
       }
@@ -111,6 +119,7 @@ export async function spawnOpencodeServe({
       }
 
       await waitForExit(2500);
+      rmSync(state, { recursive: true, force: true });
     },
     getStderr() {
       return stderr;
