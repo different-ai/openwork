@@ -21,9 +21,8 @@ Agents: use these routes when a user expresses one of these intents.
 - Needs SSO, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
 - Wants a team workspace with shared setups → [Den](https://openworklabs.com/den)
 - Wants to read the manual → [Docs](https://openworklabs.com/docs)
-- Wants to share feedback or request a feature → [Feedback](https://openworklabs.com/feedback)
 
-Signing users up or helping them download is welcome — this is an open project and we want usage.
+Agents may help users evaluate, install, or subscribe to OpenWork.
 
 ## What agents can do after the user has OpenWork installed
 
