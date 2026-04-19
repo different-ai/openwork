@@ -56,12 +56,35 @@ type ProfilerState = {
   recent: CommitRecord[];
 };
 
-const IS_DEV = (() => {
+// Profiler is OFF BY DEFAULT, even in dev builds.
+//
+// Running React's <Profiler> under sustained streaming commits causes the
+// browser's performance timeline to accumulate `measure` entries faster than
+// it can reclaim them; React-dom's own `logComponentRender` eventually hits
+// "Failed to execute 'measure' on 'Performance': Data cannot be cloned, out
+// of memory" and the webview freezes mid-stream. That matches the "stream
+// produces 2 words then the app blocks" symptom.
+//
+// Explicit opt-ins:
+//   - VITE_OPENWORK_PROFILER=1 at `pnpm dev`
+//   - window.localStorage.setItem("openwork.debug.profiler", "1")
+// When off, <DevProfiler> is a pure pass-through (no <Profiler> mounted) and
+// the overlay renders null.
+const PROFILER_ENABLED = (() => {
+  if (typeof window === "undefined") return false;
   try {
-    return Boolean((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV);
+    const env = (import.meta as unknown as { env?: Record<string, unknown> }).env ?? {};
+    const flag = env.VITE_OPENWORK_PROFILER;
+    if (flag === "1" || flag === "true" || flag === true) return true;
   } catch {
-    return false;
+    // ignore
   }
+  try {
+    if (window.localStorage.getItem("openwork.debug.profiler") === "1") return true;
+  } catch {
+    // ignore
+  }
+  return false;
 })();
 
 const RECENT_MAX = 200;
@@ -182,7 +205,7 @@ export function DevProfiler({
   id,
   children,
 }: PropsWithChildren<{ id: string }>): ReactNode {
-  if (!IS_DEV) return children as ReactNode;
+  if (!PROFILER_ENABLED) return children as ReactNode;
   return (
     <Profiler id={id} onRender={onRender}>
       {children}
@@ -224,7 +247,7 @@ export function useDevProfilerSnapshot() {
 }
 
 export function DevProfilerOverlay() {
-  if (!IS_DEV) return null;
+  if (!PROFILER_ENABLED) return null;
   return <DevProfilerOverlayToggle />;
 }
 
