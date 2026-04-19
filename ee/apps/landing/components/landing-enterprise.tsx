@@ -99,6 +99,9 @@ export function LandingEnterprise(props: Props) {
               >
                 Book a call
               </a>
+              <a href="/trust" className="secondary-button">
+                Security Review
+              </a>
 
               <div className="flex items-center gap-2 opacity-80 sm:ml-4">
                 <span className="text-[13px] font-medium text-gray-500">
@@ -113,12 +116,6 @@ export function LandingEnterprise(props: Props) {
                   </span>
                 </div>
               </div>
-            </div>
-
-            <div className="mt-4">
-              <a href="/trust" className="text-[14px] font-medium text-[#011627] transition-colors hover:text-slate-700">
-                Trust details
-              </a>
             </div>
           </section>
 

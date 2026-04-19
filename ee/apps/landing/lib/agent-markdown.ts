@@ -79,7 +79,7 @@ const enterprise = `# OpenWork for the enterprise
 ## Next step
 
 - [Book a call](https://openworklabs.com/enterprise#book)
-- See [Trust & security](https://openworklabs.com/trust) for data handling, subprocessors, and incident SLA
+- [Security Review](https://openworklabs.com/trust) — data handling, subprocessors, and incident SLA
 - See [Pricing](https://openworklabs.com/pricing) for tier comparison
 `
 
