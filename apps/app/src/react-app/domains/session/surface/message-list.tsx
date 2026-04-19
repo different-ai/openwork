@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { isToolUIPart, type DynamicToolUIPart, type UIMessage } from "ai";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -575,7 +575,7 @@ function StepsContainer(props: {
   );
 }
 
-export function SessionTranscript(props: SessionTranscriptProps) {
+function SessionTranscriptInner(props: SessionTranscriptProps) {
   const showThinking = props.showThinking ?? props.developerMode;
   const isNestedVariant = props.variant === "nested";
   const [internalExpandedStepIds, setInternalExpandedStepIds] = useState<Set<string>>(
@@ -994,3 +994,13 @@ export function SessionTranscript(props: SessionTranscriptProps) {
     </div>
   );
 }
+
+/**
+ * Memoize at the transcript boundary so SessionSurface state churn (e.g.
+ * sending=true flipping while the assistant streams) doesn't force a full
+ * transcript re-render on every parent commit. Re-renders now happen only
+ * when the transcript's own props actually change (messages array
+ * identity, isStreaming, developerMode, etc.).
+ */
+export const SessionTranscript = memo(SessionTranscriptInner);
+SessionTranscript.displayName = "SessionTranscript";
