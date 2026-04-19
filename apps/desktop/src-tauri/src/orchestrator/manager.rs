@@ -20,6 +20,17 @@ pub struct OrchestratorState {
 
 impl OrchestratorManager {
     pub fn stop_locked(state: &mut OrchestratorState) {
+        // Only act if we actually own a daemon process from this session. If we
+        // never spawned one (or already stopped it), the state file's base_url
+        // belongs to a previous run and POSTing to it would just log a spurious
+        // "Connection refused".
+        let Some(child) = state.child.take() else {
+            state.data_dir = None;
+            state.last_stdout = None;
+            state.last_stderr = None;
+            return;
+        };
+
         let data_dir = state
             .data_dir
             .clone()
@@ -33,12 +44,10 @@ impl OrchestratorManager {
             }
         };
 
-        if let Some(child) = state.child.take() {
-            // Prefer daemon-owned graceful shutdown so openwork-orchestrator can
-            // terminate its managed OpenCode child before exiting.
-            if !shutdown_requested {
-                let _ = child.kill();
-            }
+        // Prefer daemon-owned graceful shutdown so openwork-orchestrator can
+        // terminate its managed OpenCode child before exiting.
+        if !shutdown_requested {
+            let _ = child.kill();
         }
 
         orchestrator::clear_orchestrator_auth(&data_dir);
