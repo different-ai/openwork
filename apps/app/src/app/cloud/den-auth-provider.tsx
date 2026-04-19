@@ -1,6 +1,6 @@
 import { createContext, createMemo, createSignal, onCleanup, onMount, useContext, type Accessor, type ParentProps } from "solid-js";
-import { clearDenSession, createDenClient, DenApiError, readDenSettings, type DenUser } from "../lib/den";
-import { denSessionUpdatedEvent, denSettingsChangedEvent } from "../lib/den-session-events";
+import { clearDenSession, createDenClient, DenApiError, ensureDenActiveOrganization, readDenSettings, type DenUser } from "../lib/den";
+import { denSessionUpdatedEvent } from "../lib/den-session-events";
 
 type DenAuthStatus = "checking" | "signed_in" | "signed_out";
 
@@ -45,6 +45,16 @@ export function DenAuthProvider(props: ParentProps) {
         return;
       }
 
+      await ensureDenActiveOrganization({
+        forceServerSync:
+          !settings.activeOrgId?.trim() ||
+          !settings.activeOrgSlug?.trim(),
+      }).catch(() => null);
+
+      if (currentRun !== refreshToken) {
+        return;
+      }
+
       setUser(nextUser);
       setError(null);
       setStatus("signed_in");
@@ -75,10 +85,8 @@ export function DenAuthProvider(props: ParentProps) {
     };
 
     window.addEventListener(denSessionUpdatedEvent, handleSessionUpdated);
-    window.addEventListener(denSettingsChangedEvent, handleSessionUpdated);
     onCleanup(() => {
       window.removeEventListener(denSessionUpdatedEvent, handleSessionUpdated);
-      window.removeEventListener(denSettingsChangedEvent, handleSessionUpdated);
     });
   });
 

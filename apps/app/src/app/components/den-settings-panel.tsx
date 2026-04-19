@@ -24,6 +24,7 @@ import {
 import type { DenOrgSkillCard } from "../types";
 import type { CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../cloud/import-state";
 import {
+  denSettingsChangedEvent,
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
@@ -154,7 +155,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     name: string | null;
   } | null>(null);
   const [orgs, setOrgs] = createSignal<
-    Array<{ id: string; name: string; slug: string; role: "owner" | "member" }>
+    Array<{ id: string; name: string; slug: string; role: "owner" | "admin" | "member" }>
   >([]);
   const [workers, setWorkers] = createSignal<
     Array<{
@@ -546,6 +547,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const fallback = response.defaultOrgId ?? response.orgs[0]?.id ?? "";
       const next = response.orgs.some((org) => org.id === current) ? current : fallback;
       const nextOrg = response.orgs.find((org) => org.id === next) ?? null;
+
+      if (nextOrg && response.activeOrgId !== nextOrg.id) {
+        await client().setActiveOrganization({ organizationId: nextOrg.id });
+      }
+
       setActiveOrgId(next);
       writeDenSettings({
         baseUrl: baseUrl(),
@@ -858,6 +864,23 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     return () =>
       window.removeEventListener(
         denSessionUpdatedEvent,
+        handler as EventListener,
+      );
+  });
+
+  createEffect(() => {
+    const handler = () => {
+      const nextSettings = readDenSettings();
+      setBaseUrl(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
+      setBaseUrlDraft(nextSettings.baseUrl || DEFAULT_DEN_BASE_URL);
+      setAuthToken(nextSettings.authToken?.trim() || "");
+      setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
+    };
+
+    window.addEventListener(denSettingsChangedEvent, handler as EventListener);
+    return () =>
+      window.removeEventListener(
+        denSettingsChangedEvent,
         handler as EventListener,
       );
   });

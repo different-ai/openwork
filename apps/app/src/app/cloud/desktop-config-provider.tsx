@@ -1,5 +1,5 @@
 import { createContext, createEffect, createSignal, onCleanup, onMount, useContext, type Accessor, type ParentProps } from "solid-js";
-import { createDenClient, type DenDesktopConfig, normalizeDenDesktopConfig, readDenSettings } from "../lib/den";
+import { createDenClient, DenApiError, ensureDenActiveOrganization, type DenDesktopConfig, normalizeDenDesktopConfig, readDenSettings } from "../lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "../lib/den-session-events";
 import { useDenAuth } from "./den-auth-provider";
 
@@ -64,7 +64,7 @@ export function DesktopConfigProvider(props: ParentProps) {
     const token = settings.authToken?.trim() ?? "";
     const cacheKey = getDesktopConfigCacheKey();
 
-    if (!denAuth.isSignedIn() || !token) {
+    if (!denAuth.isSignedIn() || !token || !settings.activeOrgId?.trim()) {
       setConfig(DEFAULT_DESKTOP_CONFIG);
       setLoading(false);
       return;
@@ -88,9 +88,17 @@ export function DesktopConfigProvider(props: ParentProps) {
 
       writeCachedDesktopConfig(cacheKey, nextConfig);
       setConfig(nextConfig);
-    } catch {
+    } catch (error) {
       if (currentRun !== refreshRunId) {
         return;
+      }
+
+      if (
+        error instanceof DenApiError &&
+        error.status === 404 &&
+        error.code === "organization_not_found"
+      ) {
+        await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
       }
 
       setConfig(cached ?? DEFAULT_DESKTOP_CONFIG);

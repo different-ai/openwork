@@ -64,7 +64,7 @@ export type DenOrgSummary = {
   id: string;
   name: string;
   slug: string;
-  role: "owner" | "member";
+  role: "owner" | "admin" | "member";
 };
 
 export type DenWorkerSummary = {
@@ -502,6 +502,17 @@ export function writeDenSettings(next: DenSettings, options?: { persistBootstrap
   const activeOrgSlug = next.activeOrgSlug?.trim() ?? "";
   const activeOrgName = next.activeOrgName?.trim() ?? "";
 
+  if (
+    previous.baseUrl === baseUrl &&
+    (previous.apiBaseUrl ?? "") === apiBaseUrl &&
+    (previous.authToken ?? "") === authToken &&
+    (previous.activeOrgId ?? "") === activeOrgId &&
+    (previous.activeOrgSlug ?? "") === activeOrgSlug &&
+    (previous.activeOrgName ?? "") === activeOrgName
+  ) {
+    return;
+  }
+
   window.localStorage.setItem(STORAGE_BASE_URL, baseUrl);
   window.localStorage.setItem(STORAGE_API_BASE_URL, apiBaseUrl);
   if (authToken) {
@@ -567,6 +578,53 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   });
 }
 
+export async function ensureDenActiveOrganization(options?: { forceServerSync?: boolean }) {
+  const settings = readDenSettings();
+  const token = settings.authToken?.trim() ?? "";
+  if (!token) {
+    return null;
+  }
+
+  const client = createDenClient({
+    baseUrl: settings.baseUrl,
+    apiBaseUrl: settings.apiBaseUrl,
+    token,
+  });
+
+  const response = await client.listOrgs();
+  const targetOrg =
+    response.orgs.find((org) => org.id === response.activeOrgId) ??
+    response.orgs.find((org) => org.slug === response.activeOrgSlug) ??
+    response.orgs[0] ??
+    null;
+
+  if (!targetOrg) {
+    writeDenSettings({
+      ...settings,
+      activeOrgId: null,
+      activeOrgSlug: null,
+      activeOrgName: null,
+    }, { persistBootstrap: false });
+    return null;
+  }
+
+  if (
+    options?.forceServerSync &&
+    (!response.activeOrgId || response.activeOrgId !== targetOrg.id)
+  ) {
+    await client.setActiveOrganization({ organizationId: targetOrg.id });
+  }
+
+  writeDenSettings({
+    ...settings,
+    activeOrgId: targetOrg.id,
+    activeOrgSlug: targetOrg.slug,
+    activeOrgName: targetOrg.name,
+  }, { persistBootstrap: false });
+
+  return targetOrg;
+}
+
 function getErrorMessage(payload: unknown, fallback: string): string {
   if (typeof payload === "string" && payload.trim()) {
     return payload.trim();
@@ -623,7 +681,7 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
         typeof entry.id !== "string" ||
         typeof entry.name !== "string" ||
         typeof entry.slug !== "string" ||
-        (entry.role !== "owner" && entry.role !== "member")
+        (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member")
       ) {
         return null;
       }
