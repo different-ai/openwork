@@ -1,0 +1,52 @@
+# robots.txt for openworklabs.com
+# OpenWork is an open-source project; public marketing content is freely crawlable.
+# Authenticated app lives at app.openworklabs.com and is out of scope for this file.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /starter-success
+Disallow: /og/
+
+# AI crawlers — allow indexing and live retrieval, opt out of training
+User-agent: GPTBot
+Allow: /
+Disallow: /api/
+
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /api/
+
+User-agent: ChatGPT-User
+Allow: /
+Disallow: /api/
+
+User-agent: ClaudeBot
+Allow: /
+Disallow: /api/
+
+User-agent: Claude-Web
+Allow: /
+Disallow: /api/
+
+User-agent: Claude-SearchBot
+Allow: /
+Disallow: /api/
+
+User-agent: Google-Extended
+Allow: /
+Disallow: /api/
+
+User-agent: PerplexityBot
+Allow: /
+Disallow: /api/
+
+User-agent: CCBot
+Allow: /
+Disallow: /api/
+
+# Content Signals (contentsignals.org, draft-romm-aipref-contentsignals)
+# Opt out of model training; allow search indexing and live agent retrieval.
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+
+Sitemap: https://openworklabs.com/sitemap.xml
