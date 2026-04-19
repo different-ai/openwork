@@ -11,9 +11,18 @@ export function clearTextHighlights(root: HTMLElement) {
 }
 
 export function applyTextHighlights(root: HTMLElement, query: string) {
-  clearTextHighlights(root);
   const needle = query.trim().toLowerCase();
-  if (!needle) return;
+  // Fast path: if search is inactive, avoid walking large message DOM trees.
+  // We only need to clear existing marks if a previous search actually added
+  // some.
+  if (!needle) {
+    if (root.querySelector(`mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`)) {
+      clearTextHighlights(root);
+    }
+    return;
+  }
+
+  clearTextHighlights(root);
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {

@@ -71,7 +71,12 @@ type SessionTranscriptProps = {
   variant?: "default" | "nested";
 };
 
-const VIRTUALIZATION_THRESHOLD = 500;
+// 500 was too high for real-world OpenWork sessions: a handful of giant
+// messages (emails, legal docs, pasted transcripts) can still produce a
+// massive DOM even when the block count is low. Lowering the threshold means
+// we switch to react-virtual much earlier and keep the main thread lighter
+// during workspace/session switches.
+const VIRTUALIZATION_THRESHOLD = 40;
 const VIRTUAL_OVERSCAN = 4;
 
 function partIdFromUiPart(part: UIMessage["parts"][number], fallbackId: string) {
@@ -742,17 +747,20 @@ export function SessionTranscript(props: SessionTranscriptProps) {
     });
   }, [messageBlocks, shouldVirtualize, virtualizer]);
 
-  const shouldUseContentVisibility = !shouldVirtualize && messageBlocks.length > 500;
+  // Apply content-visibility earlier too. Even when the transcript is below
+  // the virtualization threshold, hiding distant blocks from layout/paint
+  // work reduces the chance that one large session makes the UI feel frozen.
+  const shouldUseContentVisibility = !shouldVirtualize && messageBlocks.length > 24;
 
   const blockPerfStyle = (index: number): CSSProperties | undefined => {
     if (!shouldUseContentVisibility) return undefined;
     const total = messageBlocks.length;
-    if (index >= total - 24) return undefined;
-    return {
-      contentVisibility: "auto",
-      containIntrinsicSize: "220px",
+      if (index >= total - 12) return undefined;
+      return {
+        contentVisibility: "auto",
+        containIntrinsicSize: "180px",
+      };
     };
-  };
 
   const renderBlock = (block: MessageBlockItem, blockIndex: number) => {
     const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
@@ -771,7 +779,7 @@ export function SessionTranscript(props: SessionTranscriptProps) {
           className={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
           data-message-role={block.isUser ? "user" : "assistant"}
           data-message-id={block.messageIds[0] ?? ""}
-          style={blockPerfStyle(blockIndex)}
+          style={{ contain: "layout style paint", ...blockPerfStyle(blockIndex) }}
         >
           <div
             className={`${
@@ -815,7 +823,7 @@ export function SessionTranscript(props: SessionTranscriptProps) {
           className="flex group justify-start"
           data-message-role="assistant"
           data-message-id={block.messageId}
-          style={blockPerfStyle(blockIndex)}
+          style={{ contain: "layout style paint", ...blockPerfStyle(blockIndex) }}
         >
           <div className={`w-full relative ${isNestedVariant ? "" : "max-w-[650px]"} ${searchOutlineClass}`}>
             <div
@@ -836,7 +844,7 @@ export function SessionTranscript(props: SessionTranscriptProps) {
         className={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
         data-message-role={block.isUser ? "user" : "assistant"}
         data-message-id={block.messageId}
-        style={blockPerfStyle(blockIndex)}
+        style={{ contain: "layout style paint", ...blockPerfStyle(blockIndex) }}
       >
         <div
           className={`${
