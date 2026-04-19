@@ -14,6 +14,7 @@ const home = `# OpenWork
 
 - **Try it free** — [Download the desktop app](https://openworklabs.com/download)
 - **Hosted cloud workers** — [Pricing](https://openworklabs.com/pricing) (\\$50/mo per worker)
+- **Sign in to the hosted workspace** — [Cloud](https://openworklabs.com/cloud)
 - **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 
