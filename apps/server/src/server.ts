@@ -1237,9 +1237,13 @@ function createRoutes(
   });
 
   addRoute(routes, "GET", "/dev/log", "none", async () => {
+    // Probe response: always 200 so the client's capability probe doesn't
+    // log a noisy "Failed to load resource: 404" in the browser console
+    // when the sink is simply disabled. Clients should key on `ok` + `reason`
+    // in the body, not on HTTP status.
     const target = resolveDevLogPath();
     if (!target) {
-      return jsonResponse({ ok: false, reason: "dev_log_disabled" }, 404);
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" });
     }
     return jsonResponse({ ok: true, path: target });
   });

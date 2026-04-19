@@ -42,6 +42,46 @@ let hangHandle: ReturnType<typeof setInterval> | null = null;
 let nativeFetchRef: typeof fetch = typeof window !== "undefined" ? window.fetch.bind(window) : (globalThis.fetch as typeof fetch);
 const sessionKey = `react-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+// Cached availability of the server-side /dev/log sink, keyed by base URL.
+// Prevents the debug-logger from spamming 404s into the console when the
+// pnpm dev process was started WITHOUT OPENWORK_DEV_LOG_FILE set. The
+// sink returns 404 in that case and the browser logs every failed POST.
+// We probe once per base URL and disable posting for the remainder of the
+// session when the probe fails.
+const sinkAvailabilityByBase = new Map<string, boolean>();
+const sinkProbePromises = new Map<string, Promise<boolean>>();
+
+async function sinkIsAvailable(base: string): Promise<boolean> {
+  const cached = sinkAvailabilityByBase.get(base);
+  if (typeof cached === "boolean") return cached;
+  let pending = sinkProbePromises.get(base);
+  if (pending) return pending;
+  pending = nativeFetchRef(`${base.replace(/\/+$/, "")}/dev/log`, {
+    method: "GET",
+    keepalive: true,
+  })
+    .then(async (response) => {
+      if (!response.ok) return false;
+      // Server returns 200 + `{ok:true}` when the sink is enabled and
+      // 200 + `{ok:false, reason:"dev_log_disabled"}` otherwise, so the
+      // probe itself never logs a 404 to the console.
+      try {
+        const body = (await response.json()) as { ok?: boolean };
+        return body.ok === true;
+      } catch {
+        return false;
+      }
+    })
+    .catch(() => false)
+    .then((ok) => {
+      sinkAvailabilityByBase.set(base, ok);
+      sinkProbePromises.delete(base);
+      return ok;
+    });
+  sinkProbePromises.set(base, pending);
+  return pending;
+}
+
 function readFallbackServerUrl(): string {
   if (typeof window === "undefined") return "";
   try {
@@ -93,6 +133,17 @@ async function flushQueue() {
   if (queue.length === 0) return;
   const base = serverUrlRef();
   if (!base) return;
+
+  // Skip the POST entirely when we know the sink is disabled, otherwise
+  // every dev session without OPENWORK_DEV_LOG_FILE set spams 404s.
+  const available = await sinkIsAvailable(base);
+  if (!available) {
+    // Drop the queued entries; they're still retained in
+    // window.__openwork.events() for any operator who needs them.
+    queue = [];
+    return;
+  }
+
   const batch = queue;
   queue = [];
   try {
