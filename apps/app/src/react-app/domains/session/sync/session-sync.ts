@@ -134,6 +134,28 @@ function upsertMessage(messages: UIMessage[], next: UIMessage) {
   );
 }
 
+/**
+ * When a message.part.updated or message.part.delta event arrives for a
+ * messageID we haven't seen a message.updated for yet, we have to stub the
+ * message so the part has somewhere to live. The stub's role used to be
+ * hard-coded to "assistant", which meant that if part events beat the
+ * message.updated event for a *user* turn (a common race during
+ * promptAsync), that user message flashed as an assistant-styled block
+ * until the real role arrived a tick later.
+ *
+ * Infer the stub role from the conversation instead. Chat sessions
+ * alternate, so the new message is almost always the opposite role of the
+ * most recent known message. If the transcript is empty the first message
+ * is always the user's.
+ */
+function inferStubRole(messages: UIMessage[]): UIMessage["role"] {
+  const lastMessage = messages[messages.length - 1];
+  if (!lastMessage) return "user";
+  if (lastMessage.role === "user") return "assistant";
+  if (lastMessage.role === "assistant") return "user";
+  return "assistant";
+}
+
 function upsertPart(messages: UIMessage[], messageId: string, partId: string, next: UIMessage["parts"][number]) {
   return messages.map((message) => {
     if (message.id !== messageId) return message;
@@ -262,7 +284,14 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         ? { ...mapped, text: `${mapped.text}${pending.text}`, state: "streaming" as const }
         : mapped;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID), (current = []) => {
-      const withMessage = upsertMessage(current, { id: part.messageID, role: "assistant", parts: [] });
+      // If we already have this message, keep its role; otherwise infer
+      // from the alternation pattern. Only the newly-stubbed case needs
+      // the inference — upsertMessage preserves existing role when the
+      // stub's role matches what we'd write anyway, and any subsequent
+      // message.updated will overwrite both.
+      const existing = current.find((m) => m.id === part.messageID);
+      const role = existing?.role ?? inferStubRole(current);
+      const withMessage = upsertMessage(current, { id: part.messageID, role, parts: [] });
       return upsertPart(withMessage, part.messageID, part.id, seededPart);
     });
     if (pending) entry.pendingDeltas.delete(part.id);
@@ -337,7 +366,13 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
         const ensuredMessageIds = new Set<string>();
         for (const item of items) {
           if (!ensuredMessageIds.has(item.messageId)) {
-            next = upsertMessage(next, { id: item.messageId, role: "assistant", parts: [] });
+            // Preserve the existing role if the message is already in
+            // state; otherwise infer it from the alternation pattern
+            // so the brief "stub before message.updated" window doesn't
+            // mislabel the message's bubble style.
+            const existing = next.find((m) => m.id === item.messageId);
+            const role = existing?.role ?? inferStubRole(next);
+            next = upsertMessage(next, { id: item.messageId, role, parts: [] });
             ensuredMessageIds.add(item.messageId);
           }
           next = appendDelta(next, item.messageId, item.partId, item.delta, item.reasoning);
