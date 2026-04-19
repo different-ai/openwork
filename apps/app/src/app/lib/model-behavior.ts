@@ -97,17 +97,35 @@ const sortVariantKeys = (keys: string[]) =>
     return a.localeCompare(b);
   });
 
+// Group a provider id into a "family" so we can apply each vendor's own
+// marketing terminology for thinking/reasoning modes. The OpenCode public
+// provider is bucketed as OpenAI-family because its default catalog is
+// GPT-5 and it advertises reasoning_effort semantics; override if/when
+// OpenCode exposes non-OpenAI defaults.
+type ProviderFamily = "openai" | "anthropic" | "google" | "xai" | "generic";
+
+function resolveProviderFamily(providerID: string): ProviderFamily {
+  const id = providerID.trim().toLowerCase();
+  if (!id) return "generic";
+  if (id === "openai" || id === "openai-compatible" || id === "azure" || id === "opencode") {
+    return "openai";
+  }
+  if (id === "anthropic") return "anthropic";
+  if (id === "google" || id === "google-genai" || id === "gemini") return "google";
+  if (id === "xai" || id === "grok") return "xai";
+  return "generic";
+}
+
 const getBehaviorTitle = (providerID: string, model: ProviderModel, variantKeys: string[]) => {
+  const family = resolveProviderFamily(providerID);
   if (variantKeys.length > 0) {
-    if (providerID === "anthropic") return t("model_behavior.title_extended_thinking");
-    if (providerID === "google") return t("model_behavior.title_reasoning_budget");
-    if (
-      providerID === "openai" ||
-      providerID === "opencode" ||
-      variantKeys.some((key) => ["none", "minimal", "low", "medium", "high", "xhigh"].includes(key))
-    ) {
-      return t("model_behavior.title_reasoning_effort");
-    }
+    // Use each vendor's public terminology. These are product/marketing
+    // names (e.g. Anthropic's "Extended thinking", OpenAI's "reasoning
+    // effort"), so we intentionally don't translate them.
+    if (family === "anthropic") return "Extended thinking";
+    if (family === "google") return "Thinking budget";
+    if (family === "xai") return "Think mode";
+    if (family === "openai") return "Reasoning effort";
     return t("app.model_behavior_title");
   }
   if (model.reasoning) return t("model_behavior.title_builtin_reasoning");
@@ -115,11 +133,52 @@ const getBehaviorTitle = (providerID: string, model: ProviderModel, variantKeys:
 };
 
 const getVariantLabel = (providerID: string, key: string) => {
+  const family = resolveProviderFamily(providerID);
+
+  if (family === "openai") {
+    // ChatGPT UI nomenclature for GPT-5.x / o-series reasoning effort.
+    if (key === "none" || key === "minimal") return "Instant";
+    if (key === "low") return "Light thinking";
+    if (key === "medium") return "Thinking";
+    if (key === "high") return "Thinking longer";
+    if (key === "xhigh" || key === "max") return "Maximum thinking";
+  }
+
+  if (family === "anthropic") {
+    // Anthropic calls the feature "Extended thinking". Budgets in the API
+    // don't have canonical display names, so we tier them verbally.
+    if (key === "none") return "No extended thinking";
+    if (key === "low") return "Brief extended thinking";
+    if (key === "medium") return "Extended thinking";
+    if (key === "high") return "Deep extended thinking";
+    if (key === "xhigh" || key === "max") return "Maximum extended thinking";
+  }
+
+  if (family === "google") {
+    // Gemini exposes a "thinking budget". Google UI uses "thinking", not
+    // "reasoning", so mirror that.
+    if (key === "none") return "Instant";
+    if (key === "low") return "Brief thinking";
+    if (key === "medium") return "Thinking";
+    if (key === "high") return "Deep thinking";
+    if (key === "xhigh" || key === "max") return "Maximum thinking";
+  }
+
+  if (family === "xai") {
+    // Grok's public UI uses "Think" as the mode name.
+    if (key === "none") return "Fast";
+    if (key === "low") return "Think";
+    if (key === "medium") return "Think";
+    if (key === "high") return "Think harder";
+    if (key === "xhigh" || key === "max") return "Think hardest";
+  }
+
+  // Generic fallback for providers we don't have a canonical mapping for.
   if (key === "none") return t("model_behavior.label_fast");
   if (key === "minimal") return t("model_behavior.label_quick");
   if (key === "low") return t("model_behavior.label_light");
   if (key === "medium") return t("model_behavior.label_balanced");
-  if (key === "high") return providerID === "anthropic" ? t("model_behavior.label_extended") : t("model_behavior.label_deep");
+  if (key === "high") return t("model_behavior.label_deep");
   if (key === "xhigh" || key === "max") return t("model_behavior.label_maximum");
   return humanize(key);
 };
@@ -131,18 +190,44 @@ export const formatGenericBehaviorLabel = (value: string | null) => {
 };
 
 const getVariantDescription = (providerID: string, key: string, label: string) => {
+  const family = resolveProviderFamily(providerID);
+
+  // Vendor-aligned blurbs — short enough to fit as menu subtext.
+  if (family === "openai") {
+    if (key === "none" || key === "minimal") return "Answer without extra reasoning.";
+    if (key === "low") return "A little extra thinking for fast follow-ups.";
+    if (key === "medium") return "Default reasoning; good all-round balance.";
+    if (key === "high") return "Reason for longer; higher quality on hard tasks.";
+    if (key === "xhigh" || key === "max") return "Spend the most time reasoning.";
+  }
+  if (family === "anthropic") {
+    if (key === "none") return "Normal Claude response; skip extended thinking.";
+    if (key === "low") return "A short Extended thinking budget.";
+    if (key === "medium") return "Default Extended thinking budget.";
+    if (key === "high") return "Extra-long Extended thinking budget.";
+    if (key === "xhigh" || key === "max") return "Maximum Extended thinking budget.";
+  }
+  if (family === "google") {
+    if (key === "none") return "Answer immediately, no thinking budget.";
+    if (key === "low") return "A small thinking budget for quick clarifications.";
+    if (key === "medium") return "Default thinking budget.";
+    if (key === "high") return "Large thinking budget; better on complex tasks.";
+    if (key === "xhigh" || key === "max") return "Maximum thinking budget.";
+  }
+  if (family === "xai") {
+    if (key === "none") return "Answer right away.";
+    if (key === "low" || key === "medium") return "Use Grok's Think mode.";
+    if (key === "high") return "Think harder before answering.";
+    if (key === "xhigh" || key === "max") return "Think the hardest before answering.";
+  }
+
+  // Generic fallback.
   if (key === "none") return t("model_behavior.desc_none");
   if (key === "minimal") return t("model_behavior.desc_minimal");
-  if (key === "low") return providerID === "google"
-    ? t("model_behavior.desc_low_google")
-    : t("model_behavior.desc_low");
+  if (key === "low") return t("model_behavior.desc_low");
   if (key === "medium") return t("model_behavior.desc_medium");
-  if (key === "high") return providerID === "anthropic"
-    ? t("model_behavior.desc_high_anthropic")
-    : t("model_behavior.desc_high");
-  if (key === "xhigh" || key === "max") return providerID === "anthropic"
-    ? t("model_behavior.desc_max_anthropic")
-    : t("model_behavior.desc_max");
+  if (key === "high") return t("model_behavior.desc_high");
+  if (key === "xhigh" || key === "max") return t("model_behavior.desc_max");
   return t("model_behavior.desc_generic", undefined, { label: label.toLowerCase() });
 };
 
