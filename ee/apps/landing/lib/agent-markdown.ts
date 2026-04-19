@@ -59,7 +59,7 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 Prices exclude taxes.
 `
 
-const enterprise = `# A privacy-first alternative to Claude Cowork for your org
+const enterprise = `# A privacy-first alternative to Claude Cowork for your organization
 
 > The open-source Claude Cowork alternative — self-hosted, permissioned, and compliance-ready. SSO, audit, custom deployment, and procurement support.
 
