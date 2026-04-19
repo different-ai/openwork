@@ -53,6 +53,79 @@ type MessageBlock = {
 
 type MessageBlockItem = MessageBlock | StepClusterBlock;
 
+/**
+ * Stable-key used to match a block across renders. For message blocks the
+ * messageId is stable. For step clusters we reuse the cluster id (which is
+ * derived from its first step group) as the identity anchor.
+ */
+function blockIdentityKey(block: MessageBlockItem): string {
+  if (block.kind === "steps-cluster") return `cluster:${block.id}`;
+  return `msg:${block.messageId}`;
+}
+
+/**
+ * Returns true when a newly-computed block is content-equivalent to the
+ * previous block we rendered under the same identity key. We compare the
+ * underlying UIMessage reference (`message.source`) for message blocks and
+ * the messageIds array + stepGroups identity for step clusters. If equal,
+ * the caller reuses the previous block reference so React.memo'd children
+ * downstream can skip work.
+ *
+ * This is the structural-sharing trick from T3Tools' MessagesTimeline: on
+ * every streaming token, `props.messages` is a fresh array, but only the
+ * *currently-streaming* message has a new `source` reference — everything
+ * else is still pointer-equal to last tick. Rebuilding blocks from the new
+ * array gives fresh block objects for every message, so downstream memo
+ * checks all fail by default. Reusing the previous block reference when
+ * its content hasn't actually changed gives every non-streaming row a free
+ * bailout during a streaming burst.
+ */
+function blocksAreEquivalent(
+  previous: MessageBlockItem | undefined,
+  next: MessageBlockItem,
+): boolean {
+  if (!previous) return false;
+  if (previous.kind !== next.kind) return false;
+  if (previous.isUser !== next.isUser) return false;
+
+  if (previous.kind === "steps-cluster" && next.kind === "steps-cluster") {
+    if (previous.id !== next.id) return false;
+    if (previous.messageIds.length !== next.messageIds.length) return false;
+    for (let i = 0; i < previous.messageIds.length; i += 1) {
+      if (previous.messageIds[i] !== next.messageIds[i]) return false;
+    }
+    if (previous.stepGroups.length !== next.stepGroups.length) return false;
+    for (let i = 0; i < previous.stepGroups.length; i += 1) {
+      const prevGroup = previous.stepGroups[i];
+      const nextGroup = next.stepGroups[i];
+      if (!prevGroup || !nextGroup) return false;
+      if (prevGroup.id !== nextGroup.id) return false;
+      if (prevGroup.mode !== nextGroup.mode) return false;
+      if (prevGroup.parts.length !== nextGroup.parts.length) return false;
+      for (let p = 0; p < prevGroup.parts.length; p += 1) {
+        if (prevGroup.parts[p] !== nextGroup.parts[p]) return false;
+      }
+    }
+    return true;
+  }
+
+  if (previous.kind === "message" && next.kind === "message") {
+    if (previous.messageId !== next.messageId) return false;
+    // The single most important check. The session sync layer keeps
+    // UIMessage references stable for every non-streaming message across
+    // rerenders; only the actively-streaming message gets a fresh
+    // `source` reference per token. If the source is pointer-equal, the
+    // block hasn't changed and we can reuse the previous object.
+    if (previous.message !== next.message) return false;
+    if (previous.attachments.length !== next.attachments.length) return false;
+    if (previous.renderableParts.length !== next.renderableParts.length) return false;
+    if (previous.groups.length !== next.groups.length) return false;
+    return true;
+  }
+
+  return false;
+}
+
 type SessionTranscriptProps = {
   messages: UIMessage[];
   isStreaming: boolean;
@@ -603,7 +676,12 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
     }));
   }, [props.messages]);
 
-  const messageBlocks = useMemo<MessageBlockItem[]>(() => {
+  // Cache of the previous messageBlocks array, indexed by identity key.
+  // Used by useStableBlocks below so structurally-equivalent blocks keep
+  // their previous object reference across renders.
+  const previousBlocksRef = useRef<Map<string, MessageBlockItem>>(new Map());
+
+  const rawMessageBlocks = useMemo<MessageBlockItem[]>(() => {
     const blocks: MessageBlockItem[] = [];
 
     transcriptMessages.forEach((message) => {
@@ -670,6 +748,27 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
 
     return blocks;
   }, [props.developerMode, showThinking, transcriptMessages]);
+
+  // Structural sharing: reuse the previous block object reference for any
+  // block whose content is equivalent. During streaming, only the active
+  // assistant message's block is actually new — every other block in the
+  // transcript keeps its previous reference, which means every
+  // React.memo'd descendant (MarkdownBlock, SessionTranscript itself, and
+  // any future per-row components) gets a pointer-equal prop and can bail
+  // out of rendering entirely.
+  const messageBlocks = useMemo<MessageBlockItem[]>(() => {
+    const prev = previousBlocksRef.current;
+    const next = new Map<string, MessageBlockItem>();
+    const stable: MessageBlockItem[] = rawMessageBlocks.map((block) => {
+      const key = blockIdentityKey(block);
+      const prevBlock = prev.get(key);
+      const reused = blocksAreEquivalent(prevBlock, block) ? (prevBlock as MessageBlockItem) : block;
+      next.set(key, reused);
+      return reused;
+    });
+    previousBlocksRef.current = next;
+    return stable;
+  }, [rawMessageBlocks]);
 
   const latestAssistantMessageId = useMemo(() => {
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
