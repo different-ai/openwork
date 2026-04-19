@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import { agentMarkdown } from "./lib/agent-markdown"
 
 export const config = {
-  matcher: ["/", "/pricing", "/enterprise", "/den", "/download", "/trust"],
+  matcher: ["/", "/pricing", "/enterprise", "/download", "/trust"],
 }
 
 export function middleware(request: NextRequest) {

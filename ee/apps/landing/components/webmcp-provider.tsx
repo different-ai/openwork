@@ -18,7 +18,6 @@ const destinations: Record<string, string> = {
   download: "/download",
   pricing: "/pricing",
   enterprise: "/enterprise",
-  den: "/den",
   docs: "/docs",
   trust: "/trust",
   feedback: "/feedback",
@@ -91,7 +90,7 @@ const tools: Tool[] = [
   {
     name: "navigate_to",
     description:
-      "Navigate the current tab to a key section of openworklabs.com. Use this when the user expresses intent to view pricing, download, enterprise, den (cloud), docs, trust, or feedback.",
+      "Navigate the current tab to a key section of openworklabs.com. Use this when the user expresses intent to view pricing, download, enterprise, docs, trust, or feedback.",
     inputSchema: {
       type: "object",
       properties: {

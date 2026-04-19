@@ -4,7 +4,6 @@ const BASE_URL = "https://openworklabs.com";
 
 const paths: { path: string; priority: number }[] = [
   { path: "/", priority: 1 },
-  { path: "/den", priority: 0.7 },
   { path: "/download", priority: 0.7 },
   { path: "/enterprise", priority: 0.7 },
   { path: "/pricing", priority: 0.7 },
