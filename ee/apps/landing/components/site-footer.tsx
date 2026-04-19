@@ -27,14 +27,9 @@ export function SiteFooter() {
           <Link href="/download" className="transition-colors hover:text-gray-800">
             Desktop
           </Link>
-          <a
-            href="https://app.openworklabs.com"
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-gray-800"
-          >
+          <Link href="/cloud" className="transition-colors hover:text-gray-800">
             Cloud
-          </a>
+          </Link>
           <Link href="/enterprise" className="transition-colors hover:text-gray-800">
             Enterprise
           </Link>
