@@ -48,9 +48,6 @@ export const metadata = {
   twitter: {
     card: "summary_large_image",
     images: ["/og-image-clean.png"]
-  },
-  icons: {
-    icon: "/openwork-mark.svg"
   }
 };
 
