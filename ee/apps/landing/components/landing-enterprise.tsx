@@ -83,11 +83,9 @@ export function LandingEnterprise(props: Props) {
             </h1>
 
             <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
-              The open-source Claude Cowork alternative — self-hosted,
-              permissioned, and compliance-ready. Get your entire organisation
-              running on shared skills, plugins, and AI workflows. Bring your
-              own LLM providers, choose from 50+ supported models, and
-              integrate with LiteLLM out of the box.
+              Get your entire organisation running on shared skills, plugins,
+              and AI workflows. Bring your own LLM providers, choose from 50+
+              supported models, and integrate with LiteLLM out of the box.
             </p>
 
             <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
