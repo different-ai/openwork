@@ -2,9 +2,15 @@ import { LandingDen } from "../../components/landing-den";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork — Den",
+  title: "OpenWork Den — Always-on cloud AI workers",
   description:
     "Always-on AI workers that handle repetitive work for your team and report back in Slack, Telegram, or the desktop app.",
+  alternates: {
+    canonical: "/den"
+  },
+  openGraph: {
+    url: "https://openworklabs.com/den"
+  }
 };
 
 export default async function Den() {

@@ -4,8 +4,15 @@ import { OpenWorkMark } from "../../components/openwork-mark";
 import { SiteFooter } from "../../components/site-footer";
 
 export const metadata = {
-  title: "OpenWork - Feedback",
+  title: "OpenWork — Feedback",
   description: "Send app feedback to the OpenWork team with prefilled runtime context.",
+  alternates: {
+    canonical: "/feedback"
+  },
+  robots: {
+    index: false,
+    follow: true
+  }
 };
 
 type PageProps = {

@@ -3,8 +3,15 @@ import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork - Starter Success",
+  title: "OpenWork — Starter Success",
   description: "Thanks for pre-ordering OpenWork Team Starter.",
+  alternates: {
+    canonical: "/starter-success"
+  },
+  robots: {
+    index: false,
+    follow: true
+  }
 };
 
 export default async function StarterSuccessPage() {

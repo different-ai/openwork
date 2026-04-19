@@ -4,7 +4,13 @@ import { getGithubData } from "../../lib/github";
 export const metadata = {
   title: "OpenWork — Security & Data Privacy",
   description:
-    "How OpenWork handles data, subprocessors, incident response, and compliance for self-hosted enterprise deployments."
+    "How OpenWork handles data, subprocessors, incident response, and compliance for self-hosted enterprise deployments.",
+  alternates: {
+    canonical: "/trust"
+  },
+  openGraph: {
+    url: "https://openworklabs.com/trust"
+  }
 };
 
 export default async function TrustPage() {

@@ -10,9 +10,9 @@ export function DenHero(props: DenHeroProps) {
   return (
     <section className="pt-8 md:pt-14">
       <div className="max-w-[42rem]">
-        <h2 className="max-w-[12.4ch] text-3xl font-medium tracking-tight text-gray-900 md:max-w-[12.1ch] md:text-[3.2rem] md:leading-[0.98] lg:max-w-none lg:text-[3.35rem] xl:text-[3.7rem]">
+        <h1 className="max-w-[12.4ch] text-3xl font-medium tracking-tight text-gray-900 md:max-w-[12.1ch] md:text-[3.2rem] md:leading-[0.98] lg:max-w-none lg:text-[3.35rem] xl:text-[3.7rem]">
           <span className="block lg:whitespace-nowrap">Agents that never sleep</span>
-        </h2>
+        </h1>
         <p className="mt-5 max-w-[35rem] text-lg leading-relaxed text-gray-700 md:text-[1rem] md:leading-8 lg:text-[1.02rem]">
           Cloud gives you a personal cloud workspace for long-running tasks, background automation, and the same agent workflows you already use locally in OpenWork, without keeping your own machine awake.
         </p>

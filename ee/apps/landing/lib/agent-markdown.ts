@@ -28,7 +28,7 @@ const home = `# OpenWork
 Backed by Y Combinator.
 `
 
-const pricing = `# Pricing
+const pricing = `# OpenWork pricing — free, team, and enterprise
 
 > OpenWork has three tiers: free open-source desktop, \\$50/mo Team Starter, and custom Enterprise.
 
@@ -59,9 +59,9 @@ const pricing = `# Pricing
 Prices exclude taxes.
 `
 
-const enterprise = `# OpenWork for Enterprise
+const enterprise = `# OpenWork for the enterprise
 
-> Secure hosting for safe, permissioned AI employees. SSO, audit, custom deployment, and procurement support.
+> The open-source Claude Cowork alternative — self-hosted, permissioned, and compliance-ready. SSO, audit, custom deployment, and procurement support.
 
 ## What Enterprise includes
 

@@ -46,7 +46,7 @@ function PricingCardView({ card }: { card: PricingCard }) {
         <div className="relative z-10 flex flex-col h-full min-h-[160px] justify-between">
           <div>
             <div className="flex justify-between items-start mb-6">
-              <h3 className="text-[17px] font-medium tracking-tight">{card.title}</h3>
+              <h2 className="text-[17px] font-medium tracking-tight">{card.title}</h2>
             </div>
 
             {card.isCustomPricing ? (
