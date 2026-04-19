@@ -135,7 +135,7 @@ function compareVersions(left: string, right: string): number | null {
 async function isUpdateSupportedByDen(updateVersion: string) {
   try {
     const settings = readDenSettings();
-    const client = createDenClient({ baseUrl: settings.baseUrl });
+    const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl });
     const metadata = await client.getAppVersionMetadata();
     const comparison = compareVersions(updateVersion, metadata.latestAppVersion);
     return comparison !== null && comparison <= 0;

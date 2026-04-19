@@ -1,4 +1,6 @@
 import App from "./app";
+import { DenAuthProvider } from "./cloud/den-auth-provider";
+import { DesktopConfigProvider } from "./cloud/desktop-config-provider";
 import { GlobalSDKProvider } from "./context/global-sdk";
 import { GlobalSyncProvider } from "./context/global-sync";
 import { LocalProvider } from "./context/local";
@@ -37,13 +39,17 @@ export default function AppEntry() {
 
   return (
     <ServerProvider defaultUrl={defaultUrl}>
-      <GlobalSDKProvider>
-        <GlobalSyncProvider>
-          <LocalProvider>
-            <App />
-          </LocalProvider>
-        </GlobalSyncProvider>
-      </GlobalSDKProvider>
+      <DenAuthProvider>
+        <DesktopConfigProvider>
+          <GlobalSDKProvider>
+            <GlobalSyncProvider>
+              <LocalProvider>
+                <App />
+              </LocalProvider>
+            </GlobalSyncProvider>
+          </GlobalSDKProvider>
+        </DesktopConfigProvider>
+      </DenAuthProvider>
     </ServerProvider>
   );
 }

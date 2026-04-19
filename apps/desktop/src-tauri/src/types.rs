@@ -237,6 +237,16 @@ pub struct UpdaterEnvironment {
     pub app_bundle_path: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopBootstrapConfig {
+    pub base_url: String,
+    #[serde(default)]
+    pub api_base_url: Option<String>,
+    #[serde(default)]
+    pub require_signin: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJobRun {

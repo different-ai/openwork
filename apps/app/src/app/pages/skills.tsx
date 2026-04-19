@@ -212,7 +212,7 @@ export default function SkillsView(props: SkillsViewProps) {
         if (!token) return;
 
         let orgId = settings.activeOrgId?.trim() ?? "";
-        const client = createDenClient({ baseUrl: settings.baseUrl, token });
+        const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
         if (!orgId) {
           const res = await client.listOrgs();
           orgId = res.orgs[0]?.id ?? "";

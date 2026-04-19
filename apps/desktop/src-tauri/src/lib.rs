@@ -1,6 +1,7 @@
 mod bun_env;
 mod commands;
 mod config;
+mod desktop_bootstrap;
 mod engine;
 mod fs;
 mod opencode_router;
@@ -19,6 +20,7 @@ use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
 use commands::config::{read_opencode_config, write_opencode_config};
+use commands::desktop_bootstrap::{get_desktop_bootstrap_config, set_desktop_bootstrap_config};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
@@ -203,6 +205,8 @@ pub fn run() {
             write_local_skill,
             read_opencode_config,
             write_opencode_config,
+            get_desktop_bootstrap_config,
+            set_desktop_bootstrap_config,
             updater_environment,
             app_build_info,
             nuke_openwork_and_opencode_config_and_exit,

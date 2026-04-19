@@ -20,6 +20,8 @@ import ResetModal from "./components/reset-modal";
 import SkillDestinationModal from "./bundles/skill-destination-modal";
 import BundleImportModal from "./bundles/import-modal";
 import BundleStartModal from "./bundles/start-modal";
+import { useDenAuth } from "./cloud/den-auth-provider";
+import ForcedSigninPage from "./cloud/forced-signin-page";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import ConnectionsModals from "./connections/modals";
 import { OpenworkServerProvider } from "./connections/openwork-server-provider";
@@ -45,6 +47,7 @@ import {
   HIDE_TITLEBAR_PREF_KEY,
   SUGGESTED_PLUGINS,
 } from "./constants";
+import { readDenBootstrapConfig } from "./lib/den";
 import type {
   Client,
   StartupPreference,
@@ -173,6 +176,7 @@ type StartupSessionSnapshot = {
 };
 
 export default function App() {
+  const denAuth = useDenAuth();
   const { resetSessionDisplayPreferences } = useSessionDisplayPreferences();
   const { microsandboxCreateSandboxEnabled } = useFeatureFlagsPreferences();
   const envOpenworkWorkspaceId =
@@ -186,9 +190,14 @@ export default function App() {
   const [creatingSession, setCreatingSession] = createSignal(false);
   const currentView = createMemo<View>(() => {
     const path = location.pathname.toLowerCase();
+    if (path.startsWith("/signin")) return "signin";
     if (path.startsWith("/session")) return "session";
     return "settings";
   });
+  const forceSigninEnabled = createMemo(() => readDenBootstrapConfig().requireSignin);
+  const blockingSigninPending = createMemo(
+    () => forceSigninEnabled() && denAuth.status() === "checking",
+  );
 
   const [settingsTab, setSettingsTabState] = createSignal<SettingsTab>("general");
   const [pendingInitialSessionSelection, setPendingInitialSessionSelection] =
@@ -208,6 +217,10 @@ export default function App() {
   };
 
   const setView = (next: View, sessionId?: string) => {
+    if (next === "signin") {
+      navigate("/signin");
+      return;
+    }
     if (next === "settings" && creatingSession()) {
       return;
     }
@@ -502,7 +515,7 @@ export default function App() {
   createEffect(() => {
     const view = currentView();
     const currentTab = settingsTab();
-    if (view === "settings") return;
+    if (view === "settings" || view === "signin") return;
     setSettingsReturnTarget({
       view,
       tab: currentTab,
@@ -2352,6 +2365,27 @@ export default function App() {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
 
+    if (forceSigninEnabled()) {
+      if (denAuth.status() === "checking") {
+        return;
+      }
+
+      if (!denAuth.isSignedIn()) {
+        if (path !== "/signin") {
+          navigate("/signin", { replace: true });
+        }
+        return;
+      }
+
+      if (path === "/signin") {
+        navigate("/session", { replace: true });
+        return;
+      }
+    } else if (path === "/signin") {
+      navigate("/session", { replace: true });
+      return;
+    }
+
     if (path === "" || path === "/") {
       navigate("/session", { replace: true });
       return;
@@ -2441,6 +2475,10 @@ export default function App() {
                     />
                   </Show>
             <Switch>
+              <Match when={blockingSigninPending()}>{null}</Match>
+              <Match when={currentView() === "signin"}>
+                <ForcedSigninPage developerMode={developerMode()} />
+              </Match>
               <Match when={currentView() === "session"}>
                 <SessionView {...sessionProps()} />
               </Match>

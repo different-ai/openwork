@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 
 fn main() {
     emit_build_info();
+    emit_desktop_bootstrap_seed();
     ensure_opencode_sidecar();
     ensure_openwork_server_sidecar();
     ensure_opencode_router_sidecar();
@@ -142,6 +143,46 @@ fn emit_build_info() {
 
     if let Some(value) = build_epoch {
         println!("cargo:rustc-env=OPENWORK_BUILD_EPOCH={}", value);
+    }
+}
+
+fn emit_desktop_bootstrap_seed() {
+    for key in [
+        "OPENWORK_DESKTOP_DEN_BASE_URL",
+        "OPENWORK_DESKTOP_DEN_API_BASE_URL",
+        "OPENWORK_DESKTOP_DEN_REQUIRE_SIGNIN",
+        "VITE_DEN_BASE_URL",
+        "VITE_DEN_API_BASE_URL",
+        "VITE_DEN_REQUIRE_SIGNIN",
+    ] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+
+    if let Some(value) = env::var("OPENWORK_DESKTOP_DEN_BASE_URL")
+        .ok()
+        .or_else(|| env::var("VITE_DEN_BASE_URL").ok())
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+    {
+        println!("cargo:rustc-env=OPENWORK_DESKTOP_DEN_BASE_URL={value}");
+    }
+
+    if let Some(value) = env::var("OPENWORK_DESKTOP_DEN_API_BASE_URL")
+        .ok()
+        .or_else(|| env::var("VITE_DEN_API_BASE_URL").ok())
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+    {
+        println!("cargo:rustc-env=OPENWORK_DESKTOP_DEN_API_BASE_URL={value}");
+    }
+
+    if let Some(value) = env::var("OPENWORK_DESKTOP_DEN_REQUIRE_SIGNIN")
+        .ok()
+        .or_else(|| env::var("VITE_DEN_REQUIRE_SIGNIN").ok())
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+    {
+        println!("cargo:rustc-env=OPENWORK_DESKTOP_DEN_REQUIRE_SIGNIN={value}");
     }
 }
 

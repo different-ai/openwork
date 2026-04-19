@@ -3,6 +3,7 @@ import { ArrowUpRight, Boxes, Brain, Cloud, KeyRound, LogOut, Package, RefreshCc
 
 import Button from "./button";
 import TextInput from "./text-input";
+import DenSignInSurface from "../cloud/den-signin-surface";
 import { currentLocale, t } from "../../i18n";
 import {
   buildDenAuthUrl,
@@ -14,8 +15,10 @@ import {
   type DenTemplate,
   createDenClient,
   normalizeDenBaseUrl,
+  readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
+  setDenBootstrapConfig,
   writeDenSettings,
 } from "../lib/den";
 import type { DenOrgSkillCard } from "../types";
@@ -134,6 +137,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [baseUrl, setBaseUrl] = createSignal(initialBaseUrl);
   const [baseUrlDraft, setBaseUrlDraft] = createSignal(initialBaseUrl);
   const [baseUrlError, setBaseUrlError] = createSignal<string | null>(null);
+  const [baseUrlBusy, setBaseUrlBusy] = createSignal(false);
   const [authToken, setAuthToken] = createSignal(initial.authToken?.trim() || "");
   const [activeOrgId, setActiveOrgId] = createSignal(initial.activeOrgId?.trim() || "");
   const [authBusy, setAuthBusy] = createSignal(false);
@@ -183,7 +187,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   const activeOrg = createMemo(() => orgs().find((org) => org.id === activeOrgId()) ?? null);
   const client = createMemo(() =>
-    createDenClient({ baseUrl: baseUrl(), token: authToken() }),
+    createDenClient({
+      baseUrl: baseUrl(),
+      apiBaseUrl: readDenSettings().apiBaseUrl,
+      token: authToken(),
+    }),
   );
   const isSignedIn = createMemo(() => Boolean(user() && authToken().trim()));
   const activeOrgName = createMemo(() => activeOrg()?.name || tr("den.no_org_selected"));
@@ -403,7 +411,10 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setStatusMessage(tr("den.signing_in"));
 
     try {
-      const result = await createDenClient({ baseUrl: nextBaseUrl }).exchangeDesktopHandoff(parsed.grant);
+      const result = await createDenClient({
+        baseUrl: nextBaseUrl,
+        apiBaseUrl: readDenSettings().apiBaseUrl,
+      }).exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
         throw new Error(tr("den.error_no_token"));
       }
@@ -460,10 +471,9 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   const clearSignedInState = (message?: string | null) => {
     clearDenSession({ includeBaseUrls: !props.developerMode });
     clearDenTemplateCache();
-    if (!props.developerMode) {
-      setBaseUrl(DEFAULT_DEN_BASE_URL);
-      setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
-    }
+    const nextBaseUrl = readDenSettings().baseUrl || DEFAULT_DEN_BASE_URL;
+    setBaseUrl(nextBaseUrl);
+    setBaseUrlDraft(nextBaseUrl);
     setAuthToken("");
     setOpeningWorkerId(null);
     setOpeningTemplateId(null);
@@ -477,7 +487,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setStatusMessage(message ?? null);
   };
 
-  const applyBaseUrl = () => {
+  const applyBaseUrl = async () => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft());
     if (!normalized) {
       setBaseUrlError(tr("den.error_base_url"));
@@ -485,15 +495,38 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     }
 
     const resolved = resolveDenBaseUrls(normalized);
-    setBaseUrlError(null);
-    if (resolved.baseUrl === baseUrl()) {
-      setBaseUrlDraft(resolved.baseUrl);
-      return;
-    }
+    setBaseUrlBusy(true);
 
-    setBaseUrl(resolved.baseUrl);
-    setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState(tr("den.status_base_url_updated"));
+    try {
+      await setDenBootstrapConfig({
+        baseUrl: resolved.baseUrl,
+        apiBaseUrl: resolved.apiBaseUrl,
+        requireSignin: readDenBootstrapConfig().requireSignin,
+      });
+      setBaseUrlError(null);
+      if (resolved.baseUrl === baseUrl()) {
+        setBaseUrlDraft(resolved.baseUrl);
+        return;
+      }
+
+      setBaseUrl(resolved.baseUrl);
+      setBaseUrlDraft(resolved.baseUrl);
+      writeDenSettings({
+        baseUrl: resolved.baseUrl,
+        apiBaseUrl: resolved.apiBaseUrl,
+        authToken: null,
+        activeOrgId: null,
+        activeOrgSlug: null,
+        activeOrgName: null,
+      }, { persistBootstrap: false });
+      clearSignedInState(tr("den.status_base_url_updated"));
+    } catch (error) {
+      setBaseUrlError(
+        error instanceof Error ? error.message : tr("den.error_base_url"),
+      );
+    } finally {
+      setBaseUrlBusy(false);
+    }
   };
 
   const refreshOrgs = async (quiet = false) => {
@@ -721,7 +754,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
     setSessionBusy(true);
     setAuthError(null);
 
-    void createDenClient({ baseUrl: currentBaseUrl, token })
+    void createDenClient({
+      baseUrl: currentBaseUrl,
+      apiBaseUrl: readDenSettings().apiBaseUrl,
+      token,
+    })
       .getSession()
       .then((nextUser) => {
         if (cancelled) return;
@@ -1127,150 +1164,71 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   return (
     <div class="space-y-6">
-      <div class={`${settingsPanelClass} space-y-4`}>
-        <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div class="space-y-2">
-            <div class={headerBadgeClass}>
-              <Cloud size={13} class="text-dls-secondary" />
-              {tr("den.cloud_section_title")}
-            </div>
-            <div>
-              <div class="text-sm font-medium text-dls-text">
-                {tr("den.cloud_section_desc")}
-              </div>
-              <div class="mt-1 max-w-[60ch] text-xs text-dls-secondary">
-                {tr("den.cloud_sleep_hint")}
-              </div>
-            </div>
-          </div>
-          <div class={headerStatusBadgeClass}>
-            <span
-              class={`h-2 w-2 rounded-full ${summaryTone() === "ready" ? "bg-green-500" : summaryTone() === "warning" ? "bg-amber-500" : summaryTone() === "error" ? "bg-red-500" : "bg-gray-400"}`}
-            />
-            {summaryLabel()}
-          </div>
-        </div>
-
-        <Show when={props.developerMode}>
-          <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <TextInput
-              label={tr("den.cloud_control_plane_url_label")}
-              value={baseUrlDraft()}
-              onInput={(event) => setBaseUrlDraft(event.currentTarget.value)}
-              placeholder={DEFAULT_DEN_BASE_URL}
-              hint={tr("den.cloud_control_plane_url_hint")}
-              disabled={authBusy() || sessionBusy()}
-            />
-            <div class="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                class="h-9 px-3 text-xs"
-                onClick={() => setBaseUrlDraft(baseUrl())}
-                disabled={authBusy() || sessionBusy()}
-              >
-                {tr("den.cloud_control_plane_reset")}
-              </Button>
-              <Button
-                variant="secondary"
-                class="h-9 px-3 text-xs"
-                onClick={applyBaseUrl}
-                disabled={authBusy() || sessionBusy()}
-              >
-                {tr("den.cloud_control_plane_save")}
-              </Button>
-              <Button
-                variant="outline"
-                class="h-9 px-3 text-xs"
-                onClick={openControlPlane}
-              >
-                {tr("den.cloud_control_plane_open")}
-                <ArrowUpRight size={13} />
-              </Button>
-            </div>
-          </div>
-        </Show>
-
-        <Show when={baseUrlError()}>
-          {(value) => (
-            <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
-              {value()}
-            </div>
-          )}
-        </Show>
-
-        <Show when={statusMessage() && !authError() && !workersError() && !orgsError() && !templatesError()}>
-          {(value) => (
-            <div class={softNoticeClass}>
-              {value()}
-            </div>
-          )}
-        </Show>
-      </div>
-
-      <Show when={!isSignedIn()}>
+      <Show when={!isSignedIn()} fallback={
         <div class={`${settingsPanelClass} space-y-4`}>
+          <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div class="space-y-2">
-              <div class="text-sm font-medium text-dls-text">
-                {tr("den.signin_title")}
+              <div class={headerBadgeClass}>
+                <Cloud size={13} class="text-dls-secondary" />
+                {tr("den.cloud_section_title")}
               </div>
-              <div class="max-w-[54ch] text-sm text-dls-secondary">
-                {tr("den.cloud_sleep_hint")}
+              <div>
+                <div class="text-sm font-medium text-dls-text">
+                  {tr("den.cloud_section_desc")}
+                </div>
+                <div class="mt-1 max-w-[60ch] text-xs text-dls-secondary">
+                  {tr("den.cloud_sleep_hint")}
+                </div>
               </div>
             </div>
-
-          <div class="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => openBrowserAuth("sign-in")}>
-              {tr("den.signin_button")}
-              <ArrowUpRight size={13} />
-            </Button>
-            <Button
-              variant="outline"
-              class="text-xs h-9 px-3"
-              onClick={() => openBrowserAuth("sign-up")}
-            >
-              {tr("den.create_account")}
-              <ArrowUpRight size={13} />
-            </Button>
-            <Button
-              variant="outline"
-              class="text-xs h-9 px-3"
-              onClick={() => {
-                setManualAuthOpen((value) => !value);
-                setAuthError(null);
-              }}
-              disabled={authBusy() || sessionBusy()}
-            >
-              {manualAuthOpen() ? tr("den.hide_signin_code") : tr("den.paste_signin_code")}
-            </Button>
+            <div class={headerStatusBadgeClass}>
+              <span
+                class={`h-2 w-2 rounded-full ${summaryTone() === "ready" ? "bg-green-500" : summaryTone() === "warning" ? "bg-amber-500" : summaryTone() === "error" ? "bg-red-500" : "bg-gray-400"}`}
+              />
+              {summaryLabel()}
+            </div>
           </div>
 
-          <Show when={manualAuthOpen()}>
-            <div class={`${settingsPanelSoftClass} space-y-3`}>
+          <Show when={props.developerMode}>
+            <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
               <TextInput
-                label={tr("den.signin_link_label")}
-                value={manualAuthInput()}
-                onInput={(event) => setManualAuthInput(event.currentTarget.value)}
-                placeholder={tr("den.signin_link_placeholder")}
+                label={tr("den.cloud_control_plane_url_label")}
+                value={baseUrlDraft()}
+                onInput={(event) => setBaseUrlDraft(event.currentTarget.value)}
+                placeholder={DEFAULT_DEN_BASE_URL}
+                hint={tr("den.cloud_control_plane_url_hint")}
                 disabled={authBusy() || sessionBusy()}
-                hint={tr("den.signin_link_hint")}
               />
               <div class="flex flex-wrap items-center gap-2">
                 <Button
-                  variant="secondary"
-                  class="text-xs h-9 px-3"
-                  onClick={() => void submitManualAuth()}
-                  disabled={authBusy() || sessionBusy() || !manualAuthInput().trim()}
+                  variant="outline"
+                  class="h-9 px-3 text-xs"
+                  onClick={() => setBaseUrlDraft(baseUrl())}
+                  disabled={authBusy() || sessionBusy()}
                 >
-                  {authBusy() ? tr("den.finishing") : tr("den.finish_signin")}
+                  {tr("den.cloud_control_plane_reset")}
                 </Button>
-                <div class="text-[11px] text-dls-secondary">
-                  {tr("den.signin_code_note")}
-                </div>
+                <Button
+                  variant="secondary"
+                  class="h-9 px-3 text-xs"
+                  onClick={applyBaseUrl}
+                  disabled={authBusy() || sessionBusy()}
+                >
+                  {tr("den.cloud_control_plane_save")}
+                </Button>
+                <Button
+                  variant="outline"
+                  class="h-9 px-3 text-xs"
+                  onClick={openControlPlane}
+                >
+                  {tr("den.cloud_control_plane_open")}
+                  <ArrowUpRight size={13} />
+                </Button>
               </div>
             </div>
           </Show>
 
-          <Show when={authError()}>
+          <Show when={baseUrlError()}>
             {(value) => (
               <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
                 {value()}
@@ -1278,10 +1236,41 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
             )}
           </Show>
 
-          <div class={`${settingsPanelSoftClass} text-sm text-gray-10`}>
-            {tr("den.auto_reconnect_hint")}
-          </div>
+          <Show when={statusMessage() && !authError() && !workersError() && !orgsError() && !templatesError()}>
+            {(value) => (
+              <div class={softNoticeClass}>
+                {value()}
+              </div>
+            )}
+          </Show>
         </div>
+      }>
+        <DenSignInSurface
+          developerMode={props.developerMode}
+          baseUrl={baseUrl()}
+          baseUrlDraft={baseUrlDraft()}
+          baseUrlError={baseUrlError()}
+          statusMessage={statusMessage() && !workersError() && !orgsError() && !templatesError() ? statusMessage() : null}
+          authError={authError()}
+          authBusy={authBusy()}
+          baseUrlBusy={baseUrlBusy()}
+          sessionBusy={sessionBusy()}
+          manualAuthOpen={manualAuthOpen()}
+          manualAuthInput={manualAuthInput()}
+          onBaseUrlDraftInput={setBaseUrlDraft}
+          onResetBaseUrl={() => setBaseUrlDraft(baseUrl())}
+          onApplyBaseUrl={() => {
+            void applyBaseUrl();
+          }}
+          onOpenControlPlane={openControlPlane}
+          onOpenBrowserAuth={openBrowserAuth}
+          onToggleManualAuth={() => {
+            setManualAuthOpen((value) => !value);
+            setAuthError(null);
+          }}
+          onManualAuthInput={setManualAuthInput}
+          onSubmitManualAuth={() => void submitManualAuth()}
+        />
       </Show>
 
       <Show when={isSignedIn()}>

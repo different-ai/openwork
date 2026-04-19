@@ -715,7 +715,7 @@ export function createExtensionsStore(options: {
         return;
       }
 
-      const client = createDenClient({ baseUrl: settings.baseUrl, token });
+      const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
       const catalog = await fetchDenOrgSkillsCatalog(client, orgId);
       if (refreshCloudOrgSkillsAborted) return;
       setCloudOrgSkills(catalog);
@@ -767,7 +767,7 @@ export function createExtensionsStore(options: {
         return;
       }
 
-      const client = createDenClient({ baseUrl: settings.baseUrl, token });
+      const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
       const hubs = await client.listOrgSkillHubs(orgId);
       if (refreshCloudOrgSkillHubsAborted) return;
       setCloudOrgSkillHubs(hubs);

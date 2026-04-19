@@ -6,6 +6,7 @@ import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
+import { initializeDenBootstrapConfig } from "./app/lib/den";
 import { nativeDeepLinkEvent, pushPendingDeepLinks } from "./app/lib/deep-link-bridge";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { isTauriRuntime } from "./app/utils";
@@ -75,6 +76,8 @@ startDeepLinkBridge();
 if (import.meta.env.DEV) {
   await import("./solid-devtools-dev");
 }
+
+await initializeDenBootstrapConfig();
 
 const RouterComponent = isTauriRuntime() ? HashRouter : Router;
 

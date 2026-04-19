@@ -132,7 +132,11 @@ export default function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const remoteError = createMemo(() => (props.remoteError ?? "").trim() || null);
   const isSignedIn = createMemo(() => Boolean(cloudSettings().authToken?.trim()));
   const denClient = createMemo(
-    () => createDenClient({ baseUrl: cloudSettings().baseUrl, token: cloudSettings().authToken ?? "" }),
+    () => createDenClient({
+      baseUrl: cloudSettings().baseUrl,
+      apiBaseUrl: cloudSettings().apiBaseUrl,
+      token: cloudSettings().authToken ?? "",
+    }),
   );
   const templateCacheSnapshot = createMemo(() =>
     readDenTemplateCacheSnapshot({

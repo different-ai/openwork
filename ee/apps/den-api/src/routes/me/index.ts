@@ -1,6 +1,7 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { desktopConfigSchema, env } from "../../env.js"
 import { requireUserMiddleware, resolveUserOrganizationsMiddleware, type UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -18,6 +19,10 @@ const meOrganizationsResponseSchema = z.object({
   activeOrgId: denTypeIdSchema("organization").nullable(),
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "CurrentUserOrganizationsResponse" })
+
+const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
+  ref: "CurrentUserDesktopConfigResponse",
+})
 
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> }>(app: Hono<T>) {
   app.get(
@@ -62,6 +67,23 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       activeOrgId: c.get("activeOrganizationId") ?? null,
       activeOrgSlug: c.get("activeOrganizationSlug") ?? null,
     })
+    },
+  )
+
+  app.get(
+    "/v1/me/desktop-config",
+    describeRoute({
+      tags: ["Users"],
+      summary: "Get current user's desktop config",
+      description: "Returns the authenticated desktop config payload for the current user session. Today this is backed by Den API config and will later resolve org-specific desktop settings.",
+      responses: {
+        200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
+        401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
+      },
+    }),
+    requireUserMiddleware,
+    (c) => {
+      return c.json(env.desktopConfig)
     },
   )
 }
