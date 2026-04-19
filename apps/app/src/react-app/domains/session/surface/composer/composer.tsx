@@ -86,53 +86,30 @@ const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/web
 const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
 const FILE_URL_RE = /^file:\/\//i;
 const HTTP_URL_RE = /^https?:\/\//i;
-const WINDOWS_PATH_RE = /^[a-zA-Z]:\\/;
-const UNC_PATH_RE = /^\\\\/;
 
-function parseClipboardLinks(clipboard: DataTransfer) {
-  const values = [
-    clipboard.getData("text/uri-list") ?? "",
-    clipboard.getData("text/plain") ?? "",
-    clipboard.getData("text") ?? "",
-  ];
+/**
+ * Extract external file/URL drops from a clipboard. Only used when the user
+ * drag-drops a file reference from another app (Finder / browser), which sets
+ * the text/uri-list MIME type explicitly. Plain text pastes — even ones that
+ * contain absolute paths like "/Users/..." — are NEVER treated as links here
+ * because that intercepted real text pastes and made composer paste feel
+ * broken. Plain text goes straight into the editor via Lexical's default.
+ */
+function parseClipboardUriList(clipboard: DataTransfer) {
+  const raw = clipboard.getData("text/uri-list") ?? "";
+  if (!raw.trim()) return [];
   const links: string[] = [];
   const seen = new Set<string>();
-  for (const value of values) {
-    const lines = value
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"));
-    for (const line of lines) {
-      const target = normalizeLinkTarget(line);
-      if (!target || seen.has(target)) continue;
-      seen.add(target);
-      links.push(target);
-    }
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (!FILE_URL_RE.test(trimmed) && !HTTP_URL_RE.test(trimmed)) continue;
+    const normalized = encodeURI(trimmed);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    links.push(normalized);
   }
   return links;
-}
-
-function normalizeLinkTarget(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (FILE_URL_RE.test(trimmed) || HTTP_URL_RE.test(trimmed)) {
-    return encodeURI(trimmed);
-  }
-  if (WINDOWS_PATH_RE.test(trimmed)) {
-    return `file:///${encodeURI(trimmed.replace(/\\/g, "/"))}`;
-  }
-  if (UNC_PATH_RE.test(trimmed)) {
-    const normalized = trimmed.replace(/\\/g, "/").replace(/^\/+/, "");
-    return `file://${encodeURI(normalized)}`;
-  }
-  if (trimmed.startsWith("/")) {
-    return `file://${encodeURI(trimmed)}`;
-  }
-  return "";
-}
-
-function countLines(text: string) {
-  return text ? text.split(/\r?\n/).length : 0;
 }
 
 function formatBytes(size: number) {
@@ -863,24 +840,41 @@ export function ReactSessionComposer(props: ComposerProps) {
               onChange={props.onDraftChange}
               onSubmit={props.onSend}
               onPaste={(event) => {
+                // Paste policy:
+                // 1. Actual files on the clipboard -> attach them.
+                // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
+                // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
+                //    handle the paste natively so newlines render correctly
+                //    and no content is silently dropped. Previous behavior
+                //    hijacked pastes that merely contained absolute paths
+                //    like "/Users/..." or pastes longer than 10 lines, which
+                //    was the root cause of "paste into composer is broken".
                 const files = Array.from(event.clipboardData?.files ?? []);
-                const text = event.clipboardData?.getData("text/plain") ?? "";
                 if (files.length) {
                   event.preventDefault();
                   void addAttachments(files);
                   return;
                 }
 
-                if (!text.trim()) return;
-                const links = parseClipboardLinks(event.clipboardData);
-                if (links.length) {
-                  props.onUnsupportedFileLinks(links);
-                  props.onNotice({ title: t("composer.inserted_links_unsupported", locale), tone: "info" });
+                const uriList = event.clipboardData
+                  ? parseClipboardUriList(event.clipboardData)
+                  : [];
+                if (uriList.length) {
                   event.preventDefault();
+                  props.onUnsupportedFileLinks(uriList);
+                  props.onNotice({
+                    title: t("composer.inserted_links_unsupported", locale),
+                    tone: "info",
+                  });
                   return;
                 }
 
-                if ((props.isRemoteWorkspace || props.isSandboxWorkspace) && /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)) {
+                const text = event.clipboardData?.getData("text/plain") ?? "";
+                if (
+                  text.trim() &&
+                  (props.isRemoteWorkspace || props.isSandboxWorkspace) &&
+                  /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
+                ) {
                   const attachedFiles = props.attachments.map((attachment) => attachment.file);
                   props.onNotice({
                     title: t("composer.remote_worker_paste_warning", locale),
@@ -894,12 +888,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                         ? () => void props.onUploadInboxFiles?.(attachedFiles)
                         : undefined,
                   });
-                }
-
-                if (countLines(text) > 10) {
-                  event.preventDefault();
-                  props.onPasteText(text);
-                  props.onNotice({ title: t("composer.expand_pasted", locale), tone: "info" });
+                  // Intentionally no preventDefault — the notice is advisory,
+                  // the paste still goes through the editor.
                 }
               }}
               onDragOver={(event) => {

@@ -99,10 +99,10 @@ class ComposerMentionNode extends TextNode {
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
     const isFile = this.__kind === "file";
-    dom.className = this.__kind === "file"
+    dom.className = isFile
       ? "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11"
       : "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11";
-    dom.textContent = `${isFile ? "📄 " : "🤖 "}@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
+    dom.textContent = `@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     dom.title = `@${this.__value}`;
@@ -112,10 +112,10 @@ class ComposerMentionNode extends TextNode {
   override updateDOM(prevNode: ComposerMentionNode, dom: HTMLElement) {
     if (prevNode.__value !== this.__value || prevNode.__kind !== this.__kind) {
       const isFile = this.__kind === "file";
-      dom.className = this.__kind === "file"
+      dom.className = isFile
         ? "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11"
         : "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11";
-      dom.textContent = `${isFile ? "📄 " : "🤖 "}@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
+      dom.textContent = `@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
       dom.title = `@${this.__value}`;
     }
     return false;
@@ -255,7 +255,7 @@ class ComposerPastedTextNode extends TextNode {
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
     dom.className = "inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-1 text-xs font-medium text-amber-11";
-    dom.textContent = `📋 ${this.__pastedLines} lines`;
+    dom.textContent = `Pasted · ${this.__pastedLines} line${this.__pastedLines === 1 ? "" : "s"}`;
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     dom.title = `Pasted text · ${this.__pastedLabel}`;
@@ -264,7 +264,7 @@ class ComposerPastedTextNode extends TextNode {
 
   override updateDOM(prevNode: ComposerPastedTextNode, dom: HTMLElement) {
     if (prevNode.__pastedLabel !== this.__pastedLabel || prevNode.__pastedLines !== this.__pastedLines) {
-      dom.textContent = `📋 ${this.__pastedLines} lines`;
+      dom.textContent = `Pasted · ${this.__pastedLines} line${this.__pastedLines === 1 ? "" : "s"}`;
       dom.title = `Pasted text · ${this.__pastedLabel}`;
     }
     return false;
@@ -313,17 +313,46 @@ function setSelectionBeforeNode(node: ComposerInlineTokenNode) {
   $setSelection(selection);
 }
 
+function appendSegmentWithNewlines(
+  paragraph: ReturnType<typeof $createParagraphNode>,
+  segment: string,
+) {
+  // Preserve newlines in plain text segments. A single paragraph cannot
+  // render "\n" as a line break in contenteditable, so we split on "\n"
+  // and start a new paragraph per line. Return the paragraph the caller
+  // should keep appending to (i.e. the last one we produced).
+  if (!segment.includes("\n")) {
+    paragraph.append($createTextNode(segment));
+    return paragraph;
+  }
+  const lines = segment.split("\n");
+  let current = paragraph;
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      const next = $createParagraphNode();
+      current.insertAfter(next);
+      current = next;
+    }
+    if (line.length > 0) {
+      current.append($createTextNode(line));
+    }
+  });
+  return current;
+}
+
 function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pastedText?: Array<{ label: string; lines: number }>) {
   const root = $getRoot();
   root.clear();
-  const paragraph = $createParagraphNode();
+  let paragraph = $createParagraphNode();
   root.append(paragraph);
+
   const slashMatch = value.match(/^\/(\S+)\s(.*)$/s);
   if (slashMatch?.[1]) {
     paragraph.append($createComposerSlashCommandNode(slashMatch[1]));
     paragraph.append($createTextNode(" "));
     value = slashMatch[2] ?? "";
   }
+
   const segments = value.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/);
   for (const segment of segments) {
     if (!segment) continue;
@@ -343,8 +372,22 @@ function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pa
         continue;
       }
     }
-    paragraph.append($createTextNode(segment));
+    paragraph = appendSegmentWithNewlines(paragraph, segment);
   }
+}
+
+// Serialize the current editor state to the external draft string. Lexical's
+// root.getTextContent() joins element children with "\n\n" (its "text content
+// mode" for the root node), which causes single newlines typed/pasted by the
+// user to round-trip as double newlines and quickly corrupts the draft. We
+// walk root children ourselves and join with a single "\n" so every newline
+// the user sees onscreen is preserved exactly in the stored draft.
+function serializePromptFromRoot(): string {
+  const root = $getRoot();
+  return root
+    .getChildren()
+    .map((child) => child.getTextContent())
+    .join("\n");
 }
 
 function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "file">; pastedText?: Array<{ label: string; lines: number }>; disabled: boolean }) {
@@ -359,10 +402,13 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
     if (valueRef.current === props.value) return;
     valueRef.current = props.value;
     editor.update(() => {
-      const root = $getRoot();
-      if (root.getTextContent() === props.value) return;
+      // Use the same single-newline serializer we write out so we don't
+      // rebuild the editor on every keystroke when the user typed only a
+      // plain newline (Lexical's root.getTextContent() uses "\n\n" which
+      // never matches what we stored).
+      if (serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText);
-      root.selectEnd();
+      $getRoot().selectEnd();
     });
   }, [editor, props.mentions, props.value]);
 
@@ -505,7 +551,7 @@ export function LexicalPromptEditor(props: EditorProps) {
   const handleChange = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
-        props.onChange($getRoot().getTextContent());
+        props.onChange(serializePromptFromRoot());
       });
     },
     [props],
@@ -523,7 +569,7 @@ export function LexicalPromptEditor(props: EditorProps) {
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
-              className="min-h-[24px] max-h-[220px] w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-6 text-dls-text outline-none placeholder:text-dls-secondary"
+              className="min-h-[60px] max-h-[280px] w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-6 text-dls-text outline-none placeholder:text-dls-secondary [&_p]:min-h-[1.5rem] [&_p]:m-0"
               aria-placeholder={props.placeholder}
               placeholder={<span />}
               onPaste={props.onPaste}
@@ -533,7 +579,7 @@ export function LexicalPromptEditor(props: EditorProps) {
             />
           }
           placeholder={
-            <div className="pointer-events-none absolute inset-0 text-[15px] leading-6 text-dls-secondary/70">
+            <div className="pointer-events-none absolute left-0 top-0 text-[15px] leading-6 text-dls-secondary/70">
               {props.placeholder}
             </div>
           }
