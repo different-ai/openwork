@@ -790,35 +790,13 @@ export function ReactSessionComposer(props: ComposerProps) {
             </div>
           ) : null}
 
-          {props.pastedText.length > 0 ? (
-            <div className="mx-5 mt-3 flex flex-wrap gap-2 md:mx-6">
-              {props.pastedText.map((item) => (
-                <div key={item.id} className="flex max-w-full items-center gap-2 rounded-2xl border border-gray-6 bg-gray-2 px-3 py-2 text-xs text-gray-10">
-                  <FileText size={14} className="text-gray-9" />
-                  <div className="max-w-[200px] min-w-0">
-                    <div className="truncate text-[12px] font-medium text-gray-11">{item.label}</div>
-                    <div className="text-[11px] text-gray-10">{item.lines} {item.lines === 1 ? "line" : "lines"}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="inline-flex h-5 items-center rounded-full px-2 text-[11px] font-medium text-gray-11 transition-colors hover:bg-gray-3"
-                    onClick={() => props.onRevealPastedText(item.id)}
-                    title={t("composer.expand_pasted", locale)}
-                  >
-                    {t("composer.expand_pasted", locale)}
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
-                    onClick={() => props.onRemovePastedText(item.id)}
-                    title={t("action.remove", locale)}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
+          {/*
+            The pasted-text chip used to render twice — once inline inside
+            the Lexical editor (via ComposerPastedTextNode) and again as a
+            separate rail here above the composer. Keep only the inline
+            chip; its pill already shows label + line count, and the user
+            removes it with backspace like any other inline token.
+          */}
 
           {dropzoneActive ? (
             <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[20px] border-2 border-dashed border-dls-accent bg-[color:color-mix(in_oklab,var(--dls-accent)_10%,transparent)]">
