@@ -78,8 +78,8 @@ export function LandingEnterprise(props: Props) {
 
         <main className="mx-auto flex w-full max-w-5xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
           <section className="max-w-4xl">
-            <h1 className="mb-6 text-4xl font-medium leading-[1.05] tracking-tight md:text-5xl lg:text-6xl">
-              OpenWork for the enterprise
+            <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
+              A privacy-first alternative to Claude Cowork<br />for your org
             </h1>
 
             <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
