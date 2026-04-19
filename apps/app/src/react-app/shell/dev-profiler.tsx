@@ -103,6 +103,14 @@ if (typeof window !== "undefined") {
 }
 
 function recordCommit(record: CommitRecord) {
+  // Fast path: when nobody is listening (overlay hidden, no external
+  // reader), don't mutate the map at all. This is critical — otherwise the
+  // overlay renders, re-renders itself inside the profiler zone, records
+  // its own commit, schedules another emit, re-renders, and so on forever.
+  // With zero subscribers we also never schedule an rAF, so the profiler
+  // is effectively free when it's off.
+  if (subscribers.size === 0) return;
+
   const prev = state.zonesById.get(record.id);
   if (!prev) {
     state.zonesById.set(record.id, {
@@ -141,6 +149,7 @@ let emitScheduled = false;
 function scheduleEmit() {
   if (emitScheduled) return;
   if (typeof window === "undefined") return;
+  if (subscribers.size === 0) return;
   emitScheduled = true;
   window.requestAnimationFrame(() => {
     emitScheduled = false;
@@ -216,17 +225,20 @@ export function useDevProfilerSnapshot() {
 
 export function DevProfilerOverlay() {
   if (!IS_DEV) return null;
-  return <DevProfilerOverlayImpl />;
+  return <DevProfilerOverlayToggle />;
 }
 
-function DevProfilerOverlayImpl() {
+/**
+ * Owns only visibility state + the global keybind. Does NOT subscribe to
+ * profiler snapshots. When the user toggles the overlay on, it mounts
+ * <DevProfilerOverlayVisible/> which is the only component that subscribes.
+ * This means when the overlay is hidden there are zero subscribers and
+ * `recordCommit` short-circuits — the profiler becomes free.
+ */
+function DevProfilerOverlayToggle() {
   const stored = readOverlayStoredPreference();
   const [visible, setVisible] = useState(stored === null ? false : stored);
-  const [collapsed, setCollapsed] = useState(false);
-  const snapshot = useDevProfilerSnapshot();
-  const lastCommitByIdRef = useRef<Record<string, number>>({});
 
-  // Keybind: Cmd/Ctrl + Shift + P toggles the overlay.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const metaOrCtrl = event.metaKey || event.ctrlKey;
@@ -243,6 +255,16 @@ function DevProfilerOverlayImpl() {
   }, []);
 
   if (!visible) return null;
+  return <DevProfilerOverlayVisible onHide={() => {
+    writeOverlayStoredPreference(false);
+    setVisible(false);
+  }} />;
+}
+
+function DevProfilerOverlayVisible({ onHide }: { onHide: () => void }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const snapshot = useDevProfilerSnapshot();
+  const lastCommitByIdRef = useRef<Record<string, number>>({});
 
   // Flash zones whose lastCommitAt changed since the previous render so
   // operators can spot hot spots.
@@ -299,10 +321,7 @@ function DevProfilerOverlayImpl() {
           <button
             type="button"
             className="rounded px-1.5 py-0.5 text-[10px] text-dls-secondary hover:bg-dls-hover"
-            onClick={() => {
-              writeOverlayStoredPreference(false);
-              setVisible(false);
-            }}
+            onClick={onHide}
             title="Hide (Cmd+Shift+P to toggle)"
           >
             ×
