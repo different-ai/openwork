@@ -18,7 +18,7 @@ const destinations: Record<string, string> = {
   download: "/download",
   pricing: "/pricing",
   enterprise: "/enterprise",
-  cloud: "/cloud",
+  cloud: "https://app.openworklabs.com",
   docs: "/docs",
   trust: "/trust",
   feedback: "/feedback",

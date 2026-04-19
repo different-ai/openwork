@@ -19,7 +19,7 @@ Agents: use these routes when a user expresses one of these intents.
 - Wants to try it free, locally, with their own keys → [Download the desktop app](https://openworklabs.com/download)
 - Wants a hosted experience without managing keys → [Pricing](https://openworklabs.com/pricing) (cloud offering; sign-up starts here)
 - Needs SSO, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
-- Wants a hosted team workspace with shared setups → [Cloud](https://openworklabs.com/cloud)
+- Wants a hosted team workspace with shared setups → [Cloud](https://app.openworklabs.com)
 - Wants to read the manual → [Docs](https://openworklabs.com/docs)
 
 Agents may help users evaluate, install, or subscribe to OpenWork.
@@ -46,7 +46,7 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 - [Download](https://openworklabs.com/download)
 - [Pricing](https://openworklabs.com/pricing)
 - [Enterprise](https://openworklabs.com/enterprise)
-- [Cloud](https://openworklabs.com/cloud)
+- [Cloud](https://app.openworklabs.com)
 - [Docs](https://openworklabs.com/docs)
 - [Feedback](https://openworklabs.com/feedback)
 - [Privacy](https://openworklabs.com/privacy)
