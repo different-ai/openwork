@@ -23,6 +23,7 @@ import {
 } from "../../../shell/app-inspector";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
+import { DevProfiler } from "../../../shell/dev-profiler";
 import type { ReactComposerNotice } from "./composer/notice";
 import { SessionDebugPanel } from "./debug-panel";
 import { SessionTranscript } from "./message-list";
@@ -487,6 +488,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   return (
+    <DevProfiler id="SessionSurface">
     <div className="flex h-full min-h-0 flex-col">
       {model.transitionState === "switching" && showDelayedLoading ? (
         <div className="flex justify-center px-6 pt-4">
@@ -537,12 +539,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 </div>
               </div>
             ) : (
-              <SessionTranscript
-                messages={renderedMessages}
-                isStreaming={chatStreaming}
-                developerMode={props.developerMode}
-                scrollElement={() => scrollRef.current}
-              />
+              <DevProfiler id="SessionTranscript">
+                <SessionTranscript
+                  messages={renderedMessages}
+                  isStreaming={chatStreaming}
+                  developerMode={props.developerMode}
+                  scrollElement={() => scrollRef.current}
+                />
+              </DevProfiler>
             )}
           </div>
         </div>
@@ -577,6 +581,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
+        <DevProfiler id="SessionComposer">
         <ReactSessionComposer
           draft={draft}
           mentions={mentions}
@@ -623,6 +628,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
         />
+        </DevProfiler>
       </div>
       {error ? (
         <div className="mx-auto w-full max-w-[800px] px-4">
@@ -631,5 +637,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ) : null}
       {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
     </div>
+    </DevProfiler>
   );
 }
