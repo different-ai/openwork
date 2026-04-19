@@ -85,6 +85,13 @@
       "when": 1776628833797,
       "tag": "0012_allowed_email_domains",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1776632400000,
+      "tag": "0013_desktop_app_restrictions",
+      "breakpoints": true
     }
   ]
 }

@@ -43,6 +43,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.4.9
         version: 1.4.9
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@openwork/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -483,6 +486,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
       '@standard-community/standard-json':
         specifier: ^0.3.5
         version: 0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(quansync@0.2.11)(zod@4.3.6)
@@ -532,6 +538,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
       '@openwork/ui':
         specifier: workspace:*
         version: link:../../../packages/ui
@@ -661,6 +670,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../utils
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
       '@planetscale/database':
         specifier: ^1.19.0
         version: 1.19.0
@@ -724,6 +736,19 @@ importers:
       '@hey-api/openapi-ts':
         specifier: 0.95.0
         version: 0.95.0(typescript@5.9.3)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/types:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

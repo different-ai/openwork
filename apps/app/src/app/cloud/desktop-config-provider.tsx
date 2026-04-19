@@ -1,5 +1,5 @@
 import { createContext, createEffect, createSignal, onCleanup, onMount, useContext, type Accessor, type ParentProps } from "solid-js";
-import { createDenClient, type DenDesktopConfig, readDenSettings } from "../lib/den";
+import { createDenClient, type DenDesktopConfig, normalizeDenDesktopConfig, readDenSettings } from "../lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "../lib/den-session-events";
 import { useDenAuth } from "./den-auth-provider";
 
@@ -33,8 +33,7 @@ function readCachedDesktopConfig(key: string): DenDesktopConfig | null {
     if (!raw) {
       return null;
     }
-    const parsed = JSON.parse(raw) as DenDesktopConfig;
-    return typeof parsed === "object" && parsed !== null ? parsed : null;
+    return normalizeDenDesktopConfig(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -46,7 +45,7 @@ function writeCachedDesktopConfig(key: string, config: DenDesktopConfig) {
   }
 
   try {
-    window.localStorage.setItem(key, JSON.stringify(config));
+    window.localStorage.setItem(key, JSON.stringify(normalizeDenDesktopConfig(config)));
   } catch {
     // ignore
   }

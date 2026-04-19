@@ -43,6 +43,7 @@
     "@codemirror/view": "^6.38.0",
     "@lexical/react": "^0.35.0",
     "@opencode-ai/sdk": "^1.4.9",
+    "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@radix-ui/colors": "^3.0.0",
     "@solid-primitives/event-bus": "^1.1.2",

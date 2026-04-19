@@ -1,8 +1,8 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { desktopAppRestrictionsSchema } from "@openwork/types/den/desktop-app-restrictions"
 import { z } from "zod"
-import { desktopConfigSchema, env } from "../../env.js"
-import { requireUserMiddleware, resolveUserOrganizationsMiddleware, type UserOrganizationsContext } from "../../middleware/index.js"
+import { requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
@@ -20,11 +20,11 @@ const meOrganizationsResponseSchema = z.object({
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "CurrentUserOrganizationsResponse" })
 
-const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
+const meDesktopConfigResponseSchema = desktopAppRestrictionsSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
 })
 
-export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> }>(app: Hono<T>) {
+export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   app.get(
     "/v1/me",
     describeRoute({
@@ -75,15 +75,16 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop config payload for the current user session. Today this is backed by Den API config and will later resolve org-specific desktop settings.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
       },
     }),
     requireUserMiddleware,
+    resolveOrganizationContextMiddleware,
     (c) => {
-      return c.json(env.desktopConfig)
+      return c.json(c.get("organizationContext").organization.desktopAppRestrictions)
     },
   )
 }

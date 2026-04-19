@@ -1,4 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions as DenDesktopConfig } from "@openwork/types/den/desktop-app-restrictions";
 import { isDesktopDeployment } from "./openwork-deployment";
 import {
   dispatchDenSettingsChanged,
@@ -180,13 +181,6 @@ export type DenDesktopHandoffExchange = {
   token: string | null;
 };
 
-export type DenDesktopConfig = {
-  models?: {
-    allowConfig?: boolean;
-    removeZen?: boolean;
-  };
-};
-
 const defaultBootstrapBaseUrls = resolveDenBaseUrls({
   baseUrl: BUILD_DEN_BASE_URL,
   apiBaseUrl: BUILD_DEN_API_BASE_URL,
@@ -240,25 +234,8 @@ function getDenAppVersionMetadata(payload: unknown): DenAppVersionMetadata | nul
   };
 }
 
-function getDenDesktopConfig(payload: unknown): DenDesktopConfig {
-  if (!isRecord(payload)) {
-    return {};
-  }
-
-  const models = isRecord(payload.models)
-    ? {
-        ...(typeof payload.models.allowConfig === "boolean"
-          ? { allowConfig: payload.models.allowConfig }
-          : {}),
-        ...(typeof payload.models.removeZen === "boolean"
-          ? { removeZen: payload.models.removeZen }
-          : {}),
-      }
-    : null;
-
-  return {
-    ...(models && Object.keys(models).length > 0 ? { models } : {}),
-  };
+export function normalizeDenDesktopConfig(payload: unknown): DenDesktopConfig {
+  return normalizeDesktopAppRestrictions(payload);
 }
 
 export function normalizeDenBaseUrl(input: string | null | undefined): string | null {
@@ -1159,7 +1136,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "GET",
         token,
       });
-      return getDenDesktopConfig(payload);
+      return normalizeDenDesktopConfig(payload);
     },
 
     async exchangeDesktopHandoff(grant: string): Promise<DenDesktopHandoffExchange> {

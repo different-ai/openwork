@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm"
 import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import { denTypeIdColumn } from "../columns"
 
 export const DesktopHandoffGrantTable = mysqlTable(
@@ -26,6 +27,7 @@ export const OrganizationTable = mysqlTable(
     slug: varchar("slug", { length: 255 }).notNull(),
     logo: varchar("logo", { length: 2048 }),
     allowedEmailDomains: json("allowed_email_domains").$type<string[] | null>(),
+    desktopAppRestrictions: json("desktop_app_restrictions").$type<DesktopAppRestrictions>().notNull().default(sql`(json_object())`),
     metadata: json("metadata").$type<Record<string, unknown> | null>(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })

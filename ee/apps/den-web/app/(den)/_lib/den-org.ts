@@ -1,3 +1,7 @@
+import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions";
+
+export type DenDesktopAppRestrictions = DesktopAppRestrictions;
+
 export type DenOrgSummary = {
   id: string;
   name: string;
@@ -108,6 +112,7 @@ export type DenOrgContext = {
     slug: string;
     logo: string | null;
     allowedEmailDomains: string[] | null;
+    desktopAppRestrictions: DenDesktopAppRestrictions;
     metadata: string | null;
     createdAt: string | null;
     updatedAt: string | null;
@@ -165,6 +170,10 @@ function asStringArray(value: unknown): string[] | null {
   }
 
   return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function asDesktopAppRestrictions(value: unknown): DenDesktopAppRestrictions {
+  return normalizeDesktopAppRestrictions(value);
 }
 
 function parsePermissionRecord(value: unknown): Record<string, string[]> {
@@ -520,6 +529,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       slug: organizationSlug,
       logo: asString(organization.logo),
       allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
+      desktopAppRestrictions: asDesktopAppRestrictions(organization.desktopAppRestrictions),
       metadata: asString(organization.metadata),
       createdAt: asIsoString(organization.createdAt),
       updatedAt: asIsoString(organization.updatedAt),

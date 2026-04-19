@@ -15,6 +15,7 @@
     "@hono/node-server": "^1.13.8",
     "@hono/standard-validator": "^0.2.2",
     "@hono/swagger-ui": "^0.6.1",
+    "@openwork/types": "workspace:*",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@standard-community/standard-json": "^0.3.5",

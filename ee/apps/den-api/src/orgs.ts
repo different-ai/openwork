@@ -9,6 +9,7 @@ import {
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
+import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { DEFAULT_ORGANIZATION_LIMITS, serializeOrganizationMetadata } from "./organization-limits.js"
@@ -61,6 +62,7 @@ export type OrganizationContext = {
     slug: string
     logo: string | null
     allowedEmailDomains: AllowedEmailDomains
+    desktopAppRestrictions: DesktopAppRestrictions
     metadata: string | null
     createdAt: Date
     updatedAt: Date
@@ -608,6 +610,7 @@ export async function updateOrganizationSettings(input: {
   organizationId: OrgId
   name?: string
   allowedEmailDomains?: readonly string[] | null
+  desktopAppRestrictions?: DesktopAppRestrictions
 }) {
   const nextName = typeof input.name === "string" ? input.name.trim() : null
   if (typeof input.name === "string" && !nextName) {
@@ -620,6 +623,9 @@ export async function updateOrganizationSettings(input: {
   }
   if (input.allowedEmailDomains !== undefined) {
     updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
+  }
+  if (input.desktopAppRestrictions !== undefined) {
+    updates.desktopAppRestrictions = normalizeDesktopAppRestrictions(input.desktopAppRestrictions)
   }
 
   if (Object.keys(updates).length === 0) {
@@ -662,6 +668,7 @@ export async function listUserOrgs(userId: UserId) {
         slug: OrganizationTable.slug,
         logo: OrganizationTable.logo,
         allowedEmailDomains: OrganizationTable.allowedEmailDomains,
+        desktopAppRestrictions: OrganizationTable.desktopAppRestrictions,
         metadata: OrganizationTable.metadata,
         createdAt: OrganizationTable.createdAt,
         updatedAt: OrganizationTable.updatedAt,
@@ -678,6 +685,7 @@ export async function listUserOrgs(userId: UserId) {
       slug: row.organization.slug,
       logo: row.organization.logo,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
+      desktopAppRestrictions: normalizeDesktopAppRestrictions(row.organization.desktopAppRestrictions),
       metadata: serializeOrganizationMetadata(row.organization.metadata),
     role: row.role,
     orgMemberId: row.membershipId,
@@ -796,6 +804,7 @@ export async function getOrganizationContextForUser(input: {
         slug: organization.slug,
         logo: organization.logo,
         allowedEmailDomains: normalizeStoredAllowedEmailDomains(organization.allowedEmailDomains),
+        desktopAppRestrictions: normalizeDesktopAppRestrictions(organization.desktopAppRestrictions),
         metadata: serializeOrganizationMetadata(organization.metadata),
         createdAt: organization.createdAt,
         updatedAt: organization.updatedAt,

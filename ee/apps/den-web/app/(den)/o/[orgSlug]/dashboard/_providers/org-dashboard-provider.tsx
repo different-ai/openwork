@@ -11,6 +11,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, requestJson } from "../../../../_lib/den-flow";
 import {
+  type DenDesktopAppRestrictions,
   type DenOrgContext,
   type DenOrgSummary,
   getOrgDashboardRoute,
@@ -30,7 +31,7 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null }) => Promise<void>;
+  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions }) => Promise<void>;
   switchOrganization: (slug: string) => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
@@ -250,8 +251,8 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null }) {
-    const body: { name?: string; allowedEmailDomains?: string[] | null } = {};
+  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions }) {
+    const body: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions } = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -261,6 +262,9 @@ export function OrgDashboardProvider({
     }
     if (input.allowedEmailDomains !== undefined) {
       body.allowedEmailDomains = input.allowedEmailDomains;
+    }
+    if (input.desktopAppRestrictions !== undefined) {
+      body.desktopAppRestrictions = input.desktopAppRestrictions;
     }
 
     await runMutation("update-organization-name", async () => {

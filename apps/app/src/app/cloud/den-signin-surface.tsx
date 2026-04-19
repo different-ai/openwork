@@ -50,9 +50,6 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
             <div class="text-sm font-medium text-dls-text">
               {tr("den.signin_title")}
             </div>
-            <div class="mt-1 max-w-[60ch] text-xs text-dls-secondary">
-              {tr("den.cloud_sleep_hint")}
-            </div>
           </div>
         </div>
       </div>
@@ -62,7 +59,9 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
           <TextInput
             label={tr("den.cloud_control_plane_url_label")}
             value={props.baseUrlDraft}
-            onInput={(event) => props.onBaseUrlDraftInput(event.currentTarget.value)}
+            onInput={(event) =>
+              props.onBaseUrlDraftInput(event.currentTarget.value)
+            }
             placeholder={DEFAULT_DEN_BASE_URL}
             hint={tr("den.cloud_control_plane_url_hint")}
             disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
@@ -71,8 +70,10 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
             <Button
               variant="outline"
               class="h-9 px-3 text-xs"
-            onClick={props.onResetBaseUrl}
-              disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
+              onClick={props.onResetBaseUrl}
+              disabled={
+                props.authBusy || props.baseUrlBusy || props.sessionBusy
+              }
             >
               {tr("den.cloud_control_plane_reset")}
             </Button>
@@ -80,7 +81,9 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
               variant="secondary"
               class="h-9 px-3 text-xs"
               onClick={props.onApplyBaseUrl}
-              disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
+              disabled={
+                props.authBusy || props.baseUrlBusy || props.sessionBusy
+              }
             >
               {tr("den.cloud_control_plane_save")}
             </Button>
@@ -115,7 +118,10 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onClick={() => props.onOpenBrowserAuth("sign-in")}>
+        <Button
+          variant="secondary"
+          onClick={() => props.onOpenBrowserAuth("sign-in")}
+        >
           {tr("den.signin_button")}
           <ArrowUpRight size={13} />
         </Button>
@@ -133,7 +139,9 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
           onClick={props.onToggleManualAuth}
           disabled={props.authBusy || props.sessionBusy}
         >
-          {props.manualAuthOpen ? tr("den.hide_signin_code") : tr("den.paste_signin_code")}
+          {props.manualAuthOpen
+            ? tr("den.hide_signin_code")
+            : tr("den.paste_signin_code")}
         </Button>
       </div>
 
@@ -142,7 +150,9 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
           <TextInput
             label={tr("den.signin_link_label")}
             value={props.manualAuthInput}
-            onInput={(event) => props.onManualAuthInput(event.currentTarget.value)}
+            onInput={(event) =>
+              props.onManualAuthInput(event.currentTarget.value)
+            }
             placeholder={tr("den.signin_link_placeholder")}
             disabled={props.authBusy || props.sessionBusy}
             hint={tr("den.signin_link_hint")}
@@ -152,7 +162,11 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
               variant="secondary"
               class="h-9 px-3 text-xs"
               onClick={props.onSubmitManualAuth}
-              disabled={props.authBusy || props.sessionBusy || !props.manualAuthInput.trim()}
+              disabled={
+                props.authBusy ||
+                props.sessionBusy ||
+                !props.manualAuthInput.trim()
+              }
             >
               {props.authBusy ? tr("den.finishing") : tr("den.finish_signin")}
             </Button>
@@ -177,20 +191,7 @@ export default function DenSignInSurface(props: DenSignInSurfaceProps) {
     return (
       <div class="min-h-screen bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_42%),linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.92))] px-6 py-10 text-dls-text">
         <div class="mx-auto flex min-h-[calc(100vh-5rem)] max-w-3xl items-center justify-center">
-          <div class="w-full space-y-4">
-            <div class="space-y-2 text-center">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.22em] text-dls-secondary">
-                OpenWork Cloud
-              </div>
-              <h1 class="text-3xl font-semibold tracking-tight text-dls-text md:text-4xl">
-                {tr("den.signin_title")}
-              </h1>
-              <p class="mx-auto max-w-2xl text-sm text-dls-secondary md:text-base">
-                {tr("den.cloud_section_desc")}
-              </p>
-            </div>
-            {content}
-          </div>
+          <div class="w-full space-y-4">{content}</div>
         </div>
       </div>
     );
