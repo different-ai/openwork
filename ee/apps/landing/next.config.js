@@ -26,7 +26,7 @@ const nextConfig = {
           {
             key: "Link",
             value:
-              '</docs>; rel="service-doc", </.well-known/agent-skills/index.json>; rel="https://agentskills.io/rel/index"',
+              '</docs>; rel="service-doc", </.well-known/agent-skills/index.json>; rel="https://agentskills.io/rel/index", </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"',
           },
         ],
       },

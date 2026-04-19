@@ -2,6 +2,7 @@ import "./globals.css";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
 import { BotIdClient } from "botid/client";
+import { WebMcpProvider } from "../components/webmcp-provider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -60,6 +61,7 @@ export default function RootLayout({
         />
       </head>
       <body className="overflow-x-hidden antialiased">
+        <WebMcpProvider />
         {children}
       </body>
     </html>
