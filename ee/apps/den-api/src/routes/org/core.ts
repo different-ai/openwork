@@ -10,7 +10,15 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { jsonValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { acceptInvitationForUser, createOrganizationForUser, getInvitationPreview, setSessionActiveOrganization, updateOrganizationName } from "../../orgs.js"
+import {
+  acceptInvitationForUser,
+  createOrganizationForUser,
+  getInvitationPreview,
+  normalizeAllowedEmailDomains,
+  OrganizationEmailDomainRestrictionError,
+  setSessionActiveOrganization,
+  updateOrganizationSettings,
+} from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOwner } from "./shared.js"
@@ -20,7 +28,10 @@ const createOrganizationSchema = z.object({
 })
 
 const updateOrganizationSchema = z.object({
-  name: z.string().trim().min(2).max(120),
+  name: z.string().trim().min(2).max(120).optional(),
+  allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
+}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined, {
+  message: "Provide at least one organization field to update.",
 })
 
 const invitationPreviewQuerySchema = z.object({
@@ -73,6 +84,19 @@ const organizationContextResponseSchema = z.object({
 const userEmailRequiredSchema = z.object({
   error: z.literal("user_email_required"),
 }).meta({ ref: "UserEmailRequiredError" })
+
+const invalidEmailDomainSchema = z.object({
+  error: z.literal("invalid_email_domain"),
+  message: z.string(),
+  invalidDomains: z.array(z.string()),
+}).meta({ ref: "InvalidEmailDomainError" })
+
+const accountEmailDomainNotAllowedSchema = z.object({
+  error: z.literal("account_email_domain_not_allowed"),
+  message: z.string(),
+  emailDomain: z.string().nullable(),
+  allowedEmailDomains: z.array(z.string()),
+}).meta({ ref: "AccountEmailDomainNotAllowedError" })
 
 function getStoredSessionId(session: { id?: string | null } | null) {
   if (!session?.id) {
@@ -212,6 +236,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         400: jsonResponse("The invitation acceptance request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to accept an invitation.", unauthorizedSchema),
         403: jsonResponse("API keys cannot accept organization invitations.", forbiddenSchema),
+        409: jsonResponse("The current account email is not allowed to join this organization.", accountEmailDomainNotAllowedSchema),
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
       },
     }),
@@ -233,11 +258,24 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "user_email_required" }, 400)
     }
 
-    const accepted = await acceptInvitationForUser({
-      userId: normalizeDenTypeId("user", user.id),
-      email,
-      invitationId: input.id,
-    })
+    let accepted
+    try {
+      accepted = await acceptInvitationForUser({
+        userId: normalizeDenTypeId("user", user.id),
+        email,
+        invitationId: input.id,
+      })
+    } catch (error) {
+      if (error instanceof OrganizationEmailDomainRestrictionError) {
+        return c.json({
+          error: "account_email_domain_not_allowed",
+          message: error.message,
+          emailDomain: error.emailDomain,
+          allowedEmailDomains: error.allowedEmailDomains,
+        }, 409)
+      }
+      throw error
+    }
 
     if (!accepted) {
       return c.json({ error: "invitation_not_found" }, 404)
@@ -265,10 +303,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Organizations"],
       summary: "Update organization",
-      description: "Updates organization fields that workspace owners are allowed to change. Currently limited to the display name; the slug is immutable to avoid breaking dashboard URLs.",
+      description: "Updates organization fields that workspace owners are allowed to change, including the display name and allowed invitation email domains. The slug is immutable to avoid breaking dashboard URLs.",
       responses: {
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
-        400: jsonResponse("The organization update request body was invalid.", invalidRequestSchema),
+        400: jsonResponse("The organization update request body was invalid or contained malformed email domains.", invalidEmailDomainSchema),
         401: jsonResponse("The caller must be signed in to update an organization.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners can update the organization.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
@@ -286,9 +324,22 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
 
-      const updated = await updateOrganizationName({
+      const normalizedDomains = input.allowedEmailDomains === undefined
+        ? { domains: undefined, invalidDomains: [] as string[] }
+        : normalizeAllowedEmailDomains(input.allowedEmailDomains)
+
+      if (normalizedDomains.invalidDomains.length > 0) {
+        return c.json({
+          error: "invalid_email_domain",
+          message: "Enter valid email domains like company.com.",
+          invalidDomains: normalizedDomains.invalidDomains,
+        }, 400)
+      }
+
+      const updated = await updateOrganizationSettings({
         organizationId: payload.organization.id,
         name: input.name,
+        allowedEmailDomains: normalizedDomains.domains,
       })
 
       if (!updated) {

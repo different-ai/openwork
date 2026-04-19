@@ -14,6 +14,7 @@ import {
   LogOut,
   MessageSquare,
   Share2,
+  SlidersHorizontal,
   Users,
 } from "lucide-react";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
@@ -27,6 +28,7 @@ import {
   getIntegrationsRoute,
   getMembersRoute,
   getOrgDashboardRoute,
+  getOrgSettingsRoute,
   getPluginsRoute,
   getSharedSetupsRoute,
   getSkillHubsRoute,
@@ -121,6 +123,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getBillingRoute(orgSlug)) || pathname === "/checkout") {
     return "Billing";
   }
+  if (pathname.startsWith(getOrgSettingsRoute(orgSlug))) {
+    return "Org Settings";
+  }
 
   return "Home";
 }
@@ -194,6 +199,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       href: activeOrg ? getBillingRoute(activeOrg.slug) : "/checkout",
       label: "Billing",
       icon: CreditCard,
+    },
+    {
+      href: activeOrg ? getOrgSettingsRoute(activeOrg.slug) : "#",
+      label: "Org Settings",
+      icon: SlidersHorizontal,
     },
   ];
 

@@ -25,6 +25,7 @@ export const OrganizationTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     slug: varchar("slug", { length: 255 }).notNull(),
     logo: varchar("logo", { length: 2048 }),
+    allowedEmailDomains: json("allowed_email_domains").$type<string[] | null>(),
     metadata: json("metadata").$type<Record<string, unknown> | null>(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })

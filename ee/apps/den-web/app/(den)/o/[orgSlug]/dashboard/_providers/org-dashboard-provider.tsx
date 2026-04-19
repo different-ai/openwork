@@ -30,6 +30,7 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
+  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null }) => Promise<void>;
   switchOrganization: (slug: string) => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
@@ -246,13 +247,29 @@ export function OrgDashboardProvider({
       throw new Error("Enter an organization name.");
     }
 
+    await updateOrganizationSettings({ name: trimmed });
+  }
+
+  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null }) {
+    const body: { name?: string; allowedEmailDomains?: string[] | null } = {};
+    if (typeof input.name === "string") {
+      const trimmed = input.name.trim();
+      if (!trimmed) {
+        throw new Error("Enter an organization name.");
+      }
+      body.name = trimmed;
+    }
+    if (input.allowedEmailDomains !== undefined) {
+      body.allowedEmailDomains = input.allowedEmailDomains;
+    }
+
     await runMutation("update-organization-name", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
         "/v1/org",
         {
           method: "PATCH",
-          body: JSON.stringify({ name: trimmed }),
+          body: JSON.stringify(body),
         },
         12000,
       );
@@ -459,10 +476,11 @@ export function OrgDashboardProvider({
     orgError,
     mutationBusy,
     refreshOrgData,
-    createOrganization,
-    updateOrganizationName,
-    switchOrganization,
-    inviteMember,
+      createOrganization,
+      updateOrganizationName,
+      updateOrganizationSettings,
+      switchOrganization,
+      inviteMember,
     cancelInvitation,
     updateMemberRole,
     removeMember,

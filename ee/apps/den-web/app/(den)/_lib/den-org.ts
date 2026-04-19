@@ -64,6 +64,7 @@ export type DenInvitationPreview = {
     id: string;
     name: string;
     slug: string;
+    allowedEmailDomains: string[] | null;
   };
 };
 
@@ -106,6 +107,7 @@ export type DenOrgContext = {
     name: string;
     slug: string;
     logo: string | null;
+    allowedEmailDomains: string[] | null;
     metadata: string | null;
     createdAt: string | null;
     updatedAt: string | null;
@@ -155,6 +157,14 @@ function asBoolean(value: unknown): boolean {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function asStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return value.filter((entry): entry is string => typeof entry === "string");
 }
 
 function parsePermissionRecord(value: unknown): Record<string, string[]> {
@@ -249,6 +259,10 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
 
 export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
+}
+
+export function getOrgSettingsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/org-settings`;
 }
 
 export function getApiKeysRoute(orgSlug?: string | null): string {
@@ -505,6 +519,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       name: organizationName,
       slug: organizationSlug,
       logo: asString(organization.logo),
+      allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
       metadata: asString(organization.metadata),
       createdAt: asIsoString(organization.createdAt),
       updatedAt: asIsoString(organization.updatedAt),
@@ -565,8 +580,23 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
       id: organizationId,
       name: organizationName,
       slug: organizationSlug,
+      allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
     },
   };
+}
+
+export function isEmailAllowedForOrganization(allowedEmailDomains: readonly string[] | null | undefined, email: string): boolean {
+  if (!allowedEmailDomains || allowedEmailDomains.length === 0) {
+    return true;
+  }
+
+  const normalized = email.trim().toLowerCase();
+  const atIndex = normalized.lastIndexOf("@");
+  if (atIndex === -1 || atIndex + 1 >= normalized.length) {
+    return false;
+  }
+
+  return allowedEmailDomains.includes(normalized.slice(atIndex + 1));
 }
 
 export function parseOrgApiKeysPayload(payload: unknown): DenOrgApiKey[] {

@@ -9,7 +9,7 @@ import { DenEmailSendError, sendDenOrganizationInvitationEmail } from "../../ema
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
-import { listAssignableRoles } from "../../orgs.js"
+import { isEmailAllowedForOrganization, listAssignableRoles } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName } from "./shared.js"
 
@@ -32,6 +32,13 @@ const invitationEmailFailedSchema = z.object({
   invitationId: denTypeIdSchema("invitation"),
 }).meta({ ref: "InvitationEmailFailedError" })
 
+const inviteEmailDomainNotAllowedSchema = z.object({
+  error: z.literal("invite_email_domain_not_allowed"),
+  message: z.string(),
+  emailDomain: z.string().nullable(),
+  allowedEmailDomains: z.array(z.string()),
+}).meta({ ref: "InviteEmailDomainNotAllowedError" })
+
 type InvitationId = typeof InvitationTable.$inferSelect.id
 const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
 
@@ -49,6 +56,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
+        409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
         502: jsonResponse("The invitation was saved but the email provider (Loops) rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
       },
     }),
@@ -66,6 +74,19 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     const input = c.req.valid("json")
 
     const email = input.email.trim().toLowerCase()
+    if (!isEmailAllowedForOrganization(payload.organization.allowedEmailDomains, email)) {
+      const emailDomain = email.includes("@") ? email.slice(email.lastIndexOf("@") + 1) : null
+      return c.json({
+        error: "invite_email_domain_not_allowed",
+        message:
+          payload.organization.allowedEmailDomains && payload.organization.allowedEmailDomains.length === 1
+            ? `This workspace only allows ${payload.organization.allowedEmailDomains[0]} email addresses.`
+            : `This workspace only allows email addresses from these domains: ${(payload.organization.allowedEmailDomains ?? []).join(", ")}.`,
+        emailDomain,
+        allowedEmailDomains: payload.organization.allowedEmailDomains ?? [],
+      }, 409)
+    }
+
     const availableRoles = await listAssignableRoles(payload.organization.id)
     const role = normalizeRoleName(input.role)
     if (!availableRoles.has(role)) {

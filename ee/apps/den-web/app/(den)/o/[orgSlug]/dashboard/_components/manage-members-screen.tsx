@@ -132,7 +132,6 @@ export function ManageMembersScreen() {
     createRole,
     updateRole,
     deleteRole,
-    updateOrganizationName,
   } = useOrgDashboard();
   const [activeTab, setActiveTab] = useState<MembersTab>("members");
   const [pageError, setPageError] = useState<string | null>(null);
@@ -152,9 +151,6 @@ export function ManageMembersScreen() {
     Record<string, string[]>
   >({});
   const [limitDialogError, setLimitDialogError] = useState<OrgLimitError | null>(null);
-  const [isRenamingOrg, setIsRenamingOrg] = useState(false);
-  const [orgNameDraft, setOrgNameDraft] = useState("");
-  const [orgRenameSuccess, setOrgRenameSuccess] = useState<string | null>(null);
 
   const assignableRoles = useMemo(
     () => (orgContext?.roles ?? []).filter((role) => !role.protected),
@@ -640,106 +636,6 @@ export function ManageMembersScreen() {
           {pageError}
         </div>
       ) : null}
-
-      <DenCard className="mb-6" data-testid="org-settings-card">
-        {isRenamingOrg && access.isOwner ? (
-          <form
-            className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setPageError(null);
-              setOrgRenameSuccess(null);
-              try {
-                await updateOrganizationName(orgNameDraft);
-                setIsRenamingOrg(false);
-                setOrgRenameSuccess("Organization renamed.");
-              } catch (error) {
-                setPageError(
-                  error instanceof Error
-                    ? error.message
-                    : "Could not rename organization.",
-                );
-              }
-            }}
-          >
-            <label className="grid gap-3">
-              <span className="text-[14px] font-medium text-gray-700">
-                Organization name
-              </span>
-              <DenInput
-                type="text"
-                value={orgNameDraft}
-                onChange={(event) => setOrgNameDraft(event.target.value)}
-                placeholder={activeOrg.name}
-                minLength={2}
-                maxLength={120}
-                required
-                autoFocus
-                data-testid="org-name-input"
-              />
-            </label>
-            <div className="flex gap-2 lg:justify-end">
-              <ActionButton
-                size="md"
-                onClick={() => {
-                  setIsRenamingOrg(false);
-                  setOrgNameDraft(activeOrg.name);
-                  setPageError(null);
-                }}
-              >
-                Cancel
-              </ActionButton>
-              <DenButton
-                type="submit"
-                loading={mutationBusy === "update-organization-name"}
-                data-testid="org-rename-save"
-              >
-                Save name
-              </DenButton>
-            </div>
-          </form>
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                Organization
-              </p>
-              <p
-                className="mt-2 text-[22px] font-semibold tracking-[-0.04em] text-gray-900"
-                data-testid="org-name-display"
-              >
-                {activeOrg.name}
-              </p>
-              {orgRenameSuccess ? (
-                <p className="mt-2 text-[13px] text-emerald-600" data-testid="org-rename-success">
-                  {orgRenameSuccess}
-                </p>
-              ) : (
-                <p className="mt-2 text-[13px] text-gray-500">
-                  {access.isOwner
-                    ? "Only workspace owners can rename the organization."
-                    : "Contact a workspace owner to change the organization name."}
-                </p>
-              )}
-            </div>
-            {access.isOwner ? (
-              <DenButton
-                icon={Pencil}
-                variant="secondary"
-                onClick={() => {
-                  setOrgNameDraft(activeOrg.name);
-                  setOrgRenameSuccess(null);
-                  setPageError(null);
-                  setIsRenamingOrg(true);
-                }}
-                data-testid="org-rename-open"
-              >
-                Rename
-              </DenButton>
-            ) : null}
-          </div>
-        )}
-      </DenCard>
 
       <UnderlineTabs
         className="mb-6"
