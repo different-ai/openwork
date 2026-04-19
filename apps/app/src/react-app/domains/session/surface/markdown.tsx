@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -93,7 +93,7 @@ const markdownClassName = `markdown-content max-w-none text-gray-12
   [&_li]:my-1
 `.trim();
 
-export function MarkdownBlock(props: {
+function MarkdownBlockInner(props: {
   text: string;
   streaming?: boolean;
   highlightQuery?: string;
@@ -130,3 +130,12 @@ export function MarkdownBlock(props: {
     </div>
   );
 }
+
+/**
+ * Memoize so a message block that has already been rendered — the usual
+ * case for every assistant bubble above the currently-streaming one —
+ * doesn't re-parse its markdown on every token. Only re-renders when its
+ * own text / streaming / highlightQuery props change.
+ */
+export const MarkdownBlock = memo(MarkdownBlockInner);
+MarkdownBlock.displayName = "MarkdownBlock";

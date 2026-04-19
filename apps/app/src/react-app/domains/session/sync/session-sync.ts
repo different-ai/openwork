@@ -14,10 +14,25 @@ type SyncOptions = {
   openworkToken: string;
 };
 
+type PendingDelta = {
+  sessionId: string;
+  messageId: string;
+  partId: string;
+  reasoning: boolean;
+  delta: string;
+};
+
 type SyncEntry = {
   refs: number;
   dispose: () => void;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
+  // Coalesce rapid-fire delta events from the SSE stream into one cache
+  // commit per animation frame. Without this, a long response produces a
+  // setQueryData per token; each triggers a full transcript re-render
+  // (~27ms on large sessions) which starves the main thread and looks to
+  // the user like the app "freezes after 2 words."
+  deltaFlushBuffer: PendingDelta[];
+  deltaFlushScheduled: boolean;
 };
 
 const idleStatus: SessionStatus = { type: "idle" };
@@ -135,40 +150,74 @@ function upsertPart(messages: UIMessage[], messageId: string, partId: string, ne
 }
 
 function appendDelta(messages: UIMessage[], messageId: string, partId: string, delta: string, reasoning: boolean) {
-  return messages.map((message) => {
-    if (message.id !== messageId) return message;
+  // Fast path: locate the target message by index, only clone that message
+  // and its parts array. The previous implementation ran messages.map AND
+  // message.parts.map on every delta event, which is O(N * P) per token.
+  // For an old session with hundreds of prior messages/parts that allocated
+  // thousands of objects per token and crushed the main thread after a
+  // handful of tokens.
+  const messageIndex = messages.findIndex((message) => message.id === messageId);
+  if (messageIndex === -1) return messages;
 
-    // Try to find and update an existing matching part
-    let matched = false;
-    const parts = message.parts.map((part) => {
-      if (reasoning && part.type === "reasoning") {
-        const id = getPartMetadataId(part);
-        if (id === partId || (!id && message.parts.at(-1) === part)) {
-          matched = true;
-          return { ...part, text: `${part.text}${delta}`, state: "streaming" as const };
-        }
-      }
-      if (!reasoning && part.type === "text") {
-        const id = getPartMetadataId(part);
-        if (id === partId || (!id && message.parts.at(-1) === part)) {
-          matched = true;
-          return { ...part, text: `${part.text}${delta}`, state: "streaming" as const };
-        }
-      }
-      if (part.type === "dynamic-tool" && part.toolCallId === partId) return part;
-      return part;
-    });
+  const target = messages[messageIndex]!;
+  const lastPart = target.parts[target.parts.length - 1];
 
-    // If no existing part matched, create a new one so the delta is not lost
-    if (!matched) {
-      const newPart: UIMessage["parts"][number] = reasoning
-        ? { type: "reasoning", text: delta, state: "streaming" as const, providerMetadata: { opencode: { partId } } }
-        : { type: "text", text: delta, state: "streaming" as const, providerMetadata: { opencode: { partId } } };
-      return { ...message, parts: [...parts, newPart] };
+  let partIndex = -1;
+  for (let i = 0; i < target.parts.length; i++) {
+    const part = target.parts[i]!;
+    const id = getPartMetadataId(part);
+    if (reasoning && part.type === "reasoning") {
+      if (id === partId || (!id && part === lastPart)) {
+        partIndex = i;
+        break;
+      }
+    } else if (!reasoning && part.type === "text") {
+      if (id === partId || (!id && part === lastPart)) {
+        partIndex = i;
+        break;
+      }
     }
+  }
 
-    return { ...message, parts };
-  });
+  let nextParts: UIMessage["parts"];
+  if (partIndex === -1) {
+    // No existing matching part — append a fresh one so the delta is not lost.
+    const newPart: UIMessage["parts"][number] = reasoning
+      ? {
+          type: "reasoning",
+          text: delta,
+          state: "streaming" as const,
+          providerMetadata: { opencode: { partId } },
+        }
+      : {
+          type: "text",
+          text: delta,
+          state: "streaming" as const,
+          providerMetadata: { opencode: { partId } },
+        };
+    nextParts = target.parts.slice();
+    nextParts.push(newPart);
+  } else {
+    const existing = target.parts[partIndex]!;
+    nextParts = target.parts.slice();
+    if (existing.type === "text") {
+      nextParts[partIndex] = {
+        ...existing,
+        text: `${existing.text}${delta}`,
+        state: "streaming",
+      };
+    } else if (existing.type === "reasoning") {
+      nextParts[partIndex] = {
+        ...existing,
+        text: `${existing.text}${delta}`,
+        state: "streaming",
+      };
+    }
+  }
+
+  const nextMessages = messages.slice();
+  nextMessages[messageIndex] = { ...target, parts: nextParts };
+  return nextMessages;
 }
 
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
@@ -229,25 +278,16 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       delta?: string;
     };
     if (!props.sessionID || !props.messageID || !props.partID || !props.delta) return;
-    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) => {
-      // Ensure the message shell exists before appending the delta
-      const withMessage = upsertMessage(current, { id: props.messageID!, role: "assistant", parts: [] });
-      const next = appendDelta(withMessage, props.messageID!, props.partID!, props.delta!, props.field === "reasoning");
-      const message = next.find((item) => item.id === props.messageID);
-      const matched = message?.parts.some((part) =>
-        (part.type === "dynamic-tool" && part.toolCallId === props.partID) || getPartMetadataId(part) === props.partID,
-      );
-      if (!matched) {
-        const pending = entry.pendingDeltas.get(props.partID!) ?? {
-          messageId: props.messageID!,
-          reasoning: props.field === "reasoning",
-          text: "",
-        };
-        pending.text += props.delta!;
-        entry.pendingDeltas.set(props.partID!, pending);
-      }
-      return next;
+    // Buffer this delta and let the frame flusher apply all queued deltas
+    // for this entry in a single setQueryData call per affected session.
+    entry.deltaFlushBuffer.push({
+      sessionId: props.sessionID!,
+      messageId: props.messageID!,
+      partId: props.partID!,
+      reasoning: props.field === "reasoning",
+      delta: props.delta!,
     });
+    scheduleDeltaFlush(entry, workspaceId);
     return;
   }
 
@@ -255,6 +295,72 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { sessionID?: string };
     if (!props.sessionID) return;
     queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+  }
+}
+
+function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
+  if (entry.deltaFlushScheduled) return;
+  entry.deltaFlushScheduled = true;
+  const run = () => {
+    entry.deltaFlushScheduled = false;
+    if (entry.deltaFlushBuffer.length === 0) return;
+    flushDeltas(entry, workspaceId);
+  };
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(run);
+  } else {
+    queueMicrotask(run);
+  }
+}
+
+function flushDeltas(entry: SyncEntry, workspaceId: string) {
+  const queryClient = getReactQueryClient();
+  const pending = entry.deltaFlushBuffer;
+  entry.deltaFlushBuffer = [];
+
+  // Group by session id so each transcript cache is touched at most once
+  // per flush.
+  const bySession = new Map<string, PendingDelta[]>();
+  for (const item of pending) {
+    const bucket = bySession.get(item.sessionId);
+    if (bucket) bucket.push(item);
+    else bySession.set(item.sessionId, [item]);
+  }
+
+  for (const [sessionId, items] of bySession) {
+    queryClient.setQueryData<UIMessage[]>(
+      transcriptKey(workspaceId, sessionId),
+      (current = []) => {
+        let next = current;
+        // Track which message shells we've ensured exist this flush so we
+        // don't call upsertMessage for the same message on every delta.
+        const ensuredMessageIds = new Set<string>();
+        for (const item of items) {
+          if (!ensuredMessageIds.has(item.messageId)) {
+            next = upsertMessage(next, { id: item.messageId, role: "assistant", parts: [] });
+            ensuredMessageIds.add(item.messageId);
+          }
+          next = appendDelta(next, item.messageId, item.partId, item.delta, item.reasoning);
+          // If the delta landed on a synthetic "no matching part" case, keep
+          // the text so a later message.part.updated event can stitch it.
+          const message = next.find((m) => m.id === item.messageId);
+          const matched = message?.parts.some((part) =>
+            (part.type === "dynamic-tool" && part.toolCallId === item.partId) ||
+              getPartMetadataId(part) === item.partId,
+          );
+          if (!matched) {
+            const existing = entry.pendingDeltas.get(item.partId) ?? {
+              messageId: item.messageId,
+              reasoning: item.reasoning,
+              text: "",
+            };
+            existing.text += item.delta;
+            entry.pendingDeltas.set(item.partId, existing);
+          }
+        }
+        return next;
+      },
+    );
   }
 }
 
@@ -290,6 +396,8 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     refs: 1,
     dispose: () => {},
     pendingDeltas: new Map(),
+    deltaFlushBuffer: [],
+    deltaFlushScheduled: false,
   });
 
   const created = syncs.get(key)!;

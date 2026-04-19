@@ -76,7 +76,11 @@ type SessionTranscriptProps = {
 // massive DOM even when the block count is low. Lowering the threshold means
 // we switch to react-virtual much earlier and keep the main thread lighter
 // during workspace/session switches.
-const VIRTUALIZATION_THRESHOLD = 40;
+// Virtualize aggressively. A session with 20+ message blocks already pays
+// more to render eagerly than to run the virtualizer, so there's no reason
+// to defer. The only reason the threshold exists at all is to avoid the
+// virtualizer's baseline overhead for tiny sessions.
+const VIRTUALIZATION_THRESHOLD = 20;
 const VIRTUAL_OVERSCAN = 4;
 
 function partIdFromUiPart(part: UIMessage["parts"][number], fallbackId: string) {
@@ -694,12 +698,26 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
     return next;
   }, [messageBlocks]);
 
-  const shouldVirtualize = Boolean(props.scrollElement?.()) && messageBlocks.length >= VIRTUALIZATION_THRESHOLD;
+  // Decide to virtualize based only on block count. Do NOT gate on whether
+  // the scrollElement ref has already attached — that's false on the first
+  // render of a session, which used to make us render every message
+  // eagerly (freezing the UI on large sessions) for one tick before
+  // switching to virtualization.
+  const shouldVirtualize = messageBlocks.length >= VIRTUALIZATION_THRESHOLD;
 
   const virtualizer = useVirtualizer({
     count: messageBlocks.length,
     getScrollElement: () => props.scrollElement?.() ?? null,
-    estimateSize: () => 220,
+    // Give react-virtual a shape-aware estimate so the initial scroll
+    // height is closer to reality. Small steps-cluster rows are much
+    // shorter than full assistant message blocks; a good estimate means
+    // fewer measurement-driven scroll corrections as rows come into view.
+    estimateSize: (index) => {
+      const block = messageBlocks[index];
+      if (!block) return 180;
+      if (block.kind === "steps-cluster") return 80;
+      return block.isUser ? 96 : 320;
+    },
     overscan: VIRTUAL_OVERSCAN,
     getItemKey: (index) => {
       const block = messageBlocks[index];
@@ -740,12 +758,12 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
     };
   }, [blockIndexByMessageId, props.scrollElement, props.setScrollToMessageById, shouldVirtualize, virtualizer]);
 
-  useEffect(() => {
-    if (!shouldVirtualize) return;
-    queueMicrotask(() => {
-      virtualizer.measure();
-    });
-  }, [messageBlocks, shouldVirtualize, virtualizer]);
+  // NOTE: we intentionally do NOT call virtualizer.measure() on every
+  // messageBlocks change. react-virtual already invalidates and
+  // re-measures rows whose refs remount or whose content changes. Calling
+  // measure() explicitly on each streaming token forces a synchronous
+  // getBoundingClientRect() pass over every measured row, which made
+  // streaming into large sessions feel like the UI was frozen.
 
   // Apply content-visibility earlier too. Even when the transcript is below
   // the virtualization threshold, hiding distant blocks from layout/paint
@@ -950,15 +968,16 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
 
   return (
     <div className={isNestedVariant ? "pb-0" : "pb-10"} style={{ contain: "layout paint style" }}>
-      {!shouldVirtualize ? (
-        <div className={isNestedVariant ? "space-y-3" : "space-y-4"}>
-          {messageBlocks.map((block, index) => renderBlock(block, index))}
-        </div>
-      ) : virtualRows.length > 0 ? (
+      {shouldVirtualize ? (
+        // Always render the virtualized container once we've decided to
+        // virtualize — even if virtualRows is empty on the very first tick
+        // (e.g. scrollElement ref hasn't attached yet). A fallback to
+        // rendering every message would re-introduce the eager-render
+        // freeze on huge sessions.
         <div
           className="relative"
           style={{
-            height: `${virtualizer.getTotalSize()}px`,
+            height: `${Math.max(virtualizer.getTotalSize(), 1)}px`,
             width: "100%",
           }}
         >
