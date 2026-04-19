@@ -241,14 +241,11 @@ pub fn run() {
             show_main_window(&app_handle);
             emit_native_deep_links(&app_handle, urls);
         }
+        // Always raise/refocus the main window on dock-icon clicks, even if
+        // it's already visible but behind other apps or on another Space.
         #[cfg(target_os = "macos")]
-        RunEvent::Reopen {
-            has_visible_windows,
-            ..
-        } => {
-            if !has_visible_windows {
-                show_main_window(&app_handle);
-            }
+        RunEvent::Reopen { .. } => {
+            show_main_window(&app_handle);
         }
         _ => {}
     });
