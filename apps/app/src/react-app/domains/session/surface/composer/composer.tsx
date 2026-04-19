@@ -1049,7 +1049,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                 </div>
               </div>
 
-              <div className="ml-auto flex shrink-0 items-end">
+              {/*
+                Send is ALWAYS reachable — even during streaming — so the
+                user can queue a follow-up prompt without stopping the run.
+                When busy AND the draft is empty, only Stop is visible (the
+                Send button would be a no-op). When busy AND there's a
+                draft, both buttons show so the user can either queue the
+                next turn or cancel the current one.
+              */}
+              <div className="ml-auto flex shrink-0 items-end gap-1.5">
                 {props.busy ? (
                   <button
                     type="button"
@@ -1060,7 +1068,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <Square size={12} fill="currentColor" />
                     <span>{t("composer.stop", locale)}</span>
                   </button>
-                ) : (
+                ) : null}
+                {!props.busy || canSend ? (
                   <button
                     type="button"
                     onClick={props.onSend}
@@ -1070,12 +1079,12 @@ export function ReactSessionComposer(props: ComposerProps) {
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]"
                     }`}
-                    title={t("composer.run_task", locale)}
+                    title={props.busy ? t("composer.run_task", locale) : t("composer.run_task", locale)}
                   >
                     <ArrowUp size={15} />
                     <span>{t("composer.run_task", locale)}</span>
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

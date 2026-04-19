@@ -40,6 +40,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../app/types";
 import { createClient } from "../../app/lib/opencode";
+import { buildFeedbackUrl } from "../../app/lib/feedback";
 import { isSandboxWorkspace, isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
 import { t } from "../../i18n";
 import { useLocal } from "../kernel/local-provider";
@@ -1007,7 +1008,12 @@ export function SessionRoute() {
       providers={[]}
       mcpConnectedCount={0}
       onSendFeedback={() => {
-        platform.openLink("https://openworklabs.com/docs");
+        platform.openLink(
+          buildFeedbackUrl({
+            entrypoint: "status-bar",
+            appVersion: "0.11.207",
+          }),
+        );
       }}
       onOpenSettings={() => navigate("/settings/general")}
       sidebar={{

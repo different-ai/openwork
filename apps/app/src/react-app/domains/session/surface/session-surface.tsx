@@ -301,7 +301,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const handleSend = async () => {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || chatStreaming) return;
+    if (!text && attachments.length === 0) return;
+    // Intentionally allow sending while the assistant is still streaming.
+    // OpenCode accepts follow-up user turns mid-run and queues them; if the
+    // backend can't accept the follow-up it'll surface an error via the
+    // catch below. This restores the "append a prompt while it's still
+    // talking" behavior that the Solid composer had.
     setError(null);
     setSending(true);
     try {
