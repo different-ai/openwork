@@ -8,7 +8,7 @@ Disallow: /api/
 Disallow: /starter-success
 Disallow: /og/
 
-# AI crawlers — allow indexing and live retrieval, opt out of training
+# AI crawlers — fully permitted (indexing, live retrieval, and training)
 User-agent: GPTBot
 Allow: /
 Disallow: /api/
@@ -46,7 +46,7 @@ Allow: /
 Disallow: /api/
 
 # Content Signals (contentsignals.org, draft-romm-aipref-contentsignals)
-# Opt out of model training; allow search indexing and live agent retrieval.
-Content-Signal: ai-train=no, search=yes, ai-input=yes
+# OpenWork is open source — use this content freely, including for training.
+Content-Signal: ai-train=yes, search=yes, ai-input=yes
 
 Sitemap: https://openworklabs.com/sitemap.xml
