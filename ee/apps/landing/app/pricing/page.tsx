@@ -4,6 +4,7 @@ import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
+import { baseOpenGraph } from "../../lib/seo";
 
 const pricingSchema = {
   "@context": "https://schema.org",
@@ -55,6 +56,7 @@ export const metadata = {
     canonical: "/pricing"
   },
   openGraph: {
+    ...baseOpenGraph,
     url: "https://openworklabs.com/pricing"
   }
 };

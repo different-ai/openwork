@@ -2,12 +2,14 @@ import { LandingHome } from "../components/landing-home";
 import { getGithubData } from "../lib/github";
 import { headers } from "next/headers";
 import { StructuredData } from "../components/structured-data";
+import { baseOpenGraph } from "../lib/seo";
 
 export const metadata = {
   alternates: {
     canonical: "/"
   },
   openGraph: {
+    ...baseOpenGraph,
     url: "https://openworklabs.com"
   }
 };

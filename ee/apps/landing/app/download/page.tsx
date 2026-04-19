@@ -2,6 +2,7 @@ import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
+import { baseOpenGraph } from "../../lib/seo";
 
 const downloadSchema = {
   "@context": "https://schema.org",
@@ -33,6 +34,7 @@ export const metadata = {
     canonical: "/download"
   },
   openGraph: {
+    ...baseOpenGraph,
     url: "https://openworklabs.com/download"
   }
 };

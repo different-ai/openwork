@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AppFeedbackForm, type AppFeedbackPrefill } from "../../components/app-feedback-form";
 import { OpenWorkMark } from "../../components/openwork-mark";
 import { SiteFooter } from "../../components/site-footer";
+import { baseOpenGraph } from "../../lib/seo";
 
 export const metadata = {
   title: "OpenWork — Feedback",
@@ -12,6 +13,10 @@ export const metadata = {
   robots: {
     index: false,
     follow: true
+  },
+  openGraph: {
+    ...baseOpenGraph,
+    url: "https://openworklabs.com/feedback"
   }
 };
 

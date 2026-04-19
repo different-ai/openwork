@@ -1,5 +1,6 @@
 import { LandingTrustOverview } from "../../components/landing-trust";
 import { getGithubData } from "../../lib/github";
+import { baseOpenGraph } from "../../lib/seo";
 
 export const metadata = {
   title: "OpenWork — Security & Data Privacy",
@@ -9,6 +10,7 @@ export const metadata = {
     canonical: "/trust"
   },
   openGraph: {
+    ...baseOpenGraph,
     url: "https://openworklabs.com/trust"
   }
 };

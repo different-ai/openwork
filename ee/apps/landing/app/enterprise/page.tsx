@@ -1,5 +1,6 @@
 import { LandingEnterprise } from "../../components/landing-enterprise";
 import { getGithubData } from "../../lib/github";
+import { baseOpenGraph } from "../../lib/seo";
 
 export const metadata = {
   title: "OpenWork Enterprise — Self-hosted AI agents for teams",
@@ -9,6 +10,7 @@ export const metadata = {
     canonical: "/enterprise"
   },
   openGraph: {
+    ...baseOpenGraph,
     url: "https://openworklabs.com/enterprise"
   }
 };
