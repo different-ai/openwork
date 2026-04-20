@@ -12,59 +12,19 @@ permissions:
   contents: read
 
 jobs:
-  resolve-trusted-ref:
-    name: Resolve trusted ref
-    runs-on: ubuntu-22.04
-    outputs:
-      trusted_sha: ${{ steps.resolve.outputs.trusted_sha }}
-    steps:
-      - name: Checkout repository metadata
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Resolve and verify trusted ref
-        id: resolve
-        shell: bash
-        env:
-          INPUT_REF: ${{ github.event.inputs.ref }}
-        run: |
-          set -euo pipefail
-
-          requested_ref="${INPUT_REF:-${GITHUB_REF_NAME}}"
-
-          git fetch origin --force --tags dev
-
-          if git show-ref --verify --quiet "refs/remotes/origin/${requested_ref}"; then
-            candidate_sha="$(git rev-parse "refs/remotes/origin/${requested_ref}")"
-          elif git show-ref --verify --quiet "refs/tags/${requested_ref}"; then
-            candidate_sha="$(git rev-list -n 1 "refs/tags/${requested_ref}")"
-          else
-            git fetch origin "${requested_ref}" --depth=1
-            candidate_sha="$(git rev-parse FETCH_HEAD)"
-          fi
-
-          if git merge-base --is-ancestor "$candidate_sha" origin/dev; then
-            echo "trusted_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Requested ref ${requested_ref} resolves to ${candidate_sha}, which is not reachable from origin/dev." >&2
-          exit 1
-
   build-and-sign-windows:
     name: Build and sign Windows artifacts
-    needs: resolve-trusted-ref
     runs-on: windows-latest
     env:
       TAURI_TARGET: x86_64-pc-windows-msvc
       BUN_TARGET: bun-windows-x64
+      WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve-trusted-ref.outputs.trusted_sha }}
-          fetch-depth: 0
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -96,7 +56,6 @@ jobs:
         shell: pwsh
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)) {
             throw "WINDOWS_CERT_PFX_BASE64 is required for Windows signing."
@@ -111,9 +70,6 @@ jobs:
 
       - name: Sign bundled Windows sidecars
         shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
         run: |
           $targets = @(
             "apps/desktop/src-tauri/sidecars/opencode-$env:TAURI_TARGET.exe",
@@ -133,9 +89,6 @@ jobs:
 
       - name: Sign Server V2 executable
         shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
         run: |
           $serverPath = "apps/server-v2/dist/bin/openwork-server-v2-$env:BUN_TARGET.exe"
           if (!(Test-Path $serverPath)) {
@@ -149,9 +102,6 @@ jobs:
 
       - name: Sign desktop Windows artifacts
         shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
         run: |
           $artifacts = Get-ChildItem -Path "apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse -Include *.exe,*.msi
           if ($artifacts.Count -eq 0) {
