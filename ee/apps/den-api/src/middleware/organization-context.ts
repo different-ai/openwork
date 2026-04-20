@@ -18,7 +18,9 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   }
 
   const apiKey = c.get("apiKey")
-  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey) ?? getLegacyProxyOrganizationId(c.req.raw.headers)
+  const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
+  const legacyProxyOrganizationId = getLegacyProxyOrganizationId(c.req.raw.headers)
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? legacyProxyOrganizationId
 
   let organizationId = c.get("activeOrganizationId") ?? null
   let organizationSlug = c.get("activeOrganizationSlug") ?? null
@@ -38,7 +40,7 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
     organizationSlug = scopedOrganizationId ? scopedOrgs[0]?.slug ?? null : resolved.activeOrgSlug
 
     if (shouldHydrateSessionActiveOrganization({
-      scopedOrganizationId,
+      scopedOrganizationId: apiKeyScopedOrganizationId,
       sessionActiveOrganizationId: session?.activeOrganizationId,
       resolvedActiveOrganizationId: organizationId,
     })) {

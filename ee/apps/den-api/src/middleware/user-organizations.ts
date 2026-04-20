@@ -59,7 +59,9 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
 
   const session = c.get("session")
   const apiKey = c.get("apiKey")
-  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey) ?? getLegacyProxyOrganizationId(c.req.raw.headers)
+  const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
+  const legacyProxyOrganizationId = getLegacyProxyOrganizationId(c.req.raw.headers)
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? legacyProxyOrganizationId
   const resolved = await resolveUserOrganizations({
     activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
     userId: normalizeDenTypeId("user", user.id),
@@ -75,7 +77,7 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     : resolved.activeOrgSlug
 
   if (shouldHydrateSessionActiveOrganization({
-    scopedOrganizationId,
+    scopedOrganizationId: apiKeyScopedOrganizationId,
     sessionActiveOrganizationId: session?.activeOrganizationId,
     resolvedActiveOrganizationId: activeOrganizationId,
   })) {
