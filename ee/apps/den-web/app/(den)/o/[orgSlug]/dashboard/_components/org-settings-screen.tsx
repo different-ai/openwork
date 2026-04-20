@@ -659,8 +659,8 @@ export function OrgSettingsScreen() {
               workspace.
             </p>
             {desktopVersionOptions.length > 0 ? (
-              <p className="text-[13px] text-gray-500">
-                This server supports desktop versions from
+              <p className="text-[10px] text-gray-400">
+                This server currently supports desktop
                 {` ${desktopVersionOptions[0]} `}
                 to {desktopVersionOptions[desktopVersionOptions.length - 1]}.
               </p>
@@ -683,16 +683,6 @@ export function OrgSettingsScreen() {
           !desktopVersionOptionsError &&
           desktopVersionOptions.length > 0 ? (
             <div className="grid gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-gray-200 bg-gray-50 px-5 py-4">
-                <p className="text-[14px] text-gray-600">
-                  {allowedDesktopVersionsDraft.length} of{" "}
-                  {desktopVersionOptions.length} supported versions allowed.
-                </p>
-                <p className="text-[13px] text-gray-500">
-                  All versions are allowed by default.
-                </p>
-              </div>
-
               <div className="grid gap-3">
                 {desktopVersionOptions.map((version) => {
                   const checked = selectedDesktopVersions.has(version);
