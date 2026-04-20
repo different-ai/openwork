@@ -22,6 +22,19 @@ function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
   return domains.length > 0 ? domains : null;
 }
 
+function normalizeAllowedVersionsInput(value: string): string[] | null {
+  const versions = [
+    ...new Set(
+      value
+        .split(/[\s,]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  return versions.length > 0 ? versions : null;
+}
+
 function SettingsToggle({
   label,
   checked,
@@ -77,6 +90,13 @@ export function OrgSettingsScreen() {
   const [allowZenModelEnabled, setAllowZenModelEnabled] = useState(true);
   const [allowMultipleWorkspacesEnabled, setAllowMultipleWorkspacesEnabled] = useState(true);
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
+  const [allowedVersionsDraft, setAllowedVersionsDraft] = useState("");
+  const [versionRestrictionsEnabled, setVersionRestrictionsEnabled] =
+    useState(false);
+  const [versionEditModeEnabled, setVersionEditModeEnabled] = useState(false);
+  const [confirmedAllowedVersions, setConfirmedAllowedVersions] = useState<
+    string[] | null
+  >(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageSuccess, setPageSuccess] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
@@ -91,6 +111,11 @@ export function OrgSettingsScreen() {
     [allowedDomainsDraft],
   );
   const hasDraftDomains = (draftAllowedDomains?.length ?? 0) > 0;
+  const draftAllowedVersions = useMemo(
+    () => normalizeAllowedVersionsInput(allowedVersionsDraft),
+    [allowedVersionsDraft],
+  );
+  const hasDraftVersions = (draftAllowedVersions?.length ?? 0) > 0;
 
   useEffect(() => {
     if (!orgContext) {
@@ -173,6 +198,34 @@ export function OrgSettingsScreen() {
     setPageSuccess(null);
     setDomainRestrictionsEnabled(nextValue);
     setDomainEditModeEnabled(nextValue && !currentAllowedDomains?.length);
+  }
+
+  function handleVersionRestrictionToggle(nextValue: boolean) {
+    if (!isOwner) {
+      return;
+    }
+
+    if (!nextValue && hasDraftVersions) {
+      return;
+    }
+
+    setPageError(null);
+    setPageSuccess(null);
+    setVersionRestrictionsEnabled(nextValue);
+    setVersionEditModeEnabled(
+      nextValue && !confirmedAllowedVersions?.length,
+    );
+  }
+
+  function handleConfirmAllowedVersions() {
+    if (!isOwner) {
+      return;
+    }
+
+    setPageError(null);
+    setPageSuccess(null);
+    setConfirmedAllowedVersions(draftAllowedVersions);
+    setVersionEditModeEnabled(false);
   }
 
   async function handleSaveSettings(event: React.FormEvent<HTMLFormElement>) {
@@ -346,6 +399,109 @@ export function OrgSettingsScreen() {
                       setPageError(null);
                       setPageSuccess(null);
                       setDomainEditModeEnabled(true);
+                    }}
+                  >
+                    Edit
+                  </DenButton>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </DenCard>
+
+        <DenCard size="spacious" className="grid gap-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="grid gap-2">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                Updates
+              </p>
+              <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
+                Allowed Openwork versions
+              </h2>
+              <p className="text-[14px] text-gray-500">
+                Limit the Openwork versions your members can update to.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <span className="text-[13px] font-medium text-gray-500">
+                {versionRestrictionsEnabled ? "On" : "Off"}
+              </span>
+              <SettingsToggle
+                label="Restrict allowed Openwork versions"
+                checked={versionRestrictionsEnabled}
+                disabled={
+                  !isOwner || (versionRestrictionsEnabled && hasDraftVersions)
+                }
+                onChange={handleVersionRestrictionToggle}
+              />
+            </div>
+          </div>
+
+          {versionRestrictionsEnabled && versionEditModeEnabled ? (
+            <div className="grid gap-3">
+              <label className="grid gap-3">
+                <span className="text-[14px] font-medium text-gray-700">
+                  Version allowlist
+                </span>
+                <span className="text-[10px] text-gray-500">
+                  Enter versions one per line or with comma as separator
+                </span>
+                <DenTextarea
+                  value={allowedVersionsDraft}
+                  onChange={(event) =>
+                    setAllowedVersionsDraft(event.target.value)
+                  }
+                  rows={6}
+                  disabled={!isOwner}
+                  placeholder={"0.11.210\n0.11.209"}
+                />
+              </label>
+              <div className="flex justify-end">
+                <DenButton
+                  type="button"
+                  size="sm"
+                  onClick={handleConfirmAllowedVersions}
+                  disabled={!isOwner || !hasDraftVersions}
+                >
+                  Confirm
+                </DenButton>
+              </div>
+            </div>
+          ) : null}
+
+          {versionRestrictionsEnabled && !versionEditModeEnabled ? (
+            <div className="grid gap-3 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-4">
+              <div className="flex items-start justify-between gap-3">
+                {confirmedAllowedVersions &&
+                confirmedAllowedVersions.length > 0 ? (
+                  <div className="flex flex-wrap w-full gap-2">
+                    {confirmedAllowedVersions.map((version) => (
+                      <span
+                        key={version}
+                        className="rounded-full border border-gray-200 bg-white px-3 py-1 font-mono text-[13px] text-gray-700"
+                      >
+                        {version}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[14px] text-gray-600">
+                    No Openwork versions are configured yet.
+                  </p>
+                )}
+                {isOwner ? (
+                  <DenButton
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    icon={Pencil}
+                    onClick={() => {
+                      setPageError(null);
+                      setPageSuccess(null);
+                      setAllowedVersionsDraft(
+                        (confirmedAllowedVersions ?? []).join("\n"),
+                      );
+                      setVersionEditModeEnabled(true);
                     }}
                   >
                     Edit
