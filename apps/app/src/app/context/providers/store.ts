@@ -1190,40 +1190,13 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       provider?.source === "config" || provider?.source === "custom";
 
     const disableProvider = async () => {
-      const config = unwrap(await c.config.get());
-      const disabledProviders = Array.isArray(config.disabled_providers)
-        ? config.disabled_providers
-        : [];
-      if (disabledProviders.includes(resolved)) {
-        return false;
-      }
-
-      const next = [...disabledProviders, resolved];
-      options.setDisabledProviders(next);
-      try {
-        const result = await c.config.update({
-          config: {
-            ...config,
-            disabled_providers: next,
-          },
-        });
-        assertNoClientError(result);
-        options.markOpencodeConfigReloadRequired();
-      } catch (error) {
-        options.setDisabledProviders(disabledProviders);
-        throw error;
-      }
-      return true;
+      return await ensureProjectProviderDisabledState(resolved, true);
     };
 
     try {
       await removeProviderAuthCredentials(resolved);
       let updated = await refreshProviders({ dispose: true });
-      if (
-        canDisableProvider &&
-        Array.isArray(updated?.connected) &&
-        updated.connected.includes(resolved)
-      ) {
+      if (canDisableProvider) {
         const disabled = await disableProvider();
         if (disabled && updated) {
           updated = filterProviderList(updated, options.disabledProviders() ?? []);
