@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
-import { hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
+import { getLegacyProxyOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
 
 export type OrganizationContextVariables = {
   organizationContext: OrganizationContext
@@ -18,7 +18,7 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   }
 
   const apiKey = c.get("apiKey")
-  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
+  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey) ?? getLegacyProxyOrganizationId(c.req.raw.headers)
 
   let organizationId = c.get("activeOrganizationId") ?? null
   let organizationSlug = c.get("activeOrganizationSlug") ?? null

@@ -1,13 +1,12 @@
 import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { Context, Hono, MiddlewareHandler } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { DenEmailSendError, sendDenOrganizationInvitationEmail } from "../../email.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
-import { hydrateSessionActiveOrganization } from "../../middleware/user-organizations.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { isEmailAllowedForOrganization, listAssignableRoles } from "../../orgs.js"
@@ -44,8 +43,6 @@ type InvitationId = typeof InvitationTable.$inferSelect.id
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
 
 const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
-const legacyOrgParamsSchema = idParamSchema("orgId", "organization")
-const legacyOrgInvitationParamsSchema = legacyOrgParamsSchema.extend(orgInvitationParamsSchema.shape)
 
 function validRequestPart<T>(c: OrgContext, target: "json" | "param") {
   return (c.req as unknown as { valid: (part: typeof target) => unknown }).valid(target) as T
@@ -75,21 +72,6 @@ function getRequiredOrganizationContext(c: OrgContext) {
   }
 
   return payload
-}
-
-const bindLegacyOrganizationParamMiddleware: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
-  const params = validParam<z.infer<typeof legacyOrgParamsSchema> | z.infer<typeof legacyOrgInvitationParamsSchema>>(c as OrgContext)
-  const session = c.get("session")
-
-  if (!session?.activeOrganizationId) {
-    await hydrateSessionActiveOrganization(session, params.orgId)
-    if (session) {
-      c.set("session", { ...session, activeOrganizationId: params.orgId })
-    }
-  }
-
-  c.set("activeOrganizationId", params.orgId)
-  await next()
 }
 
 async function handleCreateInvitation(c: OrgContext) {
@@ -223,7 +205,7 @@ async function handleCancelInvitation(c: OrgContext) {
   }
 
   const payload = getRequiredOrganizationContext(c)
-  const params = validParam<z.infer<typeof orgInvitationParamsSchema> | z.infer<typeof legacyOrgInvitationParamsSchema>>(c)
+  const params = validParam<z.infer<typeof orgInvitationParamsSchema>>(c)
   let invitationId: InvitationId
   try {
     invitationId = normalizeDenTypeId("invitation", params.invitationId)
@@ -270,32 +252,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
   )
 
   app.post(
-    "/v1/orgs/:orgId/invitations",
-    describeRoute({
-      hide: true,
-      tags: ["Invitations"],
-      summary: "Legacy create organization invitation",
-      description: "Accepts legacy org-scoped invitation URLs and routes them through the active invitation handler.",
-      responses: {
-        200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
-        201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
-        400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
-        404: jsonResponse("The organization could not be found.", notFoundSchema),
-        409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
-        502: jsonResponse("The invitation was saved but the email provider (Loops) rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
-      },
-    }),
-    requireUserMiddleware,
-    paramValidator(legacyOrgParamsSchema),
-    bindLegacyOrganizationParamMiddleware,
-    resolveOrganizationContextMiddleware,
-    jsonValidator(inviteMemberSchema),
-    handleCreateInvitation,
-  )
-
-  app.post(
     "/v1/invitations/:invitationId/cancel",
     describeRoute({
       tags: ["Invitations"],
@@ -311,28 +267,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     }),
     requireUserMiddleware,
     paramValidator(orgInvitationParamsSchema),
-    resolveOrganizationContextMiddleware,
-    handleCancelInvitation,
-  )
-
-  app.post(
-    "/v1/orgs/:orgId/invitations/:invitationId/cancel",
-    describeRoute({
-      hide: true,
-      tags: ["Invitations"],
-      summary: "Legacy cancel organization invitation",
-      description: "Accepts legacy org-scoped invitation cancel URLs and routes them through the active invitation handler.",
-      responses: {
-        200: jsonResponse("Invitation cancelled successfully.", successSchema),
-        400: jsonResponse("The invitation cancellation path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to cancel invitations.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can cancel invitations.", forbiddenSchema),
-        404: jsonResponse("The invitation or organization could not be found.", notFoundSchema),
-      },
-    }),
-    requireUserMiddleware,
-    paramValidator(legacyOrgInvitationParamsSchema),
-    bindLegacyOrganizationParamMiddleware,
     resolveOrganizationContextMiddleware,
     handleCancelInvitation,
   )

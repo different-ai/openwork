@@ -4,6 +4,8 @@ import { getApiKeyScopedOrganizationId } from "../api-keys.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
 
+export const LEGACY_ORG_PROXY_HEADER = "x-openwork-legacy-org-id"
+
 export type UserOrganizationsContext = {
   userOrganizations: UserOrgSummary[]
   activeOrganizationId: string | null
@@ -11,6 +13,19 @@ export type UserOrganizationsContext = {
 }
 
 type SessionLike = AuthContextVariables["session"]
+
+export function getLegacyProxyOrganizationId(headers: Headers) {
+  const rawOrganizationId = headers.get(LEGACY_ORG_PROXY_HEADER)?.trim()
+  if (!rawOrganizationId) {
+    return null
+  }
+
+  try {
+    return normalizeDenTypeId("organization", rawOrganizationId)
+  } catch {
+    return null
+  }
+}
 
 export function shouldHydrateSessionActiveOrganization(input: {
   resolvedActiveOrganizationId: string | null
@@ -44,7 +59,7 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
 
   const session = c.get("session")
   const apiKey = c.get("apiKey")
-  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
+  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey) ?? getLegacyProxyOrganizationId(c.req.raw.headers)
   const resolved = await resolveUserOrganizations({
     activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
     userId: normalizeDenTypeId("user", user.id),
