@@ -4,6 +4,10 @@ import { parse } from "jsonc-parser";
 
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_MODEL, MODEL_PREF_KEY, SESSION_MODEL_PREF_KEY, VARIANT_PREF_KEY } from "../constants";
+import {
+  isDesktopModelBlocked,
+  type DesktopAppRestrictionChecker,
+} from "../cloud/desktop-app-restrictions";
 import { readOpencodeConfig, writeOpencodeConfig } from "../lib/tauri";
 import {
   formatGenericBehaviorLabel,
@@ -332,6 +336,7 @@ export function createModelConfigStore(options: {
   openworkServerStatus: Accessor<OpenworkServerStatus>;
   openworkServerCapabilities: Accessor<OpenworkServerCapabilities | null>;
   runtimeWorkspaceId: Accessor<string | null>;
+  checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   focusSessionPromptSoon: () => void;
   setError: (value: string | null) => void;
   setLastKnownConfigSnapshot: (value: string) => void;
@@ -489,6 +494,71 @@ export function createModelConfigStore(options: {
   const getWorkspaceVariantFor = (ref: ModelRef) =>
     workspaceVariantMap()[formatModelRef(ref)] ?? null;
 
+  const isBlockedModelRef = (ref: ModelRef) =>
+    isDesktopModelBlocked({
+      model: ref,
+      checkRestriction: options.checkDesktopAppRestriction,
+    });
+
+  const restrictToInstalledModels = () =>
+    options.checkDesktopAppRestriction({ restriction: "disallowNonCloudModels" });
+
+  const isInstalledProvider = (providerId: string) =>
+    options.providerConnectedIds().some((id) => id.trim() === providerId.trim());
+
+  const isRestrictedModelRef = (ref: ModelRef) => {
+    if (isBlockedModelRef(ref)) {
+      return true;
+    }
+
+    if (restrictToInstalledModels() && !isInstalledProvider(ref.providerID)) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const listAllowedModelRefs = () => {
+    const sortedProviders = options.providers().slice().sort(compareProviders);
+    const next: ModelRef[] = [];
+
+    for (const provider of sortedProviders) {
+      const providerId = provider.id?.trim();
+      if (!providerId) continue;
+      if (restrictToInstalledModels() && !isInstalledProvider(providerId)) continue;
+
+      const models = Object.values(provider.models ?? {})
+        .filter((model) => model.status !== "deprecated")
+        .sort((a, b) => {
+          const aFree = a.cost?.input === 0 && a.cost?.output === 0;
+          const bFree = b.cost?.input === 0 && b.cost?.output === 0;
+          if (aFree !== bFree) return aFree ? -1 : 1;
+          return (a.name ?? a.id).localeCompare(b.name ?? b.id);
+        });
+
+      for (const model of models) {
+        const ref = { providerID: providerId, modelID: model.id };
+        if (isRestrictedModelRef(ref)) continue;
+        next.push(ref);
+      }
+    }
+
+    return next;
+  };
+
+  const resolveAllowedModelFallback = () => {
+    if (!isRestrictedModelRef(defaultModel())) {
+      return defaultModel();
+    }
+
+    const allowed = listAllowedModelRefs();
+    if (allowed.length > 0) {
+      return allowed[0];
+    }
+
+    return isRestrictedModelRef(DEFAULT_MODEL) ? null : DEFAULT_MODEL;
+  };
+
   const getVariantFor = (ref: ModelRef, sessionId?: string | null) => {
     if (sessionId) {
       const choice = sessionChoiceOverrideById()[sessionId];
@@ -508,16 +578,21 @@ export function createModelConfigStore(options: {
   const selectedSessionModel = createMemo<ModelRef>(() => {
     const id = options.selectedSessionId();
     const pendingChoice = pendingSessionChoice();
-    if (!id) return pendingChoice?.model ?? defaultModel();
+    if (!id) {
+      if (pendingChoice?.model && !isRestrictedModelRef(pendingChoice.model)) {
+        return pendingChoice.model;
+      }
+      return defaultModel();
+    }
 
     const override = sessionChoiceOverrideById()[id]?.model;
-    if (override) return override;
+    if (override && !isRestrictedModelRef(override)) return override;
 
     const known = sessionModelById()[id];
-    if (known) return known;
+    if (known && !isRestrictedModelRef(known)) return known;
 
     const fromMessages = lastUserModelFromMessages(options.messages());
-    if (fromMessages) return fromMessages;
+    if (fromMessages && !isRestrictedModelRef(fromMessages)) return fromMessages;
 
     return defaultModel();
   });
@@ -615,6 +690,7 @@ export function createModelConfigStore(options: {
     for (const provider of sortedProviders) {
       const defaultModelID = defaults[provider.id];
       const isConnected = options.providerConnectedIds().includes(provider.id);
+      if (restrictToInstalledModels() && !isConnected) continue;
       const models = Object.values(provider.models ?? {}).filter((m) => m.status !== "deprecated");
 
       models.sort((a, b) => {
@@ -629,6 +705,7 @@ export function createModelConfigStore(options: {
         const isDefault =
           provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
         const ref = { providerID: provider.id, modelID: model.id };
+        if (isRestrictedModelRef(ref)) continue;
         const activeVariant =
           modelPickerTarget() === "session" && modelEquals(ref, selectedSessionModel())
             ? modelVariant()
@@ -843,6 +920,68 @@ export function createModelConfigStore(options: {
     setSessionModelById({});
     setWorkspaceVariantMap({});
     closeModelPicker({ restorePromptFocus: false });
+  };
+
+  const reconcileRestrictedModels = () => {
+    const isRestrictedChoice = (model: ModelRef | null | undefined) => {
+      if (!model) return false;
+      return isRestrictedModelRef(model);
+    };
+
+    const fallback = resolveAllowedModelFallback();
+
+    if (isRestrictedChoice(defaultModel()) && fallback && !modelEquals(defaultModel(), fallback)) {
+      applyDefaultModelChoice(fallback);
+    }
+
+    setPendingSessionChoice((current) => {
+      if (!current?.model || !isRestrictedChoice(current.model)) {
+        return current;
+      }
+
+      return hasOwn(current, "variant")
+        ? { variant: current.variant ?? null }
+        : null;
+    });
+
+    setSessionChoiceOverrideById((current) => {
+      const next: Record<string, SessionChoiceOverride> = {};
+      let changed = false;
+
+      for (const [sessionId, choice] of Object.entries(current)) {
+        if (!choice.model || !isRestrictedChoice(choice.model)) {
+          next[sessionId] = choice;
+          continue;
+        }
+
+        changed = true;
+        const stripped = normalizeSessionChoice(
+          hasOwn(choice, "variant") ? { variant: choice.variant ?? null } : null,
+        );
+        if (stripped) {
+          next[sessionId] = stripped;
+        }
+      }
+
+      return changed ? next : current;
+    });
+
+    setSessionModelById((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([, model]) => !isRestrictedChoice(model)),
+      );
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+
+    setWorkspaceVariantMap((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([ref]) => {
+          const parsed = parseModelRef(ref);
+          return !parsed || !isRestrictedChoice(parsed);
+        }),
+      );
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
   };
 
   createEffect(() => {
@@ -1284,6 +1423,7 @@ export function createModelConfigStore(options: {
     closeModelPicker,
     applyModelSelection,
     setModelPickerBehavior,
+    reconcileRestrictedModels,
     autoCompactContext,
     toggleAutoCompactContext,
     autoCompactContextSaving,

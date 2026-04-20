@@ -6,6 +6,7 @@ import { compareProviders } from "../../utils/providers";
 import Button from "../../components/button";
 import ProviderIcon from "../../components/provider-icon";
 import TextInput from "../../components/text-input";
+import { useDesktopConfig } from "../../cloud/desktop-config-provider";
 import type { ProviderAuthMethod, ProviderAuthProvider, ProviderOAuthStartResult } from "./store";
 
 type ProviderAuthEntry = {
@@ -34,6 +35,8 @@ export type ProviderAuthModalProps = {
   loading: boolean;
   submitting: boolean;
   error: string | null;
+  restricted?: boolean;
+  restrictedMessage?: string | null;
   preferredProviderId?: string | null;
   workerType?: "local" | "remote";
   providers: ProviderAuthProvider[];
@@ -52,8 +55,17 @@ export type ProviderAuthModalProps = {
 };
 
 export default function ProviderAuthModal(props: ProviderAuthModalProps) {
+  const desktopConfig = useDesktopConfig();
   const workerType = createMemo(() => (props.workerType === "remote" ? "remote" : "local"));
   const isRemoteWorker = createMemo(() => workerType() === "remote");
+  const restricted = createMemo(() =>
+    props.restricted ?? desktopConfig.checkRestriction({ restriction: "disallowNonCloudModels" }),
+  );
+  const restrictionMessage = createMemo(
+    () =>
+      props.restrictedMessage?.trim() ||
+      "Your administrator has restricted which providers and models are allowed. Please reach out to them to add new providers and models.",
+  );
 
   const formatProviderName = (id: string, fallback?: string) => {
     const named = fallback?.trim();
@@ -658,9 +670,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           <div class="px-6 py-4 flex flex-col gap-4 min-h-0">
             <div class="min-h-[36px]">
               <Show
-                when={errorMessage()}
+                when={!restricted() && errorMessage()}
                 fallback={
-                  <Show when={props.loading}>
+                  <Show when={!restricted() && props.loading}>
                     <div class="rounded-xl border border-gray-6 bg-gray-1/60 px-4 py-3 text-sm text-gray-10 animate-pulse">
                       Loading providers...
                     </div>
@@ -673,7 +685,18 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               </Show>
             </div>
 
-            <Show when={!props.loading}>
+            <Show when={restricted()}>
+              <div class="rounded-xl border border-gray-6/50 bg-gray-2/50 p-5">
+                <p class="text-sm leading-6 text-gray-11">{restrictionMessage()}</p>
+                <div class="mt-5 flex justify-end">
+                  <Button variant="primary" onClick={handleClose}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={!restricted() && !props.loading}>
               <div class="flex-1 space-y-2 overflow-y-auto pr-1 -mr-1">
                 <Show when={resolvedView() === "list"}>
                   <div class="space-y-3" onKeyDown={handleListKeyDown}>

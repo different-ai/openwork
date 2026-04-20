@@ -73,9 +73,11 @@ export function OrgSettingsScreen() {
   const [allowedDomainsDraft, setAllowedDomainsDraft] = useState("");
   const [domainRestrictionsEnabled, setDomainRestrictionsEnabled] =
     useState(false);
-  const [allowNonCloudModelsEnabled, setAllowNonCloudModelsEnabled] = useState(true);
+  const [allowNonCloudModelsEnabled, setAllowNonCloudModelsEnabled] =
+    useState(true);
   const [allowZenModelEnabled, setAllowZenModelEnabled] = useState(true);
-  const [allowMultipleWorkspacesEnabled, setAllowMultipleWorkspacesEnabled] = useState(true);
+  const [allowMultipleWorkspacesEnabled, setAllowMultipleWorkspacesEnabled] =
+    useState(true);
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageSuccess, setPageSuccess] = useState<string | null>(null);
@@ -105,13 +107,15 @@ export function OrgSettingsScreen() {
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
     setAllowNonCloudModelsEnabled(
-      orgContext.organization.desktopAppRestrictions.disallowNonCloudModels !== true,
+      orgContext.organization.desktopAppRestrictions.disallowNonCloudModels !==
+        true,
     );
     setAllowZenModelEnabled(
       orgContext.organization.desktopAppRestrictions.blockZenModel !== true,
     );
     setAllowMultipleWorkspacesEnabled(
-      orgContext.organization.desktopAppRestrictions.blockMultipleWorkspaces !== true,
+      orgContext.organization.desktopAppRestrictions.blockMultipleWorkspaces !==
+        true,
     );
     setDomainEditModeEnabled(false);
   }, [orgContext]);
@@ -187,9 +191,13 @@ export function OrgSettingsScreen() {
           ? draftAllowedDomains
           : null,
         desktopAppRestrictions: {
-          ...(!allowNonCloudModelsEnabled ? { disallowNonCloudModels: true } : {}),
+          ...(!allowNonCloudModelsEnabled
+            ? { disallowNonCloudModels: true }
+            : {}),
           ...(!allowZenModelEnabled ? { blockZenModel: true } : {}),
-          ...(!allowMultipleWorkspacesEnabled ? { blockMultipleWorkspaces: true } : {}),
+          ...(!allowMultipleWorkspacesEnabled
+            ? { blockMultipleWorkspaces: true }
+            : {}),
         },
       });
       setDomainEditModeEnabled(false);
@@ -365,7 +373,8 @@ export function OrgSettingsScreen() {
               Desktop restrictions
             </h2>
             <p className="text-[14px] text-gray-500">
-              Control which desktop-only options remain available after people sign in to this workspace.
+              Control which desktop-only options remain available after people
+              sign in to this workspace.
             </p>
           </div>
 
@@ -376,7 +385,8 @@ export function OrgSettingsScreen() {
                   Allow non-cloud deployed models
                 </p>
                 <p className="text-[13px] text-gray-500">
-                  Let signed-in desktop users access models that are not deployed through OpenWork Cloud.
+                  Let signed-in desktop users access models that are not
+                  deployed through OpenWork Cloud.
                 </p>
               </div>
               <SettingsToggle
@@ -393,7 +403,8 @@ export function OrgSettingsScreen() {
                   Allow usage of OpenCode Zen model
                 </p>
                 <p className="text-[13px] text-gray-500">
-                  Let signed-in desktop users access the OpenCode Zen model in the desktop app.
+                  Let signed-in desktop users access the OpenCode Zen model in
+                  the desktop app.
                 </p>
               </div>
               <SettingsToggle
@@ -410,7 +421,8 @@ export function OrgSettingsScreen() {
                   Allow users to configure multiple workspaces
                 </p>
                 <p className="text-[13px] text-gray-500">
-                  Let signed-in desktop users create or manage more than one workspace on their machine.
+                  Let signed-in desktop users create or manage more than one
+                  workspace on their machine.
                 </p>
               </div>
               <SettingsToggle
@@ -420,12 +432,6 @@ export function OrgSettingsScreen() {
                 onChange={setAllowMultipleWorkspacesEnabled}
               />
             </div>
-
-            {Object.keys(currentDesktopAppRestrictions).length === 0 ? (
-              <p className="text-[13px] text-gray-500">
-                No desktop restrictions are configured yet. Leaving every toggle on stores an empty config object and keeps the desktop defaults.
-              </p>
-            ) : null}
           </div>
         </DenCard>
 

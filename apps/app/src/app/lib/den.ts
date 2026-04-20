@@ -1,5 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions as DenDesktopConfig } from "@openwork/types/den/desktop-app-restrictions";
+import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions";
 import { isDesktopDeployment } from "./openwork-deployment";
 import {
   dispatchDenSettingsChanged,
@@ -53,6 +53,8 @@ type DenBaseUrls = {
 export type DenBootstrapConfig = DenBaseUrls & {
   requireSignin: boolean;
 };
+
+export type DenDesktopConfig = DesktopAppRestrictions;
 
 export type DenUser = {
   id: string;

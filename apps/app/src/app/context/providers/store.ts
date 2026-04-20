@@ -4,6 +4,10 @@ import { applyEdits, modify, parse } from "jsonc-parser";
 import type { ProviderAuthAuthorization, ProviderConfig, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import { t } from "../../../i18n";
+import {
+  isDesktopProviderBlocked,
+  type DesktopAppRestrictionChecker,
+} from "../../cloud/desktop-app-restrictions";
 import { createDenClient, readDenSettings, type DenOrgLlmProvider, type DenOrgLlmProviderConnection } from "../../lib/den";
 import { unwrap, waitForHealthy } from "../../lib/opencode";
 import {
@@ -54,6 +58,7 @@ type CreateProvidersStoreOptions = {
   selectedWorkspaceDisplay: Accessor<WorkspaceDisplay>;
   selectedWorkspaceRoot: Accessor<string>;
   runtimeWorkspaceId: Accessor<string | null>;
+  checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   openworkServer: OpenworkServerStore;
   setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
@@ -326,6 +331,66 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     return true;
   };
 
+  const normalizeDisabledProviders = (value: unknown) =>
+    Array.isArray(value)
+      ? [...new Set(value.filter((entry): entry is string => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean))]
+      : [];
+
+  const formatConfigWithProviderDisabledState = (raw: string, providerId: string, disabled: boolean) => {
+    const resolvedProviderId = providerId.trim();
+    let updated = raw.trim() ? raw : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+    const parsed = parse(updated) as Record<string, unknown> | undefined;
+    const currentDisabled = normalizeDisabledProviders(parsed?.disabled_providers);
+    const nextDisabled = disabled
+      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
+      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+    const disabledEdits = modify(updated, ["disabled_providers"], nextDisabled.length ? nextDisabled : undefined, {
+      formattingOptions: { insertSpaces: true, tabSize: 2 },
+    });
+    updated = applyEdits(updated, disabledEdits);
+    return updated.endsWith("\n") ? updated : `${updated}\n`;
+  };
+
+  const ensureProjectProviderDisabledState = async (providerId: string, disabled: boolean) => {
+    const resolvedProviderId = providerId.trim();
+    if (!resolvedProviderId) {
+      throw new Error(t("providers.provider_id_required"));
+    }
+
+    const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
+    const nextDisabled = disabled
+      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
+      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+
+    if (
+      nextDisabled.length === currentDisabled.length &&
+      nextDisabled.every((entry, index) => entry === currentDisabled[index])
+    ) {
+      return false;
+    }
+
+    const updatedConfig = await updateProjectConfigFile(
+      (raw) => formatConfigWithProviderDisabledState(raw, resolvedProviderId, disabled),
+      (config) => {
+        const nextConfig = { ...config };
+        if (nextDisabled.length) {
+          nextConfig.disabled_providers = nextDisabled;
+        } else {
+          delete nextConfig.disabled_providers;
+        }
+        return nextConfig;
+      },
+    );
+
+    if (!updatedConfig) {
+      throw new Error("Could not update opencode.jsonc for this workspace.");
+    }
+
+    options.setDisabledProviders(nextDisabled);
+    options.markOpencodeConfigReloadRequired();
+    return true;
+  };
+
   const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   const cloudProviderComment = (provider: Pick<DenOrgLlmProvider, "id" | "name">) =>
@@ -457,6 +522,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     for (const provider of options.providers()) {
       const id = provider.id?.trim();
       if (!id) continue;
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) {
+        continue;
+      }
       merged.set(id, {
         id,
         name: provider.name?.trim() || id,
@@ -467,6 +535,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     for (const provider of cloudOrgProviders()) {
       const id = provider.providerId.trim();
       if (!id || merged.has(id)) continue;
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) {
+        continue;
+      }
       merged.set(id, {
         id,
         name: provider.name.trim() || id,
@@ -714,6 +785,10 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       merged[id] = [...existing, { type: "api", label: t("providers.api_key_label") }];
     }
     for (const [id, providerMethods] of Object.entries(merged)) {
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) {
+        delete merged[id];
+        continue;
+      }
       const provider = availableProviders.find((item) => item.id === id);
       const normalizedId = id.trim().toLowerCase();
       const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
@@ -730,6 +805,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     for (const provider of cloudProviders) {
       const id = provider.providerId.trim();
       if (!id) continue;
+      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) {
+        continue;
+      }
       const existing = merged[id] ?? [];
       if (existing.some((method) => method.type === "cloud" && method.cloudProviderId === provider.id)) {
         continue;
@@ -984,6 +1062,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         token,
       });
       const provider = await den.getOrgLlmProviderConnection(orgId, cloudProviderId);
+      if (isDesktopProviderBlocked({ providerId: provider.providerId, checkRestriction: options.checkDesktopAppRestriction })) {
+        throw new Error(`${provider.name} is blocked by your organization desktop policy.`);
+      }
       const existingImported = importedCloudProviders()[cloudProviderId] ?? null;
       const apiKey = provider.apiKey?.trim() ?? "";
       const env = getCloudProviderEnv(provider.providerConfig);
@@ -1221,6 +1302,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,
+    ensureProjectProviderDisabledState,
     openProviderAuthModal,
     closeProviderAuthModal,
   };

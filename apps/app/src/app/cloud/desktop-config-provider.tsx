@@ -2,11 +2,13 @@ import { createContext, createEffect, createSignal, onCleanup, onMount, useConte
 import { createDenClient, DenApiError, ensureDenActiveOrganization, type DenDesktopConfig, normalizeDenDesktopConfig, readDenSettings } from "../lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "../lib/den-session-events";
 import { useDenAuth } from "./den-auth-provider";
+import { checkDesktopAppRestriction, type DesktopAppRestrictionChecker } from "./desktop-app-restrictions";
 
 type DesktopConfigStore = {
   config: Accessor<DenDesktopConfig>;
   loading: Accessor<boolean>;
   refresh: () => Promise<void>;
+  checkRestriction: DesktopAppRestrictionChecker;
 };
 
 const DesktopConfigContext = createContext<DesktopConfigStore>();
@@ -155,6 +157,12 @@ export function DesktopConfigProvider(props: ParentProps) {
     config,
     loading,
     refresh,
+    checkRestriction(input) {
+      return checkDesktopAppRestriction({
+        config: config(),
+        restriction: input.restriction,
+      });
+    },
   };
 
   return (
