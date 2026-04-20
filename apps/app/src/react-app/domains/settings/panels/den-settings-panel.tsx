@@ -24,6 +24,7 @@ import {
   type DenTemplate,
   type DenUser,
   createDenClient,
+  ensureDenActiveOrganization,
   normalizeDenBaseUrl,
   readDenSettings,
   resolveDenBaseUrls,
@@ -585,6 +586,15 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           activeOrgSlug: nextOrg?.slug ?? null,
           activeOrgName: nextOrg?.name ?? null,
         });
+        // Keep Better-Auth's active org in sync so subsequent /v1/org/* requests
+        // resolve against `next` instead of whatever the session picked last.
+        // Mirrors the Solid flow (ac41d58b "feat(den): use Better Auth active
+        // org context").
+        if (next) {
+          await ensureDenActiveOrganization({ forceServerSync: true }).catch(
+            () => null,
+          );
+        }
         if (!quiet && response.orgs.length > 0) {
           setStatusMessage(
             tx("den.status_loaded_orgs", {
@@ -1416,6 +1426,13 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                         activeOrgSlug: nextOrg?.slug ?? null,
                         activeOrgName: nextOrg?.name ?? null,
                       });
+                      // Sync Better-Auth's active org so the next request
+                      // resolves against `nextId` (mirrors Solid ac41d58b).
+                      if (nextId) {
+                        void ensureDenActiveOrganization({
+                          forceServerSync: true,
+                        }).catch(() => null);
+                      }
                       setStatusMessage(tx("den.org_switched", { name: nextOrg?.name ?? tr("den.active_org_title") }));
                     }}
                     disabled={orgsBusy || orgs.length === 0}

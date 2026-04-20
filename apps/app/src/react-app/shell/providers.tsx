@@ -4,6 +4,8 @@ import { type ReactNode } from "react";
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
 import { hydrateOpenworkServerSettingsFromEnv, readOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { isTauriRuntime } from "../../app/utils";
+import { DenAuthProvider } from "../domains/cloud/den-auth-provider";
+import { DesktopConfigProvider } from "../domains/cloud/desktop-config-provider";
 import { GlobalSDKProvider } from "../kernel/global-sdk-provider";
 import { GlobalSyncProvider } from "../kernel/global-sync-provider";
 import { LocalProvider } from "../kernel/local-provider";
@@ -54,7 +56,11 @@ export function AppProviders({ children }: AppProvidersProps) {
         <DesktopRuntimeBoot />
         <GlobalSDKProvider>
           <GlobalSyncProvider>
-            <LocalProvider>{children}</LocalProvider>
+            <DenAuthProvider>
+              <DesktopConfigProvider>
+                <LocalProvider>{children}</LocalProvider>
+              </DesktopConfigProvider>
+            </DenAuthProvider>
           </GlobalSyncProvider>
         </GlobalSDKProvider>
       </ServerProvider>
