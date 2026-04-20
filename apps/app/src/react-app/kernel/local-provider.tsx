@@ -11,7 +11,8 @@ import {
 } from "react";
 
 import { THINKING_PREF_KEY } from "../../app/constants";
-import type { ModelRef, SettingsTab, View } from "../../app/types";
+import { coerceReleaseChannel } from "../../app/lib/release-channels";
+import type { ModelRef, ReleaseChannel, SettingsTab, View } from "../../app/types";
 
 export type LocalUIState = {
   view: View;
@@ -22,6 +23,12 @@ export type LocalPreferences = {
   showThinking: boolean;
   modelVariant: string | null;
   defaultModel: ModelRef | null;
+  /**
+   * Release channel the desktop app is subscribed to. Defaults to
+   * "stable". Alpha is only honored on macOS; the updater helper falls
+   * back to stable elsewhere.
+   */
+  releaseChannel: ReleaseChannel;
   featureFlags: {
     microsandboxCreateSandbox: boolean;
   };
@@ -45,6 +52,7 @@ const INITIAL_PREFS: LocalPreferences = {
   showThinking: false,
   modelVariant: null,
   defaultModel: null,
+  releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: false },
 };
 

@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import type { ReleaseChannel } from "../../../../app/types";
 import { Button } from "../../../design-system/button";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
@@ -28,6 +29,20 @@ export type UpdatesViewProps = {
   checkForUpdates: () => void;
   downloadUpdate: () => void;
   installUpdateAndRestart: () => void;
+  /** Currently selected release channel. Optional; callers may omit. */
+  releaseChannel?: ReleaseChannel;
+  /**
+   * Change the release channel. When not provided, the channel row is
+   * rendered read-only — useful for contexts where the pref can't be
+   * mutated (e.g. web preview).
+   */
+  onReleaseChannelChange?: (next: ReleaseChannel) => void;
+  /**
+   * Whether the alpha channel is available on this platform. Alpha is
+   * macOS-only today; other platforms should receive `false` so the
+   * toggle is hidden.
+   */
+  alphaChannelSupported?: boolean;
 };
 
 export function UpdatesView(props: UpdatesViewProps) {
@@ -66,6 +81,38 @@ export function UpdatesView(props: UpdatesViewProps) {
           </div>
         ) : (
           <>
+            {props.alphaChannelSupported && props.releaseChannel ? (
+              <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
+                <div className="space-y-0.5">
+                  <div className="text-sm text-gray-12">Release channel</div>
+                  <div className="text-xs text-gray-7">
+                    Stable is the default. Alpha auto-updates from every merge to{" "}
+                    <code className="rounded bg-gray-2 px-1 py-0.5 text-[11px]">dev</code>{" "}
+                    (macOS only).
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 rounded-full border border-gray-6/60 bg-gray-1/70 p-0.5 text-xs">
+                  {(["stable", "alpha"] as const).map((value) => {
+                    const active = props.releaseChannel === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`rounded-full px-3 py-1 font-medium transition-colors ${
+                          active
+                            ? "bg-gray-12/12 text-gray-12 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]"
+                            : "text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+                        } ${!props.onReleaseChannelChange ? "cursor-default opacity-70" : ""}`}
+                        onClick={() => props.onReleaseChannelChange?.(value)}
+                        disabled={!props.onReleaseChannelChange}
+                      >
+                        {value === "stable" ? "Stable" : "Alpha"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
               <div className="space-y-0.5">
                 <div className="text-sm text-gray-12">{t("settings.background_checks_title")}</div>

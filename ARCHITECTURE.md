@@ -85,6 +85,28 @@ Tauri or other native shell behavior remains the fallback or shell boundary for:
 
 If an agent needs one of the server-owned behaviors above and only a Tauri path exists, treat that as an architecture gap to close rather than a parallel capability surface to preserve.
 
+## Release channels
+
+OpenWork desktop ships through two release channels:
+
+- **Stable** (default, all platforms): versioned builds produced by the `Release App` workflow. Each tag `vX.Y.Z` publishes signed, notarized bundles plus a `latest.json` updater manifest at `https://github.com/different-ai/openwork/releases/latest/download/latest.json`.
+- **Alpha** (macOS arm64 only, rolling): every merge to `dev` publishes a signed, notarized build to the rolling GitHub release tagged `alpha-macos-latest`. The alpha updater manifest lives at a stable URL: `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest.json`.
+
+Guidelines:
+
+- The alpha channel is an opt-in preference (`LocalPreferences.releaseChannel`). The toggle is rendered only when `isTauriRuntime()` and `isMacPlatform()` both resolve true; other platforms silently fall back to stable even if the stored preference says `"alpha"`.
+- Alpha builds advertise the next patch version plus an `-alpha.<runNumber>+<sha>` prerelease suffix. That keeps semver ordering `stable < alpha.1 < alpha.2 < next stable` so alpha users migrate forward cleanly when the next stable ships.
+- Alpha and stable share the same Tauri updater signing keypair so an installed stable can upgrade into alpha and vice versa without re-installing manually.
+- Apple signing and notarization are required on both channels; the `MACOS_NOTARIZE` repo variable gates the signed path in `alpha-macos-aarch64.yml`.
+- The alpha workflow is the source of truth for the alpha channel's CI contract. Treat `.github/workflows/alpha-macos-aarch64.yml`, `apps/app/src/app/lib/release-channels.ts`, and this document as one coupled unit.
+
+Code references:
+
+- Workflow: `.github/workflows/alpha-macos-aarch64.yml`
+- Endpoint resolution: `apps/app/src/app/lib/release-channels.ts`
+- Preference plumbing: `apps/app/src/react-app/kernel/local-provider.tsx`, `apps/app/src/react-app/domains/settings/pages/updates-view.tsx`
+- Stable workflow (reference): `.github/workflows/release-macos-aarch64.yml`
+
 ## Reload-required flow
 
 OpenWork uses a single reload-required flow for changes that only take effect when OpenCode restarts.

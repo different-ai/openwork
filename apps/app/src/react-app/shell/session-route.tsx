@@ -10,20 +10,26 @@ import {
   createOpenworkServerClient,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
+  writeOpenworkServerSettings,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
 import {
+  engineInfo,
   openworkServerInfo,
+  openworkServerRestart,
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
   workspaceCreate,
   workspaceCreateRemote,
+  workspaceExportConfig,
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   workspaceUpdateDisplayName,
+  type EngineInfo,
+  type OpenworkServerInfo,
   type WorkspaceInfo,
   type WorkspaceList,
 } from "../../app/lib/tauri";
@@ -49,6 +55,7 @@ import { SessionPage } from "../domains/session/chat/session-page";
 import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
+import { useShareWorkspaceState } from "../domains/workspace/share-workspace-state";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import { CommandPalette, type SessionOption as PaletteSessionOption } from "./command-palette";
 import { getDisplaySessionTitle } from "../../app/lib/session-title";
@@ -91,20 +98,26 @@ async function resolveRouteOpenworkConnection() {
   const settings = readOpenworkServerSettings();
   let normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
   let resolvedToken = settings.token?.trim() ?? "";
+  let hostInfo: OpenworkServerInfo | null = null;
 
-  if ((!normalizedBaseUrl || !resolvedToken) && isTauriRuntime()) {
+  if (isTauriRuntime()) {
     try {
       const info = await openworkServerInfo();
-      normalizedBaseUrl =
-        normalizeOpenworkServerUrl(info.connectUrl ?? info.baseUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
-        normalizedBaseUrl;
-      resolvedToken = info.ownerToken?.trim() || info.clientToken?.trim() || resolvedToken;
+      hostInfo = info;
+      if (!normalizedBaseUrl) {
+        normalizedBaseUrl =
+          normalizeOpenworkServerUrl(info.connectUrl ?? info.baseUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
+          normalizedBaseUrl;
+      }
+      if (!resolvedToken) {
+        resolvedToken = info.ownerToken?.trim() || info.clientToken?.trim() || resolvedToken;
+      }
     } catch {
       // ignore and fall back to stored settings only
     }
   }
 
-  return { normalizedBaseUrl, resolvedToken };
+  return { normalizedBaseUrl, resolvedToken, hostInfo };
 }
 
 function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
@@ -233,6 +246,26 @@ export function SessionRoute() {
   // options for whichever model is currently selected so the composer's
   // behavior pill actually shows its options (bug: was empty before).
   const [providerCatalog, setProviderCatalog] = useState<Record<string, Record<string, any>>>({});
+  const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
+  const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
+  const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
+  const [shareRemoteAccessBusy, setShareRemoteAccessBusy] = useState(false);
+  const [shareRemoteAccessError, setShareRemoteAccessError] = useState<string | null>(null);
+
+  const openworkServerSettings = useMemo(
+    () => readOpenworkServerSettings(),
+    [openworkServerSettingsVersion],
+  );
+
+  const shareWorkspaceState = useShareWorkspaceState({
+    workspaces,
+    openworkServerHostInfo: openworkServerHostInfoState,
+    openworkServerSettings,
+    engineInfo: routeEngineInfo,
+    exportWorkspaceBusy: false,
+    openLink: (url) => platform.openLink(url),
+    workspaceLabel,
+  });
 
   const refreshRouteState = useCallback(async () => {
     // Dedupe: if a refresh is already running, skip this call. Fast workspace
@@ -246,7 +279,8 @@ export function SessionRoute() {
       const desktopList = isTauriRuntime() ? await workspaceBootstrap().catch(() => null) : null;
       const desktopWorkspaces = (desktopList?.workspaces ?? []).map(mapDesktopWorkspace);
 
-      const { normalizedBaseUrl, resolvedToken } = await resolveRouteOpenworkConnection();
+      const { normalizedBaseUrl, resolvedToken, hostInfo } = await resolveRouteOpenworkConnection();
+      setOpenworkServerHostInfoState(hostInfo);
       if (!normalizedBaseUrl || !resolvedToken) {
         setClient(null);
         setBaseUrl("");
@@ -389,6 +423,7 @@ export function SessionRoute() {
     })();
 
     const handleSettingsChange = () => {
+      setOpenworkServerSettingsVersion((value) => value + 1);
       // Self-heal: if the previous refresh got stuck mid-flight (e.g. macOS
       // backgrounded the webview and never let a fetch resolve), clear the
       // guard so a re-entry after resume actually goes through.
@@ -417,6 +452,21 @@ export function SessionRoute() {
       }
     };
   }, [refreshRouteState]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    void engineInfo()
+      .then((info) => {
+        if (!cancelled) setRouteEngineInfo(info);
+      })
+      .catch(() => {
+        if (!cancelled) setRouteEngineInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Inspector wiring: publish the route's current state so an external
   // operator (or an AI driver like Chrome MCP) can call
@@ -793,17 +843,53 @@ export function SessionRoute() {
   }, [workspaces]);
 
   const handleShareWorkspace = useCallback((workspaceId: string) => {
-    // TODO: re-introduce full ShareWorkspaceModal flow. For now copy the workspace path
-    // to the clipboard so Reveal/inspection still works.
-    const workspace = workspaces.find((item) => item.id === workspaceId);
-    const path = workspace?.path?.trim();
-    if (!path) return;
-    try {
-      void navigator.clipboard.writeText(path);
-    } catch {
-      // ignore
-    }
-  }, [workspaces]);
+    shareWorkspaceState.openShareWorkspace(workspaceId);
+  }, [shareWorkspaceState]);
+
+  const handleSaveShareRemoteAccess = useCallback(
+    async (enabled: boolean) => {
+      if (shareRemoteAccessBusy || !isTauriRuntime()) return;
+      const previous = readOpenworkServerSettings();
+      const next = { ...previous, remoteAccessEnabled: enabled };
+      setShareRemoteAccessBusy(true);
+      setShareRemoteAccessError(null);
+      writeOpenworkServerSettings(next);
+      setOpenworkServerSettingsVersion((value) => value + 1);
+      try {
+        const info = await openworkServerRestart({ remoteAccessEnabled: enabled });
+        setOpenworkServerHostInfoState(info);
+        await refreshRouteState();
+      } catch (error) {
+        writeOpenworkServerSettings(previous);
+        setOpenworkServerSettingsVersion((value) => value + 1);
+        setShareRemoteAccessError(error instanceof Error ? error.message : t("app.error_remote_access"));
+      } finally {
+        setShareRemoteAccessBusy(false);
+      }
+    },
+    [refreshRouteState, shareRemoteAccessBusy],
+  );
+
+  const handleExportWorkspaceConfig = useCallback(
+    async (workspaceId: string) => {
+      if (!isTauriRuntime()) return;
+      const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+      if (!workspace) return;
+      const outputPath = await pickDirectory({
+        title: `Choose where to export ${workspaceLabel(workspace)}`,
+      });
+      const targetPath = Array.isArray(outputPath) ? outputPath[0] : outputPath;
+      if (!targetPath) return;
+      await workspaceExportConfig({ workspaceId, outputPath: targetPath });
+      try {
+        const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+        await revealItemInDir(targetPath);
+      } catch {
+        // ignore reveal failures
+      }
+    },
+    [workspaces],
+  );
 
   const handleForgetWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -1098,6 +1184,74 @@ export function SessionRoute() {
       }}
       todos={[] satisfies TodoItem[]}
       sessionLoadingById={(sessionId) => loading && Boolean(sessionId && sessionId === selectedSessionId)}
+      shareWorkspaceModal={
+        shareWorkspaceState.shareWorkspaceOpen
+          ? {
+              open: true,
+              onClose: shareWorkspaceState.closeShareWorkspace,
+              workspaceName: shareWorkspaceState.shareWorkspaceName,
+              workspaceDetail: shareWorkspaceState.shareWorkspaceDetail,
+              fields: shareWorkspaceState.shareFields,
+              remoteAccess:
+                isTauriRuntime() && shareWorkspaceState.shareWorkspace?.workspaceType === "local"
+                  ? {
+                      enabled: openworkServerSettings.remoteAccessEnabled === true,
+                      busy: shareRemoteAccessBusy,
+                      error: shareRemoteAccessError,
+                      onSave: handleSaveShareRemoteAccess,
+                    }
+                  : undefined,
+              note: shareWorkspaceState.shareNote,
+              onShareWorkspaceProfile: () => void shareWorkspaceState.publishWorkspaceProfileLink(),
+              shareWorkspaceProfileBusy: shareWorkspaceState.shareWorkspaceProfileBusy,
+              shareWorkspaceProfileUrl: shareWorkspaceState.shareWorkspaceProfileUrl,
+              shareWorkspaceProfileError: shareWorkspaceState.shareWorkspaceProfileError,
+              shareWorkspaceProfileDisabledReason: shareWorkspaceState.shareServiceDisabledReason,
+              shareWorkspaceProfileSensitiveWarnings:
+                shareWorkspaceState.shareWorkspaceProfileSensitiveWarnings,
+              shareWorkspaceProfileSensitiveMode:
+                shareWorkspaceState.shareWorkspaceProfileSensitiveMode,
+              onShareWorkspaceProfileSensitiveModeChange:
+                shareWorkspaceState.setShareWorkspaceProfileSensitiveMode,
+              onShareWorkspaceProfileToTeam: (name) =>
+                void shareWorkspaceState.shareWorkspaceProfileToTeam(name),
+              shareWorkspaceProfileToTeamBusy:
+                shareWorkspaceState.shareWorkspaceProfileTeamBusy,
+              shareWorkspaceProfileToTeamError:
+                shareWorkspaceState.shareWorkspaceProfileTeamError,
+              shareWorkspaceProfileToTeamSuccess:
+                shareWorkspaceState.shareWorkspaceProfileTeamSuccess,
+              shareWorkspaceProfileToTeamDisabledReason:
+                shareWorkspaceState.shareWorkspaceProfileTeamDisabledReason,
+              shareWorkspaceProfileToTeamOrgName:
+                shareWorkspaceState.shareWorkspaceProfileTeamOrgName,
+              shareWorkspaceProfileToTeamNeedsSignIn:
+                shareWorkspaceState.shareWorkspaceProfileToTeamNeedsSignIn,
+              onShareWorkspaceProfileToTeamSignIn:
+                shareWorkspaceState.startShareWorkspaceProfileToTeamSignIn,
+              templateContentSummary: {
+                skillNames: [],
+                commandNames: [],
+                configFiles: ["opencode.json", "openwork.json"],
+              },
+              onShareSkillsSet: () => void shareWorkspaceState.publishSkillsSetLink(),
+              shareSkillsSetBusy: shareWorkspaceState.shareSkillsSetBusy,
+              shareSkillsSetUrl: shareWorkspaceState.shareSkillsSetUrl,
+              shareSkillsSetError: shareWorkspaceState.shareSkillsSetError,
+              shareSkillsSetDisabledReason: shareWorkspaceState.shareServiceDisabledReason,
+              onExportConfig:
+                shareWorkspaceState.exportDisabledReason === null
+                  ? () => {
+                      const id = shareWorkspaceState.shareWorkspaceId;
+                      if (!id) return;
+                      void handleExportWorkspaceConfig(id);
+                    }
+                  : undefined,
+              exportDisabledReason: shareWorkspaceState.exportDisabledReason,
+              onOpenBots: () => navigate("/settings/messaging"),
+            }
+          : null
+      }
       onRenameSession={
         opencodeClient
           ? async (sessionId, nextTitle) => {

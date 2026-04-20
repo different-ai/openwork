@@ -56,7 +56,7 @@ import {
   workspaceSetSelected,
   type WorkspaceInfo,
 } from "../../app/lib/tauri";
-import { isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
+import { isMacPlatform, isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef } from "../../app/types";
@@ -988,6 +988,11 @@ export function SettingsRoute() {
             installUpdateAndRestart={() => {
               setRouteError("App update install is not wired into the React settings route yet.");
             }}
+            releaseChannel={local.prefs.releaseChannel ?? "stable"}
+            onReleaseChannelChange={(next) =>
+              local.setPrefs((previous) => ({ ...previous, releaseChannel: next }))
+            }
+            alphaChannelSupported={isTauriRuntime() && isMacPlatform()}
           />
         );
       case "recovery":

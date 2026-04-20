@@ -154,6 +154,17 @@ export type View = "settings" | "session";
 
 export type StartupPreference = "local" | "server";
 
+/**
+ * Release channel the desktop app is subscribed to.
+ *
+ * - "stable": default. Auto-updates from the rolling stable GitHub release.
+ * - "alpha": macOS-only. Auto-updates from the rolling alpha release that
+ *   every merge to `dev` publishes to.
+ *
+ * See `apps/app/src/app/lib/release-channels.ts` for URL resolution.
+ */
+export type ReleaseChannel = "stable" | "alpha";
+
 export type EngineRuntime = "direct" | "openwork-orchestrator";
 
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
