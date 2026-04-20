@@ -144,7 +144,7 @@ export function createSidebarSessionsStore(options: {
         }
       }
 
-      const queryDirectory = toSessionTransportDirectory(directory) || undefined;
+      const queryDirectory = directory || undefined;
       const list = unwrap(
         await client.session.list({ directory: queryDirectory, roots: false, limit: SIDEBAR_SESSION_LIMIT }),
       );
