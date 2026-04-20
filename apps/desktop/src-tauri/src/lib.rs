@@ -223,6 +223,12 @@ pub fn run() {
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/opencode/openwork-server processes and stale ports.
+    //
+    // We intentionally match both ExitRequested AND Exit: on macOS the built-in
+    // Quit menu, Cmd+Q, and dock -> Quit only fire RunEvent::Exit — they don't
+    // fire ExitRequested (tauri-apps/tauri#9198). The red-X path fires both
+    // because we translate WindowEvent::CloseRequested into app_handle.exit(0)
+    // below. stop_managed_services is idempotent, so firing on both is safe.
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
         // On macOS the default behavior is to keep the process alive after the
