@@ -1,13 +1,37 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
 import { getApiKeyScopedOrganizationId } from "../api-keys.js"
-import { resolveUserOrganizations, type UserOrgSummary } from "../orgs.js"
+import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
 
 export type UserOrganizationsContext = {
   userOrganizations: UserOrgSummary[]
   activeOrganizationId: string | null
   activeOrganizationSlug: string | null
+}
+
+type SessionLike = AuthContextVariables["session"]
+
+export function shouldHydrateSessionActiveOrganization(input: {
+  resolvedActiveOrganizationId: string | null
+  scopedOrganizationId: string | null
+  sessionActiveOrganizationId?: string | null
+}) {
+  return !input.scopedOrganizationId && !input.sessionActiveOrganizationId && !!input.resolvedActiveOrganizationId
+}
+
+export async function hydrateSessionActiveOrganization(session: SessionLike, organizationId: string | null) {
+  if (!session?.id || !organizationId || session.activeOrganizationId === organizationId) {
+    return
+  }
+
+  try {
+    const sessionId = normalizeDenTypeId("session", session.id)
+    const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)
+    await setSessionActiveOrganization(sessionId, normalizedOrganizationId)
+  } catch {
+    return
+  }
 }
 
 export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
@@ -34,6 +58,17 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   const activeOrganizationSlug = scopedOrganizationId
     ? scopedOrgs[0]?.slug ?? null
     : resolved.activeOrgSlug
+
+  if (shouldHydrateSessionActiveOrganization({
+    scopedOrganizationId,
+    sessionActiveOrganizationId: session?.activeOrganizationId,
+    resolvedActiveOrganizationId: activeOrganizationId,
+  })) {
+    await hydrateSessionActiveOrganization(session, activeOrganizationId)
+    if (session) {
+      c.set("session", { ...session, activeOrganizationId })
+    }
+  }
 
   c.set("userOrganizations", scopedOrgs)
   c.set("activeOrganizationId", activeOrganizationId)
