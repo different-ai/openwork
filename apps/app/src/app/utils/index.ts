@@ -253,8 +253,30 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   return null;
 }
 
+function isSameDay(date1: Date, date2: Date): boolean {
+  return (
+    date1.getFullYear() === date2.getFullYear() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate()
+  );
+}
+
+function formatShortDate(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${month}-${day}`;
+}
+
 export function formatRelativeTime(timestampMs: number) {
-  const delta = Date.now() - timestampMs;
+  const now = new Date();
+  const timestampDate = new Date(timestampMs);
+
+  if (!isSameDay(timestampDate, now)) {
+    return formatShortDate(timestampMs);
+  }
+
+  const delta = now.getTime() - timestampMs;
 
   if (delta < 0) {
     return t("time.just_now");
@@ -268,11 +290,7 @@ export function formatRelativeTime(timestampMs: number) {
     return t("time.minutes_ago", undefined, { count: Math.max(1, Math.round(delta / 60_000)) });
   }
 
-  if (delta < 24 * 60 * 60_000) {
-    return t("time.hours_ago", undefined, { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
-  }
-
-  return new Date(timestampMs).toLocaleDateString();
+  return t("time.hours_ago", undefined, { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
 }
 
 export function addOpencodeCacheHint(message: string) {

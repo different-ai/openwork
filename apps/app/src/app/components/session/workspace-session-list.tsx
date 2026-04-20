@@ -199,8 +199,10 @@ export default function WorkspaceSessionList(props: Props) {
   const [expandedSessionIds, setExpandedSessionIds] = createSignal<Set<string>>(
     new Set(),
   );
+  const [now, setNow] = createSignal(Date.now());
   let workspaceMenuRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
+  let timeUpdateInterval: number | undefined;
 
   const isWorkspaceExpanded = (workspaceId: string) =>
     expandedWorkspaceIds().has(workspaceId);
@@ -232,6 +234,16 @@ export default function WorkspaceSessionList(props: Props) {
 
   onMount(() => {
     expandWorkspace(props.selectedWorkspaceId);
+    timeUpdateInterval = window.setInterval(() => {
+      setNow(Date.now());
+    }, 60_000);
+  });
+
+  onCleanup(() => {
+    if (timeUpdateInterval !== undefined) {
+      window.clearInterval(timeUpdateInterval);
+      timeUpdateInterval = undefined;
+    }
   });
 
   createEffect(() => {
@@ -348,6 +360,12 @@ export default function WorkspaceSessionList(props: Props) {
     const isSelected = () => props.selectedSessionId === session().id;
     const displayTitle = () =>
       getDisplaySessionTitle(session().title);
+    const sessionTime = () => {
+      now();
+      const s = session();
+      return s.time?.updated ?? s.time?.created ?? 0;
+    };
+    const displayTime = () => formatRelativeTime(sessionTime());
     const hasChildren = () =>
       (tree.descendantCountBySessionId.get(session().id) ?? 0) > 0;
     const hiddenChildCount = () =>
@@ -421,14 +439,22 @@ export default function WorkspaceSessionList(props: Props) {
             <Show when={isSessionActive()}>
               <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
             </Show>
-            <span
-              class={`block min-w-0 truncate ${
-                isSelected() ? "font-medium text-gray-12" : "font-normal text-current"
-              }`}
-              title={displayTitle()}
-            >
-              {displayTitle()}
-            </span>
+            <div class="min-w-0 flex-1">
+              <span
+                class={`block min-w-0 truncate ${
+                  isSelected() ? "font-medium text-gray-12" : "font-normal text-current"
+                }`}
+                title={displayTitle()}
+              >
+                {displayTitle()}
+              </span>
+              <span
+                class="block min-w-0 truncate text-[11px] text-gray-9"
+                title={displayTime()}
+              >
+                {displayTime()}
+              </span>
+            </div>
           </div>
 
           <div class="ml-auto flex shrink-0 items-center gap-1">
