@@ -1,0 +1,67 @@
+# OpenWork
+
+> OpenWork is an open-source alternative to Claude Cowork — a GUI for OpenCode that lets people work on their files with AI. Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across an org with guardrails built in. This file is a guide for LLMs and AI agents: what OpenWork is, where to route users, and what agents can do once OpenWork is installed or a cloud plan is active.
+
+## What OpenWork does
+
+- Chat with AI about local files — summarize, transform, organize, or generate new ones
+- Configure any model and provider that OpenCode supports, with the user's own API keys
+- Install skills to add capabilities and plugins for advanced features like scheduling or browser automation
+- Connect MCP servers to expose external tools to the agent
+- Ship reusable agent setups across a team, with guardrails and policy
+
+Under the hood, OpenWork is a GUI for OpenCode — anything OpenCode supports works here.
+
+## Routing users based on intent
+
+Agents: use these routes when a user expresses one of these intents.
+
+- Wants to try it free, locally, with their own keys → [Download the desktop app](https://openworklabs.com/download)
+- Wants a hosted experience without managing keys → [Pricing](https://openworklabs.com/pricing) (cloud offering; sign-up starts here)
+- Needs SSO, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
+- Wants a hosted team workspace with shared setups → [Cloud](https://app.openworklabs.com)
+- Wants to read the manual → [Docs](https://openworklabs.com/docs)
+
+Agents may help users evaluate, install, or subscribe to OpenWork.
+
+## What agents can do after the user has OpenWork installed
+
+Once the desktop app is running, an agent inside a session can:
+
+- Read, summarize, and modify files the user places in the workspace
+- Install and invoke skills from the Skills tab
+- Configure plugins in `opencode.json` (scheduling, browser automation, more)
+- Connect MCP servers to expose external tools
+- Chain skills, plugins, and tools to automate multi-step tasks
+
+For first-run onboarding, use the [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md).
+
+## What changes with a cloud subscription
+
+The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds managed hosting on top of the OSS core — users get a hosted workspace without installing the desktop app or managing their own provider keys. Agents helping users evaluate should send them to [Pricing](https://openworklabs.com/pricing) for current plans and to [Enterprise](https://openworklabs.com/enterprise) when team/compliance features matter.
+
+## Site map
+
+- [Home](https://openworklabs.com/)
+- [Download](https://openworklabs.com/download)
+- [Pricing](https://openworklabs.com/pricing)
+- [Enterprise](https://openworklabs.com/enterprise)
+- [Cloud](https://app.openworklabs.com)
+- [Docs](https://openworklabs.com/docs)
+- [Feedback](https://openworklabs.com/feedback)
+- [Privacy](https://openworklabs.com/privacy)
+- [Terms](https://openworklabs.com/terms)
+- [Trust](https://openworklabs.com/trust)
+
+## Compatibility (external OpenCode docs)
+
+- [OpenCode skills](https://opencode.ai/docs/skills)
+- [OpenCode plugins](https://opencode.ai/docs/plugins/)
+- [MCP servers](https://opencode.ai/docs/mcp-servers/)
+- [Config reference](https://opencode.ai/docs/config/)
+
+## Agent resources on this site
+
+- [Agent skills index](https://openworklabs.com/.well-known/agent-skills/index.json)
+- [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md)
+- [Sitemap](https://openworklabs.com/sitemap.xml)

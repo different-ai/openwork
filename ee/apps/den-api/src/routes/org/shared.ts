@@ -11,10 +11,6 @@ export type OrgRouteVariables =
   & Partial<OrganizationContextVariables>
   & Partial<MemberTeamsContext>
 
-export const orgIdParamSchema = z.object({
-  orgId: denTypeIdSchema("organization"),
-})
-
 export function idParamSchema<K extends string>(key: K, typeName?: DenTypeIdName) {
   if (!typeName) {
     return z.object({

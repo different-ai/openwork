@@ -20,6 +20,13 @@ on:
         description: "Optional Daytona region override for snapshot push"
         required: false
         type: string
+    secrets:
+      DAYTONA_API_KEY:
+        required: true
+      RENDER_API_KEY:
+        required: false
+      RENDER_DEN_CONTROL_PLANE_SERVICE_ID:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -98,6 +105,22 @@ jobs:
           fetch-depth: 0
           ref: ${{ steps.resolve.outputs.release_tag }}
 
+      - name: Ensure tag commit is on a trusted branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag_commit="$(git rev-parse HEAD)"
+          git fetch origin dev --no-tags
+
+          if git merge-base --is-ancestor "$tag_commit" origin/dev; then
+            echo "Trusted release tag commit verified: $tag_commit"
+            exit 0
+          fi
+
+          echo "Release tag ${{ steps.resolve.outputs.release_tag }} points to commit $tag_commit, which is not reachable from origin/dev." >&2
+          exit 1
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -169,4 +192,6 @@ jobs:
     uses: ./.github/workflows/deploy-den.yml
     with:
       daytona_snapshot: ${{ needs.publish-daytona-snapshot.outputs.snapshot_name }}
-    secrets: inherit
+    secrets:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}

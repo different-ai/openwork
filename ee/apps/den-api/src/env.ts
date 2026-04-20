@@ -13,6 +13,11 @@ const EnvSchema = z.object({
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CONNECTOR_APP_ID: z.string().optional(),
+  GITHUB_CONNECTOR_APP_CLIENT_ID: z.string().optional(),
+  GITHUB_CONNECTOR_APP_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CONNECTOR_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_CONNECTOR_APP_WEBHOOK_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   LOOPS_API_KEY: z.string().optional(),
@@ -157,6 +162,13 @@ export const env = {
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),
+  },
+  githubConnectorApp: {
+    appId: optionalString(parsed.GITHUB_CONNECTOR_APP_ID),
+    clientId: optionalString(parsed.GITHUB_CONNECTOR_APP_CLIENT_ID),
+    clientSecret: optionalString(parsed.GITHUB_CONNECTOR_APP_CLIENT_SECRET),
+    privateKey: optionalString(parsed.GITHUB_CONNECTOR_APP_PRIVATE_KEY),
+    webhookSecret: optionalString(parsed.GITHUB_CONNECTOR_APP_WEBHOOK_SECRET),
   },
   google: {
     clientId: optionalString(parsed.GOOGLE_CLIENT_ID),

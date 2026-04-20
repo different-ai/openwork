@@ -2780,6 +2780,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 name = "openwork"
 version = "0.11.207"
 dependencies = [
+ "dirs",
  "gethostname",
  "json5",
  "local-ip-address",

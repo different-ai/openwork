@@ -222,6 +222,7 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 
 - `/apps/app/` runs as the product UI; on desktop it is hosted inside `/apps/desktop/` (Tauri webview).
 - `/apps/desktop/` exposes native commands (`engine_*`, `orchestrator_*`, `openwork_server_*`, `opencodeRouter_*`) to start/stop local services and report status to the UI.
+- `/apps/desktop/` is also the source of truth for desktop bootstrap config that must survive updates, including Den server targeting and forced-sign-in startup behavior. The shell reads a predictable external `desktop-bootstrap.json` from the host config directory (or `OPENWORK_DESKTOP_BOOTSTRAP_PATH` when explicitly overridden). Default builds consume that file when present; custom builds seed or overwrite it when their bundled bootstrap differs from the standard default.
 - Runtime selection in desktop:
   - `openwork-orchestrator` (default): Tauri launches `openwork daemon run` and uses it for workspace activation plus OpenCode lifecycle.
   - `direct`: Tauri starts OpenCode directly.
@@ -252,6 +253,7 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 
 - `/ee/apps/den-web/` is the hosted web control surface (sign-in, worker create, upcoming user management).
 - `/ee/apps/den-api/` (formerly `/ee/apps/den-controller/`) is the cloud control plane API (auth/session + worker CRUD + provisioning orchestration).
+- Desktop org runtime config is fetched from Den after sign-in and is treated as server-owned runtime policy. It is stored per organization in Den (`organization.desktop_app_restrictions`) as sparse negative restriction flags (for example `blockZenModel`) and managed from the cloud org settings UI, while install/bootstrap config remains shell-owned in the external bootstrap file and only contains base URL, optional API base URL, and the `forceSignin` startup flag.
 - Daytona-backed workers mount a single shared provider volume and isolate each worker's persistent data by subpaths (`workers/<workerId>/workspace` and `workers/<workerId>/data`) rather than creating dedicated provider volumes per worker.
 - `/ee/apps/den-worker-runtime/` defines the runtime packaging and boot path used inside cloud workers (including Docker/snapshot artifacts and `openwork serve` startup assumptions).
 - `/ee/apps/den-worker-proxy/` fronts Daytona worker preview URLs, refreshes signed links with provider credentials, and proxies traffic to the worker runtime.

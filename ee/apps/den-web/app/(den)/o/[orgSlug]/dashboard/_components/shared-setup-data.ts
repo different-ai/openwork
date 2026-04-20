@@ -87,7 +87,7 @@ export function useOrgTemplates(orgId: string | null) {
       }
 
       const { response, payload } = await requestJson(
-        `/v1/orgs/${encodeURIComponent(orgId)}/templates`,
+        `/v1/templates`,
         { method: "GET" },
         12000,
       );

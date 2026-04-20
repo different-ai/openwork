@@ -1,0 +1,30 @@
+{
+  "name": "@openwork/server-sdk",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "generated",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "generate": "pnpm exec openapi-ts -f openapi-ts.config.ts",
+    "watch": "node ./scripts/watch.mjs",
+    "pretypecheck": "pnpm --dir ../.. run sdk:generate",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hey-api/client-fetch": "0.13.1"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.95.0",
+    "typescript": "^5.6.3"
+  }
+}

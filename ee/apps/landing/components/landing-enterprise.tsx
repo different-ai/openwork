@@ -78,8 +78,8 @@ export function LandingEnterprise(props: Props) {
 
         <main className="mx-auto flex w-full max-w-5xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
           <section className="max-w-4xl">
-            <h1 className="mb-6 text-4xl font-medium leading-[1.05] tracking-tight md:text-5xl lg:text-6xl">
-              The Open Source alternative to Claude Cowork.
+            <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
+              A privacy-first alternative to Claude Cowork<br />for your organization
             </h1>
 
             <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
@@ -97,6 +97,9 @@ export function LandingEnterprise(props: Props) {
               >
                 Book a call
               </a>
+              <a href="/trust" className="secondary-button">
+                Security Review
+              </a>
 
               <div className="flex items-center gap-2 opacity-80 sm:ml-4">
                 <span className="text-[13px] font-medium text-gray-500">
@@ -111,12 +114,6 @@ export function LandingEnterprise(props: Props) {
                   </span>
                 </div>
               </div>
-            </div>
-
-            <div className="mt-4">
-              <a href="/trust" className="text-[14px] font-medium text-[#011627] transition-colors hover:text-slate-700">
-                Trust details
-              </a>
             </div>
           </section>
 

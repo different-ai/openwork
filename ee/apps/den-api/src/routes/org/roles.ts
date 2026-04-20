@@ -9,7 +9,7 @@ import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizati
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { serializePermissionRecord } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { createRoleId, ensureOwner, idParamSchema, normalizeRoleName, orgIdParamSchema, replaceRoleValue, splitRoles } from "./shared.js"
+import { createRoleId, ensureOwner, idParamSchema, normalizeRoleName, replaceRoleValue, splitRoles } from "./shared.js"
 
 const permissionSchema = z.record(z.string(), z.array(z.string()))
 
@@ -24,11 +24,11 @@ const updateRoleSchema = z.object({
 })
 
 type OrganizationRoleId = typeof OrganizationRoleTable.$inferSelect.id
-const orgRoleParamsSchema = orgIdParamSchema.extend(idParamSchema("roleId", "organizationRole").shape)
+const orgRoleParamsSchema = idParamSchema("roleId", "organizationRole")
 
 export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/orgs/:orgId/roles",
+    "/v1/roles",
     describeRoute({
       tags: ["Roles"],
       summary: "Create organization role",
@@ -42,7 +42,6 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(createRoleSchema),
     async (c) => {
@@ -81,7 +80,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.patch(
-    "/v1/orgs/:orgId/roles/:roleId",
+    "/v1/roles/:roleId",
     describeRoute({
       tags: ["Roles"],
       summary: "Update organization role",
@@ -188,7 +187,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.delete(
-    "/v1/orgs/:orgId/roles/:roleId",
+    "/v1/roles/:roleId",
     describeRoute({
       tags: ["Roles"],
       summary: "Delete organization role",

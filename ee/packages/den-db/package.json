@@ -60,6 +60,7 @@
     "db:push": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts"
   },
   "dependencies": {
+    "@openwork/types": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.1",

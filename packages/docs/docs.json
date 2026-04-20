@@ -17,49 +17,67 @@
       {
         "tab": "Start here",
         "pages": [
-          "get-started",
+          "start-here/get-started",
           {
-            "group": "Desktop App",
+            "group": "Connect your stack",
             "pages": [
-              "enable-advanced-search-with-exa",
-              "how-to-connect-chat-gpt",
-              "how-to-connect-mcps",
-              "computer-use",
-              "sharing-ow-setup",
-              "accessing-ow-from-slack",
-              "automating-tasks"
+              "start-here/connect-your-stack/sign-in-with-chatgpt",
+              "start-here/connect-your-stack/add-anthropic-api-key",
+              "start-here/connect-your-stack/add-a-custom-llm",
+              "start-here/connect-your-stack/add-an-mcp-server",
+              "start-here/connect-your-stack/enable-exa-search"
             ]
           },
           {
-            "group": "Tutorials",
+            "group": "Do work with it",
             "pages": [
-              "how-to-get-an-anthropic-api-key",
-              "how-to-connect-a-custom-provider",
-              "importing-a-skill"
+              "start-here/do-work-with-it/control-the-browser",
+              "start-here/do-work-with-it/automate-tasks",
+              "start-here/do-work-with-it/import-a-skill",
+              "start-here/do-work-with-it/share-your-setup"
             ]
           },
           {
-            "group": "Improve this doc",
+            "group": "Self-host",
             "pages": [
-              "missing-docs"
+              "start-here/self-host"
+            ]
+          },
+          {
+            "group": "Help improve OpenWork",
+            "pages": [
+              "start-here/missing-docs",
+              "start-here/missing-languages"
             ]
           }
         ]
       },
       {
-        "tab": "Cloud docs",
+        "tab": "Cloud",
         "pages": [
-          "get-started-cloud",
-          "team-provisioning",
-          "cloud-skill-hubs",
-          "cloud-shared-workspaces",
-          "cloud-llm-providers",
-          "cloud-custom-llm-providers",
-          "cloud-members-and-rbac"
+          "cloud/get-started",
+          {
+            "group": "Share with your team",
+            "pages": [
+              "cloud/share-with-your-team/team-templates",
+              "cloud/share-with-your-team/skill-hubs",
+              "cloud/share-with-your-team/managed-llm-provider",
+              "cloud/share-with-your-team/custom-llm-provider"
+            ]
+          },
+          {
+            "group": "Run in the cloud",
+            "pages": [
+              "cloud/run-in-the-cloud/shared-workspace",
+              "cloud/run-in-the-cloud/connect-slack"
+            ]
+          },
+          "cloud/members-and-rbac",
+          "cloud/enterprise"
         ]
       },
       {
-        "tab": "Cloud API",
+        "tab": "API",
         "openapi": "https://api.openworklabs.com/openapi.json"
       },
       {
@@ -79,15 +97,23 @@
   "redirects": [
     {
       "source": "/",
-      "destination": "/get-started"
+      "destination": "/start-here/get-started"
     },
     {
       "source": "/quickstart",
-      "destination": "/get-started"
+      "destination": "/start-here/get-started"
     },
     {
       "source": "/introduction",
-      "destination": "/get-started-cloud"
+      "destination": "/cloud/get-started"
+    },
+    {
+      "source": "/roadmap/roadmap",
+      "destination": "/roadmap"
+    },
+    {
+      "source": "/changelog/changelog",
+      "destination": "/changelog"
     }
   ],
   "errors": {

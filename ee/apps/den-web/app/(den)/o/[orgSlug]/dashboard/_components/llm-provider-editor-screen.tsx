@@ -298,8 +298,8 @@ export function LlmProviderEditorScreen({
             }
 
             const path = provider
-                ? `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers/${encodeURIComponent(provider.id)}`
-                : `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers`;
+                ? `/v1/llm-providers/${encodeURIComponent(provider.id)}`
+                : `/v1/llm-providers`;
             const method = provider ? "PATCH" : "POST";
 
             const { response, payload } = await requestJson(

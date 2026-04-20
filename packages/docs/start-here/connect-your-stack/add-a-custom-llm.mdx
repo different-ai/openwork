@@ -1,0 +1,59 @@
+---
+title: "Add a custom LLM"
+description: "How to connect a custom provider with OpenWork"
+---
+
+Because `OpenWork` is built on `OpenCode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
+
+Inside `/path-to-your-workspace/.config/opencode/opencode.json`:
+```
+{
+  "provider": {
+    "my-api": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "My model",
+      "options": {
+        "baseURL": "https://your API address/v1"
+      },
+      "models": {
+        "model-name": {
+          "name": "Model name"
+        }
+      }
+    }
+  }
+}
+```
+
+We've also built a [custom skill](https://share.openworklabs.com/b/01KNBQDQAK41VZSZDF5G9MW4MW) that you can import in OpenWork following [this guide](/start-here/do-work-with-it/import-a-skill).
+
+The following tutorial covers how to [import a custom provider using the skill](https://x.com/getopenwork/status/2034129039317995908?s=20).
+
+### Functional example: Ollama (Qwen3 8B)
+
+This setup a local [Ollama](https://docs.ollama.com/api/openai-compatibility) instance running `qwen3:8b`. 
+
+```
+{
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3:8b": {
+          "name": "Qwen3 8B"
+        }
+      }
+    }
+  }
+}
+```
+
+Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama server is reachable at `http://localhost:11434` with `ollama serve`
+
+Open your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
+
+For teams, you can manage the provider in OpenWork Cloud under [LLM Providers](/cloud/share-with-your-team/managed-llm-provider), then import it into each workspace from `Settings -> Cloud`.

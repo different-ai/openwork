@@ -427,8 +427,24 @@ export type AppBuildInfo = {
   openworkDevMode?: boolean;
 };
 
+export type DesktopBootstrapConfig = {
+  baseUrl: string;
+  apiBaseUrl?: string | null;
+  requireSignin: boolean;
+};
+
 export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
+}
+
+export async function getDesktopBootstrapConfig(): Promise<DesktopBootstrapConfig> {
+  return invoke<DesktopBootstrapConfig>("get_desktop_bootstrap_config");
+}
+
+export async function setDesktopBootstrapConfig(
+  config: DesktopBootstrapConfig,
+): Promise<DesktopBootstrapConfig> {
+  return invoke<DesktopBootstrapConfig>("set_desktop_bootstrap_config", { config });
 }
 
 export async function nukeOpenworkAndOpencodeConfigAndExit(): Promise<void> {

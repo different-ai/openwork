@@ -214,9 +214,38 @@ jobs:
             --notes-file "$BODY_FILE" \
             $DRAFT_FLAG $PRERELEASE_FLAG
 
+  verify-trusted-release-tag:
+    name: Verify Trusted Release Tag
+    needs: resolve-release
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Checkout tagged release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Ensure tag commit is on a trusted branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          git fetch origin dev --no-tags
+
+          if git merge-base --is-ancestor "$tag_commit" origin/dev; then
+            echo "Trusted release tag commit verified: $tag_commit"
+            exit 0
+          fi
+
+          echo "Release tag $RELEASE_TAG points to commit $tag_commit, which is not reachable from origin/dev." >&2
+          exit 1
+
   verify-release:
     name: Verify Release Versions
-    needs: resolve-release
+    needs: [resolve-release, verify-trusted-release-tag]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -500,8 +529,8 @@ jobs:
           updaterJsonPreferNsis: true
           releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
 
-      - name: Build + upload
-        if: matrix.os_type != 'macos' || env.MACOS_NOTARIZE != 'true'
+      - name: Build + upload (macOS signed, no notarization)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
         uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
         env:
           CI: true
@@ -515,6 +544,30 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
+          prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
+          projectPath: apps/desktop
+          tauriScript: pnpm exec tauri -vvv
+          args: ${{ matrix.args }}
+          retryAttempts: 3
+          uploadUpdaterJson: false
+          updaterJsonPreferNsis: true
+          releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
+
+      - name: Build + upload (non-macOS)
+        if: matrix.os_type != 'macos'
+        uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ${{ env.RELEASE_NAME }}
@@ -865,7 +918,10 @@ jobs:
     uses: ./.github/workflows/release-daytona-snapshot.yml
     with:
       tag: ${{ needs.resolve-release.outputs.release_tag }}
-    secrets: inherit
+    secrets:
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
 
   aur-publish:
     name: Publish AUR

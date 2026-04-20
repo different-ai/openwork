@@ -8,6 +8,7 @@ This folder groups Den API endpoints by product surface instead of keeping one l
 - `me/`: current-user routes that describe the signed-in user and their org access
 - `org/`: organization routes split into focused files by concern
 - `admin/`: admin-only operational endpoints
+- `version/`: public app version metadata for desktop update checks
 - `workers/`: worker lifecycle, runtime, billing, and heartbeat routes
 
 ## Conventions

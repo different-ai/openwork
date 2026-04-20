@@ -95,7 +95,7 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
       const shared = visibility === "private" ? null : visibility;
       if (skillId) {
         const { response, payload } = await requestJson(
-          `/v1/orgs/${encodeURIComponent(orgId)}/skills/${encodeURIComponent(skillId)}`,
+          `/v1/skills/${encodeURIComponent(skillId)}`,
           { method: "PATCH", body: JSON.stringify({ skillText, shared }) },
           12000,
         );
@@ -103,7 +103,7 @@ export function SkillEditorScreen({ skillId }: { skillId?: string }) {
         router.push(getSkillDetailRoute(orgSlug, skillId));
       } else {
         const { response, payload } = await requestJson(
-          `/v1/orgs/${encodeURIComponent(orgId)}/skills`,
+          `/v1/skills`,
           { method: "POST", body: JSON.stringify({ skillText, shared }) },
           12000,
         );

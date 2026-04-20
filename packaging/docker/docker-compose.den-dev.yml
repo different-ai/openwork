@@ -70,7 +70,7 @@ services:
       start_period: 120s
     environment:
       CI: "true"
-      OPENWORK_DEV_MODE: "1"
+      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
       DATABASE_URL: mysql://root:password@mysql:3306/openwork_den
       BETTER_AUTH_SECRET: ${DEN_BETTER_AUTH_SECRET:-dev-den-local-auth-secret-please-override-1234567890}
       DEN_DB_ENCRYPTION_KEY: ${DEN_DB_ENCRYPTION_KEY:-dev-den-db-encryption-key-please-change-1234567890}

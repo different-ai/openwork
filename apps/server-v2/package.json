@@ -1,0 +1,43 @@
+{
+  "name": "openwork-server-v2",
+  "version": "0.11.206",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "openwork-server-v2": "bin/openwork-server-v2.mjs"
+  },
+  "scripts": {
+    "dev": "OPENWORK_DEV_MODE=1 bun --watch src/cli.ts",
+    "start": "bun src/cli.ts",
+    "openapi:generate": "bun ./scripts/generate-openapi.ts",
+    "openapi:watch": "node ./scripts/watch-openapi.mjs",
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:bin": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2",
+    "build:bin:windows": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --target bun-windows-x64",
+    "build:bin:embedded": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --embed-runtime",
+    "build:bin:embedded:windows": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --embed-runtime --target bun-windows-x64",
+    "build:bin:all": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --target bun-darwin-arm64 --target bun-darwin-x64-baseline --target bun-linux-x64-baseline --target bun-linux-arm64 --target bun-windows-x64",
+    "build:bin:embedded:all": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --embed-runtime --target bun-darwin-arm64 --target bun-darwin-x64-baseline --target bun-linux-x64-baseline --target bun-linux-arm64 --target bun-windows-x64",
+    "prepublishOnly": "pnpm openapi:generate && pnpm build:bin"
+  },
+  "files": [
+    "bin",
+    "openapi",
+    "src"
+  ],
+  "dependencies": {
+    "@opencode-ai/sdk": "1.4.9",
+    "hono": "4.12.12",
+    "hono-openapi": "1.3.0",
+    "jsonc-parser": "^3.3.1",
+    "yaml": "^2.8.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "bun-types": "^1.3.6",
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "pnpm@10.27.0"
+}

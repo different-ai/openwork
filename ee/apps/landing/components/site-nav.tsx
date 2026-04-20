@@ -11,7 +11,7 @@ type Props = {
   downloadHref?: string;
   mobilePrimaryHref?: string;
   mobilePrimaryLabel?: string;
-  active?: "home" | "pricing" | "download" | "enterprise" | "den" | "docs";
+  active?: "home" | "pricing" | "download" | "enterprise" | "cloud" | "docs";
 };
 
 export function SiteNav(props: Props) {
@@ -32,12 +32,15 @@ export function SiteNav(props: Props) {
   const callExternal = /^https?:\/\//.test(callHref);
   const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
   const navItems = [
-    { href: "/docs", label: "Docs", key: "docs" },
+    { href: "/docs", label: "Docs", key: "docs", newTab: true },
     { href: "/pricing", label: "Pricing", key: "pricing" },
     { href: "/download", label: "Desktop", key: "download" },
-    { href: "https://app.openworklabs.com", label: "Cloud", key: "den" },
+    { href: "https://app.openworklabs.com", label: "Cloud", key: "cloud" },
     { href: "/enterprise", label: "Enterprise", key: "enterprise" }
   ] as const;
+
+  const opensInNewTab = (item: (typeof navItems)[number]) =>
+    ("newTab" in item && item.newTab) || /^(?:https?:\/\/)/.test(item.href);
 
   const navLink = (isActive: boolean) =>
     isActive
@@ -64,7 +67,7 @@ export function SiteNav(props: Props) {
               <Link
                 key={item.key}
                 href={item.href}
-                {...(/^(?:https?:\/\/)/.test(item.href) ? { target: "_blank", rel: "noreferrer" } : {})}
+                {...(opensInNewTab(item) ? { target: "_blank", rel: "noreferrer" } : {})}
                 className={navLink(props.active === item.key)}
               >
                 {item.label}
@@ -117,7 +120,7 @@ export function SiteNav(props: Props) {
                 <Link
                   key={item.key}
                   href={item.href}
-                  {...(/^(?:https?:\/\/)/.test(item.href) ? { target: "_blank", rel: "noreferrer" } : {})}
+                  {...(opensInNewTab(item) ? { target: "_blank", rel: "noreferrer" } : {})}
                   className={`rounded-2xl px-4 py-3 ${navLink(
                     props.active === item.key
                   )}`}

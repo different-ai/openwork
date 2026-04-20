@@ -9,18 +9,18 @@ import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizati
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, roleIncludesOwner } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOwner, idParamSchema, normalizeRoleName, orgIdParamSchema } from "./shared.js"
+import { ensureOwner, idParamSchema, normalizeRoleName } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
 })
 
 type MemberId = typeof MemberTable.$inferSelect.id
-const orgMemberParamsSchema = orgIdParamSchema.extend(idParamSchema("memberId", "member").shape)
+const orgMemberParamsSchema = idParamSchema("memberId", "member")
 
 export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/orgs/:orgId/members/:memberId/role",
+    "/v1/members/:memberId/role",
     describeRoute({
       tags: ["Members"],
       summary: "Update member role",
@@ -81,7 +81,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
   )
 
   app.delete(
-    "/v1/orgs/:orgId/members/:memberId",
+    "/v1/members/:memberId",
     describeRoute({
       tags: ["Members"],
       summary: "Remove organization member",

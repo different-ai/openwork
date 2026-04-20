@@ -353,7 +353,7 @@ export function buildEditableCustomProviderText(provider: DenLlmProvider) {
 }
 
 export async function requestLlmProviderCatalog(orgId: string) {
-  const { response, payload } = await requestJson(`/v1/orgs/${encodeURIComponent(orgId)}/llm-provider-catalog`, { method: "GET" }, 20000);
+  const { response, payload } = await requestJson(`/v1/llm-provider-catalog`, { method: "GET" }, 20000);
   if (!response.ok) {
     throw new Error(getErrorMessage(payload, `Failed to load the provider catalog (${response.status}).`));
   }
@@ -365,7 +365,7 @@ export async function requestLlmProviderCatalog(orgId: string) {
 
 export async function requestLlmProviderCatalogDetail(orgId: string, providerId: string) {
   const { response, payload } = await requestJson(
-    `/v1/orgs/${encodeURIComponent(orgId)}/llm-provider-catalog/${encodeURIComponent(providerId)}`,
+    `/v1/llm-provider-catalog/${encodeURIComponent(providerId)}`,
     { method: "GET" },
     20000,
   );
@@ -401,7 +401,7 @@ export function useOrgLlmProviders(orgId: string | null) {
     setBusy(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson(`/v1/orgs/${encodeURIComponent(orgId)}/llm-providers`, { method: "GET" }, 15000);
+      const { response, payload } = await requestJson(`/v1/llm-providers`, { method: "GET" }, 15000);
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load providers (${response.status}).`));
       }

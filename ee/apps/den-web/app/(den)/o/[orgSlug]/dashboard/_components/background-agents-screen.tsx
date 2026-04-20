@@ -34,7 +34,7 @@ import {
 } from "../../../../_lib/den-flow";
 import { buildDenFeedbackUrl } from "../../../../_lib/feedback";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
-import { getSharedSetupsRoute } from "../../../../_lib/den-org";
+import { getBackgroundAgentsRoute, getSharedSetupsRoute } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type ConnectionDetails = {
@@ -317,7 +317,7 @@ export function BackgroundAgentsScreen() {
     renameBusyWorkerId,
   } = useDenFlow();
   const feedbackHref = buildDenFeedbackUrl({
-    pathname: `/o/${orgSlug}/dashboard/background-agents`,
+    pathname: getBackgroundAgentsRoute(orgSlug),
     orgSlug,
     topic: "workspace-limits",
   });

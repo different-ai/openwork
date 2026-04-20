@@ -8,7 +8,7 @@ import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { idParamSchema, orgIdParamSchema, parseTemplateJson } from "./shared.js"
+import { idParamSchema, parseTemplateJson } from "./shared.js"
 
 const createTemplateSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -41,11 +41,11 @@ const templateListResponseSchema = z.object({
 }).meta({ ref: "TemplateListResponse" })
 
 type TemplateSharingId = typeof TempTemplateSharingTable.$inferSelect.id
-const orgTemplateParamsSchema = orgIdParamSchema.extend(idParamSchema("templateId", "tempTemplateSharing").shape)
+const orgTemplateParamsSchema = idParamSchema("templateId", "tempTemplateSharing")
 
 export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/orgs/:orgId/templates",
+    "/v1/templates",
     describeRoute({
       tags: ["Templates"],
       summary: "Create shared template",
@@ -58,7 +58,6 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(createTemplateSchema),
     async (c) => {
@@ -101,7 +100,7 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
   )
 
   app.get(
-    "/v1/orgs/:orgId/templates",
+    "/v1/templates",
     describeRoute({
       tags: ["Templates"],
       summary: "List shared templates",
@@ -114,7 +113,6 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     async (c) => {
     const payload = c.get("organizationContext")
@@ -168,7 +166,7 @@ export function registerOrgTemplateRoutes<T extends { Variables: OrgRouteVariabl
   )
 
   app.delete(
-    "/v1/orgs/:orgId/templates/:templateId",
+    "/v1/templates/:templateId",
     describeRoute({
       tags: ["Templates"],
       summary: "Delete shared template",

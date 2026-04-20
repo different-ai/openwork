@@ -251,7 +251,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [openingTemplateId, setOpeningTemplateId] = useState<string | null>(null);
   const [user, setUser] = useState<DenUser | null>(null);
   const [orgs, setOrgs] = useState<
-    Array<{ id: string; name: string; slug: string; role: "owner" | "member" }>
+    Array<{ id: string; name: string; slug: string; role: "owner" | "admin" | "member" }>
   >([]);
   const [workers, setWorkers] = useState<
     Array<{

@@ -1,3 +1,4 @@
+import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
 import {
@@ -77,6 +78,22 @@ export const auth = betterAuth({
     provider: "mysql",
     schema,
   }),
+  databaseHooks: {
+    session: {
+      create: {
+        before: async (session) => {
+          const activeOrganizationId = await getInitialActiveOrganizationIdForUser(session.userId);
+
+          return {
+            data: {
+              ...session,
+              activeOrganizationId,
+            },
+          };
+        },
+      },
+    },
+  },
   advanced: {
     ipAddress: {
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"],

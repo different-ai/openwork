@@ -294,7 +294,7 @@ export function LandingHome(props: Props) {
 
               <div
                 className="relative flex min-h-[400px] w-full items-center justify-center overflow-hidden rounded-3xl border border-gray-100 bg-cover bg-center p-6 lg:w-2/3 md:p-10"
-                style={{ backgroundImage: "url('/enterprise-showcase-bg.png')" }}
+                style={{ backgroundImage: "url('/enterprise-showcase-bg.jpg')" }}
               >
                 {showEnterpriseShowcase ? (
                   <div className="grid w-full [&>*]:col-start-1 [&>*]:row-start-1">

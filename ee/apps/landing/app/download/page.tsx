@@ -1,11 +1,42 @@
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
+import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
+import { baseOpenGraph } from "../../lib/seo";
+
+const downloadSchema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "OpenWork",
+  description:
+    "Open source Claude Cowork alternative. Desktop app for macOS, Windows, and Linux that lets teams use 50+ LLMs with their own provider keys.",
+  url: "https://openworklabs.com/download",
+  downloadUrl: "https://github.com/different-ai/openwork/releases/latest",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "macOS, Windows, Linux",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD"
+  },
+  publisher: {
+    "@type": "Organization",
+    name: "OpenWork",
+    url: "https://openworklabs.com"
+  }
+};
 
 export const metadata = {
-  title: "OpenWork - Download",
+  title: "Download OpenWork — macOS, Windows, Linux",
   description:
     "Download OpenWork desktop for macOS, Windows, and Linux. Includes AUR install instructions and direct package downloads.",
+  alternates: {
+    canonical: "/download"
+  },
+  openGraph: {
+    ...baseOpenGraph,
+    url: "https://openworklabs.com/download"
+  }
 };
 
 export default async function Download() {
@@ -15,6 +46,7 @@ export default async function Download() {
 
   return (
     <div className="min-h-screen">
+      <StructuredData data={downloadSchema} />
       <SiteNav
         stars={github.stars}
         downloadHref={github.downloads.macos}
@@ -52,21 +84,21 @@ export default async function Download() {
               href="#macos"
               className="feature-card border-sky-100 bg-sky-50/60 transition hover:border-sky-200"
             >
-              <h2 className="mb-2 text-[16px] font-semibold text-gray-900">macOS</h2>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">macOS</span>
               <p className="text-[14px] text-gray-700">Apple Silicon and Intel builds</p>
             </a>
             <a
               href="#windows"
               className="feature-card border-violet-100 bg-violet-50/50 transition hover:border-violet-200"
             >
-              <h2 className="mb-2 text-[16px] font-semibold text-gray-900">Windows</h2>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">Windows</span>
               <p className="text-[14px] text-gray-700">x64 MSI installer</p>
             </a>
             <a
               href="#linux"
               className="feature-card border-emerald-100 bg-emerald-50/60 transition hover:border-emerald-200"
             >
-              <h2 className="mb-2 text-[16px] font-semibold text-gray-900">Linux</h2>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">Linux</span>
               <p className="text-[14px] text-gray-700">AUR, .deb, and .rpm options</p>
             </a>
           </div>

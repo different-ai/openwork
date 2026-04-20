@@ -1,0 +1,25 @@
+---
+title: "Control the browser"
+description: "How to use OpenWork to automate your Chrome Browser"
+---
+
+Computer-Use in OpenWork currently works as a browser automation in Google Chrome. It does not yet mean full desktop control of Ubuntu, macOS, or Windows apps.
+
+With the right skills, your OpenWork agent will be able to runs browser actions and take screnshots as proof of having completed said actions. If you connect to a remote OpenWork server, that remote machine also needs to have Chrome installed.
+
+Today, the supported path is `Control Chrome`, which uses Chrome DevTools MCP.
+
+## Requirements
+
+- Google Chrome on the machine running the session
+- In `Settings > Extensions > Control Chrome`
+
+<Frame>
+  ![Extensions page with Control Chrome MCP app](/images/extensions-control-chrome-app.png)
+
+  - Enable it and follow the instructions in the configuration screen _Note_: _do note use "Use my existing Chrome profile". It's currently not well supported._
+    <Frame>
+      ![Set up Control Chrome dialog](/images/control-chrome-setup-modal.png)
+    </Frame>
+    Go back to the session view and ask it to open a website
+</Frame>

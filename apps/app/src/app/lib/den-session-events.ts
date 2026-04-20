@@ -1,6 +1,7 @@
-import type { DenUser } from "./den";
+import type { DenSettings, DenUser } from "./den";
 
 export const denSessionUpdatedEvent = "openwork-den-session-updated";
+export const denSettingsChangedEvent = "openwork-den-settings-changed";
 
 export type DenSessionUpdatedDetail = {
   status?: "success" | "error";
@@ -18,6 +19,22 @@ export function dispatchDenSessionUpdated(detail: DenSessionUpdatedDetail) {
 
   window.dispatchEvent(
     new CustomEvent<DenSessionUpdatedDetail>(denSessionUpdatedEvent, {
+      detail,
+    }),
+  );
+}
+
+export type DenSettingsChangedDetail = {
+  settings: DenSettings;
+};
+
+export function dispatchDenSettingsChanged(detail: DenSettingsChangedDetail) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<DenSettingsChangedDetail>(denSettingsChangedEvent, {
       detail,
     }),
   );

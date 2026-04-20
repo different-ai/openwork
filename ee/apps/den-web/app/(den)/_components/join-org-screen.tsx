@@ -9,6 +9,7 @@ import {
   formatRoleLabel,
   getJoinOrgRoute,
   getOrgDashboardRoute,
+  isEmailAllowedForOrganization,
   parseInvitationPreviewPayload,
   type DenInvitationPreview,
 } from "../_lib/den-org";
@@ -45,6 +46,16 @@ function statusMessage(preview: DenInvitationPreview | null) {
   }
 }
 
+function formatAllowedDomains(allowedEmailDomains: readonly string[] | null | undefined) {
+  if (!allowedEmailDomains || allowedEmailDomains.length === 0) {
+    return "any invited email address";
+  }
+
+  return allowedEmailDomains.length === 1
+    ? allowedEmailDomains[0]
+    : allowedEmailDomains.join(", ");
+}
+
 export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const router = useRouter();
   const { user, sessionHydrated, signOut } = useDenFlow();
@@ -57,7 +68,14 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
   const invitedEmailMatches = preview && user
     ? preview.invitation.email.trim().toLowerCase() === user.email.trim().toLowerCase()
     : false;
+  const invitedEmailAllowed = preview
+    ? isEmailAllowedForOrganization(preview.organization.allowedEmailDomains, preview.invitation.email)
+    : true;
+  const signedInEmailAllowed = preview && user
+    ? isEmailAllowedForOrganization(preview.organization.allowedEmailDomains, user.email)
+    : true;
   const roleLabel = preview ? formatRoleLabel(preview.invitation.role) : "";
+  const allowedDomainsLabel = preview ? formatAllowedDomains(preview.organization.allowedEmailDomains) : "";
 
   useEffect(() => {
     let cancelled = false;
@@ -190,6 +208,27 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
     );
   }
 
+  if (preview.invitation.status === "pending" && !invitedEmailAllowed) {
+    return (
+      <section className="den-page py-4 lg:py-6">
+        <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
+          <div className="grid gap-2">
+            <p className="den-eyebrow">OpenWork Cloud</p>
+            <h1 className="den-title-lg">This invite needs a different email domain.</h1>
+            <p className="den-copy">
+              {preview.organization.name} now only accepts accounts from {allowedDomainsLabel}. Ask a workspace owner to update the allowlist or send a new invite.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Link href="/" className="den-button-primary w-full sm:w-auto">
+              Back to OpenWork Cloud
+            </Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   if (preview.invitation.status === "pending" && !user) {
     return (
       <section className="den-page grid gap-6 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] lg:py-6">
@@ -210,7 +249,12 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">
               Your team is already set up and waiting.
             </p>
-            <p className="den-copy">Member access is ready as soon as you join.</p>
+            <p className="den-copy">
+              Member access is ready as soon as you join.
+              {preview.organization.allowedEmailDomains?.length
+                ? ` This workspace only accepts ${allowedDomainsLabel} accounts.`
+                : ""}
+            </p>
           </div>
         </div>
 
@@ -281,6 +325,25 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
               >
                 {user && invitedEmailMatches ? "Open team" : "Back to OpenWork Cloud"}
               </Link>
+            </div>
+          </div>
+        ) : user && !signedInEmailAllowed ? (
+          <div className="grid gap-4">
+            <p className="den-copy">
+              {preview.organization.name} only accepts accounts from <span className="font-medium text-[var(--dls-text-primary)]">{allowedDomainsLabel}</span>. You are signed in as <span className="font-medium text-[var(--dls-text-primary)]">{user.email}</span>, so this account cannot join.
+            </p>
+            <p className="text-sm text-gray-500">
+              Log out, then create a new account or sign in with an allowed email address.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="den-button-primary w-full sm:w-auto"
+                onClick={() => void handleSwitchAccount()}
+                disabled={joinBusy}
+              >
+                Log out
+              </button>
             </div>
           </div>
         ) : !invitedEmailMatches ? (

@@ -18,6 +18,34 @@ const nextConfig = {
       },
     ];
   },
+  async headers() {
+    return [
+      {
+        source: "/",
+        headers: [
+          {
+            key: "Link",
+            value:
+              '</docs>; rel="service-doc", </.well-known/agent-skills/index.json>; rel="https://agentskills.io/rel/index", </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"',
+          },
+        ],
+      },
+      {
+        source: "/.well-known/agent-skills/index.json",
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+      {
+        source: "/.well-known/agent-skills/:path*/SKILL.md",
+        headers: [
+          { key: "Content-Type", value: "text/markdown; charset=utf-8" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+    ];
+  },
 };
 
 module.exports = withBotId(nextConfig);
