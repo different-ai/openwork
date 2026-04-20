@@ -31,7 +31,7 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions }) => Promise<void>;
+  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions; allowedDesktopVersions?: string[] | null }) => Promise<void>;
   switchOrganization: (slug: string) => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
@@ -251,8 +251,8 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions }) {
-    const body: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions } = {};
+  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions; allowedDesktopVersions?: string[] | null }) {
+    const body: { name?: string; allowedEmailDomains?: string[] | null; desktopAppRestrictions?: DenDesktopAppRestrictions; allowedDesktopVersions?: string[] | null } = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -266,8 +266,11 @@ export function OrgDashboardProvider({
     if (input.desktopAppRestrictions !== undefined) {
       body.desktopAppRestrictions = input.desktopAppRestrictions;
     }
+    if (input.allowedDesktopVersions !== undefined) {
+      body.allowedDesktopVersions = input.allowedDesktopVersions;
+    }
 
-    await runMutation("update-organization-name", async () => {
+    await runMutation("update-organization-settings", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
         "/v1/org",

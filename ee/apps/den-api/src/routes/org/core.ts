@@ -32,7 +32,8 @@ const updateOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   desktopAppRestrictions: desktopAppRestrictionsSchema.optional(),
-}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.desktopAppRestrictions !== undefined, {
+  allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
+}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.desktopAppRestrictions !== undefined || value.allowedDesktopVersions !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -343,6 +344,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         name: input.name,
         allowedEmailDomains: normalizedDomains.domains,
         desktopAppRestrictions: input.desktopAppRestrictions,
+        allowedDesktopVersions: input.allowedDesktopVersions,
       })
 
       if (!updated) {

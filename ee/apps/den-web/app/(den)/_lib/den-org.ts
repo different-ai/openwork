@@ -138,6 +138,10 @@ export type DenOrgContext = {
   currentMemberTeams: DenCurrentMemberTeam[];
 };
 
+export type DenOrganizationMetadata = {
+  allowedDesktopVersions?: string[];
+} & Record<string, unknown>;
+
 export const DEN_ROLE_PERMISSION_OPTIONS = {
   organization: ["update", "delete"],
   member: ["create", "update", "delete"],
@@ -170,6 +174,37 @@ function asStringArray(value: unknown): string[] | null {
   }
 
   return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function normalizeDesktopVersionString(value: string): string | null {
+  const normalized = value.trim().replace(/^v/i, "");
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(normalized)
+    ? normalized
+    : null;
+}
+
+export function parseOrganizationMetadata(metadata: string | null): DenOrganizationMetadata | null {
+  if (!metadata) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(metadata) as unknown;
+    return isRecord(parsed) ? (parsed as DenOrganizationMetadata) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getAllowedDesktopVersionsFromMetadata(metadata: string | null): string[] | null {
+  const parsed = parseOrganizationMetadata(metadata);
+  const values = asStringArray(parsed?.allowedDesktopVersions);
+
+  if (!values) {
+    return null;
+  }
+
+  return [...new Set(values.map((entry) => normalizeDesktopVersionString(entry)).filter((entry): entry is string => Boolean(entry)))];
 }
 
 function asDesktopAppRestrictions(value: unknown): DenDesktopAppRestrictions {
