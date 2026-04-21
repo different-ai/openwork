@@ -81,6 +81,7 @@ export function LlmProviderEditorScreen({
         useState<DenModelsDevProviderDetail | null>(null);
     const [detailBusy, setDetailBusy] = useState(false);
     const [detailError, setDetailError] = useState<string | null>(null);
+    const [providerName, setProviderName] = useState("");
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [modelQuery, setModelQuery] = useState("");
     const [customConfigText, setCustomConfigText] = useState(
@@ -131,6 +132,7 @@ export function LlmProviderEditorScreen({
         if (provider) {
             setSource(provider.source);
             setSelectedProviderId(provider.providerId);
+            setProviderName(provider.name);
             setSelectedModelIds(provider.models.map((entry) => entry.id));
             setSelectedMemberIds(
                 provider.access.members.map((entry) => entry.orgMembershipId),
@@ -149,6 +151,7 @@ export function LlmProviderEditorScreen({
 
         setSource("models_dev");
         setSelectedProviderId("");
+        setProviderName("");
         setSelectedModelIds([]);
         setSelectedMemberIds(
             orgContext?.currentMember.id ? [orgContext.currentMember.id] : [],
@@ -261,6 +264,11 @@ export function LlmProviderEditorScreen({
             return;
         }
 
+        if (!providerName.trim()) {
+            setSaveError("Give this provider a name.");
+            return;
+        }
+
         if (source === "models_dev") {
             if (!selectedProviderId) {
                 setSaveError("Select a provider.");
@@ -281,6 +289,7 @@ export function LlmProviderEditorScreen({
         setSaveError(null);
         try {
             const body: Record<string, unknown> = {
+                name: providerName.trim(),
                 source,
                 memberIds: [...new Set(selectedMemberIds)],
                 teamIds: [...new Set(selectedTeamIds)],
@@ -396,7 +405,7 @@ export function LlmProviderEditorScreen({
                     <div>
                         <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950">
                             {provider
-                                ? provider.name
+                                ? (providerName.trim() || provider.name)
                                 : "Add a new LLM provider"}
                         </h1>
                         <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500">
@@ -434,6 +443,24 @@ export function LlmProviderEditorScreen({
                     {saveError}
                 </div>
             ) : null}
+
+            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+                <label className="grid gap-3">
+                    <span className="text-[14px] font-medium text-gray-700">
+                        Name
+                    </span>
+                    <DenInput
+                        value={providerName}
+                        onChange={(event) => setProviderName(event.target.value)}
+                        placeholder="Give this key a name"
+                        autoComplete="off"
+                    />
+                </label>
+                <p className="mt-3 text-[13px] text-gray-500">
+                    Pick a clear label so teammates know which key or provider
+                    setup they are using.
+                </p>
+            </section>
 
             <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <h2 className="mb-6 text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
