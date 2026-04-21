@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 
 import { t, currentLocale } from "../../i18n";
 import type { StartupPreference, WorkspaceDisplay } from "../types";
@@ -111,19 +111,12 @@ export function createOpenworkServerStore(options: {
   });
 
   const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
-  const openworkServerWorkspaceReady = createMemo(() => Boolean(options.runtimeWorkspaceId()));
   const resolvedOpenworkCapabilities = createMemo(() => openworkServerCapabilities());
   const openworkServerCanWriteSkills = createMemo(
-    () =>
-      openworkServerReady() &&
-      openworkServerWorkspaceReady() &&
-      (resolvedOpenworkCapabilities()?.skills?.write ?? false),
+    () => openworkServerReady() && (resolvedOpenworkCapabilities()?.skills?.write ?? false),
   );
   const openworkServerCanWritePlugins = createMemo(
-    () =>
-      openworkServerReady() &&
-      openworkServerWorkspaceReady() &&
-      (resolvedOpenworkCapabilities()?.plugins?.write ?? false),
+    () => openworkServerReady() && (resolvedOpenworkCapabilities()?.plugins?.write ?? false),
   );
 
   const updateOpenworkServerSettings = (next: OpenworkServerSettings) => {
@@ -247,8 +240,10 @@ export function createOpenworkServerStore(options: {
         }
 
         if (!active) return;
-        setOpenworkServerStatus(result.status);
-        setOpenworkServerCapabilities(result.capabilities);
+        batch(() => {
+          setOpenworkServerStatus(result.status);
+          setOpenworkServerCapabilities(result.capabilities);
+        });
         delayMs =
           result.status === "connected" || result.status === "limited"
             ? 10_000
