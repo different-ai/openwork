@@ -301,7 +301,7 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
       const importedProvider = imported[provider.id] ?? null;
       const status = !importedProvider
         ? "available"
-        : importedProvider.providerId !== provider.providerId ||
+        : importedProvider.sourceProviderId !== provider.providerId ||
             (importedProvider.source ?? null) !== provider.source ||
             (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
             !sameStringList(importedProvider.modelIds, sortStrings(provider.models.map((model) => model.id)))

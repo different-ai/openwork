@@ -2863,7 +2863,12 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const hasOpenAiProviderConnected = createMemo(() =>
-    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
+    (props.providerConnectedIds ?? []).some((id) => {
+      const provider = props.providers.find((entry) => entry.id === id) ?? null;
+      const normalizedId = id.trim().toLowerCase();
+      const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
+      return normalizedId === "openai" || normalizedName.includes("openai");
+    })
   );
   const showNewSessionProviderCta = createMemo(() => !hasOpenAiProviderConnected());
   const emptyStatePreset = createMemo(

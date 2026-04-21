@@ -223,7 +223,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         }}
       >
         <div class="flex items-start gap-3">
-          <ProviderIcon providerId={opt.providerID} size={16} class={`mt-[1px] shrink-0 transition-colors ${active() ? 'text-gray-12' : 'text-gray-10 group-hover:text-gray-11'}`} />
+          <ProviderIcon providerId={opt.providerID} providerName={opt.description} size={16} class={`mt-[1px] shrink-0 transition-colors ${active() ? 'text-gray-12' : 'text-gray-10 group-hover:text-gray-11'}`} />
           <div class="flex-1 min-w-0">
             <div class={`text-[13px] flex items-center justify-between gap-2 ${active() ? 'font-medium text-gray-12' : 'text-current'}`}>
               <span class="truncate">{opt.title}</span>
@@ -300,7 +300,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
       }}
     >
       <div class="flex items-start gap-3">
-        <ProviderIcon providerId={provider.providerID} size={16} class={`mt-[1px] shrink-0 transition-colors ${index === activeIndex() ? 'text-gray-12' : 'text-gray-10 group-hover:text-gray-11'}`} />
+        <ProviderIcon providerId={provider.providerID} providerName={provider.title} size={16} class={`mt-[1px] shrink-0 transition-colors ${index === activeIndex() ? 'text-gray-12' : 'text-gray-10 group-hover:text-gray-11'}`} />
         <div class="flex-1 min-w-0">
           <div class={`text-[13px] flex items-center justify-between gap-2 text-current`}>
             <span class="truncate">{provider.title}</span>

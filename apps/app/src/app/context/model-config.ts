@@ -617,12 +617,14 @@ export function createModelConfigStore(options: {
   };
 
   const sanitizeModelVariantForRef = (ref: ModelRef, value: string | null) => {
+    const provider = options.providers().find((entry) => entry.id === ref.providerID) ?? null;
     const modelInfo = findProviderModel(ref);
     if (!modelInfo) return normalizeModelBehaviorValue(value);
-    return sanitizeModelBehaviorValue(ref.providerID, modelInfo, value);
+    return sanitizeModelBehaviorValue(ref.providerID, modelInfo, value, provider?.name);
   };
 
   const getModelBehaviorCopy = (ref: ModelRef, value: string | null) => {
+    const provider = options.providers().find((entry) => entry.id === ref.providerID) ?? null;
     const modelInfo = findProviderModel(ref);
     if (!modelInfo) {
       return {
@@ -632,7 +634,7 @@ export function createModelConfigStore(options: {
         options: [],
       };
     }
-    return getModelBehaviorSummary(ref.providerID, modelInfo, value);
+    return getModelBehaviorSummary(ref.providerID, modelInfo, value, provider?.name);
   };
 
   const selectedSessionModelLabel = createMemo(() =>
@@ -710,8 +712,8 @@ export function createModelConfigStore(options: {
           modelPickerTarget() === "session" && modelEquals(ref, selectedSessionModel())
             ? modelVariant()
             : getWorkspaceVariantFor(ref);
-        const behavior = getModelBehaviorSummary(provider.id, model, activeVariant);
-        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, activeVariant);
+        const behavior = getModelBehaviorSummary(provider.id, model, activeVariant, provider.name);
+        const behaviorValue = sanitizeModelBehaviorValue(provider.id, model, activeVariant, provider.name);
         const footerBits: string[] = [];
         if (defaultModelID === model.id || isDefault) {
           footerBits.push(t("settings.model_default", currentLocale()));

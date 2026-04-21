@@ -120,6 +120,10 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     modelCount: provider.models.length,
   });
 
+  const getCloudManagedProviderId = (provider: Pick<DenOrgLlmProvider, "id" | "providerId">) => {
+    return provider.id.trim();
+  };
+
   const buildCloudProviderConfig = (
     provider: DenOrgLlmProviderConnection,
   ): ProviderConfig => {
@@ -422,13 +426,14 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
   const addCloudProviderComment = (
     raw: string,
-    provider: Pick<DenOrgLlmProvider, "id" | "name" | "providerId">,
+    provider: Pick<DenOrgLlmProvider, "id" | "name">,
+    localProviderId: string,
   ) => {
-    const withoutExisting = removeCloudProviderComment(raw, provider.providerId);
-    const propertyPattern = new RegExp(`^([ \t]*)"${escapeRegExp(provider.providerId)}":`, "m");
+    const withoutExisting = removeCloudProviderComment(raw, localProviderId);
+    const propertyPattern = new RegExp(`^([ \t]*)"${escapeRegExp(localProviderId)}":`, "m");
     return withoutExisting.replace(
       propertyPattern,
-      `$1${cloudProviderComment(provider)}\n$1"${provider.providerId}":`,
+      `$1${cloudProviderComment(provider)}\n$1"${localProviderId}":`,
     );
   };
 
@@ -447,6 +452,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
   const formatConfigWithCloudProvider = (
     raw: string,
     provider: DenOrgLlmProviderConnection,
+    localProviderId: string,
     previousProviderId?: string | null,
   ) => {
     const nextProviderConfig = buildCloudProviderConfig(provider) as unknown as Record<string, unknown>;
@@ -460,13 +466,13 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       updated = applyEdits(updated, previousEdits);
     }
 
-    const providerEdits = modify(updated, ["provider", provider.providerId], nextProviderConfig, {
+    const providerEdits = modify(updated, ["provider", localProviderId], nextProviderConfig, {
       formattingOptions: { insertSpaces: true, tabSize: 2 },
     });
     updated = applyEdits(updated, providerEdits);
-    updated = addCloudProviderComment(updated, provider);
+    updated = addCloudProviderComment(updated, provider, localProviderId);
 
-    const disabledToRemove = new Set([provider.providerId, previousProviderId ?? ""]);
+    const disabledToRemove = new Set([localProviderId, previousProviderId ?? ""]);
     const currentDisabled = options.disabledProviders();
     if (currentDisabled.some((id) => disabledToRemove.has(id))) {
       const nextDisabled = currentDisabled.filter((id) => !disabledToRemove.has(id));
@@ -496,18 +502,23 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
   };
 
   const assertCloudProviderImportSafe = async (provider: DenOrgLlmProviderConnection) => {
-    const existingImported = Object.values(importedCloudProviders()).find(
-      (entry) => entry.providerId === provider.providerId,
-    );
-    if (existingImported && existingImported.cloudProviderId !== provider.id) {
+    const localProviderId = getCloudManagedProviderId(provider);
+    const existingImported = importedCloudProviders()[provider.id] ?? null;
+    if (
+      existingImported &&
+      existingImported.providerId !== localProviderId &&
+      Object.values(importedCloudProviders()).some(
+        (entry) => entry.providerId === localProviderId && entry.cloudProviderId !== provider.id,
+      )
+    ) {
       throw new Error(
-        `${provider.providerId} is already imported from ${existingImported.name}. Remove it before importing a different cloud provider.`,
+        `${localProviderId} is already imported from another cloud provider. Remove it before importing this one.`,
       );
     }
 
-    if (!existingImported && options.providerConnectedIds().includes(provider.providerId)) {
+    if (!existingImported && options.providerConnectedIds().includes(localProviderId)) {
       throw new Error(
-        `${provider.providerId} is already connected in this workspace. Disconnect it before importing the cloud-managed version.`,
+        `${localProviderId} is already connected in this workspace. Disconnect it before importing the cloud-managed version.`,
       );
     }
 
@@ -525,10 +536,10 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       providerSection &&
       typeof providerSection === "object" &&
       !Array.isArray(providerSection) &&
-      provider.providerId in (providerSection as Record<string, unknown>)
+      localProviderId in (providerSection as Record<string, unknown>)
     ) {
       throw new Error(
-        `${provider.providerId} already has a provider block in opencode.jsonc. Remove it before importing the cloud-managed version.`,
+        `${localProviderId} already has a provider block in opencode.jsonc. Remove it before importing the cloud-managed version.`,
       );
     }
   };
@@ -608,7 +619,8 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     provider: DenOrgLlmProvider,
     importedProvider: CloudImportedProvider,
   ) =>
-    importedProvider.providerId !== provider.providerId ||
+    importedProvider.providerId !== getCloudManagedProviderId(provider) ||
+    importedProvider.sourceProviderId !== provider.providerId ||
     (importedProvider.source ?? null) !== provider.source ||
     (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
     !sameStringList(importedProvider.modelIds, sortStrings(provider.models.map((model) => model.id)));
@@ -901,7 +913,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       const provider = availableProviders.find((item) => item.id === id);
       const normalizedId = id.trim().toLowerCase();
       const normalizedName = provider?.name?.trim().toLowerCase() ?? "";
-      const isOpenAiProvider = normalizedId === "openai" || normalizedName === "openai";
+      const isOpenAiProvider = normalizedId === "openai" || normalizedName.includes("openai");
       if (!isOpenAiProvider) continue;
       merged[id] = providerMethods.filter((method) => {
         if (method.type !== "oauth") return true;
@@ -1180,6 +1192,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         throw new Error(`${provider.name} is blocked by your organization desktop policy.`);
       }
       const existingImported = importedCloudProviders()[cloudProviderId] ?? null;
+      const localProviderId = getCloudManagedProviderId(provider);
       const apiKey = provider.apiKey?.trim() ?? "";
       const env = getCloudProviderEnv(provider.providerConfig);
       if (!apiKey && env.length > 0) {
@@ -1190,7 +1203,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
 
       if (apiKey) {
         await c.auth.set({
-          providerID: provider.providerId,
+          providerID: localProviderId,
           auth: {
             type: "api",
             key: apiKey,
@@ -1208,7 +1221,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         }
       }
       const updatedConfig = await updateProjectConfigFile((raw) =>
-        formatConfigWithCloudProvider(raw, provider, existingImported?.providerId ?? null),
+        formatConfigWithCloudProvider(raw, provider, localProviderId, existingImported?.providerId ?? null),
       );
       if (!updatedConfig) {
         throw new Error("Could not update opencode.jsonc for this workspace.");
@@ -1218,7 +1231,8 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
         ...importedCloudProviders(),
         [provider.id]: {
           cloudProviderId: provider.id,
-          providerId: provider.providerId,
+          providerId: localProviderId,
+          sourceProviderId: provider.providerId,
           name: provider.name,
           source: provider.source,
           updatedAt: provider.updatedAt ?? null,
@@ -1229,7 +1243,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       await persistImportedCloudProviders(nextImportedProviders);
 
       const nextDisabledProviders = options.disabledProviders().filter(
-        (id) => id !== provider.providerId && id !== existingImported?.providerId,
+        (id) => id !== localProviderId && id !== existingImported?.providerId,
       );
       options.setDisabledProviders(nextDisabledProviders);
       options.markOpencodeConfigReloadRequired();

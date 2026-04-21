@@ -1529,7 +1529,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     {(provider) => (
                       <div class={`${settingsPanelSoftClass} flex flex-wrap items-center justify-between gap-3 px-3 py-2`}>
                         <div class="min-w-0 flex items-center gap-3">
-                          <ProviderIcon providerId={provider.id} size={18} class="text-gray-12" />
+                          <ProviderIcon providerId={provider.id} providerName={provider.name} size={18} class="text-gray-12" />
                           <div class="min-w-0">
                             <div class="text-sm font-medium text-gray-12 truncate">
                               {provider.name}

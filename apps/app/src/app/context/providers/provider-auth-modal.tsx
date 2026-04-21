@@ -99,7 +99,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isOpenAiProvider = (id: string, fallbackName?: string) => {
     const normalizedId = id.trim().toLowerCase();
     const normalizedName = fallbackName?.trim().toLowerCase() ?? "";
-    return normalizedId === "openai" || normalizedName === "openai";
+    return normalizedId === "openai" || normalizedName.includes("openai");
   };
 
   // TODO: remove once we upgrade to opencode 1.3.0 — the Claude Pro/Max OAuth
@@ -107,7 +107,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isAnthropicProvider = (id: string, fallbackName?: string) => {
     const normalizedId = id.trim().toLowerCase();
     const normalizedName = fallbackName?.trim().toLowerCase() ?? "";
-    return normalizedId === "anthropic" || normalizedName === "anthropic";
+    return normalizedId === "anthropic" || normalizedName.includes("anthropic");
   };
 
   const isClaudeProMaxMethod = (method: ProviderAuthMethod) => {
@@ -743,7 +743,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                               onClick={() => handleEntrySelect(entry)}
                             >
                               <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-5/60 bg-gray-2 shadow-sm overflow-hidden">
-                                <ProviderIcon providerId={entry.id} size={18} class="text-gray-12" />
+                                <ProviderIcon providerId={entry.id} providerName={entry.name} size={18} class="text-gray-12" />
                               </div>
 
                               <div class="flex-1 min-w-0">

@@ -2,6 +2,7 @@ import { JSX } from "solid-js";
 
 type ProviderIconProps = {
   providerId?: string | null;
+  providerName?: string | null;
   class?: string;
   size?: number;
 };
@@ -9,10 +10,16 @@ type ProviderIconProps = {
 export default function ProviderIcon(props: ProviderIconProps) {
   const size = () => props.size ?? 16;
   const normalizedId = () => props.providerId?.trim().toLowerCase() ?? "";
+  const normalizedName = () => props.providerName?.trim().toLowerCase() ?? "";
+  const hasProviderFamily = (family: string) => {
+    const id = normalizedId();
+    const name = normalizedName();
+    return id === family || name.includes(family);
+  };
 
-  const isAnthropic = () => normalizedId() === "anthropic";
-  const isOpenAI = () => normalizedId() === "openai";
-  const isOpenCode = () => normalizedId() === "opencode";
+  const isAnthropic = () => hasProviderFamily("anthropic");
+  const isOpenAI = () => hasProviderFamily("openai");
+  const isOpenCode = () => hasProviderFamily("opencode");
 
   const fallbackLetters = () => {
     const id = normalizedId();
