@@ -151,6 +151,24 @@ function logUpdateGateFailure(label: string, payload?: unknown) {
   }
 }
 
+function logUpdateGateDebug(label: string, payload?: unknown) {
+  try {
+    recordDevLog(true, {
+      level: "debug",
+      source: "updates",
+      label,
+      payload,
+    });
+    if (payload === undefined) {
+      console.log(`[UPDATES] ${label}`);
+    } else {
+      console.log(`[UPDATES] ${label}`, payload);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function isUpdateAllowedByDesktopConfig(
   updateVersion: string,
   desktopConfig: DenDesktopConfig | null | undefined,
@@ -168,6 +186,14 @@ async function isUpdateSupportedByDen(updateVersion: string) {
   try {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
+    logUpdateGateDebug("den-update-check-start", {
+      updateVersion,
+      hasToken: Boolean(token),
+      activeOrgId: settings.activeOrgId ?? null,
+      activeOrgSlug: settings.activeOrgSlug ?? null,
+      baseUrl: settings.baseUrl,
+      apiBaseUrl: settings.apiBaseUrl ?? null,
+    });
     const client = createDenClient({
       baseUrl: settings.baseUrl,
       apiBaseUrl: settings.apiBaseUrl,
@@ -175,6 +201,12 @@ async function isUpdateSupportedByDen(updateVersion: string) {
     });
     const metadata = await client.getAppVersionMetadata();
     const comparison = compareVersions(updateVersion, metadata.latestAppVersion);
+    logUpdateGateDebug("den-update-check-app-version-response", {
+      updateVersion,
+      minAppVersion: metadata.minAppVersion,
+      latestAppVersion: metadata.latestAppVersion,
+      comparison,
+    });
     if (comparison === null) {
       logUpdateGateFailure("den-update-check-invalid-version-comparison", {
         updateVersion,
@@ -184,16 +216,27 @@ async function isUpdateSupportedByDen(updateVersion: string) {
     }
 
     if (comparison > 0) {
+      logUpdateGateDebug("den-update-check-blocked-by-server-max", {
+        updateVersion,
+        latestAppVersion: metadata.latestAppVersion,
+      });
       return false;
     }
 
     if (!token) {
+      logUpdateGateDebug("den-update-check-allowed-no-token", { updateVersion });
       return true;
     }
 
     try {
       const desktopConfig = await client.getDesktopConfig();
-      return isUpdateAllowedByDesktopConfig(updateVersion, desktopConfig);
+      const allowed = isUpdateAllowedByDesktopConfig(updateVersion, desktopConfig);
+      logUpdateGateDebug("den-update-check-desktop-config-response", {
+        updateVersion,
+        allowedDesktopVersions: desktopConfig.allowedDesktopVersions ?? null,
+        allowed,
+      });
+      return allowed;
     } catch (error) {
       logUpdateGateFailure("den-update-check-desktop-config-fetch-failed", {
         updateVersion,
@@ -582,6 +625,15 @@ export function createSystemState(options: {
       const update = (await check({ timeout: 8_000 })) as unknown as UpdateHandle | null;
       const checkedAt = Date.now();
 
+      logUpdateGateDebug("tauri-update-check-result", update
+        ? {
+            available: update.available,
+            currentVersion: update.currentVersion,
+            version: update.version,
+            date: update.date ?? null,
+          }
+        : { available: false });
+
       if (!update) {
         setPendingUpdate(null);
         setUpdateStatus({ state: "idle", lastCheckedAt: checkedAt });
@@ -591,11 +643,17 @@ export function createSystemState(options: {
       const notes = typeof update.body === "string" ? update.body : undefined;
 
       if (!(await isUpdateSupportedByDen(update.version))) {
+        logUpdateGateDebug("tauri-update-check-suppressed-by-den", {
+          version: update.version,
+        });
         setPendingUpdate(null);
         setUpdateStatus({ state: "idle", lastCheckedAt: checkedAt });
         return;
       }
 
+      logUpdateGateDebug("tauri-update-check-allowed-by-den", {
+        version: update.version,
+      });
       setPendingUpdate({ update, version: update.version, notes });
       setUpdateStatus({
         state: "available",

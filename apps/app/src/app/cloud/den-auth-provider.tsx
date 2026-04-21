@@ -1,6 +1,7 @@
 import { createContext, createMemo, createSignal, onCleanup, onMount, useContext, type Accessor, type ParentProps } from "solid-js";
 import { clearDenSession, createDenClient, DenApiError, ensureDenActiveOrganization, readDenSettings, type DenUser } from "../lib/den";
 import { denSessionUpdatedEvent } from "../lib/den-session-events";
+import { recordDevLog } from "../lib/dev-log";
 
 type DenAuthStatus = "checking" | "signed_in" | "signed_out";
 
@@ -14,6 +15,19 @@ type DenAuthStore = {
 
 const DenAuthContext = createContext<DenAuthStore>();
 
+function logDenAuth(label: string, payload?: unknown) {
+  try {
+    recordDevLog(true, { level: "debug", source: "den-auth", label, payload });
+    if (payload === undefined) {
+      console.log(`[DEN-AUTH] ${label}`);
+    } else {
+      console.log(`[DEN-AUTH] ${label}`, payload);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function DenAuthProvider(props: ParentProps) {
   const [status, setStatus] = createSignal<DenAuthStatus>("checking");
   const [user, setUser] = createSignal<DenUser | null>(null);
@@ -25,14 +39,24 @@ export function DenAuthProvider(props: ParentProps) {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
 
+    logDenAuth("refresh-start", {
+      currentRun,
+      hasToken: Boolean(token),
+      activeOrgId: settings.activeOrgId ?? null,
+      activeOrgSlug: settings.activeOrgSlug ?? null,
+      baseUrl: settings.baseUrl,
+    });
+
     if (!token) {
       setUser(null);
       setError(null);
       setStatus("signed_out");
+      logDenAuth("refresh-signed-out-no-token", { currentRun });
       return;
     }
 
     setStatus("checking");
+    logDenAuth("refresh-status-checking", { currentRun });
 
     try {
       const nextUser = await createDenClient({
@@ -42,6 +66,7 @@ export function DenAuthProvider(props: ParentProps) {
       }).getSession();
 
       if (currentRun !== refreshToken) {
+        logDenAuth("refresh-stale-after-session", { currentRun, refreshToken });
         return;
       }
 
@@ -52,14 +77,22 @@ export function DenAuthProvider(props: ParentProps) {
       }).catch(() => null);
 
       if (currentRun !== refreshToken) {
+        logDenAuth("refresh-stale-after-org-sync", { currentRun, refreshToken });
         return;
       }
 
       setUser(nextUser);
       setError(null);
       setStatus("signed_in");
+      logDenAuth("refresh-signed-in", {
+        currentRun,
+        userId: nextUser.id,
+        activeOrgId: readDenSettings().activeOrgId ?? null,
+        activeOrgSlug: readDenSettings().activeOrgSlug ?? null,
+      });
     } catch (nextError) {
       if (currentRun !== refreshToken) {
+        logDenAuth("refresh-stale-after-error", { currentRun, refreshToken });
         return;
       }
 
@@ -70,6 +103,10 @@ export function DenAuthProvider(props: ParentProps) {
       setUser(null);
       setError(nextError instanceof Error ? nextError.message : "Failed to restore OpenWork Cloud session.");
       setStatus("signed_out");
+      logDenAuth("refresh-error", {
+        currentRun,
+        error: nextError instanceof Error ? nextError.message : String(nextError),
+      });
     }
   };
 
@@ -81,6 +118,7 @@ export function DenAuthProvider(props: ParentProps) {
     }
 
     const handleSessionUpdated = () => {
+      logDenAuth("session-updated-event");
       void refresh();
     };
 

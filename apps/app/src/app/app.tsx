@@ -1709,6 +1709,18 @@ export default function App() {
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
   const [launchUpdateCheckTriggered, setLaunchUpdateCheckTriggered] = createSignal(false);
 
+  const logAppUpdateLifecycle = (label: string, payload?: unknown) => {
+    try {
+      if (payload === undefined) {
+        console.log(`[APP-UPDATES] ${label}`);
+      } else {
+        console.log(`[APP-UPDATES] ${label}`, payload);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
 
   const busySeconds = createMemo(() => {
     const start = busyStartedAt();
@@ -1893,7 +1905,10 @@ export default function App() {
         // ignore
       }
 
-      if (!launchUpdateCheckTriggered()) {
+      if (!launchUpdateCheckTriggered() && denAuth.status() !== "checking") {
+        logAppUpdateLifecycle("mount-triggering-launch-update-check", {
+          denAuthStatus: denAuth.status(),
+        });
         setLaunchUpdateCheckTriggered(true);
         checkForUpdates({ quiet: true }).catch(() => undefined);
       }
@@ -2053,13 +2068,33 @@ export default function App() {
   });
 
   createEffect(() => {
+    logAppUpdateLifecycle("den-auth-status", {
+      status: denAuth.status(),
+      isSignedIn: denAuth.isSignedIn(),
+    });
+  });
+
+  createEffect(() => {
     if (booting()) return;
     if (!isTauriRuntime()) return;
-    if (launchUpdateCheckTriggered()) return;
+    if (launchUpdateCheckTriggered()) {
+      logAppUpdateLifecycle("launch-update-check-skipped-already-triggered");
+      return;
+    }
+    if (denAuth.status() === "checking") {
+      logAppUpdateLifecycle("launch-update-check-waiting-for-den-auth", {
+        denAuthStatus: denAuth.status(),
+      });
+      return;
+    }
 
     const state = updateStatus();
     if (state.state === "checking" || state.state === "downloading") return;
 
+    logAppUpdateLifecycle("effect-triggering-launch-update-check", {
+      denAuthStatus: denAuth.status(),
+      updateState: state.state,
+    });
     setLaunchUpdateCheckTriggered(true);
     checkForUpdates({ quiet: true }).catch(() => undefined);
   });
