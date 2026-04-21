@@ -56,6 +56,9 @@ import {
   workspaceSetSelected,
   type WorkspaceInfo,
 } from "../../app/lib/tauri";
+import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
+import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
+import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
 import { isMacPlatform, isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
@@ -215,6 +218,7 @@ export function SettingsRoute() {
   const location = useLocation();
   const local = useLocal();
   const platform = usePlatform();
+  const checkDesktopRestriction = useCheckDesktopRestriction();
   const route = parseSettingsPath(location.pathname);
 
   const [loading, setLoading] = useState(true);
@@ -614,6 +618,12 @@ export function SettingsRoute() {
       openworkServerStore.dispose();
     };
   }, [automationsStore, connectionsStore, extensionsStore, openworkServerStore, providerAuthStore]);
+
+  // Periodically refresh cloud providers from Den while signed in (dev
+  // #1509 "auto-sync cloud providers"). Mounted here because the settings
+  // route always owns the provider-auth store and we don't want to fire
+  // the timer while the user is in an unrelated tree.
+  useCloudProviderAutoSync(providerAuthStore.refreshCloudOrgProviders);
 
   useEffect(() => {
     openworkServerStore.syncFromOptions();
@@ -1086,7 +1096,16 @@ export function SettingsRoute() {
         error={providerAuthSnapshot.providerAuthError}
         preferredProviderId={providerAuthSnapshot.providerAuthPreferredProviderId}
         workerType={providerAuthSnapshot.providerAuthWorkerType}
-        providers={providerAuthSnapshot.providerAuthProviders}
+        // Hide any provider the org blocks at the desktop layer so users
+        // can't connect a forbidden one (dev #1505). Same helper covers
+        // opencode-provider gating via the `blockZenModel` restriction.
+        providers={providerAuthSnapshot.providerAuthProviders.filter(
+          (provider) =>
+            !isDesktopProviderBlocked({
+              providerId: provider.id,
+              checkRestriction: checkDesktopRestriction,
+            }),
+        )}
         connectedProviderIds={providerConnectedIds}
         authMethods={providerAuthSnapshot.providerAuthMethods}
         onSelect={providerAuthStore.startProviderAuth}

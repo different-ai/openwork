@@ -6,6 +6,7 @@ import { hydrateOpenworkServerSettingsFromEnv, readOpenworkServerSettings } from
 import { isTauriRuntime } from "../../app/utils";
 import { DenAuthProvider } from "../domains/cloud/den-auth-provider";
 import { DesktopConfigProvider } from "../domains/cloud/desktop-config-provider";
+import { RestrictionNoticeProvider } from "../domains/cloud/restriction-notice-provider";
 import { GlobalSDKProvider } from "../kernel/global-sdk-provider";
 import { GlobalSyncProvider } from "../kernel/global-sync-provider";
 import { LocalProvider } from "../kernel/local-provider";
@@ -58,7 +59,9 @@ export function AppProviders({ children }: AppProvidersProps) {
           <GlobalSyncProvider>
             <DenAuthProvider>
               <DesktopConfigProvider>
-                <LocalProvider>{children}</LocalProvider>
+                <RestrictionNoticeProvider>
+                  <LocalProvider>{children}</LocalProvider>
+                </RestrictionNoticeProvider>
               </DesktopConfigProvider>
             </DenAuthProvider>
           </GlobalSyncProvider>

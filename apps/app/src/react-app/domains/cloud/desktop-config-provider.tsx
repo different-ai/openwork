@@ -11,6 +11,10 @@ import {
 } from "react";
 
 import {
+  checkDesktopAppRestriction,
+  type DesktopAppRestrictionChecker,
+} from "../../../app/cloud/desktop-app-restrictions";
+import {
   createDenClient,
   DenApiError,
   ensureDenActiveOrganization,
@@ -28,6 +32,12 @@ export type DesktopConfigStore = {
   config: DenDesktopConfig;
   loading: boolean;
   refresh: () => Promise<void>;
+  /**
+   * Stable checker function that matches the `DesktopAppRestrictionChecker`
+   * shape Solid passes to its stores. Useful when wiring restriction gates
+   * from non-hook code paths.
+   */
+  checkRestriction: DesktopAppRestrictionChecker;
 };
 
 const DesktopConfigContext = createContext<DesktopConfigStore | undefined>(
@@ -185,10 +195,13 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     };
   }, [isSignedIn, refresh]);
 
-  const value = useMemo<DesktopConfigStore>(
-    () => ({ config, loading, refresh }),
-    [config, loading, refresh],
-  );
+  const value = useMemo<DesktopConfigStore>(() => {
+    // Bind the checker to the latest `config` so callers see the most
+    // recent org restrictions without having to recompute every render.
+    const checkRestriction: DesktopAppRestrictionChecker = ({ restriction }) =>
+      checkDesktopAppRestriction({ config, restriction });
+    return { config, loading, refresh, checkRestriction };
+  }, [config, loading, refresh]);
 
   return (
     <DesktopConfigContext.Provider value={value}>
@@ -212,4 +225,24 @@ export function useDesktopConfig(): DesktopConfigStore {
  */
 export function useOrgRestrictions(): DenDesktopConfig {
   return useDesktopConfig().config;
+}
+
+/**
+ * Hook variant that returns the stable `checkRestriction` function so
+ * feature sites that already receive a "checker" (e.g. helpers ported
+ * from Solid stores) can call it directly without reshaping.
+ */
+export function useCheckDesktopRestriction(): DesktopAppRestrictionChecker {
+  return useDesktopConfig().checkRestriction;
+}
+
+/**
+ * Single-restriction hook — returns true/false for a specific key.
+ * Use this at feature sites that only care about one flag
+ * (e.g. `useDesktopRestriction("blockMultipleWorkspaces")`).
+ */
+export function useDesktopRestriction(
+  restriction: Parameters<DesktopAppRestrictionChecker>[0]["restriction"],
+): boolean {
+  return useDesktopConfig().checkRestriction({ restriction });
 }
