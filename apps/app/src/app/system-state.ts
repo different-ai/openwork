@@ -18,7 +18,8 @@ import type {
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { filterProviderList, mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState, type UpdateStatus } from "./context/updater";
-import { createDenClient, readDenSettings } from "./lib/den";
+import { createDenClient, readDenSettings, type DenDesktopConfig } from "./lib/den";
+import { recordDevLog } from "./lib/dev-log";
 import {
   resetOpenworkState,
   resetOpencodeCache,
@@ -132,14 +133,79 @@ function compareVersions(left: string, right: string): number | null {
   return comparePrereleaseIdentifiers(parsedLeft.prerelease, parsedRight.prerelease);
 }
 
+function logUpdateGateFailure(label: string, payload?: unknown) {
+  try {
+    recordDevLog(true, {
+      level: "warn",
+      source: "updates",
+      label,
+      payload,
+    });
+    if (payload === undefined) {
+      console.warn(`[UPDATES] ${label}`);
+    } else {
+      console.warn(`[UPDATES] ${label}`, payload);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function isUpdateAllowedByDesktopConfig(
+  updateVersion: string,
+  desktopConfig: DenDesktopConfig | null | undefined,
+) {
+  if (!Array.isArray(desktopConfig?.allowedDesktopVersions)) {
+    return true;
+  }
+
+  return desktopConfig.allowedDesktopVersions.some(
+    (allowedVersion) => compareVersions(updateVersion, allowedVersion) === 0,
+  );
+}
+
 async function isUpdateSupportedByDen(updateVersion: string) {
   try {
     const settings = readDenSettings();
-    const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl });
+    const token = settings.authToken?.trim() ?? "";
+    const client = createDenClient({
+      baseUrl: settings.baseUrl,
+      apiBaseUrl: settings.apiBaseUrl,
+      ...(token ? { token } : {}),
+    });
     const metadata = await client.getAppVersionMetadata();
     const comparison = compareVersions(updateVersion, metadata.latestAppVersion);
-    return comparison !== null && comparison <= 0;
-  } catch {
+    if (comparison === null) {
+      logUpdateGateFailure("den-update-check-invalid-version-comparison", {
+        updateVersion,
+        latestAppVersion: metadata.latestAppVersion,
+      });
+      return false;
+    }
+
+    if (comparison > 0) {
+      return false;
+    }
+
+    if (!token) {
+      return true;
+    }
+
+    try {
+      const desktopConfig = await client.getDesktopConfig();
+      return isUpdateAllowedByDesktopConfig(updateVersion, desktopConfig);
+    } catch (error) {
+      logUpdateGateFailure("den-update-check-desktop-config-fetch-failed", {
+        updateVersion,
+        error: error instanceof Error ? error.message : safeStringify(error),
+      });
+      return false;
+    }
+  } catch (error) {
+    logUpdateGateFailure("den-update-check-app-version-fetch-failed", {
+      updateVersion,
+      error: error instanceof Error ? error.message : safeStringify(error),
+    });
     return false;
   }
 }

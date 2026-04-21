@@ -1,5 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions";
+import { normalizeDesktopConfig, type DesktopConfig as SharedDesktopConfig } from "@openwork/types/den/desktop-app-restrictions";
 import { isDesktopDeployment } from "./openwork-deployment";
 import {
   dispatchDenSettingsChanged,
@@ -54,7 +54,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
   requireSignin: boolean;
 };
 
-export type DenDesktopConfig = DesktopAppRestrictions;
+export type DenDesktopConfig = SharedDesktopConfig;
 
 export type DenUser = {
   id: string;
@@ -237,7 +237,7 @@ function getDenAppVersionMetadata(payload: unknown): DenAppVersionMetadata | nul
 }
 
 export function normalizeDenDesktopConfig(payload: unknown): DenDesktopConfig {
-  return normalizeDesktopAppRestrictions(payload);
+  return normalizeDesktopConfig(payload);
 }
 
 export function normalizeDenBaseUrl(input: string | null | undefined): string | null {

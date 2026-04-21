@@ -1,7 +1,8 @@
-import type { DesktopAppRestrictions as DenDesktopConfig } from "@openwork/types/den/desktop-app-restrictions";
+import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions";
+import type { DenDesktopConfig } from "../lib/den";
 import type { ModelRef } from "../types";
 
-export type DesktopAppRestrictionKey = keyof DenDesktopConfig;
+export type DesktopAppRestrictionKey = keyof DesktopAppRestrictions;
 
 export type DesktopAppRestrictionChecker = (input: {
   restriction: DesktopAppRestrictionKey;
