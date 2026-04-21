@@ -435,6 +435,22 @@ export function createWorkspaceStore(options: {
   });
   const normalizeRemoteType = (value?: WorkspaceInfo["remoteType"] | null) =>
     value === "openwork" ? "openwork" : "opencode";
+  const describeRemoteConnectionTarget = (workspace: WorkspaceInfo) => {
+    const remoteType = normalizeRemoteType(workspace.remoteType);
+    if (remoteType === "openwork") {
+      const hostUrl =
+        workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || workspace.path?.trim() || "";
+      return hostUrl ? `OpenWork host ${hostUrl}` : "OpenWork host";
+    }
+
+    const baseUrl = workspace.baseUrl?.trim() || "";
+    return baseUrl ? `worker ${baseUrl}` : "worker";
+  };
+  const formatRemoteConnectionError = (workspace: WorkspaceInfo, message: string) => {
+    const target = describeRemoteConnectionTarget(workspace);
+    const detail = message.trim();
+    return detail ? `${target}: ${detail}` : target;
+  };
   const isOpenworkRemote = (workspace: WorkspaceInfo | null) =>
     Boolean(workspace && workspace.workspaceType === "remote" && normalizeRemoteType(workspace.remoteType) === "openwork");
   const selectedWorkspacePath = createMemo(() => {
@@ -1209,9 +1225,10 @@ export function createWorkspaceStore(options: {
       const hostUrl =
         workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || workspace.path?.trim() || "";
       if (!hostUrl) {
+        const message = "OpenWork server URL is required.";
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "OpenWork server URL is required.",
+          message,
         });
         return false;
       }
@@ -1224,9 +1241,13 @@ export function createWorkspaceStore(options: {
           workspaceId: workspace.openworkWorkspaceId ?? null,
         });
         if (resolved.kind !== "openwork") {
+          const message = formatRemoteConnectionError(
+            workspace,
+            "OpenWork server unavailable. Check the URL and token.",
+          );
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "OpenWork server unavailable. Check the URL and token.",
+            message,
           });
           return false;
         }
@@ -1234,16 +1255,20 @@ export function createWorkspaceStore(options: {
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : safeStringify(error);
-        updateWorkspaceConnectionState(id, { status: "error", message });
+        updateWorkspaceConnectionState(id, {
+          status: "error",
+          message: formatRemoteConnectionError(workspace, message),
+        });
         return false;
       }
     }
 
     const baseUrl = workspace.baseUrl?.trim() || "";
     if (!baseUrl) {
+      const message = "Remote base URL is required.";
       updateWorkspaceConnectionState(id, {
         status: "error",
-        message: "Remote base URL is required.",
+        message,
       });
       return false;
     }
@@ -1255,7 +1280,10 @@ export function createWorkspaceStore(options: {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
-      updateWorkspaceConnectionState(id, { status: "error", message });
+      updateWorkspaceConnectionState(id, {
+        status: "error",
+        message: formatRemoteConnectionError(workspace, message),
+      });
       return false;
     }
   }
