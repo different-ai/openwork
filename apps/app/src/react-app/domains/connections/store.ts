@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { homeDir } from "@tauri-apps/api/path";
-import { parse } from "jsonc-parser";
+import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 
 import { currentLocale, t } from "../../../i18n";
 import {
@@ -500,30 +500,34 @@ export function createConnectionsStore(options: {
       } else {
         const configFile = await readOpencodeConfig("project", resolvedProjectDir);
 
-        let existingConfig: Record<string, unknown> = {};
-        if (configFile.exists && configFile.content?.trim()) {
-          try {
-            existingConfig = parse(configFile.content) ?? {};
-          } catch (parseErr) {
-            recordPerfLog(options.developerMode(), "mcp.connect", "config-parse-failed", {
-              error: parseErr instanceof Error ? parseErr.message : String(parseErr),
-            });
-            existingConfig = {};
-          }
+        const raw = configFile.exists && configFile.content?.trim()
+          ? configFile.content
+          : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+
+        const parseErrors: Array<{ error: number; offset: number; length: number }> = [];
+        parse(raw, parseErrors, { allowTrailingComma: true });
+        if (parseErrors.length > 0) {
+          const details = parseErrors
+            .map((entry) => printParseErrorCode(entry.error))
+            .join(", ");
+          throw new Error(`Failed to parse opencode config: ${details}`);
         }
 
-        if (!existingConfig["$schema"]) {
-          existingConfig["$schema"] = "https://opencode.ai/config.json";
-        }
-
-        const mcpSection = (existingConfig["mcp"] as Record<string, unknown>) ?? {};
-        existingConfig["mcp"] = mcpSection;
-        mcpSection[slug] = mcpEntryConfig;
+        let updated = raw;
+        const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
+        updated = applyEdits(
+          updated,
+          modify(updated, ["$schema"], "https://opencode.ai/config.json", { formattingOptions }),
+        );
+        updated = applyEdits(
+          updated,
+          modify(updated, ["mcp", slug], mcpEntryConfig, { formattingOptions }),
+        );
 
         const writeResult = await writeOpencodeConfig(
           "project",
           resolvedProjectDir,
-          `${JSON.stringify(existingConfig, null, 2)}\n`,
+          updated.endsWith("\n") ? updated : `${updated}\n`,
         );
         if (!writeResult.ok) {
           throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
