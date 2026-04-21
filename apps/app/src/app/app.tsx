@@ -2625,7 +2625,9 @@ export default function App() {
                     />
                   </Show>
             <Switch>
-              <Match when={blockingSigninPending()}>{null}</Match>
+              <Match when={blockingSigninPending()}>
+                <ForcedSigninPage developerMode={developerMode()} />
+              </Match>
               <Match when={currentView() === "signin"}>
                 <ForcedSigninPage developerMode={developerMode()} />
               </Match>
