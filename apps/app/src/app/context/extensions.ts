@@ -1306,8 +1306,8 @@ export function createExtensionsStore(options: {
         const result = await openworkClient.listPlugins(openworkWorkspaceId, { includeGlobal: false });
         if (refreshPluginsAborted) return;
 
-        const configItems = result.items.filter((item) => item.source === "config" && item.scope === "project");
-        const list = configItems.map((item) => item.spec);
+        const projectItems = result.items.filter((item) => item.scope === "project");
+        const list = Array.from(new Set(projectItems.map((item) => item.spec)));
         setPluginList(list);
         setSidebarPluginList(list);
         setPluginsContextKey(workspaceContextKey());
