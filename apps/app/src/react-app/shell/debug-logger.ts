@@ -40,6 +40,12 @@ let hangHandle: ReturnType<typeof setInterval> | null = null;
 // own POST to /dev/log doesn't go through the wrapper (which would recurse
 // and also spam the log with its own activity).
 let nativeFetchRef: typeof fetch = typeof window !== "undefined" ? window.fetch.bind(window) : (globalThis.fetch as typeof fetch);
+let originalFetchRef: typeof fetch | null = null;
+let nativeConsoleRef: Record<LogLevel, (...args: unknown[]) => void> | null = null;
+let windowErrorHandlerRef: ((event: ErrorEvent) => void) | null = null;
+let windowUnhandledRejectionHandlerRef: ((event: PromiseRejectionEvent) => void) | null = null;
+let visibilityHandlerRef: (() => void) | null = null;
+let disposeInspectorSliceRef: (() => void) | null = null;
 const sessionKey = `react-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 // Cached availability of the server-side /dev/log sink, keyed by base URL.
@@ -196,6 +202,7 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
     error: console.error.bind(console),
     debug: console.debug.bind(console),
   };
+  nativeConsoleRef = nativeConsole;
   (Object.keys(nativeConsole) as LogLevel[]).forEach((level) => {
     const original = nativeConsole[level];
     console[level] = (...args: unknown[]) => {
@@ -214,7 +221,7 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
   });
 
   // Window errors
-  window.addEventListener("error", (event) => {
+  const handleWindowError = (event: ErrorEvent) => {
     const target = event.error as Error | undefined;
     enqueue({
       level: "uncaught",
@@ -223,9 +230,11 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
       stack: target?.stack,
       extra: { line: event.lineno, col: event.colno },
     });
-  });
+  };
+  windowErrorHandlerRef = handleWindowError;
+  window.addEventListener("error", handleWindowError);
 
-  window.addEventListener("unhandledrejection", (event) => {
+  const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
     const reason = event.reason;
     enqueue({
       level: "unhandledRejection",
@@ -233,13 +242,16 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
       stack: reason instanceof Error ? reason.stack : undefined,
       extra: { reason: safeStringify(reason) as Record<string, unknown> },
     });
-  });
+  };
+  windowUnhandledRejectionHandlerRef = handleUnhandledRejection;
+  window.addEventListener("unhandledrejection", handleUnhandledRejection);
 
   // Fetch wrapping (so we can see which requests are hanging around a stall).
   // We capture the native reference here and reuse it inside `flushQueue` so
   // our own POST to /dev/log doesn't go through the wrapper (which would make
   // the logger log itself forever).
   const nativeFetch = window.fetch.bind(window);
+  originalFetchRef = nativeFetch;
   nativeFetchRef = nativeFetch;
   window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const id = nextFetchId++;
@@ -336,7 +348,7 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
   // even though JS is fine. Nudge the app to re-resolve its connection and
   // re-fetch route data.
   if (typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", () => {
+    const handleVisibilityChange = () => {
       enqueue({
         level: "meta",
         message: `visibilitychange: ${document.visibilityState}`,
@@ -349,10 +361,12 @@ export function startDebugLogger(opts?: { serverUrl?: () => string }) {
           // ignore
         }
       }
-    });
+    };
+    visibilityHandlerRef = handleVisibilityChange;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
   }
 
-  publishInspectorSlice("debug", () => ({
+  disposeInspectorSliceRef = publishInspectorSlice("debug", () => ({
     enabled: true,
     sessionKey,
     pendingFetchCount: pendingFetches.size,
@@ -381,7 +395,40 @@ function readMemoryUsage(): Record<string, unknown> | null {
 
 export function stopDebugLogger() {
   if (!started) return;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
   if (hangHandle) clearInterval(hangHandle);
   hangHandle = null;
+  if (windowErrorHandlerRef) {
+    window.removeEventListener("error", windowErrorHandlerRef);
+    windowErrorHandlerRef = null;
+  }
+  if (windowUnhandledRejectionHandlerRef) {
+    window.removeEventListener("unhandledrejection", windowUnhandledRejectionHandlerRef);
+    windowUnhandledRejectionHandlerRef = null;
+  }
+  if (typeof document !== "undefined" && visibilityHandlerRef) {
+    document.removeEventListener("visibilitychange", visibilityHandlerRef);
+    visibilityHandlerRef = null;
+  }
+  if (disposeInspectorSliceRef) {
+    disposeInspectorSliceRef();
+    disposeInspectorSliceRef = null;
+  }
+  if (originalFetchRef && typeof window !== "undefined") {
+    window.fetch = originalFetchRef;
+    nativeFetchRef = originalFetchRef;
+    originalFetchRef = null;
+  }
+  if (nativeConsoleRef) {
+    (Object.keys(nativeConsoleRef) as LogLevel[]).forEach((level) => {
+      console[level] = nativeConsoleRef![level];
+    });
+    nativeConsoleRef = null;
+  }
+  pendingFetches.clear();
+  queue = [];
   started = false;
 }

@@ -25,6 +25,7 @@ type PendingDelta = {
 type SyncEntry = {
   refs: number;
   dispose: () => void;
+  trackedSessionRefs: Map<string, number>;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
   // Coalesce rapid-fire delta events from the SSE stream into one cache
   // commit per animation frame. Without this, a long response produces a
@@ -47,6 +48,10 @@ export const todoKey = (workspaceId: string, sessionId: string) =>
 
 function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.openworkToken}`;
+}
+
+function isTrackedSession(entry: SyncEntry, sessionId: string) {
+  return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0;
 }
 
 function toUIPart(part: Part): UIMessage["parts"][number] | null {
@@ -248,6 +253,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.status") {
     const props = (event.properties ?? {}) as { sessionID?: string; status?: SessionStatus };
     if (!props.sessionID || !props.status) return;
+    if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
     return;
   }
@@ -255,6 +261,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "todo.updated") {
     const props = (event.properties ?? {}) as { sessionID?: string; todos?: Todo[] };
     if (!props.sessionID || !props.todos) return;
+    if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData(todoKey(workspaceId, props.sessionID), props.todos);
     return;
   }
@@ -265,6 +272,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
       return;
     }
+    if (!isTrackedSession(entry, info.sessionID)) return;
     const next = { id: info.id, role: info.role, parts: [] } satisfies UIMessage;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>
       upsertMessage(current, next),
@@ -276,6 +284,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { part?: Part };
     const part = props.part;
     if (!part?.sessionID || !part.messageID) return;
+    if (!isTrackedSession(entry, part.sessionID)) return;
     const mapped = toUIPart(part);
     if (!mapped) return;
     const pending = entry.pendingDeltas.get(part.id);
@@ -307,6 +316,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       delta?: string;
     };
     if (!props.sessionID || !props.messageID || !props.partID || !props.delta) return;
+    if (!isTrackedSession(entry, props.sessionID)) return;
     // Buffer this delta and let the frame flusher apply all queued deltas
     // for this entry in a single setQueryData call per affected session.
     entry.deltaFlushBuffer.push({
@@ -323,6 +333,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.idle") {
     const props = (event.properties ?? {}) as { sessionID?: string };
     if (!props.sessionID) return;
+    if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
   }
 }
@@ -430,6 +441,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   syncs.set(key, {
     refs: 1,
     dispose: () => {},
+    trackedSessionRefs: new Map(),
     pendingDeltas: new Map(),
     deltaFlushBuffer: [],
     deltaFlushScheduled: false,
@@ -497,4 +509,33 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
 
   queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), snapshot.status);
   queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
+}
+
+export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string | null | undefined) {
+  const normalizedSessionId = sessionId?.trim() ?? "";
+  if (!normalizedSessionId) return () => {};
+
+  const entry = syncs.get(syncKey(input));
+  if (!entry) return () => {};
+
+  entry.trackedSessionRefs.set(
+    normalizedSessionId,
+    (entry.trackedSessionRefs.get(normalizedSessionId) ?? 0) + 1,
+  );
+
+  return () => {
+    const current = entry.trackedSessionRefs.get(normalizedSessionId) ?? 0;
+    if (current <= 1) {
+      entry.trackedSessionRefs.delete(normalizedSessionId);
+      entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
+        (item) => item.sessionId !== normalizedSessionId,
+      );
+      const queryClient = getReactQueryClient();
+      queryClient.removeQueries({ queryKey: transcriptKey(input.workspaceId, normalizedSessionId), exact: true });
+      queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, normalizedSessionId), exact: true });
+      queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, normalizedSessionId), exact: true });
+      return;
+    }
+    entry.trackedSessionRefs.set(normalizedSessionId, current - 1);
+  };
 }

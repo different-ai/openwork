@@ -1112,6 +1112,7 @@ export function SessionRoute() {
     {selectedWorkspaceId && opencodeBaseUrl && token ? (
       <ReactSessionRuntime
         workspaceId={selectedWorkspaceId}
+        sessionId={selectedSessionId}
         opencodeBaseUrl={opencodeBaseUrl}
         openworkToken={token}
       />

@@ -106,6 +106,11 @@ function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
   );
 }
 
+function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }) {
+  if (!attachment.previewUrl) return;
+  URL.revokeObjectURL(attachment.previewUrl);
+}
+
 export function SessionSurface(props: SessionSurfaceProps) {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -121,6 +126,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const hydratedKeyRef = useRef<string | null>(null);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  attachmentsRef.current = attachments;
   const opencodeClient = useMemo(
     () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
     [props.opencodeBaseUrl, props.openworkToken],
@@ -142,6 +149,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactTodoKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
+
+  useEffect(() => {
+    return () => {
+      const queryClient = getReactQueryClient();
+      queryClient.removeQueries({ queryKey: snapshotQueryKey, exact: true });
+      queryClient.removeQueries({ queryKey: transcriptQueryKey, exact: true });
+      queryClient.removeQueries({ queryKey: statusQueryKey, exact: true });
+      queryClient.removeQueries({ queryKey: todoQueryKey, exact: true });
+    };
+  }, [snapshotQueryKey, transcriptQueryKey, statusQueryKey, todoQueryKey]);
 
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
@@ -169,11 +186,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // effectively changes when the workspace changes too because the route
     // navigates to the remembered session id for that workspace.
     setDraft("");
-    setAttachments([]);
+    setAttachments((current) => {
+      current.forEach(revokeAttachmentPreview);
+      return [];
+    });
     setMentions({});
     setPasteParts([]);
     setNotice(null);
   }, [props.sessionId]);
+
+  useEffect(() => {
+    return () => {
+      attachmentsRef.current.forEach(revokeAttachmentPreview);
+    };
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
@@ -314,6 +340,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const nextDraft = buildDraft(text, attachments);
       props.onSendDraft(nextDraft);
       setDraft("");
+      attachments.forEach(revokeAttachmentPreview);
       setAttachments([]);
       props.onDraftChange(buildDraft("", []));
     } catch (nextError) {
