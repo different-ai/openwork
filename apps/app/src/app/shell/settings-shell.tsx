@@ -91,6 +91,7 @@ export type SettingsShellProps = {
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
   removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  runCloudProviderSync: (reason: "sign_in" | "app_launch" | "interval" | "settings_cloud_opened") => Promise<void>;
   closeProviderAuthModal: (options?: { restorePromptFocus?: boolean }) => void;
   startProviderAuth: (providerId?: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (
@@ -1158,6 +1159,7 @@ export default function SettingsShell(props: SettingsShellProps) {
                   openProviderAuthModal={props.openProviderAuthModal}
                   disconnectProvider={props.disconnectProvider}
                   removeCloudProvider={props.removeCloudProvider}
+                  runCloudProviderSync={props.runCloudProviderSync}
                   refreshCloudOrgProviders={props.refreshCloudOrgProviders}
                   connectCloudProvider={props.connectCloudProvider}
                   openworkServerStatus={props.openworkServerStatus}

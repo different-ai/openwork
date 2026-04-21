@@ -56,6 +56,7 @@ type DenSettingsPanelProps = {
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  runCloudProviderSync: (reason: "sign_in" | "app_launch" | "interval" | "settings_cloud_opened") => Promise<void>;
 };
 
 type CloudSkillHubRow = {
@@ -819,6 +820,11 @@ export default function DenSettingsPanel(props: DenSettingsPanelProps) {
   createEffect(() => {
     if (!user() || !activeOrgId().trim()) return;
     void refreshProviders(true);
+  });
+
+  createEffect(() => {
+    if (!user() || !activeOrgId().trim()) return;
+    void props.runCloudProviderSync("settings_cloud_opened");
   });
 
   createEffect(() => {

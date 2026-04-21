@@ -8,7 +8,13 @@ import {
   isDesktopProviderBlocked,
   type DesktopAppRestrictionChecker,
 } from "../../cloud/desktop-app-restrictions";
+import { CLOUD_SYNC_INTERVAL_MS } from "../../cloud/sync/constants";
 import { createDenClient, readDenSettings, type DenOrgLlmProvider, type DenOrgLlmProviderConnection } from "../../lib/den";
+import {
+  denSessionUpdatedEvent,
+  denSettingsChangedEvent,
+  type DenSessionUpdatedDetail,
+} from "../../lib/den-session-events";
 import { unwrap, waitForHealthy } from "../../lib/opencode";
 import {
   readOpencodeConfig,
@@ -27,6 +33,8 @@ import {
 } from "../../cloud/import-state";
 
 type ProviderReturnFocusTarget = "none" | "composer";
+
+type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
 
 export type ProviderAuthMethod = {
   type: "oauth" | "api" | "cloud";
@@ -78,10 +86,14 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     createSignal<ProviderReturnFocusTarget>("none");
   const [cloudOrgProviders, setCloudOrgProviders] = createSignal<DenOrgLlmProvider[]>([]);
   const [importedCloudProviders, setImportedCloudProviders] = createSignal<Record<string, CloudImportedProvider>>({});
+  const [denSettingsVersion, setDenSettingsVersion] = createSignal(0);
 
   let cloudOrgProvidersLoadKey = "";
   let cloudOrgProvidersInFlightKey = "";
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
+  let cloudProviderSyncInFlight: Promise<void> | null = null;
+  let cloudProviderSyncQueuedReason: CloudProviderSyncReason | null = null;
+  let cloudProviderSyncContextKey = "";
 
   const getStringList = (value: unknown) =>
     Array.isArray(value)
@@ -89,6 +101,9 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       : [];
 
   const getCloudProviderEnv = (config: Record<string, unknown>) => getStringList(config.env);
+  const sortStrings = (values: string[]) => [...values].sort();
+  const sameStringList = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((value, index) => value === b[index]);
 
   const buildCloudProviderMethod = (provider: DenOrgLlmProvider): ProviderAuthMethod => ({
     type: "cloud",
@@ -423,6 +438,12 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       .filter(Boolean)
       .sort();
 
+  const logCloudProviderSyncError = (reason: CloudProviderSyncReason, error: unknown) => {
+    const message = describeProviderError(error, "Cloud provider sync failed.");
+    console.warn(`[cloud-provider-sync:${reason}] ${message}`);
+    return message;
+  };
+
   const formatConfigWithCloudProvider = (
     raw: string,
     provider: DenOrgLlmProviderConnection,
@@ -558,6 +579,40 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     ].join("::");
   };
 
+  const getCloudProviderSyncContextKey = () => {
+    const settings = readDenSettings();
+    return [
+      settings.baseUrl,
+      settings.apiBaseUrl ?? "",
+      settings.activeOrgId?.trim() ?? "",
+      settings.authToken?.trim() ?? "",
+      options.selectedWorkspaceDisplay().workspaceType,
+      options.selectedWorkspaceRoot().trim(),
+      options.runtimeWorkspaceId() ?? "",
+      options.client() ? "connected" : "disconnected",
+    ].join("::");
+  };
+
+  const hasCloudProviderSyncPrerequisites = () => {
+    const settings = readDenSettings();
+    const workspaceTarget = options.selectedWorkspaceRoot().trim() || options.runtimeWorkspaceId() || "";
+    return Boolean(
+      options.client() &&
+      settings.authToken?.trim() &&
+      settings.activeOrgId?.trim() &&
+      workspaceTarget,
+    );
+  };
+
+  const isCloudProviderOutOfSync = (
+    provider: DenOrgLlmProvider,
+    importedProvider: CloudImportedProvider,
+  ) =>
+    importedProvider.providerId !== provider.providerId ||
+    (importedProvider.source ?? null) !== provider.source ||
+    (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
+    !sameStringList(importedProvider.modelIds, sortStrings(provider.models.map((model) => model.id)));
+
   const refreshCloudOrgProviders = async (optionsArg?: { force?: boolean }) => {
     const settings = readDenSettings();
     const loadKey = getCloudOrgProvidersKey();
@@ -611,17 +666,34 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       return;
     }
 
-    const handleDenSessionUpdate = () => {
+    const handleDenSessionUpdate = (event: Event) => {
       cloudOrgProvidersLoadKey = "";
       cloudOrgProvidersInFlightKey = "";
       cloudOrgProvidersInFlight = null;
       setCloudOrgProviders([]);
       setProviderAuthMethods({});
+      setDenSettingsVersion((value) => value + 1);
+
+      const detail = (event as CustomEvent<DenSessionUpdatedDetail>).detail;
+      if (detail?.status === "success") {
+        void runCloudProviderSync("sign_in");
+      }
     };
 
-    window.addEventListener("openwork-den-session-updated", handleDenSessionUpdate as EventListener);
+    const handleDenSettingsChanged = () => {
+      cloudOrgProvidersLoadKey = "";
+      cloudOrgProvidersInFlightKey = "";
+      cloudOrgProvidersInFlight = null;
+      setCloudOrgProviders([]);
+      setProviderAuthMethods({});
+      setDenSettingsVersion((value) => value + 1);
+    };
+
+    window.addEventListener(denSessionUpdatedEvent, handleDenSessionUpdate as EventListener);
+    window.addEventListener(denSettingsChangedEvent, handleDenSettingsChanged as EventListener);
     onCleanup(() => {
-      window.removeEventListener("openwork-den-session-updated", handleDenSessionUpdate as EventListener);
+      window.removeEventListener(denSessionUpdatedEvent, handleDenSessionUpdate as EventListener);
+      window.removeEventListener(denSettingsChangedEvent, handleDenSettingsChanged as EventListener);
     });
   });
 
@@ -629,6 +701,43 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     void options.selectedWorkspaceRoot();
     void options.runtimeWorkspaceId();
     void refreshImportedCloudProviders();
+  });
+
+  createEffect(() => {
+    denSettingsVersion();
+    void options.selectedWorkspaceRoot();
+    void options.runtimeWorkspaceId();
+    void options.client();
+
+    if (!hasCloudProviderSyncPrerequisites()) {
+      cloudProviderSyncContextKey = "";
+      return;
+    }
+
+    const nextKey = getCloudProviderSyncContextKey();
+    if (nextKey === cloudProviderSyncContextKey) {
+      return;
+    }
+
+    cloudProviderSyncContextKey = nextKey;
+    void runCloudProviderSync("app_launch");
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      if (!hasCloudProviderSyncPrerequisites()) {
+        return;
+      }
+      void runCloudProviderSync("interval");
+    }, CLOUD_SYNC_INTERVAL_MS);
+
+    onCleanup(() => {
+      window.clearInterval(interval);
+    });
   });
 
   const applyProviderListState = (value: ProviderListResponse) => {
@@ -1042,8 +1151,13 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     }
   }
 
-  async function connectCloudProvider(cloudProviderId: string) {
-    setProviderAuthError(null);
+  async function connectCloudProviderInternal(
+    cloudProviderId: string,
+    optionsArg?: { silent?: boolean },
+  ) {
+    if (!optionsArg?.silent) {
+      setProviderAuthError(null);
+    }
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
@@ -1122,13 +1236,24 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       return `${t("status.connected")} ${provider.name}`;
     } catch (error) {
       const message = describeProviderError(error, "Failed to connect organization provider.");
-      setProviderAuthError(message);
+      if (!optionsArg?.silent) {
+        setProviderAuthError(message);
+      }
       throw error instanceof Error ? error : new Error(message);
     }
   }
 
-  async function removeCloudProvider(cloudProviderId: string) {
-    setProviderAuthError(null);
+  async function connectCloudProvider(cloudProviderId: string) {
+    return await connectCloudProviderInternal(cloudProviderId);
+  }
+
+  async function removeCloudProviderInternal(
+    cloudProviderId: string,
+    optionsArg?: { silent?: boolean },
+  ) {
+    if (!optionsArg?.silent) {
+      setProviderAuthError(null);
+    }
     const imported = importedCloudProviders()[cloudProviderId];
     if (!imported) {
       throw new Error("This cloud provider has not been imported into the workspace.");
@@ -1159,9 +1284,119 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
       return `${t("providers.disconnected_prefix")} ${imported.name}`;
     } catch (error) {
       const message = describeProviderError(error, t("providers.disconnect_failed"));
-      setProviderAuthError(message);
+      if (!optionsArg?.silent) {
+        setProviderAuthError(message);
+      }
       throw error instanceof Error ? error : new Error(message);
     }
+  }
+
+  async function removeCloudProvider(cloudProviderId: string) {
+    return await removeCloudProviderInternal(cloudProviderId);
+  }
+
+  async function performCloudProviderSync(reason: CloudProviderSyncReason) {
+    if (!hasCloudProviderSyncPrerequisites()) {
+      return;
+    }
+
+    const importedProviders = await refreshImportedCloudProviders();
+    const liveProviders = await refreshCloudOrgProviders({ force: true });
+    const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
+    const failures: string[] = [];
+    const processedLiveProviderIds = new Set<string>();
+    let configChanged = false;
+
+    for (const importedProvider of Object.values(importedProviders)) {
+      const liveProvider = liveProviderMap.get(importedProvider.cloudProviderId);
+      if (!liveProvider) {
+        try {
+          await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });
+          configChanged = true;
+        } catch (error) {
+          failures.push(logCloudProviderSyncError(reason, error));
+        }
+        continue;
+      }
+
+      processedLiveProviderIds.add(liveProvider.id);
+
+      if (isDesktopProviderBlocked({
+        providerId: liveProvider.providerId,
+        checkRestriction: options.checkDesktopAppRestriction,
+      })) {
+        continue;
+      }
+
+      if (!isCloudProviderOutOfSync(liveProvider, importedProvider)) {
+        continue;
+      }
+
+      try {
+        await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });
+        await connectCloudProviderInternal(liveProvider.id, { silent: true });
+        configChanged = true;
+      } catch (error) {
+        failures.push(logCloudProviderSyncError(reason, error));
+      }
+    }
+
+    const nextImportedProviders = importedCloudProviders();
+    for (const liveProvider of liveProviders) {
+      if (processedLiveProviderIds.has(liveProvider.id)) {
+        continue;
+      }
+      if (isDesktopProviderBlocked({
+        providerId: liveProvider.providerId,
+        checkRestriction: options.checkDesktopAppRestriction,
+      })) {
+        continue;
+      }
+      if (nextImportedProviders[liveProvider.id]) {
+        continue;
+      }
+
+      try {
+        await connectCloudProviderInternal(liveProvider.id, { silent: true });
+        configChanged = true;
+      } catch (error) {
+        failures.push(logCloudProviderSyncError(reason, error));
+      }
+    }
+
+    if (configChanged) {
+      await refreshProviders({ dispose: true }).catch(() => null);
+    }
+
+    if (failures.length > 0) {
+      throw new Error(failures.join("\n"));
+    }
+  }
+
+  async function runCloudProviderSync(reason: CloudProviderSyncReason) {
+    if (cloudProviderSyncInFlight) {
+      cloudProviderSyncQueuedReason = reason;
+      return cloudProviderSyncInFlight;
+    }
+
+    const request = performCloudProviderSync(reason)
+      .catch((error) => {
+        const message = logCloudProviderSyncError(reason, error);
+        if (reason === "settings_cloud_opened") {
+          setProviderAuthError(message);
+        }
+      })
+      .finally(() => {
+        cloudProviderSyncInFlight = null;
+        const queuedReason = cloudProviderSyncQueuedReason;
+        cloudProviderSyncQueuedReason = null;
+        if (queuedReason) {
+          void runCloudProviderSync(queuedReason);
+        }
+      });
+
+    cloudProviderSyncInFlight = request;
+    return request;
   }
 
   async function disconnectProvider(providerId: string) {
@@ -1275,6 +1510,7 @@ export function createProvidersStore(options: CreateProvidersStoreOptions) {
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,
+    runCloudProviderSync,
     ensureProjectProviderDisabledState,
     openProviderAuthModal,
     closeProviderAuthModal,

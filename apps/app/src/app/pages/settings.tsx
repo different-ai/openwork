@@ -107,6 +107,7 @@ export type SettingsViewProps = {
   }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
   removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  runCloudProviderSync: (reason: "sign_in" | "app_launch" | "interval" | "settings_cloud_opened") => Promise<void>;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   openworkServerStatus: OpenworkServerStatus;
@@ -1917,6 +1918,7 @@ export default function SettingsView(props: SettingsViewProps) {
               refreshCloudOrgProviders={props.refreshCloudOrgProviders}
               connectCloudProvider={props.connectCloudProvider}
               removeCloudProvider={props.removeCloudProvider}
+              runCloudProviderSync={props.runCloudProviderSync}
             />
         </Match>
 
