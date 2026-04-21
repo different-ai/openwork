@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
-import type { UserOrganizationsContext } from "./user-organizations.js"
+import { getLegacyProxyOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
 
 export type OrganizationContextVariables = {
   organizationContext: OrganizationContext
@@ -18,14 +18,17 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   }
 
   const apiKey = c.get("apiKey")
-  const scopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
+  const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
+  const legacyProxyOrganizationId = getLegacyProxyOrganizationId(c.req.raw.headers)
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? legacyProxyOrganizationId
 
   let organizationId = c.get("activeOrganizationId") ?? null
   let organizationSlug = c.get("activeOrganizationSlug") ?? null
 
   if (!organizationId) {
+    const session = c.get("session")
     const resolved = await resolveUserOrganizations({
-      activeOrganizationId: scopedOrganizationId ?? c.get("session")?.activeOrganizationId ?? null,
+      activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
       userId: normalizeDenTypeId("user", user.id),
     })
 
@@ -35,6 +38,17 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
 
     organizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
     organizationSlug = scopedOrganizationId ? scopedOrgs[0]?.slug ?? null : resolved.activeOrgSlug
+
+    if (shouldHydrateSessionActiveOrganization({
+      scopedOrganizationId: apiKeyScopedOrganizationId,
+      sessionActiveOrganizationId: session?.activeOrganizationId,
+      resolvedActiveOrganizationId: organizationId,
+    })) {
+      await hydrateSessionActiveOrganization(session, organizationId)
+      if (session) {
+        c.set("session", { ...session, activeOrganizationId: organizationId })
+      }
+    }
 
     c.set("userOrganizations", scopedOrgs)
     c.set("activeOrganizationId", organizationId)

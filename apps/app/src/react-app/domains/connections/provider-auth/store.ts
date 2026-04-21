@@ -1152,6 +1152,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         [provider.id]: {
           cloudProviderId: provider.id,
           providerId: provider.providerId,
+          // Track the provider id as shipped by the server at import time
+          // so we can detect local/remote drift later (see dev #1510 "key
+          // cloud providers by cloud id"). On first import both match.
+          sourceProviderId: provider.providerId,
           name: provider.name,
           source: provider.source,
           updatedAt: provider.updatedAt ?? null,

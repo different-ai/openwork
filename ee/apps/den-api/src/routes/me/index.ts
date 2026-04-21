@@ -1,9 +1,10 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
-import { desktopAppRestrictionsSchema } from "@openwork/types/den/desktop-app-restrictions"
+import { desktopConfigSchema } from "@openwork/types/den/desktop-app-restrictions"
 import { z } from "zod"
 import { requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const meResponseSchema = z.object({
@@ -20,7 +21,7 @@ const meOrganizationsResponseSchema = z.object({
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "CurrentUserOrganizationsResponse" })
 
-const meDesktopConfigResponseSchema = desktopAppRestrictionsSchema.meta({
+const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
 })
 
@@ -84,7 +85,15 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     requireUserMiddleware,
     resolveOrganizationContextMiddleware,
     (c) => {
-      return c.json(c.get("organizationContext").organization.desktopAppRestrictions)
+      const organization = c.get("organizationContext").organization
+      const metadata = normalizeOrganizationMetadata(organization.metadata).metadata
+
+      return c.json({
+        ...organization.desktopAppRestrictions,
+        ...(Array.isArray(metadata.allowedDesktopVersions)
+          ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
+          : {}),
+      })
     },
   )
 }

@@ -2,6 +2,8 @@
 
 import { Check, Copy, Pencil, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
+import { getAllowedDesktopVersionsFromMetadata } from "../../../../_lib/den-org";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../../../_components/ui/button";
 import { DenCard } from "../../../../_components/ui/card";
@@ -20,6 +22,88 @@ function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
   ];
 
   return domains.length > 0 ? domains : null;
+}
+
+function normalizeDesktopVersionString(value: string): string | null {
+  const normalized = value.trim().replace(/^v/i, "");
+  return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : null;
+}
+
+function getDesktopVersionMetadata(payload: unknown): {
+  minAppVersion: string;
+  latestAppVersion: string;
+} | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+
+  const minAppVersion =
+    typeof record.minAppVersion === "string"
+      ? normalizeDesktopVersionString(record.minAppVersion)
+      : null;
+  const latestAppVersion =
+    typeof record.latestAppVersion === "string"
+      ? normalizeDesktopVersionString(record.latestAppVersion)
+      : null;
+
+  if (!minAppVersion || !latestAppVersion) {
+    return null;
+  }
+
+  return { minAppVersion, latestAppVersion };
+}
+
+function buildDesktopVersionOptions(
+  minVersion: string,
+  maxVersion: string,
+): string[] {
+  const minMatch = minVersion.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  const maxMatch = maxVersion.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!minMatch || !maxMatch) {
+    return [...new Set([minVersion, maxVersion])];
+  }
+
+  const minMajor = Number(minMatch[1]);
+  const minMinor = Number(minMatch[2]);
+  const minPatch = Number(minMatch[3]);
+  const maxMajor = Number(maxMatch[1]);
+  const maxMinor = Number(maxMatch[2]);
+  const maxPatch = Number(maxMatch[3]);
+
+  if (minMajor !== maxMajor || minMinor !== maxMinor || minPatch > maxPatch) {
+    return [...new Set([minVersion, maxVersion])];
+  }
+
+  return Array.from(
+    { length: maxPatch - minPatch + 1 },
+    (_, index) => `${minMajor}.${minMinor}.${minPatch + index}`,
+  );
+}
+
+function toggleAllowedDesktopVersion(
+  current: string[],
+  version: string,
+  checked: boolean,
+) {
+  if (checked) {
+    return current.includes(version) ? current : [...current, version];
+  }
+
+  return current.filter((entry) => entry !== version);
+}
+
+function filterAllowedDesktopVersionsToVisibleOptions(
+  storedVersions: string[] | null,
+  visibleOptions: string[],
+) {
+  if (storedVersions === null) {
+    return null;
+  }
+
+  const visibleOptionSet = new Set(visibleOptions);
+  return storedVersions.filter((version) => visibleOptionSet.has(version));
 }
 
 function SettingsToggle({
@@ -73,10 +157,22 @@ export function OrgSettingsScreen() {
   const [allowedDomainsDraft, setAllowedDomainsDraft] = useState("");
   const [domainRestrictionsEnabled, setDomainRestrictionsEnabled] =
     useState(false);
-  const [allowNonCloudModelsEnabled, setAllowNonCloudModelsEnabled] = useState(true);
+  const [allowNonCloudModelsEnabled, setAllowNonCloudModelsEnabled] =
+    useState(true);
   const [allowZenModelEnabled, setAllowZenModelEnabled] = useState(true);
-  const [allowMultipleWorkspacesEnabled, setAllowMultipleWorkspacesEnabled] = useState(true);
+  const [allowMultipleWorkspacesEnabled, setAllowMultipleWorkspacesEnabled] =
+    useState(true);
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
+  const [desktopVersionOptions, setDesktopVersionOptions] = useState<string[]>(
+    [],
+  );
+  const [allowedDesktopVersionsDraft, setAllowedDesktopVersionsDraft] =
+    useState<string[]>([]);
+  const [desktopVersionOptionsBusy, setDesktopVersionOptionsBusy] =
+    useState(false);
+  const [desktopVersionOptionsError, setDesktopVersionOptionsError] = useState<
+    string | null
+  >(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageSuccess, setPageSuccess] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
@@ -91,6 +187,23 @@ export function OrgSettingsScreen() {
     [allowedDomainsDraft],
   );
   const hasDraftDomains = (draftAllowedDomains?.length ?? 0) > 0;
+  const visibleAllowedDesktopVersionsDraft = useMemo(
+    () =>
+      filterAllowedDesktopVersionsToVisibleOptions(
+        allowedDesktopVersionsDraft,
+        desktopVersionOptions,
+      ) ?? [],
+    [allowedDesktopVersionsDraft, desktopVersionOptions],
+  );
+  const selectedDesktopVersions = useMemo(
+    () => new Set(visibleAllowedDesktopVersionsDraft),
+    [visibleAllowedDesktopVersionsDraft],
+  );
+  const allDesktopVersionsAllowed =
+    desktopVersionOptions.length > 0 &&
+    desktopVersionOptions.every((version) =>
+      selectedDesktopVersions.has(version),
+    );
 
   useEffect(() => {
     if (!orgContext) {
@@ -105,16 +218,109 @@ export function OrgSettingsScreen() {
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
     setAllowNonCloudModelsEnabled(
-      orgContext.organization.desktopAppRestrictions.disallowNonCloudModels !== true,
+      orgContext.organization.desktopAppRestrictions.disallowNonCloudModels !==
+        true,
     );
     setAllowZenModelEnabled(
       orgContext.organization.desktopAppRestrictions.blockZenModel !== true,
     );
     setAllowMultipleWorkspacesEnabled(
-      orgContext.organization.desktopAppRestrictions.blockMultipleWorkspaces !== true,
+      orgContext.organization.desktopAppRestrictions.blockMultipleWorkspaces !==
+        true,
     );
     setDomainEditModeEnabled(false);
   }, [orgContext]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDesktopVersionOptions() {
+      setDesktopVersionOptionsBusy(true);
+      setDesktopVersionOptionsError(null);
+
+      try {
+        const { response, payload } = await requestJson(
+          "/v1/app-version",
+          { method: "GET" },
+          12000,
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            getErrorMessage(
+              payload,
+              `Failed to load desktop version metadata (${response.status}).`,
+            ),
+          );
+        }
+
+        const metadata = getDesktopVersionMetadata(payload);
+        if (!metadata) {
+          throw new Error("Desktop version metadata was incomplete.");
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setDesktopVersionOptions(
+          buildDesktopVersionOptions(
+            metadata.minAppVersion,
+            metadata.latestAppVersion,
+          ),
+        );
+      } catch (error) {
+        if (!cancelled) {
+          setDesktopVersionOptions([]);
+          setDesktopVersionOptionsError(
+            error instanceof Error
+              ? error.message
+              : "Could not load desktop versions.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setDesktopVersionOptionsBusy(false);
+        }
+      }
+    }
+
+    void loadDesktopVersionOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!orgContext || desktopVersionOptions.length === 0) {
+      return;
+    }
+
+    const storedAllowedDesktopVersions =
+      filterAllowedDesktopVersionsToVisibleOptions(
+        getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata),
+        desktopVersionOptions,
+      );
+
+    if (storedAllowedDesktopVersions === null) {
+      setAllowedDesktopVersionsDraft(desktopVersionOptions);
+      return;
+    }
+
+    setAllowedDesktopVersionsDraft(storedAllowedDesktopVersions);
+  }, [desktopVersionOptions, orgContext]);
+
+  useEffect(() => {
+    if (
+      visibleAllowedDesktopVersionsDraft.length ===
+      allowedDesktopVersionsDraft.length
+    ) {
+      return;
+    }
+
+    setAllowedDesktopVersionsDraft(visibleAllowedDesktopVersionsDraft);
+  }, [allowedDesktopVersionsDraft.length, visibleAllowedDesktopVersionsDraft]);
 
   useEffect(() => {
     if (!copiedOrgId) {
@@ -187,10 +393,23 @@ export function OrgSettingsScreen() {
           ? draftAllowedDomains
           : null,
         desktopAppRestrictions: {
-          ...(!allowNonCloudModelsEnabled ? { disallowNonCloudModels: true } : {}),
+          ...(!allowNonCloudModelsEnabled
+            ? { disallowNonCloudModels: true }
+            : {}),
           ...(!allowZenModelEnabled ? { blockZenModel: true } : {}),
-          ...(!allowMultipleWorkspacesEnabled ? { blockMultipleWorkspaces: true } : {}),
+          ...(!allowMultipleWorkspacesEnabled
+            ? { blockMultipleWorkspaces: true }
+            : {}),
         },
+        ...(desktopVersionOptions.length > 0
+          ? {
+              allowedDesktopVersions: allDesktopVersionsAllowed
+                ? null
+                : desktopVersionOptions.filter((version) =>
+                    selectedDesktopVersions.has(version),
+                  ),
+            }
+          : {}),
       });
       setDomainEditModeEnabled(false);
       setPageSuccess("Workspace settings updated.");
@@ -365,7 +584,8 @@ export function OrgSettingsScreen() {
               Desktop restrictions
             </h2>
             <p className="text-[14px] text-gray-500">
-              Control which desktop-only options remain available after people sign in to this workspace.
+              Control which desktop-only options remain available after people
+              sign in to this workspace.
             </p>
           </div>
 
@@ -376,7 +596,8 @@ export function OrgSettingsScreen() {
                   Allow non-cloud deployed models
                 </p>
                 <p className="text-[13px] text-gray-500">
-                  Let signed-in desktop users access models that are not deployed through OpenWork Cloud.
+                  Let signed-in desktop users access models that are not
+                  deployed through OpenWork Cloud.
                 </p>
               </div>
               <SettingsToggle
@@ -393,7 +614,8 @@ export function OrgSettingsScreen() {
                   Allow usage of OpenCode Zen model
                 </p>
                 <p className="text-[13px] text-gray-500">
-                  Let signed-in desktop users access the OpenCode Zen model in the desktop app.
+                  Let signed-in desktop users access the OpenCode Zen model in
+                  the desktop app.
                 </p>
               </div>
               <SettingsToggle
@@ -410,7 +632,8 @@ export function OrgSettingsScreen() {
                   Allow users to configure multiple workspaces
                 </p>
                 <p className="text-[13px] text-gray-500">
-                  Let signed-in desktop users create or manage more than one workspace on their machine.
+                  Let signed-in desktop users create or manage more than one
+                  workspace on their machine.
                 </p>
               </div>
               <SettingsToggle
@@ -420,13 +643,81 @@ export function OrgSettingsScreen() {
                 onChange={setAllowMultipleWorkspacesEnabled}
               />
             </div>
+          </div>
+        </DenCard>
 
-            {Object.keys(currentDesktopAppRestrictions).length === 0 ? (
-              <p className="text-[13px] text-gray-500">
-                No desktop restrictions are configured yet. Leaving every toggle on stores an empty config object and keeps the desktop defaults.
+        <DenCard size="spacious" className="grid gap-6">
+          <div className="grid gap-2">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+              Desktop app
+            </p>
+            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
+              Allowed Desktop Versions
+            </h2>
+            <p className="text-[14px] text-gray-500">
+              Choose which supported desktop versions can sign in to this
+              workspace.
+            </p>
+            {desktopVersionOptions.length > 0 ? (
+              <p className="text-[10px] text-gray-400">
+                This server currently supports desktop
+                {` ${desktopVersionOptions[0]} `}
+                to {desktopVersionOptions[desktopVersionOptions.length - 1]}.
               </p>
             ) : null}
           </div>
+
+          {desktopVersionOptionsBusy ? (
+            <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-4 text-[14px] text-gray-500">
+              Loading desktop versions...
+            </div>
+          ) : null}
+
+          {desktopVersionOptionsError ? (
+            <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
+              {desktopVersionOptionsError}
+            </div>
+          ) : null}
+
+          {!desktopVersionOptionsBusy &&
+          !desktopVersionOptionsError &&
+          desktopVersionOptions.length > 0 ? (
+            <div className="grid gap-4">
+              <div className="grid gap-3">
+                {desktopVersionOptions.map((version) => {
+                  const checked = selectedDesktopVersions.has(version);
+
+                  return (
+                    <label
+                      key={version}
+                      className="flex items-center justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4"
+                    >
+                      <div className="grid gap-1">
+                        <p className="text-[15px] font-medium text-gray-900">
+                          {version}
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!isOwner}
+                        aria-label={`Allow desktop version ${version}`}
+                        onChange={(event) =>
+                          setAllowedDesktopVersionsDraft((current) =>
+                            toggleAllowedDesktopVersion(
+                              current,
+                              version,
+                              event.target.checked,
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </DenCard>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -436,7 +727,7 @@ export function OrgSettingsScreen() {
           {isOwner ? (
             <DenButton
               type="submit"
-              loading={mutationBusy === "update-organization-name"}
+              loading={mutationBusy === "update-organization-settings"}
             >
               Save settings
             </DenButton>

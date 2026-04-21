@@ -2,6 +2,13 @@
 
 export type ProviderIconProps = {
   providerId?: string | null;
+  /**
+   * Optional provider display name. When the id is an opaque cloud id
+   * (e.g. a uuid), the name is what tells us whether it's an Anthropic /
+   * OpenAI / OpenCode provider. Ported from dev 022b68a8 ("key cloud
+   * providers by cloud id") so the icon still resolves by family.
+   */
+  providerName?: string | null;
   className?: string;
   size?: number;
 };
@@ -9,10 +16,13 @@ export type ProviderIconProps = {
 export function ProviderIcon(props: ProviderIconProps) {
   const size = props.size ?? 16;
   const normalizedId = props.providerId?.trim().toLowerCase() ?? "";
+  const normalizedName = props.providerName?.trim().toLowerCase() ?? "";
+  const hasProviderFamily = (family: string) =>
+    normalizedId === family || normalizedName.includes(family);
 
-  const isAnthropic = normalizedId === "anthropic";
-  const isOpenAI = normalizedId === "openai";
-  const isOpenCode = normalizedId === "opencode";
+  const isAnthropic = hasProviderFamily("anthropic");
+  const isOpenAI = hasProviderFamily("openai");
+  const isOpenCode = hasProviderFamily("opencode");
 
   const fallbackLetters = (() => {
     if (normalizedId === "openrouter") return "OR";

@@ -12,7 +12,7 @@ import {
 import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
-import { DEFAULT_ORGANIZATION_LIMITS, serializeOrganizationMetadata } from "./organization-limits.js"
+import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata, serializeOrganizationMetadata } from "./organization-limits.js"
 import { denDefaultDynamicOrganizationRoles, denOrganizationStaticRoles } from "./organization-access.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -611,6 +611,7 @@ export async function updateOrganizationSettings(input: {
   name?: string
   allowedEmailDomains?: readonly string[] | null
   desktopAppRestrictions?: DesktopAppRestrictions
+  allowedDesktopVersions?: readonly string[] | null
 }) {
   const nextName = typeof input.name === "string" ? input.name.trim() : null
   if (typeof input.name === "string" && !nextName) {
@@ -626,6 +627,30 @@ export async function updateOrganizationSettings(input: {
   }
   if (input.desktopAppRestrictions !== undefined) {
     updates.desktopAppRestrictions = normalizeDesktopAppRestrictions(input.desktopAppRestrictions)
+  }
+  if (input.allowedDesktopVersions !== undefined) {
+    const rows = await db
+      .select({ metadata: OrganizationTable.metadata })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, input.organizationId))
+      .limit(1)
+
+    const existingOrganization = rows[0]
+    if (!existingOrganization) {
+      return null
+    }
+
+    const nextMetadata = {
+      ...normalizeOrganizationMetadata(existingOrganization.metadata).metadata,
+    } as Record<string, unknown>
+
+    if (input.allowedDesktopVersions === null) {
+      delete nextMetadata.allowedDesktopVersions
+    } else {
+      nextMetadata.allowedDesktopVersions = input.allowedDesktopVersions
+    }
+
+    updates.metadata = normalizeOrganizationMetadata(nextMetadata).metadata
   }
 
   if (Object.keys(updates).length === 0) {

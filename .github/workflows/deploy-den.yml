@@ -7,11 +7,6 @@ on:
         description: "Daytona snapshot name to promote into Render"
         required: true
         type: string
-    secrets:
-      RENDER_API_KEY:
-        required: true
-      RENDER_DEN_CONTROL_PLANE_SERVICE_ID:
-        required: true
   workflow_dispatch:
     inputs:
       daytona_snapshot:

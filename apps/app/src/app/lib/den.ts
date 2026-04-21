@@ -1,11 +1,16 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions as DenDesktopConfig } from "@openwork/types/den/desktop-app-restrictions";
+import {
+  normalizeDesktopConfig,
+  type DesktopConfig as SharedDesktopConfig,
+} from "@openwork/types/den/desktop-app-restrictions";
 
-// Re-export the aliased type so React consumers (e.g. the cloud domain's
-// desktop-config provider) can import it alongside the helpers they need.
-// Solid references it internally, but the React port wants it as part of
-// the public surface of this module.
-export type { DenDesktopConfig };
+// Re-export the shared schema under the local alias so React consumers
+// (e.g. the cloud domain's desktop-config provider) can import it alongside
+// the helpers they need. Solid references it internally only; the React
+// port wants it as part of the public surface of this module.
+export type { SharedDesktopConfig };
+export { normalizeDesktopConfig };
+
 import { isDesktopDeployment } from "./openwork-deployment";
 import {
   dispatchDenSettingsChanged,
@@ -59,6 +64,8 @@ type DenBaseUrls = {
 export type DenBootstrapConfig = DenBaseUrls & {
   requireSignin: boolean;
 };
+
+export type DenDesktopConfig = SharedDesktopConfig;
 
 export type DenUser = {
   id: string;
@@ -241,7 +248,7 @@ function getDenAppVersionMetadata(payload: unknown): DenAppVersionMetadata | nul
 }
 
 export function normalizeDenDesktopConfig(payload: unknown): DenDesktopConfig {
-  return normalizeDesktopAppRestrictions(payload);
+  return normalizeDesktopConfig(payload);
 }
 
 export function normalizeDenBaseUrl(input: string | null | undefined): string | null {

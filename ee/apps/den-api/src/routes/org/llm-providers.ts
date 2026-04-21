@@ -60,6 +60,7 @@ const customProviderSchema = z.object({
 }).passthrough()
 
 const llmProviderWriteSchema = z.object({
+  name: z.string().trim().min(1).max(255),
   source: z.enum(["models_dev", "custom"]),
   providerId: z.string().trim().min(1).max(255).optional(),
   modelIds: z.array(z.string().trim().min(1).max(255)).min(1).optional(),
@@ -288,7 +289,7 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
     return {
       source: input.source,
       providerId: provider.id,
-      name: provider.name,
+      name: input.name,
       providerConfig: provider.config,
       models: models.map((model) => ({
         id: model.id,
@@ -320,7 +321,7 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
   return {
     source: input.source,
     providerId: customProvider.data.id,
-    name: customProvider.data.name,
+    name: input.name,
     providerConfig: providerConfig as JsonRecord,
     models: models.map((model) => ({
       id: model.id,

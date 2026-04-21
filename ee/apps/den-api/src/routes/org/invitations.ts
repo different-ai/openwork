@@ -40,6 +40,7 @@ const inviteEmailDomainNotAllowedSchema = z.object({
 }).meta({ ref: "InviteEmailDomainNotAllowedError" })
 
 type InvitationId = typeof InvitationTable.$inferSelect.id
+
 const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
 
 export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {

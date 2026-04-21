@@ -414,13 +414,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch origin dev --no-tags
-          publish_sha="$(git rev-parse HEAD)"
-          if ! git merge-base --is-ancestor "$publish_sha" origin/dev; then
-            echo "Ref ${publish_sha} is not reachable from origin/dev; refusing AUR publish." >&2
-            exit 1
-          fi
-
           if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
             echo "AUR_SSH_PRIVATE_KEY not set; cannot push to AUR." >&2
             exit 1

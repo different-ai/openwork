@@ -8,6 +8,39 @@ export const desktopAppRestrictionsSchema = z.object({
 
 export type DesktopAppRestrictions = z.infer<typeof desktopAppRestrictionsSchema>
 
+export const desktopConfigSchema = desktopAppRestrictionsSchema.extend({
+  allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).optional(),
+}).meta({ ref: "DenDesktopConfig" })
+
+export type DesktopConfig = z.infer<typeof desktopConfigSchema>
+
+function normalizeDesktopVersionString(value: unknown) {
+  if (typeof value !== "string") {
+    return null
+  }
+
+  const normalized = value.trim().replace(/^v/i, "")
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(normalized)
+    ? normalized
+    : null
+}
+
+function normalizeAllowedDesktopVersions(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const versions = [
+    ...new Set(
+      value
+        .map((entry) => normalizeDesktopVersionString(entry))
+        .filter((entry): entry is string => Boolean(entry)),
+    ),
+  ]
+
+  return versions
+}
+
 export function normalizeDesktopAppRestrictions(value: unknown): DesktopAppRestrictions {
   const parsed = desktopAppRestrictionsSchema.safeParse(value)
   if (parsed.success) {
@@ -26,5 +59,17 @@ export function normalizeDesktopAppRestrictions(value: unknown): DesktopAppRestr
 
   return {
     ...(legacy?.models?.removeZen === true ? { blockZenModel: true } : {}),
+  }
+}
+
+export function normalizeDesktopConfig(value: unknown): DesktopConfig {
+  const restrictions = normalizeDesktopAppRestrictions(value)
+  const allowedDesktopVersions = normalizeAllowedDesktopVersions(
+    (value as { allowedDesktopVersions?: unknown } | null)?.allowedDesktopVersions,
+  )
+
+  return {
+    ...restrictions,
+    ...(allowedDesktopVersions !== undefined ? { allowedDesktopVersions } : {}),
   }
 }

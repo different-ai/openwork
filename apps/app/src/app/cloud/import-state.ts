@@ -19,6 +19,7 @@ export type CloudImportedSkill = {
 export type CloudImportedProvider = {
   cloudProviderId: string;
   providerId: string;
+  sourceProviderId: string;
   name: string;
   source: string | null;
   updatedAt: string | null;
@@ -76,11 +77,15 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
           ? entry.cloudProviderId.trim()
           : key.trim();
         const providerId = typeof entry.providerId === "string" ? entry.providerId.trim() : "";
+        const sourceProviderId = typeof entry.sourceProviderId === "string"
+          ? entry.sourceProviderId.trim()
+          : providerId;
         const name = typeof entry.name === "string" ? entry.name.trim() : providerId || cloudProviderId;
-        if (!cloudProviderId || !providerId || !name) return null;
+        if (!cloudProviderId || !providerId || !sourceProviderId || !name) return null;
         const imported = {
           cloudProviderId,
           providerId,
+          sourceProviderId,
           name,
           source: typeof entry.source === "string" ? entry.source.trim() || null : null,
           updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt.trim() || null : null,
